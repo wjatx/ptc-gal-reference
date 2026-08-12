@@ -69,9 +69,9 @@ it rather than copy it.
   which-layer decision test and the unified-config-store anti-pattern.
 - `posture-ladder.md` — the honesty lens (2026-07-26, vocabulary ruled 2026-07-24), beside
   `friction-doctrine.md` and `contract-vs-reference.md`. Those decide what to build; this decides
-  what you may *say* about what you built. Three rungs by where the boundary is (a plain wrapper,
+  what you may *say* about what you built. Three postures by where the boundary is (a plain wrapper,
   same OS user · a wrapper plus a sandbox, agent inside and gateway outside · the cloud floor with
-  IAM), the rule that every posture claim names its rung or is an overclaim, the per-harness
+  IAM), the rule that every posture claim names its posture or is an overclaim, the per-harness
   wrap-durability table with its coverage-artifact caveat, and #165's cheap half (the agent asks,
   the broker performs). Executable form: a wrapper's `posture` command.
 - `canonical-consumer.md` — the reusable *consumer* pattern (sa#179, PTC Phase 6): the invariant

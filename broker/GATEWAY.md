@@ -79,8 +79,8 @@ only drift checking a hole here specifically — **#227**.
 **#222** (decision only).
 
 **Nothing is confined.** The gateway runs as the same OS user as the agent it serves, and MCP-stdio
-children run unconfined (**#269**). This is rung 1 (`docs/posture-ladder.md`); a gateway does not
-move the rung, because a rung is about where the boundary is.
+children run unconfined (**#269**). This is posture 1 (`docs/posture-ladder.md`); a gateway does not
+move the posture, because a posture is about where the boundary is.
 
 ## Relationships
 

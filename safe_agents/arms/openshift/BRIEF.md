@@ -93,7 +93,7 @@ policy" (DNS is allowed on purpose, so the denial is attributable to the policy 
 resolution failure); "PASS the API server answers this pod, and refuses it the Secret AND the
 pod that would mount it" (RBAC 403s naming the ServiceAccount); and "PASS the agent's only
 reachable endpoint served it, and still refused the unadmitted op".
-*Limits:* this is **rung 2 by orchestration** — separate ServiceAccounts, OVN egress and a
+*Limits:* this is **posture 2 by orchestration** — separate ServiceAccounts, OVN egress and a
 broker-only mount are boundaries the *platform* enforces; no `safe_agents` code sits in that
 path, and **nothing here constrains what the agent does inside its own pod**. The API server is
 *deliberately* reachable from the agent pod so the refusal is a 403 naming the credential

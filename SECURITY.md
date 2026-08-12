@@ -29,7 +29,7 @@ When reporting, please include:
 - Which of the three postures it applies to — a single-machine run, a
   containerised deployment, or a cloud/cluster deployment. See
   [`docs/posture-ladder.md`](docs/posture-ladder.md); a finding that applies at
-  every rung is a different thing from one that applies only where a boundary is
+  every posture is a different thing from one that applies only where a boundary is
   absent.
 
 You should receive an acknowledgement within a few business days.

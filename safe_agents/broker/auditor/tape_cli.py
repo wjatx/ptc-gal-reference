@@ -18,7 +18,7 @@ record deleted, or a reordering. It is **not** tamper-evidence: anyone who can
 write the file can rewrite every record and recompute every hash, and the result
 verifies clean. Real tamper-evidence needs off-device append-only durability (S3
 Object Lock — GOVERNANCE mode as deployed, with the limits `_s3_sink.py` states),
-which is rung 3.
+which is posture 3.
 
 That distinction is the entire reason this command says "consistent" and never
 "untampered". A user who believes they have a boundary stops looking for one
@@ -47,7 +47,7 @@ CHAIN_CAVEAT = (
     "The chain is unkeyed SHA-256, so this proves the tape is SELF-CONSISTENT: no "
     "record was edited, dropped or reordered in place. It is NOT tamper-evidence — "
     "anyone who can write this file can rewrite it whole and recompute every hash. "
-    "That needs off-device append-only storage (rung 3, docs/posture-ladder.md)."
+    "That needs off-device append-only storage (posture 3, docs/posture-ladder.md)."
 )
 
 

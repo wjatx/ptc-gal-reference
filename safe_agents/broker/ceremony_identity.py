@@ -229,7 +229,7 @@ def local_release_identity() -> str:
 
     There is no ``--as``, here or anywhere: identity is derived, never asserted.
     What this buys is honest attribution, not authentication — anyone who can run
-    the command is that operator, which is the definition of rung 1 and is stated
+    the command is that operator, which is the definition of posture 1 and is stated
     rather than papered over.
 
     Refused on the dynamo arm for the same reason the ceremony arm is: on a cloud

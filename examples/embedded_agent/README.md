@@ -78,8 +78,8 @@ The agent, the broker, the Doer and the audit sink are all objects in one Python
 OS user. `build_runtime` hands the sink straight back to the caller — the agent cannot reach the
 writer *through the `BrokerResponse`*, which is a real and test-asserted property
 (`runtime/pep.py:176-180`), but nothing stops a same-process caller that goes looking for it. This
-configuration sits at **rung 1 or below**. What would move it up is not another rule; it is a
-boundary — the broker in its own process or its own identity, which is rungs 2 and 3.
+configuration sits at **posture 1 or below**. What would move it up is not another rule; it is a
+boundary — the broker in its own process or its own identity, which is postures 2 and 3.
 
 **The credential story is real but narrow.** The agent never receives a credential, because the
 Doer fetches it inside `execute()` and the response type has no field to carry one. That holds
@@ -91,7 +91,7 @@ that wanted a credential could read the same environment the broker reads.
 - `docs/consuming-the-sdk.md` §2 — the two-tier import surface this example is written against.
 - `docs/canonical-consumer.md` §3 — the five-seam consumer anatomy; `build_runtime(manifest)` is
   its centerpiece.
-- `docs/posture-ladder.md` — the rung vocabulary the limits above are stated in.
+- `docs/posture-ladder.md` — the posture vocabulary the limits above are stated in.
 - [`missileer/`](../missileer/) — the same `connector_providers` seam, used to prove the opposite
   move: absence rather than refusal.
 - #266 (this example), #106 (the installable-SDK thread it advances).

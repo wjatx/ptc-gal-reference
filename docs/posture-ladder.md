@@ -1,8 +1,15 @@
-# The posture ladder — naming the rung you are on
+# The posture ladder — naming the posture you are on
 
 **Status:** doctrine, written 2026-07-26. The vocabulary was ruled 2026-07-24 [ruling: maintainer]; until
 now it existed only in plan files and a CLAUDE.md summary, which meant every module that deferred
 to it was citing something unwritten. This document is the referent.
+
+**A word this ladder deliberately does not use.** Its positions were called "rungs" until
+2026-08-11, when that word was reserved for the *autonomy* ladder, which is normative in
+`spec/GAL-SPEC.md` §4.1 and implemented in `safe_agents/broker/grants/rung.py`. Two ladders sharing
+one word is a homonym a reader has no way to resolve, and the autonomy sense is the filed one, so
+the posture sense moved. A position here is a **posture**: posture 1, posture 2, posture 3. See
+`GLOSSARY.md` for the reservation and both ladders side by side.
 
 It is the third doctrine lens beside [friction-doctrine.md](friction-doctrine.md) (gate-vs-log) and
 [contract-vs-reference.md](contract-vs-reference.md) (what ships as what). Those two decide *what to
@@ -20,16 +27,16 @@ Both are worth shipping. Neither is worth *misdescribing*. The failure mode is n
 weak version — it is building the weak version and describing it in the strong version's vocabulary,
 because a user who believes they have a boundary stops looking for one.
 
-So: **every posture claim names its rung, or it is an overclaim.** The rung is the honest unit of
-"how much does this actually hold".
+So: **every posture claim names its posture, or it is an overclaim.** The posture is the honest unit
+of "how much does this actually hold".
 
-## The three rungs
+## The three postures
 
-The rungs are about **where the boundary is**, not about how many controls are switched on. Adding
-another Envelope knob does not move you up a rung; putting the controlled thing and the controlling
-thing on opposite sides of a boundary the controlled thing cannot cross does.
+The postures are about **where the boundary is**, not about how many controls are switched on.
+Adding another Envelope knob does not move you up the ladder; putting the controlled thing and the
+controlling thing on opposite sides of a boundary the controlled thing cannot cross does.
 
-### Rung 1 — a local wrapper
+### Posture 1 — a local wrapper
 
 The agent and the thing controlling it run as the **same OS user on one machine**. The controlling
 thing is a wrapper: it interposes on the agent's tool calls by rewriting the harness's own
@@ -47,11 +54,11 @@ separation.* A wrapper's authority should live outside the project tree, so that
 injected-agent edit cannot reach it: the agent writes where it normally writes, and the authority is
 not there. That defeats the agent following a poisoned instruction. It does not defeat a determined
 same-user adversary, who can read and write that directory, and the key files in it, exactly as
-easily as the wrapper can. The distinction is the whole content of this rung.
+easily as the wrapper can. The distinction is the whole content of this posture.
 
 Note what that implies about the wrapper's own protection: it depends on the *harness* refusing to
 write to certain paths, and a harness's protected-path list is vendor-controlled. The wrapper cannot
-extend it. So the boundary at rung 1 is one the wrapper borrows rather than one it owns.
+extend it. So the boundary at posture 1 is one the wrapper borrows rather than one it owns.
 
 The agent's **built-in** tools are also outside the boundary. A wrapper of this shape interposes on
 tool servers; a harness's own shell, file-write and network tools are not tool servers and are not
@@ -59,13 +66,13 @@ gated by anything the wrapper does.
 
 **What would move you up.** Not another rule. A boundary.
 
-### Rung 2 — a local wrapper plus a sandbox
+### Posture 2 — a local wrapper plus a sandbox
 
 The agent runs **inside** a sandbox; the gateway runs **outside** it; the sandbox's egress allows
 the gateway and the model provider and nothing else.
 
-This is the first rung where the word "boundary" is literal. Two things change, and they are the two
-that rung 1 cannot fix from the inside:
+This is the first posture where the word "boundary" is literal. Two things change, and they are the
+two that posture 1 cannot fix from the inside:
 
 - **Built-ins are confined.** The agent's shell can still run, but it runs in a place whose reach is
   bounded by the sandbox rather than by the agent's good behaviour. The ungated-built-ins gap does
@@ -79,7 +86,7 @@ per-harness containment profile), never to implement a sandbox. The composition 
 gateway being reachable over HTTP as well as stdio, which is why that transport is first-class
 rather than an extra.
 
-### Rung 3 — the cloud floor
+### Posture 3 — the cloud floor
 
 The broker runs as its **own cloud identity**, with per-capability IAM scoping, and the agent has no
 credentials at all.
@@ -90,24 +97,24 @@ resources, so a broker bug or a broker compromise still cannot reach past the ro
 enforcement point gets an enforcement point", proven live on `development` with out-of-scope actions
 AccessDenied by IAM rather than by broker policy [#175].
 
-This rung also gets the operator identity plane: maker≠checker on ceremonies is enforced by
+This posture also gets the operator identity plane: maker≠checker on ceremonies is enforced by
 comparing credential ARNs rather than by convention, and no single identity can both propose and
 ratify.
 
-## The rungs are not a maturity model
+## The postures are not a maturity model
 
-You do not "graduate" from rung 1. Rung 1 is the correct rung for a developer wrapping their own
-coding agent on their own laptop, and saying so plainly is the point — the alternative is not a
-better rung, it is the same rung described dishonestly. Rung 2 is the recommended hardening for
-anyone whose agent handles anything they would mind losing. Rung 3 is for a deployment that already
-has a cloud account and an operator.
+You do not "graduate" from posture 1. Posture 1 is the correct posture for a developer wrapping
+their own coding agent on their own laptop, and saying so plainly is the point — the alternative is
+not a better posture, it is the same posture described dishonestly. Posture 2 is the recommended
+hardening for anyone whose agent handles anything they would mind losing. Posture 3 is for a
+deployment that already has a cloud account and an operator.
 
 What the ladder forbids is the *unmarked* claim. "This controls which tools your agent can call" is
-true at every rung and means something different at each.
+true at every posture and means something different at each.
 
-## Wrap durability — a rung-1 sub-property
+## Wrap durability — a posture-1 sub-property
 
-At rung 1 there is a second honest question, separate from what a control does when it fires: **can
+At posture 1 there is a second honest question, separate from what a control does when it fires: **can
 the wrapped agent undo the wrap?**
 
 A wrapper of this shape interposes by rewriting the harness's own configuration. That
@@ -145,34 +152,34 @@ These are vendor behaviours in a fast-moving space. Establish the line for the h
 wrap, cite what you established it from, and re-verify at integration time rather than trusting a
 summary's memory.
 
-## Audit durability — what the tape is worth, per rung
+## Audit durability — what the tape is worth, per posture
 
 The audit tape is the architecture's payoff: "a fully compromised agent can still only ask",
 demonstrated rather than asserted. So how much the tape can be *trusted* is a posture property, and
-it differs by rung in a way nothing else states. `tape_cli` prints a caveat pointing here with every
+it differs by posture in a way nothing else states. `tape_cli` prints a caveat pointing here with every
 verify verdict, which is why this section exists.
 
-**The one fact that governs all three rungs: the chain is unkeyed SHA-256**
+**The one fact that governs all three postures: the chain is unkeyed SHA-256**
 [`safe_agents/broker/audit/_hash.py` — `hash_record` is a bare digest over the canonical field JSON]. An intact
 chain therefore proves **self-consistency**: no record edited in place, dropped, or reordered. It is
 **not** tamper-evidence, because anyone who can write the file can rewrite every record and recompute
 every hash, and the result verifies clean. A test pins that limit deliberately
 (`test_a_wholesale_rewrite_verifies_clean`) — its *passing* is the point.
 
-Since the chain is unkeyed, the whole question at each rung is **who can write the tape.**
+Since the chain is unkeyed, the whole question at each posture is **who can write the tape.**
 
-- **Rung 1 — anyone who can write the file.** `FileAuditSink` only ever appends and has no delete or
+- **Posture 1 — anyone who can write the file.** `FileAuditSink` only ever appends and has no delete or
   overwrite path, but that is a property of the *writer*, not of the file. Same-user process
   separation is not privilege separation, so the agent's own file-writing tool reaches the tape. The
   honest claim is "self-consistent", never "tamper-evident".
-- **Rung 2 — the broker identity alone, one pod at a time.** On a cluster the tape gets its own
+- **Posture 2 — the broker identity alone, one pod at a time.** On a cluster the tape gets its own
   volume, read-write under the broker's ServiceAccount and **read-only in every ceremony leg**, with
   the kernel enforcing it. What that buys, exactly: **a ceremony leg cannot forge or erase another
   leg's records** — attempted and refused four ways, against a tape holding real records. What it
   does **not** buy: the broker must write the tape, so a compromised broker can still rewrite it and
   re-chain. The read-only mount *is* the control; the chain only catches an edit by someone who could
   not rewrite the rest of the file.
-- **Rung 3 — off-device, and weaker than it sounds.** The cloud floor writes one S3 object per record
+- **Posture 3 — off-device, and weaker than it sounds.** The cloud floor writes one S3 object per record
   under a bucket with Object Lock. Three limits must ride with that claim: it is **GOVERNANCE** mode,
   not COMPLIANCE, so an administrator holding `s3:BypassGovernanceRetention` can still delete (no role
   in this repo is granted it); the retention applies in **durable environments only** — `development`
@@ -200,10 +207,10 @@ compromised agent can still only ask".
 ## How this doc gets used
 
 A **posture report** is the executable form: it reports which properties hold in one concrete
-configuration, names the rung, and cites a code path or a vendor doc for every line. A posture line
+configuration, names the posture, and cites a code path or a vendor doc for every line. A posture line
 that cannot cite is an overclaim and should be weakened to what is actually known — including all
 the way down to "unknown".
 
 The discipline is worth more than the report format: any module making a posture claim should defer
-to a document like this one rather than restating the claim locally, so that the rung and the claim
-cannot drift apart.
+to a document like this one rather than restating the claim locally, so that the posture and the
+claim cannot drift apart.

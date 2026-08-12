@@ -27,8 +27,8 @@ them is worth more to us than one defeating any single one.
 
 Note that the third is enforced by a platform boundary (an IAM deny, a read-only mount) rather than
 by broker code, because code cannot meaningfully deny itself. That makes it a property of a
-**deployment**, so every claim about it must name a rung: a single-machine run has no boundary for
-it to sit on, and correspondingly little for it to buy. We state the rungs and what each holds in
+**deployment**, so every claim about it must name a posture: a single-machine run has no boundary
+for it to sit on, and correspondingly little for it to buy. We state the postures and what each holds in
 `docs/posture-ladder.md` rather than asserting the property flatly.
 
 **safe-agents is the reference implementation that demonstrates these controls.** It has been

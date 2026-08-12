@@ -481,7 +481,7 @@ improves through its own conduct. *NOT SOLVED; bounded by ceremony, and whether 
 **A compromised broker.** The audit chain is unkeyed SHA-256, so write access alone re-chains a
 rewritten tape; the read-only mount is the control. Say precisely what that buys (a ceremony leg
 cannot forge or erase another leg's records) and never that the audit survives a compromised broker.
-The resolved answer is a rung-2 witness leg recording chain heads to a volume the broker cannot
+The resolved answer is a posture-2 witness leg recording chain heads to a volume the broker cannot
 mount, which is **detection and never prevention**, designed and unbuilt. *ROADMAP (#336)*
 
 **A vendor-baked refusal.** The model's own inference is not a brokered op: the broker mediates

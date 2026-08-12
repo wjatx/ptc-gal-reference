@@ -47,6 +47,12 @@ A first run spends most of its time in the two in-cluster builds; `SKIP_BUILD=1`
 them. The drill discards the previous run's store by default (`KEEP_STORE=1` to keep it), so
 re-running is always safe.
 
+**One known diff, 2026-08-12 (#385).** The posture ladder's positions were renamed from "rung N"
+to "posture N", so `cluster-arc-run.sh` and `cluster-posture.sh` now print `Posture 2` where the
+captured log reads `Rung 2`. The log is deliberately NOT hand-corrected — editing recorded output
+to match a change we made is manufacturing evidence — so it carries the old word until the next
+cluster re-capture. Three lines, all prose in a `printf`; no predicate moved.
+
 **What success looks like:** exit code 0, every leg admitted under `restricted-v2`, and four
 green predicate blocks — Phases 3, 4, 5 and 6.1 — at the end. `expected-output.log` beside
 this file is the complete log of a real run, captured rather than composed, to diff yours

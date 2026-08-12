@@ -34,7 +34,7 @@ CONSUMER decision, re-derived per agent, and it is emphatically not in the base'
 policy — this module is mechanism, and the polarity is recorded here and in
 `example-wrapper posture` because the ladder forbids an unmarked claim.
 
-Rung 1 (`docs/posture-ladder.md`): anyone who can run this command is the operator.
+Posture 1 (`docs/posture-ladder.md`): anyone who can run this command is the operator.
 The release is attributed honestly (`local-solo:` — see local_release_identity),
 never authenticated.
 """

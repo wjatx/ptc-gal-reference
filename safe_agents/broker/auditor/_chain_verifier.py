@@ -116,11 +116,11 @@ class FileTapeReader:
     what counts as a record. This delegates, which is what keeps a reader from
     disagreeing with the writer about the contents of the same file.
 
-    **What verifying this proves, and what it does not.** At rung 1 the chain
+    **What verifying this proves, and what it does not.** At posture 1 the chain
     establishes SELF-CONSISTENCY: it detects an isolated edit or a deleted record.
     It is not tamper-evidence, because the chain is unkeyed SHA-256 and anyone who
     can write the file can recompute every hash. Real tamper-evidence needs
-    off-device append-only durability (S3 Object Lock), which is rung 3. Any
+    off-device append-only durability (S3 Object Lock), which is posture 3. Any
     surface reporting this result has to say so — see `example-wrapper audit`.
     """
 
