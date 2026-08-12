@@ -73,7 +73,7 @@ selects, in-memory ones included. Identity separation, IAM confinement and the t
 chain are properties of a **deployment**, not of an import.
 
 `examples/embedded_agent/` is the runnable worked example of exactly this surface — a plain Python
-agent that composes a runtime, gets one call allowed and one refused, and states its rung honestly.
+agent that composes a runtime, gets one call allowed and one refused, and states its posture honestly.
 `python -m examples.embedded_agent.agent`, no account and no credentials.
 
 Plus a console entrypoint, installed on your `PATH`:

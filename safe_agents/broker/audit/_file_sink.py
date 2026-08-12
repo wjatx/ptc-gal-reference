@@ -37,7 +37,7 @@ AND re-derives seq/last_hash from what is actually on disk before emit() reads t
 The cached counters are therefore a fast path, never the authority — a non-empty file
 always wins over the constructor's ``initial_seq``/``initial_last_hash``.
 
-This is a correctness fix within rung 1, not tamper-evidence: it stops honest writers
+This is a correctness fix within posture 1, not tamper-evidence: it stops honest writers
 from corrupting each other. Anyone who can write the file can still rewrite the whole
 chain (see the IMPORTANT note above).
 

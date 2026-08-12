@@ -101,7 +101,7 @@ def test_a_wholesale_rewrite_verifies_clean(tape):
 
     An attacker who rewrites the whole tape and recomputes every hash is
     undetectable here. This passing is not a bug — it is the reason the command
-    says "self-consistent" and never "untampered", and the reason rung 3 exists.
+    says "self-consistent" and never "untampered", and the reason posture 3 exists.
     """
     fresh = str(tape) + ".rewritten"
     sink = FileAuditSink.resuming(fresh)

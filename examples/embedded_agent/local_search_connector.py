@@ -35,7 +35,7 @@ from safe_agents.connectors import Connector
 # and contains no network.
 _CORPUS: dict[str, str] = {
     "onboarding": "Run `example-wrapper init` once, then `example-wrapper wrap claude` inside a project.",
-    "posture": "`example-wrapper posture` names the rung; a claim without a rung is an overclaim.",
+    "posture": "`example-wrapper posture` names the posture; a claim without a posture is an overclaim.",
     "broker": "The agent holds no connector credentials. Its only egress is the broker.",
 }
 

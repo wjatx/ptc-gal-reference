@@ -212,6 +212,35 @@ default-deny). Level moves on a ratchet via recorded maker-checker promotion and
 automatic demotion, with a `lastSafeLevel` floor that is never `out-of-loop`. See
 `broker/grant-lifecycle.md`.
 
+### The posture ladder (postures)
+The **second** ladder in this project, and it answers a different question. The autonomy ladder
+asks *how closely is a human watching this agent*. The posture ladder asks *how much does the
+machinery actually hold where you have deployed it* — because the same control is a real boundary
+in one deployment and a convention in another, and that difference is invisible from inside the
+code. There are **three postures**, and they are about *where the boundary is*, not about how many
+controls are switched on:
+
+- **Posture 1 — a local wrapper.** The agent and the thing controlling it run as the same user on
+  one machine. Deterministic gating, taint and audit honesty all hold; what does not hold is
+  privilege separation, because a determined same-user adversary can reach the controller's own
+  files.
+- **Posture 2 — a wrapper plus a sandbox.** The agent runs inside a sandbox and the gatekeeper
+  outside it. This is the first posture where "boundary" is literal.
+- **Posture 3 — the cloud floor.** The broker runs as its own cloud identity and the agent holds no
+  credentials at all, so an out-of-scope action is refused by the infrastructure rather than by the
+  broker.
+
+The rule that makes it worth having: **every posture claim names its posture, or it is an
+overclaim.** "This controls which tools your agent can call" is true at all three and means
+something different at each. See `docs/posture-ladder.md`.
+
+**Why these are not "rungs".** Both ladders were called ladders and both had their positions called
+rungs, which left one word meaning two things in documents that use both. **Bare "rung" is
+reserved for the autonomy ladder** [ruled 2026-08-11], where it is normative in `spec/GAL-SPEC.md`
+§4.1 and implemented as `safe_agents/broker/grants/rung.py`; a position on the posture ladder is a
+**posture**. The design corpus in the sibling `auto-agents` repository reserves the word the same
+way. A sentence that says "rung" and means deployment posture is stale, not a third sense.
+
 ### The five decisions
 Every request to the broker ends in exactly one of five outcomes: **allow** (do it), **deny**
 (refuse, with a reason), **transform** (do a *safer version* instead — e.g. turn "send this

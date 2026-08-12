@@ -44,8 +44,8 @@ claim any confidence; replay; flood; and argue persuasively in every free-text f
 hold connector credentials (invariant 1), set or clear taint, mint or roll a turn, write a grant
 or a registry row, or author its own provenance labels. The network bound (reaching no endpoint
 except the broker and its model proxy) holds only where the confinement is deployed, which is
-rung-dependent (§3 Network, `docs/posture-ladder.md`); the credential and gate bounds hold on every
-rung. The floor claim, stated exactly: a fully compromised agent can still only ask, and where the
+posture-dependent (§3 Network, `docs/posture-ladder.md`); the credential and gate bounds hold at every
+posture. The floor claim, stated exactly: a fully compromised agent can still only ask, and where the
 network is confined it can only ask the broker.
 
 **A2: hostile content on a legitimate channel.** Prompt injection arriving in a tool result, an
@@ -88,17 +88,17 @@ Where each adversary's reach ends, and the mechanism that ends it.
   is per-arm, not one thing: a network namespace whose sole route is the broker on the netns EC2 arm
   (`docs/model-egress.md`), network topology on the woken-EC2 and Fargate arms, and a NetworkPolicy
   on the OpenShift arm (`safe_agents/arms/openshift/60-networkpolicy.yaml`). Two honest gaps: the
-  VPC-level topology (`secureNetwork`) ships OFF on the experiment floor, and a plain rung-1
+  VPC-level topology (`secureNetwork`) ships OFF on the experiment floor, and a plain posture-1
   wrap has no network confinement at all (`docs/posture-ladder.md`), so a network claim must always
-  name its rung. The code/credential half (no creds in the agent, broker as separate identity) is
+  name its posture. The code/credential half (no creds in the agent, broker as separate identity) is
   always on (`docs/network-security-layer.md`).
 - **Identity.** Agent, broker, ceremony maker, ceremony checker, watcher, and auditor are distinct
   principals where they exist. The broker is denied grant-store writes by the platform rather than
   by broker code — IAM on AWS, a read-only mount on the cluster — so this is a deployed property to
   assert per arm, and a single-machine run falls outside its reach rather than failing it
-  (`docs/posture-ladder.md`). The residue that is NOT rung-scoped: the default seed path stamps
+  (`docs/posture-ladder.md`). The residue that is NOT posture-scoped: the default seed path stamps
   `promotedBy` and an evidence ref as literals (#372), which is a false entry in authority state at
-  any rung. The maker cannot sign or write the checker's key space; the acting
+  any posture. The maker cannot sign or write the checker's key space; the acting
   roles hold no `dynamodb:Scan`. The ceremony and audit roles are
   context-gated at deploy: a redeploy that omits any of the five `<x>TrustedPrincipals` contexts
   silently drops the gated roles, which is the standing operator trap the runbook exists for
@@ -201,7 +201,7 @@ reviewer.
   retained as a record of the gap the register sweep found and closed, not as a live limit.
 - **Egress confinement has two halves with different defaults.** The code/credential half is always
   on; the network topology (`secureNetwork`) ships OFF on the experiment floor, so posture claims
-  must name their rung (`docs/posture-ladder.md`).
+  must name their posture (`docs/posture-ladder.md`).
 - **Every proof here is a drill we designed to pass.** No third party has attacked these claims;
   that gap is tracked, not waved away (#304, #320, `/assumption-testing`).
 

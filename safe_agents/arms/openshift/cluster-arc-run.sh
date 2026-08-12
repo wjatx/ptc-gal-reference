@@ -438,7 +438,7 @@ printf '  the network policy and by RBAC respectively, each attempted from insid
 printf '  that pod and each naming which control refused it — while a brokered call\n'
 printf '  through the broker executed anyway. That last clause is the phase: two\n'
 printf '  denials without it are what a broken pod produces.\n'
-printf '\n  Rung 2 by ORCHESTRATION, and the distinction is the claim: separate\n'
+printf '\n  Posture 2 by ORCHESTRATION, and the distinction is the claim: separate\n'
 printf '  ServiceAccounts, OVN egress and a broker-only mount are boundaries the\n'
 printf '  PLATFORM enforces. No safe_agents code sits in that path, and nothing here\n'
 printf '  constrains what the agent does inside its own pod.\n'

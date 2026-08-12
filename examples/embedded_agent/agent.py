@@ -16,7 +16,7 @@ and cannot reach the audit tape's writer. It calls `handle_request` and receives
 to the Doer. A fully compromised version of this file can still only ask.
 
 Read README.md beside this file for what that does and does NOT buy you. The
-short version: this is an import, not a deployment, and it sits at rung 1 or
+short version: this is an import, not a deployment, and it sits at posture 1 or
 below (`docs/posture-ladder.md`).
 """
 

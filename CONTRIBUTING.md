@@ -82,10 +82,10 @@ Issues are for actionable work items. Use GitHub Discussions for questions and
 ideas.
 
 A good issue here states **what you observed**, **what you expected**, and
-**which posture rung you were on** — a single-machine run, a container, or a
+**which posture you were on** — a single-machine run, a container, or a
 cloud/cluster deployment. That last one matters more in this project than in
 most: several controls are enforced by a platform boundary rather than by code,
-so a finding that applies at every rung is a different and more serious thing
+so a finding that applies at every posture is a different and more serious thing
 than one that applies only where a boundary is absent.
 [`docs/posture-ladder.md`](docs/posture-ladder.md) is the referent.
 
@@ -165,8 +165,8 @@ a packaging change breaks.
 the control on purpose and confirm the test goes red *naming the right mechanism*,
 then restore it. A test that passes both ways is not testing what you think.
 
-**Name the rung.** A test that proves a control at rung 3 proves nothing about
-rung 1, where the boundary it depends on does not exist.
+**Name the posture.** A test that proves a control at posture 3 proves nothing
+about posture 1, where the boundary it depends on does not exist.
 
 ## Documentation expectations
 

@@ -55,7 +55,7 @@ It does NOT promise that embedding the broker gets you the cloud floor's
 guarantees. `build_runtime` composes whatever backends the environment selects,
 including in-memory ones; the identity separation, the IAM confinement and the
 tamper-evident audit chain are properties of a deployment, not of an import. The
-rung ladder is where that distinction is stated honestly.
+posture ladder is where that distinction is stated honestly.
 """
 
 from __future__ import annotations

@@ -70,10 +70,18 @@ SCHEMA_VERSION = "1"
 # The alternative, `immutable=1`, was measured and REJECTED: it makes the
 # reader assert the file cannot change, and when that assertion is wrong the
 # reader silently returns pre-WAL data. Measured on this substrate's shape, a
-# checker committing a demotion to `out-of-loop` left an `immutable=1` reader
-# seeing `in-loop` — a stale grant level, no error, in the direction of MORE
-# authority. A control whose read path rests on an unverifiable promise is not
-# the control this phase is buying.
+# checker committing a PROMOTION to `out-of-loop` left an `immutable=1` reader
+# still seeing `in-loop` — a stale grant level, with no error to say so.
+#
+# Say nothing about which direction that stale value points. The measured run
+# happens to go the lucky way (`in-loop` is the BOTTOM of the ladder — see
+# grants/rung.py:20-30, where promotion ascends in-loop -> on-loop ->
+# out-of-loop), but a reader pinned to pre-WAL contents returns whatever those
+# contents were, so a demotion the checker had just committed would read back
+# as the higher level it replaced. The defect is that the read is stale and
+# SILENT; direction is a property of the run, not of the flag. A control whose
+# read path rests on an unverifiable promise is not the control this phase is
+# buying.
 JOURNAL_WAL = "wal"
 JOURNAL_DELETE = "delete"
 _JOURNAL_MODES = (JOURNAL_WAL, JOURNAL_DELETE)

@@ -140,15 +140,15 @@ broker code — an IAM policy denying the write on the cloud deployment, a read-
 cluster. That is not an implementation shortcut; code cannot meaningfully deny itself, so a boundary
 is the only place the property can live. It follows that the leg is a property of a **deployment**,
 and a single-machine run has no boundary for it to sit on. `docs/posture-ladder.md` is where each
-rung states what it holds and what it does not: at the bottom rung the agent and the thing
+posture states what it holds and what it does not: at the bottom posture the agent and the thing
 controlling it are the same OS user, so an adversary who could exploit the broker writing grants
 could equally edit the grant store directly. The control has little to buy there. Attack it at a
-rung where the boundary exists, or attack the boundary.
+posture where the boundary exists, or attack the boundary.
 
-One thing on that path is **not** rung-scoped, and we would rather you heard it from us. The default
+One thing on that path is **not** posture-scoped, and we would rather you heard it from us. The default
 local seed mode writes grants from inside the broker process, and the grant it writes carries
 `promotedBy: "human-reviewer"` and an evidence reference as hardcoded literals, with no demotion
 triggers armed (#372, open). Skipping a ceremony that has no boundary to enforce it is a posture
 statement; *asserting in authority state that a human reviewed something* is a false record, and a
-false record does not get cheaper at a lower rung. The fix is a posture decision we have not yet
-taken; the misattribution is a defect at every rung.
+false record does not get cheaper at a lower posture. The fix is a posture decision we have not yet
+taken; the misattribution is a defect at every posture.
