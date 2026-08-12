@@ -1,0 +1,19 @@
+{
+  "name": "safe-agents-base-infra",
+  "description": "Build infrastructure for the safe-agents base AMI. This instance has internet egress (needed for package installs during bake). Deployed agent instances have no internet access.",
+  "instanceTypes": ["c7g.medium"],
+  "instanceProfileName": "${IMAGE_BUILDER_INSTANCE_PROFILE}",
+  "securityGroupIds": ["${BUILD_SECURITY_GROUP_ID}"],
+  "subnetId": "${BUILD_SUBNET_ID}",
+  "logging": {
+    "s3Logs": {
+      "s3BucketName": "safe-agents-${ENVIRONMENT}-deploy",
+      "s3KeyPrefix": "image-builder-logs/"
+    }
+  },
+  "terminateInstanceOnFailure": true,
+  "tags": {
+    "Project": "safe-agents",
+    "ManagedBy": "safe-agents-image-builder"
+  }
+}

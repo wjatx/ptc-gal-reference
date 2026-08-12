@@ -1,0 +1,52 @@
+# sepsis-detection/manifest.yaml — FICTIONAL example consumer (act-safe archetype).
+#
+# A bedside early-warning monitor: it reads patient vitals, records its assessment,
+# and raises an alert. Here INACTION is the hazard — failing to alert is worse than
+# a false alert — so the safe default is to ACT. This is the deliberate inverse of
+# missileer; the two share the same base and the same connectors and differ ONLY in
+# polarity, which is the whole point (the base is polarity-blind).
+#
+# Broker-facing AgentManifest (extra="forbid"): only the five broker blocks;
+# connectors/grant_classes name only base connectors (github/example/notify/ledger/search).
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: sepsis-monitor
+  skill: monitor
+  user: charge-nurse
+  tier: A
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+grant_classes:
+  - search.query
+  - ledger.append
+  - notify.send
+
+# ── Connectors (names only; resolved against the base registry) ───────────────
+connectors:
+  - search
+  - ledger
+  - notify
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# The broker resolves each granted (tool, op) against THIS table; the base names no
+# op. Copied from the base copyable CATALOG (safe_agents.broker.manifest.CATALOG).
+tool_ops:
+  - {tool: search, op: query,  effect: read,  external: true,  egress_arg: query}
+  - {tool: ledger, op: append, effect: write, external: false, reversible: true}
+  - {tool: notify, op: send,   effect: write, external: true,  reversible: true}
+
+# ── Risk envelope ─────────────────────────────────────────────────────────────
+# polarity: act — a raised alert is the safe outcome; a suppressed one can be fatal.
+# Deliberately IDENTICAL connectors/grant_classes to missileer: only polarity (and a
+# more permissive cap, since alerting freely is the safe behavior) differ.
+envelope:
+  polarity: act
+  caps:
+    actions_per_run: 50
+  allowlists:
+    tools:
+      - search.query
+      - ledger.append
+      - notify.send
+  high_stakes: false

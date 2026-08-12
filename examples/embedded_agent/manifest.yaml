@@ -1,0 +1,67 @@
+# embedded_agent/manifest.yaml — FICTIONAL example consumer (the embedding archetype).
+#
+# A small research assistant that searches a local corpus. It exists to prove one
+# thing no other example proves: the broker is usable as a LIBRARY, embedded in a
+# plain Python program, through the public `safe_agents.broker.api` surface — not
+# only as a service configured by a manifest and a consumer image (#266).
+#
+# Read agent.py beside this file for the twenty lines that consume it, and README.md
+# for what the example claims and — just as important — what it does NOT claim.
+#
+# This is a broker-facing AgentManifest (broker/schemas/manifest.py, extra="forbid").
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: embedded-assistant
+  skill: research
+  user: local-developer
+  tier: C
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+# Read the local corpus. Nothing else. `notify.send` is deliberately CLASSIFIED
+# below but NOT granted here — that gap is the example's whole demonstration: the
+# agent can ask for it and the broker refuses, on the record.
+grant_classes:
+  - search.query
+
+# ── Connectors (names; provider-first, then the base registry) ────────────────
+# `notify` resolves to the base connector and is never executed — it is listed
+# because a real consumer declares the connectors its classified ops name, and
+# because constructing it proves the deny costs no connector call.
+connectors:
+  - search
+  - notify
+
+# ── Consumer-supplied connector (the sa#141 injection seam) ───────────────────
+# This example's `search` is a fixed in-process corpus, not the base
+# SearchConnector: the provider path is imported / zero-arg instantiated /
+# protocol-checked at build_runtime, fail-closed. Honored ONLY from this
+# image-baked file — the envelope store loads an Envelope, which has no provider
+# field, so nothing store-loaded can reach this seam. Overriding a base name is
+# what keeps the allow path offline; see local_search_connector.py for why.
+connector_providers:
+  search: "examples.embedded_agent.local_search_connector:LocalSearchConnector"
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# The broker resolves each granted (tool, op) against THIS table; the base names
+# no op. `search.query` is external: false because the corpus is in-process — an
+# honest classification, not a convenience: calling a local read "external" would
+# taint every turn for nothing, and calling a network read "internal" would be the
+# dangerous direction of the same lie.
+tool_ops:
+  - {tool: search, op: query, effect: read,  external: false}
+  - {tool: notify, op: send,  effect: write, external: true, reversible: true}
+
+# ── Risk envelope ─────────────────────────────────────────────────────────────
+# polarity: abstain — silence is the safe outcome for a research assistant; not
+# answering is never the harm. NB the broker enforces `caps` as a per-op,
+# per-principal, per-period budget (enforcement.scoped_counter_key), NOT a
+# per-invocation limit despite the `actions_per_run` name.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 25
+  allowlists:
+    tools:
+      - search.query
+  high_stakes: false

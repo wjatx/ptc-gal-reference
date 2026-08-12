@@ -1,0 +1,46 @@
+# Containerfile.broker — the #221 Phase-2 floor-drill CONSUMER broker image.
+#
+# The consumer-image-layer pattern (docs/broker-image-cutover.md): the agent-
+# agnostic base broker image + this drill's files, nothing else. One image
+# carries BOTH drill examples (the toy missileer server and this Alpaca-paper
+# manifest); the task definition's BROKER_MANIFEST picks which one boots.
+# What this layer adds:
+#
+#   * the `mcp` python SDK — the base image deliberately ships SDK-free.
+#   * `uv` (for `uvx`) + a pre-warmed cache of the PINNED alpaca-mcp-server —
+#     the manifest spawns `uvx alpaca-mcp-server==2.1.1`, byte-identical to the
+#     laptop proof (the local/image shape-parity rule). The == pin keeps the
+#     resolution deterministic; the prewarm keeps first spawn off the PyPI
+#     cold-start path. A version bump here or in manifest.yaml is a re-vet
+#     trigger by design (admitted tools drift-quarantine).
+#   * both example packages' files (toy server.py + the two manifests).
+#
+# Build from the safe-agents REPO ROOT with the base image tag as BASE_IMAGE
+# (mirror a consumer's build-broker-image.sh; no default — a build without it
+# must fail rather than pin a stale digest):
+#
+#   podman build --platform linux/arm64 -f examples/alpaca_paper_drill/Containerfile.broker \
+#     --build-arg BASE_IMAGE=<base broker image> -t <consumer tag> .
+#
+# No ENTRYPOINT/CMD override — the base broker server entrypoint is inherited.
+# No baked BROKER_MANIFEST — the task definition injects
+# BROKER_MANIFEST=/app/examples/alpaca_paper_drill/manifest.yaml (an unset one
+# fails loudly at boot, #205).
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# The base image ends on `USER broker`; step up only to install + stage, then drop.
+USER root
+# Ceiling, for the reason spelled out in
+# examples/restricted_mcp_server/Containerfile.broker: `mcp` 2.0.0 removed
+# `mcp.server.fastmcp`, and this image stages that same server.py.
+RUN pip install --no-cache-dir 'mcp>=1.25,<2' uv
+COPY --chown=broker:broker examples/restricted_mcp_server/server.py \
+     examples/restricted_mcp_server/manifest.yaml \
+     /app/examples/restricted_mcp_server/
+COPY --chown=broker:broker examples/alpaca_paper_drill/manifest.yaml \
+     /app/examples/alpaca_paper_drill/
+USER broker
+# Pre-warm the uv cache for the pinned server under the runtime user, so the
+# task's first spawn resolves from the baked cache, not a PyPI cold start.
+RUN uv tool install alpaca-mcp-server==2.1.1

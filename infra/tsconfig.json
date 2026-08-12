@@ -1,0 +1,27 @@
+{
+  // A stale compiled lib/*.js (gitignored build output) otherwise SHADOWS the .ts
+  // for any ts-node invocation that forgets --prefer-ts-exts. npm test and
+  // cdk.json both pass the flag; ad-hoc `npx ts-node` did not, and silently
+  // loaded a months-old identity-stack.js. Setting it here closes that gap
+  // for every invocation rather than relying on each caller to remember.
+  "ts-node": { "preferTsExts": true },
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "declaration": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "noImplicitReturns": true,
+    "esModuleInterop": true,
+    "inlineSourceMap": true,
+    "inlineSources": true,
+    "skipLibCheck": true,
+    "typeRoots": ["./node_modules/@types"]
+  },
+  "exclude": ["node_modules", "cdk.out"]
+}

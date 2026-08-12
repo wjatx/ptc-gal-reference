@@ -1,0 +1,33 @@
+# webhook-peer/Containerfile.drain — a consumer drain image (FICTIONAL example).
+#
+# The pattern a real consumer follows (channels/DRAIN.md §"Reference binding"):
+# FROM the base channels-drain image, COPY in your own AgentManifest + Receiver
+# package, and point the drain env at them. No base source is modified; the
+# manifest and the receiver are the entire per-consumer surface.
+#
+# The receiver is named to the drain by dotted path in CHANNELS_DRAIN_RECEIVER
+# (examples.webhook_peer.inbound_log_receiver:InboundLogReceiver), so the package
+# tree must land at /var/task/examples/webhook_peer/ — hence the REPO-ROOT build
+# context (preserving the import path), unlike the airlock consumer layer's dir
+# context.
+#
+# Build (after building the base image and passing its tag as DRAIN_BASE_IMAGE),
+# from the repo root:
+#   podman build --platform linux/arm64 \
+#     --build-arg DRAIN_BASE_IMAGE=safe-agents-channels-drain:dev \
+#     -t webhook-peer-drain:dev \
+#     -f examples/webhook_peer/Containerfile.drain .
+ARG DRAIN_BASE_IMAGE
+FROM ${DRAIN_BASE_IMAGE}
+
+# The consumer package: the manifest and the Receiver. Preserved at
+# examples/webhook_peer/ so the receiver dotted path resolves at /var/task (on
+# sys.path).
+COPY examples/webhook_peer ./examples/webhook_peer
+
+# The image-baked drain contract (channels/DRAIN.md D6). These mirror the infra
+# side's -c channelsDrainManifestPath / -c channelsDrainReceiver, which set the
+# same names as the authoritative Lambda env; declaring them here documents the
+# contract and lets the image run stand-alone for a local smoke.
+ENV CHANNELS_DRAIN_MANIFEST=/var/task/examples/webhook_peer/drain-manifest.yaml
+ENV CHANNELS_DRAIN_RECEIVER=examples.webhook_peer.inbound_log_receiver:InboundLogReceiver

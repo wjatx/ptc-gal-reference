@@ -1,0 +1,198 @@
+# The agent pod's egress, and the broker's ingress (#250 Phase 4).
+#
+# This is the file the posture line points at, so be precise about what it is:
+# NetworkPolicy is a PLATFORM BOUNDARY WE ORCHESTRATE, not a sandbox we implement.
+# The kernel and OVN enforce it; nothing in safe_agents/ is in the path. That is the
+# whole reason this epic went to a cluster -- on a Mac the equivalent claim needs a
+# caveat, and here it does not.
+#
+# Equally: a NetworkPolicy in a YAML file is not evidence. `cluster-agent.sh`
+# attempts every denial from inside the pod and reports the specific mechanism.
+#
+# ---------------------------------------------------------------------------
+# THE POST-DNAT RULE, which cost this phase an hour and will cost the next person
+# the same hour if it is not written down.
+#
+# OVN-Kubernetes evaluates egress policy AFTER the Service DNAT, against the backend
+# pod or endpoint address and the TARGET port. So a rule written against the thing
+# you typed -- the ClusterIP and the Service port -- never matches:
+#
+#   want                     Service says      rule must say
+#   ----------------------   ---------------   ----------------------------------
+#   cluster DNS              172.30.0.10:53    openshift-dns pods, port 5353
+#   the kube API server      172.30.0.1:443    the node endpoint IPs, port 6443
+#   the broker               <svc>:8080        the broker pod, port 8080 (same)
+#
+# [verified 2026-07-28 on OpenShift 4.20, OVNKubernetes: an ipBlock of 172.30.0.1/32
+# port 443 times out; the node endpoint IPs on 6443 connect. Likewise DNS on 53 times
+# out and 5353 resolves.] CoreDNS listens on 5353 and is DNAT'd from 53 -- see
+# `oc get pod -n openshift-dns -o jsonpath='{..containers[*].ports[*]}'`.
+#
+# The failure is silent in the worst way: the policy applies cleanly, `oc describe`
+# shows the rule you meant, and the pod just cannot resolve anything. It looks like a
+# broken cluster rather than a wrong port number.
+# ---------------------------------------------------------------------------
+#
+# THE API SERVER IS DELIBERATELY REACHABLE, and it is the least obvious decision here.
+# A tighter policy would drop it too, and the agent would then be refused the broker's
+# Secret by the FIREWALL -- a timeout, which proves almost nothing, because a timeout
+# is what a broken mount, a wrong namespace and a typo'd host all look like. This is
+# #312's argument exactly: a negative proof that cannot name which control fired gets
+# cited later as evidence for a control that never ran.
+#
+# So the agent is given MORE reach than a production envelope would give it, and is
+# refused anyway -- by RBAC, with an HTTP 403, naming the ServiceAccount. That is a
+# strictly stronger claim than "it could not connect", and the drill says so on
+# screen. A real deployment should deny both; defense in depth is not what is being
+# demonstrated here, attributability is.
+#
+# The allow itself is NOT in this file, because the endpoint IPs are cluster-specific
+# (`oc get endpoints kubernetes -n default`). `cluster-arc-run.sh` generates
+# `safe-agents-agent-egress-apiserver` from the live endpoints at apply time. Keeping
+# it out of here is the honest split: everything below is portable, and the one rule
+# that is not is visibly not.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: safe-agents-agent-egress
+  namespace: safe-agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: safe-agents
+      app.kubernetes.io/component: agent
+  # Naming Egress here is what makes this default-deny. A pod selected by ANY egress
+  # policy loses its implicit allow-all, and only the rules below are restored --
+  # which is why deleting the generated API-server policy fails CLOSED (the agent
+  # loses API reach) rather than open.
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS. Port 5353 -- see the post-DNAT rule above.
+    #
+    # Allowing DNS is not a concession, it is load-bearing for the proof. With DNS
+    # denied, an external connection attempt fails at RESOLUTION and the drill could
+    # not tell a dropped packet from an unresolvable name. With DNS allowed,
+    # `api.github.com` resolves to a real address and the connection to that address
+    # is then dropped -- so the denial is attributable to this policy and to nothing
+    # else. [verified 2026-07-28: resolves to a live IP in 0.0s, connect times out.]
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - { protocol: UDP, port: 5353 }
+        - { protocol: TCP, port: 5353 }
+    # The broker, and nothing else in the namespace. Selected by POD LABEL rather
+    # than by the Service: a Service is a name, not a boundary, and an ipBlock of the
+    # ClusterIP would not match post-DNAT anyway.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: safe-agents
+              app.kubernetes.io/component: broker
+      ports:
+        - { protocol: TCP, port: 8080 }
+    # NOTE what is absent: the peer receiver (Phase 5). The agent pod is given the
+    # peer's DNS name in its own environment and still cannot open a socket to it —
+    # `cluster-demo-taint.sh` step 2 attempts exactly that and is dropped. Publishing
+    # to a peer is something this agent can only ASK the broker to do, which is the
+    # difference between a capability and a request.
+---
+# Phase 5. The broker's own egress, which until now was unconstrained.
+#
+# Worth constraining for its own sake — the broker holds every connector credential,
+# so it is the workload whose reach matters most — and it costs nothing here because
+# the broker needs remarkably little: DNS, and the one peer it publishes to. The
+# sqlite store is a mount, the `dir` secrets are a mount, and the MCP `ledger` server
+# is a stdio CHILD PROCESS rather than a network hop, so none of them appears below.
+#
+# That last point is the restrict-by-construction archetype paying off in an
+# unexpected place: a tool set that runs as a child of the broker has no network
+# surface for a policy to have to allow.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: safe-agents-broker-egress
+  namespace: safe-agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: safe-agents
+      app.kubernetes.io/component: broker
+  policyTypes:
+    - Egress
+  egress:
+    # Port 5353 — the post-DNAT rule again. See the header.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-dns
+      ports:
+        - { protocol: UDP, port: 5353 }
+        - { protocol: TCP, port: 5353 }
+    # The peer airlock, and nothing else. `peer.publish` is the broker's ONLY outbound
+    # network capability on this manifest, so this rule is the network-layer statement
+    # of the same thing the grant says.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: safe-agents
+              app.kubernetes.io/component: peer
+      ports:
+        - { protocol: TCP, port: 8081 }
+---
+# Phase 5. The peer accepts from the broker alone — not from the agent, and not from
+# anything else in the namespace. Paired with the broker's egress rule above, the only
+# path to the peer runs through a broker decision.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: safe-agents-peer-ingress
+  namespace: safe-agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: safe-agents
+      app.kubernetes.io/component: peer
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: safe-agents
+              app.kubernetes.io/component: broker
+      ports:
+        - { protocol: TCP, port: 8081 }
+---
+# The other half, and worth having even though the egress policy already implies it:
+# the broker accepts /call from the agent pod alone. Without this, any pod in the
+# namespace could drive the broker, and "the agent's only egress is the broker" would
+# be true while "the broker's only client is the agent" was not -- a gap an audience
+# reading manifests will find faster than one running the drill.
+#
+# Note this does NOT protect the broker from a compromised agent. It cannot: the
+# agent is supposed to talk to the broker. What stops a compromised agent is that
+# the broker decides every call, which is the platform's actual thesis and has
+# nothing to do with the network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: safe-agents-broker-ingress
+  namespace: safe-agents
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: safe-agents
+      app.kubernetes.io/component: broker
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: safe-agents
+              app.kubernetes.io/component: agent
+      ports:
+        - { protocol: TCP, port: 8080 }

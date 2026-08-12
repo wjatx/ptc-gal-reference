@@ -1,0 +1,109 @@
+title = "safe-agents gitleaks config"
+
+# Extend the default rule set; add project-specific allowlisting for obvious test fixtures.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allow clearly-fake placeholder values used in test fixtures"
+regexes = [
+  '''DUMMY-[A-Z-]+-FIXTURE''',
+  '''oauth-tok-(abc|xyz)''',
+  # Dataclass field type annotation in channels/signing.py (`_private_key: Ed25519PrivateKey`);
+  # gitleaks extracts the class name as the "secret". A class name is never secret material.
+  '''^Ed25519PrivateKey$''',
+  # A placeholder that existed only in commit 6fbacf1's test_interpose.py, where it
+  # stood in for "a literal credential in a harness config". It was replaced in the
+  # working tree the same day with a value that trips no rule, but full-history
+  # scans still reach the original. Allowlisted as this exact STRING rather than by
+  # path: exempting the whole file would mean a real secret pasted there later is
+  # never caught, which is the guard quietly ceasing to guard.
+  '''sk-live-abc123''',
+  # Same shape, same day, same lesson (#253, commit d3bc7f5): two fixtures spelled to
+  # LOOK like live vendor keys, for realism they did not actually need — the tests only
+  # ever require an opaque string. Replaced in the working tree with values that trip no
+  # rule; allowlisted as exact STRINGS so full-history scans pass without exempting the
+  # file, which is how the guard quietly stops guarding.
+  '''sk-live-ledger-9f3c1e77-do-not-copy''',
+  '''sk-live-4f8a2b91c7de6035-rotate-me''',
+]
+paths = [
+  # Historical path only (moved to safe_agents/pipeline/tests in the sa#106 extraction):
+  # its deploy-key fixture is a bare "-----BEGIN OPENSSH PRIVATE KEY-----" header string,
+  # which trips the private-key rule on full-history scans.
+  '''core/pipeline/tests/test_pipeline\.py''',
+]
+
+# ---------------------------------------------------------------------------
+# Project rule: a REAL secret id is a spill, even though it is not a credential
+# ---------------------------------------------------------------------------
+# gitleaks ships rules for secret VALUES, so a live Secrets Manager *name* in
+# tracked source passes every scan — which is exactly how a consumer's secret
+# prefix ended up in base source, docs and a shell script (#302). A name grants nobody
+# access on its own, but it is reconnaissance in a repo that is going public,
+# and it leaks the account's layout.
+#
+# The pattern is this project's own secret-leaf vocabulary (docs/config-provenance.md,
+# "Secret naming — the leaf rule") preceded by a namespace. Fake namespaces used in
+# documentation and fixtures are allowlisted below, so the rule fires on a REAL id
+# and stays quiet on an illustrative one.
+[[rules]]
+id = "safe-agents-real-secret-id"
+description = "Real Secrets Manager id in tracked source — use a placeholder namespace"
+regex = '''(?i)\b[a-z0-9][a-z0-9._-]{2,40}/(claude-oauth-token|deploy-key|runner-keys|broker-keys|inbound-channel-token|broker-hmac-key)\b'''
+tags = ["secret-id", "spill"]
+
+[rules.allowlist]
+# Against the LINE, not the secret. The rule's capture is the leaf
+# ("claude-oauth-token"), so a namespace allowlist matched against the secret can
+# never fire — the namespace is precisely the part that is not in the capture.
+# Verified: without this, `my-agent/claude-oauth-token` was still reported.
+regexTarget = "line"
+regexes = [
+  # Placeholder namespaces. Anything documenting the SHAPE must use one of these.
+  '''<agent>/''',
+  '''\{agent\}/''',
+  '''\$\{[A-Za-z_][A-Za-z0-9_]*\}/''',
+  '''(?i)\b(my-agent|your-agent|example-agent|example|acme|test-agent|test-stub|some-agent)/''',
+  # The base's own env-scoped layout is a documented convention, not one tenant's id.
+  '''safe-agents/\{?env''',
+  '''safe-agents/(development|staging|production)/''',
+  # This repo's OWN smoke agents. Real secrets, but this project's own fixtures rather
+  # than a tenant's — the rule exists to keep a CONSUMER's ids out of base source.
+  # Renaming these before the repo goes public is optional hygiene, tracked on #302.
+  '''\b(smoke-ec2|smoke-fargate|smoke-woken|smoke-rhel-openshell)/''',
+  # Prose, not an id: "ssh/deploy-key" as a category, "<unknown>-cal-agent" in a fixture.
+  '''\bssh/deploy-key\b''',
+  '''\b(unknown-)?cal-agent/''',
+]
+
+# Historical commits, allowlisted by SHA rather than by string.
+#
+# The real ids are in 15 past commits and git history is NOT being rewritten: no secret
+# VALUE was ever committed (verified 2026-07-27 — a full-history scan with the default
+# ruleset reports zero findings across 682 commits, and there is no `sk-ant-` token or
+# private-key body anywhere in the log), a secret NAME grants nobody access, and rewriting
+# would invalidate every commit SHA this project's session summaries, issue comments and
+# commit messages cite — the audit provenance is worth more than hiding a string that is
+# useless to an outsider and redundant to anyone who already has IAM access.
+#
+# By SHA and not by string deliberately: allowlisting a specific id would blind the
+# rule to the exact value it most needs to catch if that id were ever reintroduced.
+# Scoped this way, any NEW commit carrying one of these still fails.
+commits = [
+  '''0e54d557c16de2bfcf566f544f71564cfd2e513b''',
+  '''17cc15547326b113da395ade56f44aa3e2a8b8d8''',
+  '''2446897cdf9fcafcf83230d51330ca785fb2027d''',
+  '''2e3fa0712dd7838e0d686a5e89321d10cda7eed8''',
+  '''410b790f24d546ef0d22c54ecf9376ca21e24556''',
+  '''665315218b2d02a96d391d62ec861f9673580bfe''',
+  '''72650a28342f38762ba589184cf5a8369547da09''',
+  '''76fc08cd23c8ab69708136f1d2e41d4bf777d1c8''',
+  '''812f23bd5103c07d01fec430c1033791ba4f141d''',
+  '''8427bf9cd9a9a123d05d35bfb26c2d96e74911d1''',
+  '''a29997ab020775187a1a4b79a9d3d0e6a422e45d''',
+  '''af72779b19015917e549a062c1d96eb440ac12f5''',
+  '''db5b466a0ebddc69facfbf113f8100caed8cb0e3''',
+  '''e5b665a9d701aeb0f789800bd2c7cf15924c002e''',
+  '''f34f0502d0eeba9aa0435918f4d5e0e1339bd1f1''',
+]

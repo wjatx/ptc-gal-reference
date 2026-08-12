@@ -1,0 +1,64 @@
+# example_manifest.yaml — the broker's default deployment manifest (a FICTIONAL demo).
+#
+# This is the AgentManifest (broker/schemas/manifest.py) that build_runtime()
+# consumes at startup: principal, granted action classes, connector names, the
+# per-run action cap, and the risk envelope. De-baking P2 moved these OUT of the
+# module constants in broker_server.py and INTO this artifact; the runtime code holds
+# NO agent-specific constant — the config lives here as data.
+#
+# It is a deliberately-generic, obviously-fictional demo consumer ("example-advisor")
+# so the base ships with a runnable default that belongs to NO real agent. Broker-
+# debaking P3 retired the former real-agent default from here — a real consumer
+# supplies its OWN manifest via BROKER_MANIFEST=/path/to/manifest.yaml. See
+# examples/ for the missileer (abstain-safe) and sepsis-detection (act-safe)
+# archetypes.
+#
+# AgentManifest is extra="forbid": this file carries ONLY the five broker-facing
+# blocks (no pipeline-facing name/repo/policy/secrets keys — those live in the
+# agents/<name>.yaml the pipeline reads).
+
+# ── Principal (fictional demo) ────────────────────────────────────────────────
+principal:
+  agentId: example-advisor
+  skill: demo
+  user: demo-user
+  tier: B
+
+# ── Granted action classes ────────────────────────────────────────────────────
+# The served registry is exactly these ops — an ungranted op is REMOVED (not
+# visible), not merely refused. BROKER_GRANT_CLASSES overrides this list at runtime
+# (the local arm narrows it to the one class whose credential it provisions).
+grant_classes:
+  - search.query
+  - notify.send
+
+# ── Connectors (names only; resolved against the base registry) ───────────────
+# build_runtime resolves each name against connector_registry.py's base map. This
+# is the by-name seam only — consumer-supplied implementations + secret injection
+# are the deferred sa#113 design pass, not built here.
+connectors:
+  - github
+  - search
+  - notify
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# The broker resolves every (tool, op) against THIS table — the base holds no op
+# names. Each entry classifies one op once (effect/external/reversible/egress_arg);
+# copied from the base copyable CATALOG (safe_agents.broker.manifest.CATALOG).
+tool_ops:
+  - {tool: search, op: query, effect: read,  external: true, egress_arg: query}
+  - {tool: notify, op: send,  effect: write, external: true, reversible: true}
+
+# ── Risk envelope (broker-facing) ─────────────────────────────────────────────
+# caps.actions_per_run is the per-op counter cap build_runtime threads into the
+# runtime. polarity is never defaulted — this demo advisor is abstain-safe (silence
+# is the safe action). The envelope-hash wiring is later-phase work.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 25
+  allowlists:
+    tools:
+      - search.query
+      - notify.send
+  high_stakes: false

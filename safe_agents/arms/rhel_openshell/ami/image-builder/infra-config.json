@@ -1,0 +1,19 @@
+{
+  "name": "safe-agents-base-rhel-infra",
+  "description": "Build infrastructure for the safe-agents rhel-openshell base AMI. This build instance has internet + RHUI egress (needed for dnf/npm/installer downloads during the bake). Deployed agent instances have no internet access.",
+  "instanceTypes": ["m7i.large"],
+  "instanceProfileName": "${IMAGE_BUILDER_INSTANCE_PROFILE}",
+  "securityGroupIds": ["${BUILD_SECURITY_GROUP_ID}"],
+  "subnetId": "${BUILD_SUBNET_ID}",
+  "logging": {
+    "s3Logs": {
+      "s3BucketName": "safe-agents-${ENVIRONMENT}-deploy",
+      "s3KeyPrefix": "image-builder-logs/"
+    }
+  },
+  "terminateInstanceOnFailure": true,
+  "tags": {
+    "Project": "safe-agents",
+    "ManagedBy": "safe-agents-image-builder"
+  }
+}

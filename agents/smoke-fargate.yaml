@@ -1,0 +1,39 @@
+# agents/smoke-fargate.yaml — deployment manifest for a smoke-deploy of the Fargate arm.
+#
+# Purpose: proves the Fargate arm adapter (sa#36) end-to-end — provision →
+# deploy → smoke — in the development environment. Targets the test-stub agent
+# (the runner-contract reference implementation) so the smoke runs without a real
+# Claude session. The coordinator runs the live capstone; CI uses --dry-run.
+#
+# The pipeline reads this file with:
+#   python -m safe_agents.pipeline.cli agents/smoke-fargate.yaml --dry-run --env development
+
+name: smoke-fargate
+
+# ── Manifest (pipeline-facing) ────────────────────────────────────────────────
+# agent_package points the smoke phase at the conformance fixture (agents/test-stub)
+# rather than agents/smoke-fargate (which does not exist as a package directory).
+agent_package: test-stub
+repo: git@github.com:controlled-agents/safe-agents.git
+deploy_key_secret: smoke-fargate/deploy-key
+arm: fargate                        # scheduled Fargate task; broker is its own ECS service
+policy: policies/smoke-fargate.yaml # egress: broker endpoint ONLY (isolated agent subnet + SG)
+secrets:
+  runner_keys: smoke-fargate/runner-keys           # non-connector runtime config only
+  broker_connector_keys: smoke-fargate/broker-keys # connector creds → broker store ONLY
+  oauth_token: smoke-fargate/claude-oauth-token     # model brain; not a connector
+
+smoke:
+  read_only: true
+  prompt: >-
+    You are read-only. In ONE sentence, what does the test-stub agent do?
+  expect_substring: test
+
+# ── Envelope (broker-facing) ──────────────────────────────────────────────────
+envelope:
+  polarity: abstain             # silence is safe for this smoke stub
+  caps:
+    actions_per_run: 0          # no actions — smoke only
+  allowlists:
+    tools: []                   # no tools registered; smoke only
+  high_stakes: false

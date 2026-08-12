@@ -1,0 +1,87 @@
+# oauth_api/manifest.yaml — FICTIONAL example consumer for the oauth_refresh
+# credential strategy (#173, PTC Phase 3a — connector-auth-strategy seam).
+#
+# Before #173, EVERY connector's credential was a single static secret string: the
+# Doer fetched a leaf and handed it to the connector verbatim. Real OAuth-protected
+# APIs use short-lived access tokens minted from a broker-held refresh token — this
+# example proves that path end to end.
+#
+# The flow: this manifest declares `connector_auth: {api: {strategy: oauth_refresh}}`.
+# At execute time the broker (safe_agents.broker.runtime.credentials.OAuthRefresh)
+# reads the REFRESH token from the secret leaf named by `refresh_token_leaf`
+# (falling back to connector_secrets' leaf if omitted), performs the refresh-grant
+# exchange against `token_url`, and hands the connector the resulting ACCESS token —
+# never the refresh token. The two doctrines this proves:
+#
+#   1. No raw passthrough of long-lived material: the refresh token never leaves
+#      the broker. oauth_api_connector.py only ever sees the minted access token,
+#      and this manifest's `connector_auth.params` names only leaf names/URLs/client
+#      ids — never a token VALUE.
+#   2. No raw command/query passthrough: `api.query` is a narrow, classified
+#      capability (see tool_ops below), not a free-form HTTP verb/URL the agent
+#      could smuggle an unclassified effect through.
+#
+# This is a broker-facing AgentManifest (broker/schemas/manifest.py, extra="forbid").
+# See broker/CONNECTOR-AUTH.md for the full contract this instantiates.
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: oauth-api-reader
+  skill: reader
+  user: api-consumer
+  tier: B
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+grant_classes:
+  - api.query
+
+# ── Connectors (names; provider-first, then the base registry) ────────────────
+connectors:
+  - api
+
+# ── Consumer-supplied connector (the sa#141 seam) ──────────────────────────────
+# oauth_api's "api" is this example's own connector, not a base connector: the
+# provider path is imported / zero-arg instantiated / protocol-checked at
+# build_runtime, fail-closed. Honored ONLY from this image-baked file — the
+# envelope store loads an Envelope, which has no provider field.
+connector_providers:
+  api: "examples.oauth_api.oauth_api_connector:OAuthApiConnector"
+
+# connector_secrets maps the connector to the secret LEAF holding the refresh
+# token (never a value, never a full id) — this is also the default leaf the
+# oauth_refresh strategy reads if `refresh_token_leaf` were omitted from params
+# below. Declared explicitly here for clarity; resolved under the broker secret
+# prefix (`<prefix>/connectors/api-refresh-token`, sa#164).
+connector_secrets:
+  api: "api-refresh-token"
+
+# ── Per-connector credential-resolution strategy (#173) ───────────────────────
+# Selects oauth_refresh: the broker reads the refresh token from the
+# `refresh_token_leaf` secret leaf, exchanges it at `token_url`, and hands the
+# connector the minted access token. `params` is a string map of leaf names /
+# URLs / client ids — NEVER secret values.
+connector_auth:
+  api:
+    strategy: oauth_refresh
+    params:
+      token_url: "https://auth.example.test/oauth/token"
+      client_id: "example-client"
+      refresh_token_leaf: "api-refresh-token"
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# The broker resolves each granted (tool, op) against THIS table; the base names
+# no op. A read, external (the API is outside the broker's trust boundary),
+# egress-bounded by the query argument — mirrors missileer's search.query entry.
+tool_ops:
+  - {tool: api, op: query, effect: read, external: true, egress_arg: query}
+
+# ── Risk envelope ───────────────────────────────────────────────────────────
+# polarity: abstain — silence is the safe outcome for a read-only reader with no
+# effecting capability granted. Sized modestly for a bounded query workload.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 50
+  allowlists:
+    tools:
+      - api.query

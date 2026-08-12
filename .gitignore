@@ -1,0 +1,49 @@
+# secrets — never commit
+.env*
+*.key
+*.pem
+.secrets*
+*_SECRET*
+*_API_KEY*
+# ...but not test MODULES about secrets. core.ignorecase=true (the macOS default)
+# makes *_SECRET* match test_secrets_arms.py, which git then drops from `add -A`
+# SILENTLY — the #248 secrets-arm suite was the first source file to ever collide
+# with these patterns, and more are coming (the keychain arm, the container floor).
+# Filename patterns cannot judge content anyway; gitleaks scans contents and is the
+# real guard. Keep this negation narrow: test modules under safe_agents/ only.
+!safe_agents/**/test_*.py
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+# Per-epic session plans are TRACKED (convention change 2026-07-20). They carry
+# structural claims later sessions read cold and act on ("X is the only writer",
+# "Y is already built"), so they need git blame like any other asserted fact —
+# an unverified claim must not be indistinguishable from a checked one forever.
+# Claims in these files are tagged [verified <date>: <cmd>] / [assumed] / [ruling: <src>].
+# EPICS.md is tracked for the same reason (un-ignored 2026-07-21) — the 2026-07-20
+# change removed the NEXT_SESSION-* entries but left this one, so the portfolio
+# snapshot kept making structural claims with no history. Nothing to add here.
+# build/artifacts
+.aws-sam/
+*.zip
+logs/
+*.egg-info/
+build/
+dist/
+
+# Binary doc exports (keep the .md source of truth)
+*.docx
+
+# Local-only planning scratch (deliberately untracked — e.g. the org-migration
+# what-moves/what-stays plan lives in MIGRATION-PLAN.local.md, 2026-07-24)
+*.local.md
+
+# Downloaded reference PDFs — re-downloadable, no binary bloat in git. The analysis
+# lives in docs/references/ and cites the URL (2026-07-25).
+research/CISA/
+research/LangChain/
+
+# Local Tests
+local-tests/

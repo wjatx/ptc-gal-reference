@@ -1,0 +1,26 @@
+{
+  "name": "safe-agents-base",
+  "description": "Base AMI for safe-agents: AL2023 arm64 + toolchain + Claude Code CLI. Baked in CI; no internet access required at agent runtime.",
+  "semanticVersion": "1.0.0",
+  "components": [
+    {
+      "componentArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:component/safe-agents-base/1.0.0"
+    }
+  ],
+  "parentImage": "arn:aws:imagebuilder:${AWS_REGION}:aws:image/amazon-linux-2023-arm64/x.x.x/1",
+  "blockDeviceMappings": [
+    {
+      "deviceName": "/dev/xvda",
+      "ebs": {
+        "encrypted": true,
+        "volumeSize": 20,
+        "volumeType": "gp3",
+        "deleteOnTermination": true
+      }
+    }
+  ],
+  "tags": {
+    "Project": "safe-agents",
+    "ManagedBy": "safe-agents-image-builder"
+  }
+}

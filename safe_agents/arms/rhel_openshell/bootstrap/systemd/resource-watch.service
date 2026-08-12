@@ -1,0 +1,21 @@
+# Host resource sampler + alert — system service, driven by resource-watch.timer.
+# Faithful snapshot from a development harness (systemd/resource-watch.service).
+#
+# GATED: only installed in SA_PROFILE=interactive (bootstrap.sh installs it via sudo).
+# System service (not user): reads global host metrics, needs no user session.
+# The script lives in /usr/local/bin (bin_t) so systemd can exec it — a system
+# service can't exec from /home under SELinux (user_home_t -> 203/EXEC).
+#
+# Install (interactive profile, as root or with sudo):
+#   sudo cp resource-watch.sh /usr/local/bin/ && sudo chmod +x /usr/local/bin/resource-watch.sh
+#   sudo cp resource-watch.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now resource-watch.timer
+
+[Unit]
+Description=safe-agents host resource watch (sample + alert)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/resource-watch.sh

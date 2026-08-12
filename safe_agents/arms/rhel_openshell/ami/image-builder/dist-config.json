@@ -1,0 +1,23 @@
+{
+  "name": "safe-agents-base-rhel-dist",
+  "description": "AMI distribution configuration for the safe-agents rhel-openshell base AMI. Tags the output AMI with the load-bearing safe-agents:ami=base-rhel tag so rhel_openshell_provision can select the newest bake by tag (falling back to the RHEL marketplace AMI when no bake exists).",
+  "distributions": [
+    {
+      "region": "${AWS_REGION}",
+      "amiDistributionConfiguration": {
+        "name": "safe-agents-base-rhel-{{imagebuilder:buildDate}}",
+        "description": "safe-agents base AMI - RHEL 9 x86_64 + toolchain + Claude Code CLI",
+        "amiTags": {
+          "safe-agents:ami": "base-rhel",
+          "safe-agents:ami-version": "{{imagebuilder:buildDate}}",
+          "Project": "safe-agents",
+          "ManagedBy": "safe-agents-image-builder"
+        }
+      }
+    }
+  ],
+  "tags": {
+    "Project": "safe-agents",
+    "ManagedBy": "safe-agents-image-builder"
+  }
+}

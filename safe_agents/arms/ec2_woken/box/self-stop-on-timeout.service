@@ -1,0 +1,21 @@
+# self-stop-on-timeout.service — the oneshot the lifetime-cap timer fires (sa#98 belt-and-suspenders).
+#
+# Triggered by self-stop-on-timeout.timer (OnBootSec=3h), NOT enabled directly. It runs
+# self-stop-on-timeout.sh, which stops THIS instance via the box's existing ec2:StopInstances-self
+# grant. This is the hard cap for a hung box whose drain loop never reached its own idle self-stop.
+#
+# Runs as the unprivileged, connector-credential-free box user; AWS control-plane calls use the
+# instance profile via IMDS. Config (AWS_DEFAULT_REGION) comes from the box provision's
+# EnvironmentFile.
+
+[Unit]
+Description=safe-agents ec2-woken box lifetime cap (stop the box if it has run too long)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/safe-agents/agent.env
+ExecStart=/opt/safe-agents/bin/self-stop-on-timeout.sh
+User=safe-agents
+Group=safe-agents

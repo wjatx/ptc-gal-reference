@@ -1,0 +1,79 @@
+# scoped_s3/manifest.yaml — FICTIONAL example consumer for per-capability IAM
+# scoping (#175, PTC Phase 3a — the confinement half of the connector-auth seam).
+#
+# #173 generalized a connector's credential from a static string to a broker-resolved
+# strategy. #175 finishes the story for an *identity* credential: with `assumed_role`
+# the credential IS an IAM identity, so its blast radius is whatever that identity can
+# do — which must be scoped to exactly the declared capability, never the broker's full
+# role (doctrine 2). This manifest declares BOTH halves:
+#
+#   connector_auth.s3.strategy = assumed_role   # HOW the broker resolves the credential
+#   capability_iam.s3          = {actions, resources}  # the minimal IAM the deploy scopes to
+#
+# The flow: the deploy (infra/lib/, CDK) reads `capability_iam` and provisions a role
+# scoped to exactly those actions+resources, trusting the broker identity. At execute
+# time the broker (credentials.AssumedRole) STS-assumes that role and hands the
+# connector the short-lived bundle. An out-of-scope action is then denied by IAM, not
+# by the broker.
+#
+# This is a broker-facing AgentManifest (broker/schemas/manifest.py, extra="forbid").
+# See broker/CONNECTOR-AUTH.md §"Per-capability IAM scoping (#175)".
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: scoped-s3-reader
+  skill: reader
+  user: data-consumer
+  tier: B
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+grant_classes:
+  - s3.get_object
+
+# ── Connectors (names; provider-first, then the base registry) ────────────────
+connectors:
+  - s3
+
+# ── Consumer-supplied connector (the sa#141 seam) ──────────────────────────────
+connector_providers:
+  s3: "examples.scoped_s3.scoped_s3_connector:ScopedS3Connector"
+
+# ── Per-connector credential-resolution strategy (#173/#175) ──────────────────
+# assumed_role: the broker STS-assumes the deploy-provisioned scoped role (below)
+# and hands the connector the short-lived bundle. `role_arn` is the ARN the deploy
+# outputs for the capability-scoped role; no secret leaf is read (an identity is not
+# a stored secret). params are operator config — never secret VALUES.
+connector_auth:
+  s3:
+    strategy: assumed_role
+    params:
+      role_arn: "arn:aws:iam::000000000000:role/scoped-s3-reader-s3"
+      session_name: "scoped-s3-reader"
+
+# ── Per-capability IAM scoping (#175) ─────────────────────────────────────────
+# The minimal IAM this capability runs with. The deploy provisions a role scoped to
+# EXACTLY this — one GetObject on one bucket prefix. Anything else (a Put, a Delete,
+# another bucket) is denied by IAM at execute time, not by the broker. Same key as
+# connector_auth, so the strategy and its scope line up one-to-one.
+capability_iam:
+  s3:
+    actions:
+      - "s3:GetObject"
+    resources:
+      - "arn:aws:s3:::scoped-s3-example-bucket/*"
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# A read, external (S3 is outside the broker's trust boundary), egress-bounded by the
+# object key. The op is classified here; capability_iam bounds the identity.
+tool_ops:
+  - {tool: s3, op: get_object, effect: read, external: true, egress_arg: key}
+
+# ── Risk envelope ───────────────────────────────────────────────────────────
+# polarity: abstain — silence is the safe outcome for a read-only reader.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 50
+  allowlists:
+    tools:
+      - s3.get_object

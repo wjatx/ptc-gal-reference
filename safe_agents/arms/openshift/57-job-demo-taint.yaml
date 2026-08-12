@@ -1,0 +1,41 @@
+# Demonstration 2's caller (#250 Phase 5) — the agent, again.
+#
+# Deliberately the SAME ServiceAccount and the SAME `component: agent` label as
+# 52-job-agent.yaml, so 60-networkpolicy.yaml binds to it unchanged. That is what
+# makes step 2 of the script meaningful: the pod publishing through the broker is
+# subject to exactly the egress policy Phase 4 proved, and the peer is not in it.
+#
+# It mounts nothing. The peer token, the connector descriptor and the store are all
+# broker-side; this pod knows only two DNS names.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: safe-agents-demo-taint
+  namespace: safe-agents
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safe-agents
+        app.kubernetes.io/component: agent
+    spec:
+      serviceAccountName: safe-agents-agent
+      restartPolicy: Never
+      containers:
+        - name: demo
+          image: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-missileer:arc
+          imagePullPolicy: Always
+          command: ["bash", "/opt/drill/cluster-demo-taint.sh"]
+          env:
+            - { name: AGENT_BROKER_URL, value: "http://safe-agents-broker.safe-agents.svc:8080" }
+            # The agent is TOLD the peer's address, and still cannot reach it. Passing
+            # it here is the point rather than an oversight: a denial that depended on
+            # the agent not knowing where to aim would be secrecy, not a control.
+            - { name: DEMO_PEER_URL, value: "http://safe-agents-peer.safe-agents.svc:8081" }
+          volumeMounts:
+            - { name: drill, mountPath: /opt/drill, readOnly: true }
+      volumes:
+        - name: drill
+          configMap:
+            name: safe-agents-drill-scripts

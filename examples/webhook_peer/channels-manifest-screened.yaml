@@ -1,0 +1,42 @@
+# webhook-peer/channels-manifest-screened.yaml — the ENABLED variant of the sibling
+# channels-manifest.yaml (still a FICTIONAL example consumer, sa#8 A2A peer).
+#
+# Same trust map, zone, and adapter as channels-manifest.yaml — the ONLY difference is
+# that the injection screen (gate 7) and its observability valve are turned ON. Enabling
+# a screen is config, never code: a consumer ships THIS file instead of the sibling. No
+# base source changes; the named `kind` is resolved from SCREEN_REGISTRY at build time.
+#
+# This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
+
+# The receiver's provenance zone, stamped onto every accepted envelope at gate 8.
+zone: channels
+
+# The signed-webhook adapter — unchanged from the sibling manifest.
+adapter:
+  channel_type: webhook
+  token_header: x-airlock-token
+
+# The trust map — unchanged from the sibling manifest.
+trust_map:
+  - channel_type: webhook
+    channel_identity: peer:example
+    principal: example-agent
+    sender_class: peer-agent
+
+# The injection screen, ON. `kind` names a screen registered in SCREEN_REGISTRY
+# (safe_agents/channels/screens/); `params` are that screen's opaque construction
+# args. The reference Bedrock classifier asks a model, via the model-agnostic Converse
+# API, one yes/no question about the payload — it may only REFUSE or PASS, never bless
+# (channels/SCREENING.md). model_id is the consumer's declaration; the base names no
+# vendor. An unknown kind fails the build loudly rather than degrading to pass-through.
+screen:
+  kind: bedrock_classifier
+  params:
+    model_id: us.anthropic.claude-haiku-4-5-20251001-v1:0
+
+# The verdict sink — the observability valve a consumer turns ON alongside the screen so
+# an enabled-but-always-passing screen is distinguishable from a null one
+# (docs/friction-doctrine.md rule 3). When ON, every screen invocation appends one
+# PII-safe ScreenRecord; it ships OFF by default (see the sibling manifest).
+verdict_sink: true
+dedupe_ttl_days: 30

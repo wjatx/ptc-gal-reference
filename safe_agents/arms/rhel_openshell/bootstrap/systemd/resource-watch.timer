@@ -1,0 +1,14 @@
+# Timer for resource-watch.service — fires every 5 minutes and shortly after boot.
+# Faithful snapshot from a development harness (systemd/resource-watch.timer).
+# GATED: only installed in SA_PROFILE=interactive.
+
+[Unit]
+Description=Run resource-watch every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

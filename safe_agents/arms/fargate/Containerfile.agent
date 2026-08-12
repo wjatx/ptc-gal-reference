@@ -1,0 +1,51 @@
+# Containerfile.agent — the confined agent for the AWS Fargate arm (sa#36 C2a).
+#
+# Unlike the local/Mac arm (where a Podman container IS the netns egress boundary and the runner
+# blackholes its own default route), on Fargate the agent is confined by NETWORK TOPOLOGY, not by
+# anything this image does. The task runs in a PRIVATE_ISOLATED subnet — no NAT, no internet route
+# at all — behind a security group whose only egress is the broker. So this image carries NO
+# iproute2 and the runner does NO route surgery: it just proves the confinement holds (smoke-egress)
+# and does the brokered round-trip (model proxy :8443 + tool API :8080).
+#
+# node:22-slim matches the local agent image. The agent reaches DynamoDB (its run record) over the
+# VPC gateway endpoint, so the AWS CLI v2 is installed for that one write.
+FROM node:22-slim
+
+# curl + ca-certificates for the smoke-egress probes and the brokered tool call; unzip for the
+# AWS CLI v2 bundle install.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# AWS CLI v2 — for the run-record PutItem to DynamoDB via the VPC gateway endpoint (the agent is in
+# an isolated subnet; the gateway endpoint is its only path to the service). The bundle is
+# arch-specific; pick by dpkg architecture so the image builds on both arm64 and amd64.
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        arm64) awscli_arch="aarch64" ;; \
+        amd64) awscli_arch="x86_64" ;; \
+        *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${awscli_arch}.zip" -o /tmp/awscliv2.zip; \
+    unzip -q /tmp/awscliv2.zip -d /tmp; \
+    /tmp/aws/install; \
+    rm -rf /tmp/awscliv2.zip /tmp/aws; \
+    aws --version
+
+# The model brain — same CLI the local + autonomous arms install.
+RUN npm install -g @anthropic-ai/claude-code
+
+# The runner, owned by root but world-readable/executable.
+COPY run.sh /app/run.sh
+RUN chmod 0755 /app/run.sh
+
+# Run as an unprivileged user. The agent holds no connector credentials and never needs root —
+# its only egress is the broker, enforced by the subnet topology, not by anything it can do here.
+RUN useradd -m agent
+USER agent
+WORKDIR /home/agent
+
+# Line-buffer stdout/stderr (stdbuf, from coreutils) so the runner's output reaches the awslogs
+# driver incrementally rather than in one block-buffered flush at exit — Fargate's awslogs driver
+# can drop that final buffer when the container exits, leaving an empty log stream.
+ENTRYPOINT ["stdbuf", "-oL", "-eL", "/app/run.sh"]

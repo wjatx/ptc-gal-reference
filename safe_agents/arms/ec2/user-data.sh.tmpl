@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# cloud-init bootstrap — always-on EC2 arm (Arm 1), prebuilt-AMI model, TWO-BOX broker (sa#35).
+#
+# Rendered by safe_agents/arms/ec2/provision.py from this template before RunInstances.
+# Template parameters (replaced at render time — never hardcoded here):
+#   {{name}}              agent name from the deployment manifest
+#   {{arm}}               arm identifier (always "ec2" for this template)
+#   {{oauth_token}}       Secrets Manager secret id for the Claude Code OAuth token
+#   {{environment}}       deployment environment: development|staging|production
+#   {{broker_dns}}        the broker SERVICE DNS (broker.safe-agents.local)
+#   {{agent_runs_table}}  the agent-runs DynamoDB table name (run records)
+#   {{region}}            deployment region (for the runtime AWS clients)
+#
+# Converged model (Option A): the box runs in the ISOLATED agent subnet on the agent SG, whose
+# only egress is the broker SG (+ the endpoint SG for AWS endpoints) — the SAME placement the
+# proven ec2-woken box uses. The confined agent does a REAL brokered round-trip against the broker
+# SERVICE at broker.safe-agents.local, NOT a co-located model-proxy stub. The netns is KEPT as a
+# defense-in-depth process-isolation layer, but it now FORWARDS to the broker service instead of
+# blackholing to a local stub (agent-netns-setup.sh). The per-turn work — oauth fetch + run record
+# on the HOST, `claude -p` + brokered `github.whoami` inside the NETNS — is run-brokered.sh.
+#
+# Bootstrap model (prebuilt-AMI, sa#85): all tooling is baked into the base AMI. This script is
+# config-only — it pulls bundles from S3 via the gateway endpoint (no internet), writes the env
+# contract, wires the netns + agent units, and enables the timer. No package managers, no git.
+#
+# Architecture references: core/arms.md §Arm1, core/PORTING.md, core/RUNNER-CONTRACT.md.
+set -euo pipefail
+
+AGENT_NAME="{{name}}"
+AGENT_ARM="{{arm}}"
+OAUTH_TOKEN_SECRET="{{oauth_token}}"
+ENVIRONMENT="{{environment}}"
+BROKER_DNS="{{broker_dns}}"
+AGENT_RUNS_TABLE="{{agent_runs_table}}"
+REGION="{{region}}"
+
+AGENT_DIR="/opt/agents/${AGENT_NAME}"
+LOG_FILE="/var/log/agent-bootstrap-${AGENT_NAME}.log"
+FAIL_MARKER="/var/log/agent-bootstrap-${AGENT_NAME}.FAILED"
+
+# The EC2 arm is ALWAYS autonomous — there is no OpenShell interactive path here (that lives on
+# the rhel-openshell arm). The netns process-isolation layer (sa#35) is therefore wired
+# unconditionally. SA_PROFILE is kept as an escape hatch: set SA_PROFILE=direct to skip the
+# namespace (break-glass/debug only) and run the brokered turn in the host root netns.
+SA_PROFILE="${SA_PROFILE:-autonomous}"
+
+# The unprivileged user the confined turn drops to inside the netns. AL2023's default login user
+# is ec2-user (the RHEL arm uses 'dev'); the agent service runs as root so run-brokered.sh can
+# `ip netns exec`, then runuser-drops to this user inside the netns.
+AGENT_RUN_USER="ec2-user"
+
+# Broker port contract (identical to the Fargate + ec2-woken arms — the same broker service).
+SA_MODEL_PROXY_PORT="8443"
+SA_TOOL_API_PORT="8080"
+
+# S3 deploy bucket and bundle keys follow the platform naming convention (sa#85):
+#   bucket: safe-agents-<env>-deploy
+#   key:    agents/<name>/current/bundle.tar.gz
+S3_BUCKET="safe-agents-${ENVIRONMENT}-deploy"
+S3_KEY="agents/${AGENT_NAME}/current/bundle.tar.gz"
+# Platform ec2-bootstrap bundle (sa#35): the netns-setup + smoke + run-brokered scripts, delivered
+# via S3 at boot (mirrors the platform/contract bundle). Stable key (== EC2_BOOTSTRAP_KEY, bundle.py).
+EC2_BOOTSTRAP_KEY="platform/ec2-bootstrap/bundle.tar.gz"
+
+exec > >(tee -a "${LOG_FILE}") 2>&1
+
+# Emit every command before executing it (-x) so the log is a full audit trail.
+set -x
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Bootstrap start: agent=${AGENT_NAME} arm=${AGENT_ARM} env=${ENVIRONMENT}"
+
+# Error handler: write a failure marker so post-boot inspection can detect a silent cloud-init
+# death without digging through the full log.
+_bootstrap_err() {
+    local _exit=$? _line=$LINENO _cmd="${BASH_COMMAND}"
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] BOOTSTRAP FAILED: exit=${_exit} line=${_line} cmd=${_cmd}"
+    echo "BOOTSTRAP_FAILED exit=${_exit} line=${_line} cmd=${_cmd}" > "${FAIL_MARKER}"
+}
+trap '_bootstrap_err' ERR
+
+# ── Pull agent code bundle from S3 ────────────────────────────────────────────
+# The aws CLI is pre-installed in the base AMI. Traffic routes via the S3 gateway VPC endpoint —
+# no internet route required. The bakery (sa#84) writes the bundle.
+mkdir -p "${AGENT_DIR}"
+aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}" /tmp/agent-bundle.tar.gz
+tar -xzf /tmp/agent-bundle.tar.gz -C "${AGENT_DIR}" --strip-components=1
+rm -f /tmp/agent-bundle.tar.gz
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Agent bundle unpacked to ${AGENT_DIR}"
+
+# ── Pull platform/contract bundle from S3 ─────────────────────────────────────
+# The conformance harness (safe_agents/contract/harness.py) is delivered at boot via S3 rather than baked
+# into the AMI, so the bakery never needs a private git token. After extraction the harness is at
+# the path the remote smoke phase SSM-execs: /opt/safe-agents/core/contract/harness.py.
+PLATFORM_CONTRACT_KEY="platform/contract/bundle.tar.gz"
+aws s3 cp "s3://${S3_BUCKET}/${PLATFORM_CONTRACT_KEY}" /tmp/platform-contract.tar.gz
+tar -xzf /tmp/platform-contract.tar.gz -C /opt/safe-agents/core
+rm -f /tmp/platform-contract.tar.gz
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Platform contract unpacked to /opt/safe-agents/core/contract"
+
+# ── netns process-isolation + broker-service wiring (sa#35) ───────────────────
+# AUTONOMOUS profile only. The agent runs inside a network namespace whose default route forwards
+# through the host to the external broker SERVICE (broker.safe-agents.local). The host is confined
+# by the agent SG/subnet (broker only), so the netns egress is bounded by the same SG. The
+# arm-agnostic scripts arrive via S3 in the ec2-bootstrap bundle (no internet). There is NO
+# co-located model-proxy stub in this model — the broker is its own service.
+if [ "${SA_PROFILE}" = "autonomous" ]; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] [autonomous] installing netns + broker-service wiring (sa#35)"
+
+    # Pull + extract the ec2-bootstrap bundle (root = ec2-bootstrap) via the S3 gateway endpoint.
+    # -C /opt/safe-agents yields /opt/safe-agents/ec2-bootstrap/{scripts,box}/.
+    aws s3 cp "s3://${S3_BUCKET}/${EC2_BOOTSTRAP_KEY}" /tmp/ec2-bootstrap.tar.gz
+    tar -xzf /tmp/ec2-bootstrap.tar.gz -C /opt/safe-agents
+    rm -f /tmp/ec2-bootstrap.tar.gz
+    _EC2_BOOTSTRAP_DIR="/opt/safe-agents/ec2-bootstrap"
+
+    # Install the confinement + runner executables to stable /opt paths the system services exec.
+    mkdir -p /opt/safe-agents/bin
+    install -m 0755 "${_EC2_BOOTSTRAP_DIR}/scripts/agent-netns-setup.sh" /opt/safe-agents/bin/agent-netns-setup.sh
+    install -m 0755 "${_EC2_BOOTSTRAP_DIR}/scripts/smoke-egress.sh"      /opt/safe-agents/bin/smoke-egress.sh
+    install -m 0755 "${_EC2_BOOTSTRAP_DIR}/box/run-brokered.sh"          /opt/safe-agents/bin/run-brokered.sh
+
+    # netns-setup oneshot — creates + forwards agent-ns BEFORE the agent run service.
+    cat > /etc/systemd/system/agent-netns-setup.service <<'NETNSUNIT'
+[Unit]
+Description=safe-agents agent netns setup (sa#35)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/safe-agents/bin/agent-netns-setup.sh up
+ExecStop=/opt/safe-agents/bin/agent-netns-setup.sh down
+
+[Install]
+WantedBy=multi-user.target
+NETNSUNIT
+
+    # Env contract consumed by run-brokered.sh (both its host + netns phases). The oauth token is
+    # referenced by SECRET ID (resolved at RUN time via the box's own GetSecretValue grant) — never
+    # written here as plaintext. This is also read by an on-demand SSM invocation of run-brokered.sh.
+    install -d /etc/safe-agents
+    cat > /etc/safe-agents/agent.env <<AGENTENV
+AGENT_NAME=${AGENT_NAME}
+SA_BROKER_DNS=${BROKER_DNS}
+SA_MODEL_PROXY_PORT=${SA_MODEL_PROXY_PORT}
+SA_TOOL_API_PORT=${SA_TOOL_API_PORT}
+AGENT_RUNS_TABLE=${AGENT_RUNS_TABLE}
+AWS_DEFAULT_REGION=${REGION}
+SA_OAUTH_SECRET_ID=${OAUTH_TOKEN_SECRET}
+SA_NETNS_NAME=agent-ns
+AGENT_RUN_USER=${AGENT_RUN_USER}
+SA_PROFILE=${SA_PROFILE}
+AGENTENV
+    chmod 0644 /etc/safe-agents/agent.env
+
+    systemctl daemon-reload
+    systemctl enable --now agent-netns-setup.service
+
+    # The confined turn runs as ec2-user inside the netns; give it ownership of its bundle dir.
+    chown -R "${AGENT_RUN_USER}:${AGENT_RUN_USER}" "${AGENT_DIR}"
+fi
+
+# ── ── HARNESS-COUPLING BLOCK START ───────────────────────────────────────────
+# This block is ONE OF ONLY TWO places safe-agents couples to Claude Code specifically (the other
+# is the memory SessionStart loader, #71). In the converged two-box model the actual harness call
+# — `claude -p "<task>"` through the broker model proxy — lives in run-brokered.sh (the S3-delivered
+# box runner), NOT in this template. To swap harnesses: replace ONLY that call plus this note.
+#
+# The model OAuth token is NOT fetched at bootstrap time here. run-brokered.sh resolves it at RUN
+# time from the secret id OAUTH_TOKEN_SECRET (${OAUTH_TOKEN_SECRET}) using the box's own
+# GetSecretValue grant — on the HOST, before entering the netns (Secrets Manager is unreachable from
+# the confined namespace). The claude-code binary is pre-installed in the base AMI (sa#84).
+# ── HARNESS-COUPLING BLOCK END ────────────────────────────────────────────────
+
+# ── Systemd service + timer ────────────────────────────────────────────────────
+# The agent service ExecStart's run-brokered.sh (the converged capstone runner). Autonomous: the
+# service runs as ROOT so run-brokered.sh can `ip netns exec` into the confined namespace (it drops
+# to ec2-user inside via runuser); it orders after / requires the netns-setup unit so the namespace
+# is up + forwarding before the turn runs. The escape-hatch profile has no such dependency.
+if [ "${SA_PROFILE}" = "autonomous" ]; then
+    _SVC_DEPS="Requires=agent-netns-setup.service
+After=agent-netns-setup.service"
+else
+    _SVC_DEPS=""
+fi
+
+cat > "/etc/systemd/system/${AGENT_NAME}.service" <<UNIT
+[Unit]
+Description=safe-agents run: ${AGENT_NAME}
+After=network-online.target
+Wants=network-online.target
+${_SVC_DEPS}
+
+[Service]
+Type=oneshot
+ExecStart=/opt/safe-agents/bin/run-brokered.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=${AGENT_NAME}
+EnvironmentFile=/etc/safe-agents/agent.env
+UNIT
+
+cat > "/etc/systemd/system/${AGENT_NAME}.timer" <<TIMER
+[Unit]
+Description=Timer for safe-agents run: ${AGENT_NAME}
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+TIMER
+
+systemctl daemon-reload
+systemctl enable --now "${AGENT_NAME}.timer"
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Bootstrap complete: agent=${AGENT_NAME}"

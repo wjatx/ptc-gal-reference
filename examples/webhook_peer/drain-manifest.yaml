@@ -1,0 +1,71 @@
+# webhook-peer/drain-manifest.yaml — FICTIONAL example consumer (peer-agent inbound
+# archetype, the complement to missileer's launch-observer archetype).
+#
+# webhook-peer's airlock already admits its one mapped peer (channels-manifest.yaml's
+# `peer:example` -> `example-agent` trust-map row); this manifest is the broker-facing
+# side of the SAME consumer, so an accepted peer envelope can drain to a durable
+# record. It is abstain-safe by construction: the only granted op is an observation
+# (ledger.append), and no effecting op exists in the served registry to escalate to —
+# a fully compromised drain path can still only record what it saw.
+#
+# This is a broker-facing AgentManifest (broker/schemas/manifest.py, extra="forbid"),
+# distinct from the channels-side ChannelsManifest (channels-manifest.yaml) that gates
+# the airlock. grant_classes name base action classes; connectors resolve against the
+# manifest's connector_providers FIRST, then the base registry.
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: example-agent
+  skill: observer
+  user: peer-relay
+  tier: B
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+# Record what an accepted peer envelope said. No effecting op is granted — there
+# is nothing here for a compromised drain path to escalate into.
+grant_classes:
+  - ledger.append
+
+# ── Connectors (names; provider-first, then the base registry) ────────────────
+connectors:
+  - ledger
+
+# ── Consumer-supplied connector + secret mapping (the sa#141 seam) ────────────
+# webhook-peer uses the base LedgerConnector (no connector_providers override needed),
+# but redirects it to its OWN Secrets Manager leaf so its ledger destination never
+# collides with missileer's shared `connectors/ledger` leaf. connector_secrets maps a
+# connector to its Secrets Manager LEAF (never a value, never a full id): the Doer
+# fetches the leaf `ledger-example` instead of the default leaf `ledger`. That leaf is
+# resolved under the broker secret prefix — with BROKER_SECRET_PREFIX=safe-agents/development
+# it becomes `safe-agents/development/connectors/ledger-example` (sa#164 bare-leaf
+# rule). Declare a bare leaf, never a pre-prefixed path, so the manifest stays
+# env-agnostic and inside the `<prefix>/connectors/*` IAM grant.
+#
+# The seeded credential JSON at that leaf is `{"bucket": <ledger-bucket>, "prefix":
+# "webhook-peer/"}` — so, per LedgerConnector's key layout (<prefix><agent>/deltas/
+# <run_id>.jsonl), an accepted peer envelope's ledger_delta lands at
+# `webhook-peer/example-agent/deltas/evt-<digest>.jsonl`: credential prefix
+# `webhook-peer/` (this consumer's own namespace) plus the agent segment
+# `example-agent` (this manifest's principal, also `InboundLogReceiver`'s
+# `_AGENT_SEGMENT`).
+connector_secrets:
+  ledger: "ledger-example"
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# The broker resolves the granted (tool, op) against THIS table; the base names no
+# op. Copied from the base copyable CATALOG (safe_agents.broker.manifest.CATALOG).
+tool_ops:
+  - {tool: ledger, op: append, effect: write, external: false, reversible: true}
+
+# ── Risk envelope ─────────────────────────────────────────────────────────────
+# polarity: abstain — silence is the safe outcome; recording nothing is always
+# safe here. Sized for a steady peer-event stream; see missileer/manifest.yaml
+# for the scoped-daily-budget note on `caps.actions_per_run`.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 100
+  allowlists:
+    tools:
+      - ledger.append
+  high_stakes: false

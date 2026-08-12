@@ -1,0 +1,78 @@
+# missileer/manifest.yaml — FICTIONAL example consumer (abstain-safe archetype).
+#
+# A launch-watch observer: it reads sensor/track data, logs what it sees, and can
+# page a human duty officer — but it holds NO capability to act on its own. The
+# dangerous action (launch) is not refused at call time; it is ABSENT from the
+# served registry entirely (there is no launch grant_class), so a fully compromised
+# agent still cannot mint it. See README.md for the polarity rationale.
+#
+# This is a broker-facing AgentManifest (broker/schemas/manifest.py, extra="forbid").
+# grant_classes name base action classes; connector names resolve against the
+# manifest's connector_providers FIRST, then the base registry — this example also
+# exercises the one sanctioned injection seam (sa#141) by supplying its own `search`
+# connector implementation (see trackfeed_connector.py).
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: missileer-watch
+  skill: observer
+  user: duty-officer
+  tier: A
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+# Read the world, record it, page a human. No effecting op is granted — the
+# hazardous capability is structurally out of reach, not merely denied.
+grant_classes:
+  - search.query
+  - ledger.append
+  - notify.send
+
+# ── Connectors (names; provider-first, then the base registry) ────────────────
+connectors:
+  - search
+  - ledger
+  - notify
+
+# ── Consumer-supplied connector + secret mapping (the sa#141 seam) ────────────
+# missileer's "search" is its own track-feed query, not the base SearchConnector:
+# the provider path is imported / zero-arg instantiated / protocol-checked at
+# build_runtime, fail-closed. Honored ONLY from this image-baked file — the
+# envelope store loads an Envelope, which has no provider field. connector_secrets
+# maps a connector to its Secrets Manager LEAF (never a value, never a full id): the
+# Doer fetches the leaf `track-feed-token` instead of the default leaf `search`. That
+# leaf is resolved under the broker secret prefix — with
+# BROKER_SECRET_PREFIX=safe-agents/development it becomes
+# `safe-agents/development/connectors/track-feed-token` (sa#164). Declare a bare leaf,
+# never a pre-prefixed path, so the manifest stays env-agnostic and inside the
+# `<prefix>/connectors/*` IAM grant.
+connector_providers:
+  search: "examples.missileer.trackfeed_connector:TrackFeedConnector"
+connector_secrets:
+  search: "track-feed-token"
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# The broker resolves each granted (tool, op) against THIS table; the base names no
+# op. Copied from the base copyable CATALOG (safe_agents.broker.manifest.CATALOG).
+tool_ops:
+  - {tool: search, op: query,  effect: read,  external: true,  egress_arg: query}
+  - {tool: ledger, op: append, effect: write, external: false, reversible: true}
+  - {tool: notify, op: send,   effect: write, external: true,  reversible: true}
+
+# ── Risk envelope ─────────────────────────────────────────────────────────────
+# polarity: abstain — silence is the safe outcome. Not launching / not acting is
+# always safe here; the broker's `abstain` verb is a SUCCESS, not a fallback. A
+# bounded cap and high_stakes reflect the launch domain. NB the broker enforces
+# `caps` as a per-op, per-principal, per-UTC-day budget (enforcement.scoped_counter_key),
+# NOT a per-invocation limit despite the `actions_per_run` name — so this is the
+# daily ceiling on observations an inbound-signal drain may record before the broker
+# denies with "capacity budget breached". Sized for a steady observation stream.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 100
+  allowlists:
+    tools:
+      - search.query
+      - ledger.append
+      - notify.send
+  high_stakes: true

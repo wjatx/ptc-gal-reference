@@ -1,0 +1,41 @@
+# Test-stub manifest — the reference do-nothing agent.
+# Satisfies all 8 runner-contract conformance checks.
+# Every real per-agent manifest follows this structure.
+
+job: test-stub
+arm: local
+
+# Element 2: all env vars the agent reads — no connector creds.
+# connector_creds_in_agent: false is the machine-checkable assertion that
+# connector credentials live in the broker, not here.
+env:
+  connector_creds_in_agent: false
+  required:
+    - SA_RUN_RECORD_WRITE_CREDS   # write creds for the run-record store (non-connector)
+  optional:
+    - SA_MODEL_TOKEN               # model inference credential (non-connector)
+    - SA_DYNAMO_TABLE              # if set, write run record to this DynamoDB table
+    - SA_RUN_RECORD_DIR            # directory for local run-record file (fallback)
+    - SA_PREFLIGHT_ONLY            # "1" = run pre-flight gate only then exit
+    - SA_ARM                       # arm identifier: ec2 | ec2-woken | fargate | local
+    - SA_NOTIFY_CHANNEL            # notification channel (absent = no-op)
+
+# Element 4: declared durable output sink.
+# One of: git_push | notification | approval_queue
+output_sink: notification
+
+# Element 7: liveness declaration.
+# push_ping_env_var names the env var that carries the uptime-monitor URL;
+# absent = no-op (catches total arm death). pull_check names the artifact an
+# external watcher reads to detect ran-but-failed and did-not-run.
+liveness:
+  push_ping_env_var: SA_LIVENESS_URL
+  pull_check: run_record
+
+# Clause 8: broker co-placement declaration.
+# Any arm adapter or manifest that omits this block FAILS the harness with
+# the named violation CLAUSE_8_BROKER_CO_PLACEMENT.
+broker:
+  sidecar: true
+  identity: separate      # broker runs under a separate IAM role from the agent
+  egress_confined: true   # agent egress is confined to the broker at the network layer

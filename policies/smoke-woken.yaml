@@ -1,0 +1,19 @@
+# policies/smoke-woken.yaml — network-egress confinement policy for the smoke-woken box
+# (the ec2-woken inbound-airlock arm smoke fixture).
+#
+# The airlock Lambda is a separate, credential-free taint boundary in front of the box;
+# this policy governs the EC2 box the airlock wakes. Under the broker model the agent
+# process on the box may reach only the broker endpoint and api.anthropic.com. Connector
+# IPs must never appear in agent_egress; all connector traffic routes through the broker.
+#
+# Enforcement on the ec2-woken box: the same netns + broker-proxy confinement as the EC2
+# arm — a confined network namespace whose only outbound route is the broker, which is
+# also the model-inference proxy for api.anthropic.com. The broker endpoint is added
+# implicitly by the arm adapter at deploy time.
+
+agent_egress:
+  allow_hosts:
+    - api.anthropic.com    # model API (required for all arms; reached only via the broker proxy)
+    # broker endpoint is added implicitly by the arm adapter; do not list it here
+    # as a raw IP — it will vary by environment
+  deny_by_default: true

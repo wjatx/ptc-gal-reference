@@ -1,0 +1,68 @@
+[
+  {
+    "seq": 0,
+    "ts": "2026-07-14T04:11:51.862294+00:00",
+    "principal": {
+      "agentId": "golden-agent",
+      "skill": "golden-skill",
+      "user": "golden-user",
+      "tier": "B"
+    },
+    "tool": "ledger",
+    "op": "append",
+    "argsDigest": "sha256:e18b0bd83a6696db623e23b627cb0ec836690d3317856e2c131750c1b2391993",
+    "decision": "allow",
+    "reason": null,
+    "envelopeHash": "sha256:aaaa",
+    "approvedBy": null,
+    "outcome": "executed",
+    "error": null,
+    "seed": null,
+    "prevHash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "hash": "sha256:3b4dc18b6c7febd0f46db79e4ca6ca0e92b3df2f5a5de94af476a9a7f45ff943"
+  },
+  {
+    "seq": 1,
+    "ts": "2026-07-14T04:11:51.862485+00:00",
+    "principal": {
+      "agentId": "golden-agent",
+      "skill": "golden-skill",
+      "user": "golden-user",
+      "tier": "B"
+    },
+    "tool": "ledger",
+    "op": "append",
+    "argsDigest": "sha256:bcc75dd61d5ea462321161e294bbd48d7521457cd55f6a8f8c176b55ee5d48d0",
+    "decision": "require_approval",
+    "reason": null,
+    "envelopeHash": "sha256:aaaa",
+    "approvedBy": null,
+    "outcome": "held",
+    "error": null,
+    "seed": null,
+    "prevHash": "sha256:3b4dc18b6c7febd0f46db79e4ca6ca0e92b3df2f5a5de94af476a9a7f45ff943",
+    "hash": "sha256:7d54f2d379aa817532646aa99716315fc1591d477aa3bc5b1acb21df3181efcf"
+  },
+  {
+    "seq": 2,
+    "ts": "2026-07-14T04:11:51.862509+00:00",
+    "principal": {
+      "agentId": "golden-agent",
+      "skill": "golden-skill",
+      "user": "golden-user",
+      "tier": "B"
+    },
+    "tool": "ledger",
+    "op": "append",
+    "argsDigest": "sha256:bcc75dd61d5ea462321161e294bbd48d7521457cd55f6a8f8c176b55ee5d48d0",
+    "decision": "allow",
+    "reason": null,
+    "envelopeHash": "sha256:aaaa",
+    "approvedBy": "owner@example.com",
+    "outcome": "executed",
+    "error": null,
+    "seed": null,
+    "prevHash": "sha256:7d54f2d379aa817532646aa99716315fc1591d477aa3bc5b1acb21df3181efcf",
+    "hash": "sha256:dc03460efc1f8c13ad92755ed5882e0fc9d453efdaa4ed3280274a1338232483"
+  }
+]

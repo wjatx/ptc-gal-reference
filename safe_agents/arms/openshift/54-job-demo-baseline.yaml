@@ -1,0 +1,50 @@
+# The unbrokered baseline (#154) — the control for every refusal in this arm.
+#
+# Runs under the AGENT ServiceAccount with the agent's pod label, so it is bound by
+# the same SCC and the same default-deny egress policy as the workload whose
+# refusals it is the control for. A control that ran under weaker constraints
+# would not be a control.
+#
+# It needs NO new grant, NO new secret and NO new mount — Act 1 spawns the ledger
+# server as a stdio child, which has no network surface for the egress policy to
+# have to allow, and needs no credential. That is the restrict-by-construction
+# archetype paying off again: the thing that makes this leg cheap to add is the
+# same thing that makes the broker's own tool set cheap to constrain.
+#
+# `workingDir: /app` is load-bearing. The server is spawned with `-m
+# examples.restricted_mcp_server.server`, which resolves the module from the
+# process's cwd, and the image stages the example package under /app.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: safe-agents-demo-baseline
+  namespace: safe-agents
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safe-agents
+        app.kubernetes.io/component: agent
+    spec:
+      serviceAccountName: safe-agents-agent
+      restartPolicy: Never
+      containers:
+        - name: baseline
+          image: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-missileer:arc
+          imagePullPolicy: Always
+          command: ["bash", "/opt/drill/cluster-demo-baseline.sh"]
+          workingDir: /app
+          env:
+            - { name: AGENT_BROKER_URL, value: "http://safe-agents-broker.safe-agents.svc:8080" }
+            # Named rather than defaulted, because the ORDER dependency rides on
+            # this: `list_entries` is unadmitted only until the drill's step 12
+            # ratifies it. See the header of cluster-demo-baseline.sh.
+            - { name: DRILL_REFUSE_TOOL, value: "list_entries" }
+            - { name: DRILL_ADMIT_TOOL, value: "get_entry" }
+          volumeMounts:
+            - { name: drill, mountPath: /opt/drill, readOnly: true }
+      volumes:
+        - name: drill
+          configMap:
+            name: safe-agents-drill-scripts

@@ -1,0 +1,64 @@
+# emailer/manifest.yaml — FICTIONAL example consumer (the A2A SENDER, sa#156).
+#
+# The sending half of the sa#8 driving case: an email-watching agent that reads
+# inbound email (untrusted content) and, when it recognizes a trade confirmation,
+# PUBLISHES a normalized signal to a peer agent's airlock — the receiver being the
+# sibling `webhook-peer/` airlock consumer. It holds NO peer webhook credential:
+# its only outbound capability is the brokered `peer.publish` op, whose `peer`
+# connector (the transport + shared secret) the broker holds.
+#
+# This is a broker-facing AgentManifest (broker/schemas/manifest.py, extra="forbid").
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: emailer-watch
+  skill: relay
+  user: ops
+  tier: B
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+# One outbound capability: publish to a peer. The agent cannot mint the transport
+# credential — a compromised agent can still only ASK the broker to publish.
+grant_classes:
+  - peer.publish
+
+# ── Connectors (names; provider-first, then the base registry) ────────────────
+# `peer` is now a BASE builtin connector (#172): it resolves from the base
+# registry (safe_agents.connectors.PeerConnector), no provider path needed — the
+# transport speaks our own protocol to our own airlock, so it is platform
+# mechanism, not domain code.
+connectors:
+  - peer
+
+# ── Consumer-supplied secret mapping (the sa#141 seam) ────────────────────────
+# The `peer` connector CLASS is now base, but its secret + endpoint stay
+# consumer-supplied (they vary per deployment). connector_secrets maps it to a
+# Secrets Manager LEAF (never a value, never a pre-prefixed path — sa#164): the
+# Doer fetches the leaf `peer-example-agent`, resolved under the broker secret
+# prefix as `safe-agents/development/connectors/peer-example-agent`. The secret
+# VALUE is the JSON peer descriptor {url, token_header, token} the connector
+# transports with.
+connector_secrets:
+  peer: "peer-example-agent"
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# The broker resolves the granted (tool, op) against THIS table; the base names no
+# op. Copied from the base copyable CATALOG (safe_agents.broker.manifest.CATALOG).
+tool_ops:
+  - {tool: peer, op: publish, effect: write, external: true, reversible: true}
+
+# ── Risk envelope ─────────────────────────────────────────────────────────────
+# polarity: abstain — NOT publishing is the safe outcome here. A relay that fails
+# to send, or whose tainted-turn publish is gated to require_approval, has produced
+# the safe result (silence), not a fallback. The taint teeth are automatic: because
+# the agent reads untrusted inbound email upstream, a publish on that tainted turn
+# hits the standing tainted_external_write cut and escalates — the emitter cannot
+# autonomously relay untrusted content across the boundary (channels/PUBLISH.md P2).
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 100
+  allowlists:
+    tools:
+      - peer.publish
+  high_stakes: false

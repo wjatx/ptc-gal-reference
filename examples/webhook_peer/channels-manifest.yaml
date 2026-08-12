@@ -1,0 +1,34 @@
+# webhook-peer/channels-manifest.yaml — FICTIONAL example consumer (sa#8 A2A peer).
+#
+# The channels analogue of the broker AgentManifests in this directory: it wires the
+# inbound airlock ENTIRELY as config. A peer agent POSTs an EventTrigger over the signed
+# webhook; this manifest says which peer identity is trusted, as which principal, and at
+# what sender class. All values here are OBVIOUSLY EXAMPLE — a real deployment supplies
+# its own manifest in its own repo (channels/ADAPTERS.md §"Reference bindings").
+#
+# This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
+
+# The receiver's provenance zone, stamped onto every accepted envelope at gate 8.
+zone: channels
+
+# The signed-webhook adapter: the peer proves authenticity with a shared secret token
+# in this header (the token itself lives in Secrets Manager, never in the manifest).
+adapter:
+  channel_type: webhook
+  token_header: x-airlock-token
+
+# The trust map — exact-match membership, the ONLY place a sender becomes known. An empty
+# map (the base default) drops everything; this one row admits a single example peer.
+# channel_identity is matched against the adapter's NORMALIZED identity (lower-cased), so
+# it is written lower-case here.
+trust_map:
+  - channel_type: webhook
+    channel_identity: peer:example
+    principal: example-agent
+    sender_class: peer-agent
+
+# The injection screen is ABSENT ⇒ OFF — the friction-doctrine default
+# (docs/friction-doctrine.md). A consumer turns it on by adding a `screen:` block naming
+# a registered kind; an unknown kind fails the build loudly.
+verdict_sink: false
+dedupe_ttl_days: 30

@@ -1,0 +1,36 @@
+# Fixture: an agents/<name>.yaml exercising EVERY broker-facing block.
+# Not a real agent — only the schema round-trip tests load it. Real manifests
+# carry only `envelope:` today; the other four blocks land in broker-debaking P2.
+envelope:
+  polarity: act
+  caps:
+    actions_per_run: 5
+  allowlists:
+    tools:
+      - example.read
+      - notify.send
+  high_stakes: true
+principal:
+  agentId: full-fixture-agent
+  skill: trade
+  user: owner@example.com
+  tier: B
+grant_classes:
+  - example.read
+  - notify.send
+budgets:
+  error:
+    tolerance: 0.05
+    spent: 0.0
+  attention:
+    capacity: 20.0
+    spent: 3.0
+  escalation:
+    capacity: 5.0
+    spent: 0.0
+  fallback:
+    capacity: 10.0
+    spent: 1.0
+connectors:
+  - github
+  - example

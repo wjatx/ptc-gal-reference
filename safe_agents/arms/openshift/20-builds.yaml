@@ -1,0 +1,81 @@
+# Image delivery is an IN-CLUSTER BuildConfig [ruling: maintainer, 2026-07-26], not a
+# push from a laptop.
+#
+# The load-bearing constraint: these build the SAME Containerfiles the podman
+# drill and CI build — `safe_agents/arms/local/Containerfile.broker` and
+# `examples/restricted_mcp_server/Containerfile.broker`, byte for byte, via
+# `dockerfilePath`. A BuildConfig that inlined its own steps would be a second
+# build path, and the drift would stay invisible until the cluster and the laptop
+# disagreed about an image with the same name in both places.
+#
+# Binary source: the driver runs `oc start-build --from-dir=<repo root>`, so the
+# context is the same tree podman gets, minus the root .dockerignore exclusions
+# that every build path shares.
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: safe-agents-broker-base
+  namespace: safe-agents
+spec:
+  lookupPolicy:
+    local: true
+---
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: safe-agents-missileer
+  namespace: safe-agents
+spec:
+  lookupPolicy:
+    local: true
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: safe-agents-broker-base
+  namespace: safe-agents
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: safe_agents/arms/local/Containerfile.broker
+  output:
+    to:
+      kind: ImageStreamTag
+      name: safe-agents-broker-base:arc
+  resources:
+    limits:
+      memory: 2Gi
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: safe-agents-missileer
+  namespace: safe-agents
+spec:
+  source:
+    type: Binary
+    binary: {}
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: examples/restricted_mcp_server/Containerfile.broker
+      # The consumer Containerfile takes the base as an ARG and has no default —
+      # "a build without it must fail rather than pin a stale digest". Passed
+      # explicitly rather than via dockerStrategy.from, because `from` rewrites a
+      # literal FROM line and this one is `FROM ${BASE_IMAGE}`; naming the
+      # ImageStreamTag through the internal registry keeps the Containerfile
+      # untouched, which is the whole point.
+      buildArgs:
+        - name: BASE_IMAGE
+          value: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-broker-base:arc
+  output:
+    to:
+      kind: ImageStreamTag
+      name: safe-agents-missileer:arc
+  resources:
+    limits:
+      memory: 2Gi

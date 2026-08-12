@@ -1,0 +1,29 @@
+# agents/test-stub.yaml — deployment manifest for the test-stub agent.
+# The pipeline reads this file; the broker reads the envelope half.
+# The runtime conformance manifest lives at agents/test-stub/manifest.yaml.
+
+name: test-stub
+
+# ── Manifest (pipeline-facing) ────────────────────────────────────────────────
+repo: git@github.com:example-org/test-stub.git
+deploy_key_secret: test-stub/deploy-key
+arm: ec2                        # always-on EC2; broker co-placed as local sidecar
+policy: policies/test-stub.yaml # egress: broker endpoint + api.anthropic.com ONLY
+secrets:
+  runner_keys: test-stub/runner-keys           # non-connector runtime config only
+  broker_connector_keys: test-stub/broker-keys # connector creds → broker store ONLY
+  oauth_token: test-stub/claude-oauth-token    # model brain; not a connector
+smoke:
+  read_only: true
+  prompt: >-
+    You are read-only. In ONE sentence, what does this test-stub agent do?
+  expect_substring: test
+
+# ── Envelope (broker-facing; re-derived per domain) ───────────────────────────
+envelope:
+  polarity: abstain             # silence is safe for this stub
+  caps:
+    actions_per_run: 0          # no actions — stub only
+  allowlists:
+    tools: []                   # no tools registered; stub only
+  high_stakes: false

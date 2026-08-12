@@ -1,0 +1,23 @@
+# Containerfile — the inbound channels airlock, as a Lambda container image (sa#152).
+#
+# Reference-tier (channels/ADAPTERS.md §"Reference bindings"): the base image a
+# consumer FROMs to add its own ChannelsManifest (see examples/webhook_peer/).
+#
+# Build from the REPO ROOT (the build context is the repo root so `safe_agents`
+# and pyproject are visible), targeting arm64 to match the Lambda arch:
+#   podman build --platform linux/arm64 \
+#     -t safe-agents-channels-airlock:dev \
+#     -f safe_agents/channels/airlock/Containerfile .
+FROM public.ecr.aws/lambda/python:3.13
+
+# Install the safe-agents SDK (+ the `aws` extra for boto3) into the image;
+# pydantic and PyYAML arrive as base package deps. Mirrors the dependency posture
+# of safe_agents/arms/local/Containerfile.broker — the pyproject is the single
+# source of truth for pins, not a hand-maintained list. WORKDIR is the Lambda
+# task root (/var/task) in this base image.
+COPY pyproject.toml README.md LICENSE ./
+COPY safe_agents ./safe_agents
+RUN pip install --no-cache-dir ".[aws]"
+
+# The Lambda runtime imports this dotted path and calls handler(event, context).
+CMD ["safe_agents.channels.airlock.handler.handler"]

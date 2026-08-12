@@ -1,0 +1,28 @@
+# The agent's ONLY sanctioned egress (#250 Phase 4).
+#
+# ClusterIP and deliberately not a Route. A Route would publish /call outside the
+# cluster, and the thing this phase is trying to demonstrate is a pod that can reach
+# exactly one endpoint -- adding an ingress path from the internet to the broker
+# would not break that claim, but it would invite the audience to ask why the
+# demonstration ships with a public mouth it does not need. Phase 6 can add one if
+# the packaged artifact wants it; say so then, in the posture doc.
+#
+# Note the Service is not itself a control. A Service is a DNS name and a load
+# balancer; nothing about it prevents the agent from opening a socket somewhere
+# else. 60-networkpolicy.yaml is what does that, and the two are easy to conflate
+# because together they look like "the agent can only talk to the broker".
+apiVersion: v1
+kind: Service
+metadata:
+  name: safe-agents-broker
+  namespace: safe-agents
+  labels:
+    app.kubernetes.io/name: safe-agents
+    app.kubernetes.io/component: broker
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: safe-agents
+    app.kubernetes.io/component: broker
+  ports:
+    - { name: http, port: 8080, targetPort: http }

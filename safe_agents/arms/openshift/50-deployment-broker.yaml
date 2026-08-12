@@ -1,0 +1,118 @@
+# The broker as a LONG-LIVED workload (#250 Phase 4).
+#
+# Every leg before this one runs the broker in-process and exits: `cluster-serve.sh`
+# builds a runtime, makes two calls and closes it. That is enough to prove the store
+# outlived the pods that wrote it, and it is not enough for Phase 4, whose predicate
+# is "from INSIDE the agent pod". A predicate about crossing a boundary needs two
+# workloads with the boundary between them, so the broker has to still be running
+# when something else asks it for something.
+#
+# BROKER_HOST is the line that matters and it is easy to miss: broker_server.main()
+# defaults to 127.0.0.1, which is correct for the Mac arm and would make this
+# Deployment come up healthy, pass its own readiness probe over loopback, and refuse
+# every connection from the Service — a failure that reads like a NetworkPolicy bug
+# and is not one.
+#
+# What this deliberately does NOT become: a general-purpose broker deployment for
+# anyone to run. It is the drill's serving half. Product-tier packaging is Phase 6
+# and wants a named consumer first.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: safe-agents-broker
+  namespace: safe-agents
+  labels:
+    app.kubernetes.io/name: safe-agents
+    app.kubernetes.io/component: broker
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate. The PVC is ReadWriteOnce and the broker holds a
+  # sqlite file on it; a rolling update would deliberately run two writers at once
+  # and would either wedge on the volume or corrupt the store, depending on where
+  # the new pod scheduled. One writer at a time is what the store wants anyway --
+  # the same reasoning 30-storage.yaml gives for ReadWriteOnce being correct rather
+  # than a limitation worked around.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: safe-agents
+      app.kubernetes.io/component: broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safe-agents
+        app.kubernetes.io/component: broker
+    spec:
+      # The serving identity. No ceremony, no signing key, and -- unchanged from
+      # the serve Job -- no issuer Secret mounted anywhere in this pod.
+      serviceAccountName: safe-agents-broker
+      containers:
+        - name: broker
+          image: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-missileer:arc
+          # See 42-job-serve.yaml: `:arc` is a MUTABLE tag, so Kubernetes defaults
+          # to IfNotPresent and a node holding an older `:arc` silently keeps running
+          # it. Quiet and misleading, which is the worst combination.
+          imagePullPolicy: Always
+          command: ["python3", "-m", "safe_agents.broker.prototype.broker_server"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            # 0.0.0.0, not the 127.0.0.1 default -- see the header.
+            - { name: BROKER_HOST, value: "0.0.0.0" }
+            - { name: BROKER_PORT, value: "8080" }
+            - { name: BROKER_STORE, value: sqlite }
+            - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
+            # The #203 split, read-only here for the same reason the serve Job takes
+            # it read-only: BROKER_GRANT_LOAD=read is get_grant and never a write, so
+            # a serving broker has no business holding write access to the grant key
+            # space. Free strengthening, not a Phase 4 requirement.
+            - { name: BROKER_SQLITE_GRANTS_PATH, value: /var/lib/broker-grants/grants.db }
+            - { name: BROKER_SQLITE_GRANTS_READONLY, value: "1" }
+            - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
+            - { name: BROKER_SECRETS, value: dir }
+            - { name: BROKER_SECRETS_DIR, value: /run/connector-secrets }
+            # The #310 split. This pod is the tape's only writer, and the agent pod
+            # -- the one making the calls that land on it -- cannot reach the volume
+            # at all. Note that does NOT make the tape safe from the broker: the
+            # writer can still rewrite what it wrote, and the chain is unkeyed
+            # SHA-256, so a rewrite re-verifies clean. Off-device append-only
+            # durability is what closes that, and it is Phase 7.
+            - { name: BROKER_AUDIT_PATH, value: /var/lib/broker-audit/audit.jsonl }
+            # Read, never seed. The grant this serves was ratified by a pod that no
+            # longer exists; "it re-minted one at boot" is not an available
+            # explanation for the agent's call succeeding.
+            - { name: BROKER_GRANT_LOAD, value: read }
+            - name: BROKER_HMAC_KEY
+              valueFrom:
+                secretKeyRef: { name: safe-agents-hmac, key: hmac-key }
+          # /registry is a GET that forces the runtime to be built, so readiness
+          # means "the manifest loaded, the grant resolved and the registry is
+          # served" rather than "the port is open". The distinction is load-bearing
+          # for the driver: it waits on Ready before starting the agent leg, and a
+          # port-only probe would let the agent race a broker that is still booting
+          # and report a connection failure as though the policy had denied it.
+          readinessProbe:
+            httpGet: { path: /registry, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            failureThreshold: 20
+          livenessProbe:
+            httpGet: { path: /registry, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - { name: store, mountPath: /var/lib/broker, subPath: work }
+            - { name: store, mountPath: /var/lib/broker-grants, subPath: grants, readOnly: true }
+            - { name: store, mountPath: /var/lib/broker-audit, subPath: audit }
+            - { name: connector-secrets, mountPath: /run/connector-secrets, readOnly: true }
+      volumes:
+        - name: store
+          persistentVolumeClaim:
+            claimName: safe-agents-store
+        # The connector credentials, mounted into THIS pod and no other. The agent
+        # pod's spec has no such volume, and 60-networkpolicy.yaml is what stops it
+        # reaching the connector directly instead.
+        - name: connector-secrets
+          secret:
+            secretName: safe-agents-connector-secrets

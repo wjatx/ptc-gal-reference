@@ -1,0 +1,62 @@
+{
+  "schema": "safe-agents/egress-snapshot/v1",
+  "arm": "rhel-openshell",
+  "environment": "development",
+  "network_mode": "open",
+  "generated_by": "infra/scripts/gen-egress-snapshot.py",
+  "source": {
+    "sg": "infra/cdk.out/SafeAgents-Network-development.template.json",
+    "netns_proxy": [
+      "safe_agents/arms/rhel_openshell/bootstrap/scripts/agent-netns-setup.sh"
+    ]
+  },
+  "rules": [
+    {
+      "layer": "sg",
+      "sg": "agent",
+      "direction": "egress",
+      "protocol": "-1",
+      "ports": "all",
+      "target": "cidr:0.0.0.0/0"
+    },
+    {
+      "layer": "sg",
+      "sg": "broker",
+      "direction": "egress",
+      "protocol": "-1",
+      "ports": "all",
+      "target": "cidr:0.0.0.0/0"
+    },
+    {
+      "layer": "sg",
+      "sg": "broker",
+      "direction": "ingress",
+      "protocol": "-1",
+      "ports": "all",
+      "target": "sg:agent"
+    },
+    {
+      "layer": "sg",
+      "sg": "endpoint",
+      "direction": "ingress",
+      "protocol": "tcp",
+      "ports": "443",
+      "target": "sg:agent"
+    },
+    {
+      "layer": "sg",
+      "sg": "endpoint",
+      "direction": "ingress",
+      "protocol": "tcp",
+      "ports": "443",
+      "target": "sg:broker"
+    },
+    {
+      "layer": "netns_proxy",
+      "kind": "veth",
+      "host_ip": "10.255.255.1",
+      "agent_ip": "10.255.255.2",
+      "prefix": 30
+    }
+  ]
+}

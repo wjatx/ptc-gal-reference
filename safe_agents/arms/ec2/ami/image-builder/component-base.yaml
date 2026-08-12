@@ -1,0 +1,126 @@
+schemaVersion: 1.0
+
+# safe-agents base-AMI component (AWSTOE format for EC2 Image Builder).
+#
+# Target platform: arm64 Amazon Linux 2023.
+# Installs: toolchain (git / python3 / nodejs) + boto3 venv + Claude Code CLI.
+# The bake runs in CI where internet egress exists. The deployed instance never
+# needs internet access: agent code arrives via the S3 gateway endpoint at boot.
+#
+# Deploy with:
+#   aws imagebuilder create-component \
+#     --name safe-agents-base \
+#     --semantic-version 1.0.0 \
+#     --platform Linux \
+#     --supported-os-versions '["Amazon Linux 2023"]' \
+#     --data file://component-base.yaml \
+#     --region <REGION>
+#
+# HARNESS-COUPLING BLOCK: only the ClaudeCodeCLI step below couples safe-agents
+# to Claude Code specifically. All other steps are harness-neutral.
+# To swap harnesses: replace ONLY that step.
+
+phases:
+  - name: build
+    steps:
+      - name: UpdateOS
+        action: ExecuteBash
+        inputs:
+          commands:
+            - dnf update -y --quiet
+
+      - name: InstallToolchain
+        action: ExecuteBash
+        inputs:
+          commands:
+            # git — deploy-key clone and local git ops.
+            # python3 / python3-pip — runner scripts, boto3 venv.
+            # nodejs — required by the Claude Code CLI (see HARNESS-COUPLING below).
+            # unzip — needed to unpack the AWS CLI v2 installer zip (see InstallAWSCLI).
+            # python3-pyyaml — the conformance harness imports yaml; must be available
+            #                  on the system python3 path. The harness arrives via S3 at
+            #                  boot (not baked here) but the import happens at runtime.
+            # iptables-nft — the netns forwards to the broker service; agent-netns-setup.sh
+            #                MASQUERADEs the veth /30 out the uplink (sa#35). No internet at
+            #                boot in the isolated subnet, so this MUST be baked, not dnf'd later.
+            - dnf install -y --quiet git python3 python3-pip nodejs unzip python3-pyyaml iptables-nft
+
+      - name: InstallAWSCLI
+        action: ExecuteBash
+        inputs:
+          commands:
+            # 'awscli2' is NOT a valid AL2023 dnf package. Install the official
+            # AWS CLI v2 via the upstream installer (arm64 / aarch64 build).
+            # user-data.sh.tmpl calls 'aws s3 cp' and 'aws secretsmanager' at boot;
+            # the CLI must be pre-installed because user-data is config-only.
+            - curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o /tmp/awscliv2.zip
+            - unzip -q /tmp/awscliv2.zip -d /tmp
+            - /tmp/aws/install
+            - rm -rf /tmp/aws /tmp/awscliv2.zip
+
+      - name: InstallBoto3Venv
+        action: ExecuteBash
+        inputs:
+          commands:
+            # Pre-provision the boto3 venv used by the runner wrapper and the
+            # credential fetcher at boot. Isolated from distro python packages.
+            - python3 -m venv /opt/boto3-venv
+            - /opt/boto3-venv/bin/pip install --quiet boto3
+
+      # ── HARNESS-COUPLING BLOCK START ──────────────────────────────────────
+      # This step is ONE OF ONLY TWO places safe-agents couples to Claude Code
+      # specifically (the other is the SessionStart memory loader, sa#71).
+      # All other steps above and below are harness-neutral.
+      # To swap harnesses: replace ONLY this step.
+      #
+      # What this step does:
+      #   Installs the Claude Code CLI globally via npm (requires nodejs, above).
+      # Token injection happens at boot from Secrets Manager, NOT here.
+      - name: ClaudeCodeCLI
+        action: ExecuteBash
+        inputs:
+          commands:
+            - npm install --global --quiet @anthropic-ai/claude-code
+      # ── HARNESS-COUPLING BLOCK END ────────────────────────────────────────
+
+      - name: CreateDirectoryLayout
+        action: ExecuteBash
+        inputs:
+          commands:
+            # /opt/agents               — agent packages are extracted here at boot.
+            # /opt/broker               — broker sidecar binary + credentials file (brokerRole only).
+            # /opt/safe-agents/core     — platform substrate dir; populated at boot via S3
+            #                            (the conformance harness arrives as a platform bundle,
+            #                            not baked here, so no git token is needed at bake time).
+            - mkdir -p /opt/agents /opt/broker /opt/safe-agents/core
+            - chmod 755 /opt/agents /opt/broker /opt/safe-agents /opt/safe-agents/core
+
+      - name: VerifyInstalls
+        action: ExecuteBash
+        inputs:
+          commands:
+            # Fail the bake early if any tool is missing rather than shipping a
+            # broken AMI. which claude confirms the binary is on PATH.
+            # The conformance harness (harness.py) is NOT checked here — it arrives
+            # via the S3 platform bundle at boot, not at bake time.
+            - git --version
+            - python3 --version
+            - node --version
+            - which claude
+            - aws --version
+
+  - name: validate
+    steps:
+      - name: ValidateDirectoryLayout
+        action: ExecuteBash
+        inputs:
+          commands:
+            - test -d /opt/agents
+            - test -d /opt/broker
+            - test -d /opt/boto3-venv
+            - /opt/boto3-venv/bin/python3 -c "import boto3; print('boto3 ok')"
+            # aws CLI installed via the official installer (not awscli2 dnf package).
+            - aws --version
+            # The harness (harness.py) arrives at boot via S3; not checked here.
+            # The harness imports yaml; verify the system python3 can import it.
+            - python3 -c "import yaml; print('pyyaml ok')"

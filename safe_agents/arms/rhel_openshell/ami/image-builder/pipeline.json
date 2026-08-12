@@ -1,0 +1,17 @@
+{
+  "name": "safe-agents-base-rhel-pipeline",
+  "description": "Builds the safe-agents rhel-openshell base AMI (RHEL 9 x86_64) on demand or weekly. The bake runs in CI where internet + RHUI egress exists; the resulting AMI is referenced by rhel_openshell_provision at deploy time (tag safe-agents:ami=base-rhel).",
+  "imageRecipeArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:image-recipe/safe-agents-base-rhel/1.0.0",
+  "infrastructureConfigurationArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:infrastructure-configuration/safe-agents-base-rhel-infra",
+  "distributionConfigurationArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:distribution-configuration/safe-agents-base-rhel-dist",
+  "enhancedImageMetadataEnabled": false,
+  "schedule": {
+    "scheduleExpression": "cron(0 3 ? * SUN *)",
+    "pipelineExecutionStartCondition": "EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE"
+  },
+  "status": "ENABLED",
+  "tags": {
+    "Project": "safe-agents",
+    "ManagedBy": "safe-agents-image-builder"
+  }
+}

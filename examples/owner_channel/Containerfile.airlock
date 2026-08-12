@@ -1,0 +1,20 @@
+# owner-channel/Containerfile.airlock — a consumer airlock image (FICTIONAL example).
+#
+# The pattern a real consumer follows: FROM the base channels-airlock image, COPY in
+# your own ChannelsManifest, and point the handler at it. No base source is modified;
+# the manifest is the entire per-consumer surface. This one selects the owner adapter
+# (adapter.kind: owner) instead of the default signed-webhook.
+#
+# Build (after building the base image and passing its tag as AIRLOCK_BASE_IMAGE):
+#   podman build --platform linux/arm64 \
+#     --build-arg AIRLOCK_BASE_IMAGE=safe-agents-channels-airlock:dev \
+#     -t owner-channel-airlock:dev \
+#     -f examples/owner_channel/Containerfile.airlock examples/owner_channel
+ARG AIRLOCK_BASE_IMAGE
+FROM ${AIRLOCK_BASE_IMAGE}
+
+# Default = the fictional reference manifest; pass
+# --build-arg MANIFEST_FILE=channels-manifest-development.yaml for the dev-floor variant.
+ARG MANIFEST_FILE=channels-manifest.yaml
+COPY ${MANIFEST_FILE} /var/task/channels-manifest.yaml
+ENV CHANNELS_MANIFEST=/var/task/channels-manifest.yaml

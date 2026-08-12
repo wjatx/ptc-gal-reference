@@ -1,0 +1,15 @@
+# policies/test-stub.yaml — network-egress confinement policy for the test-stub agent.
+#
+# Under the broker model the agent process may reach only the broker endpoint and
+# api.anthropic.com. Connector IPs must never appear in agent_egress; all connector
+# traffic routes through the broker.
+#
+# Enforcement: confined netns + security group on EC2/Fargate arms. The broker
+# endpoint is implicitly added by the arm adapter at deploy time.
+
+agent_egress:
+  allow_hosts:
+    - api.anthropic.com    # model API (required for all arms)
+    # broker endpoint is added implicitly by the arm adapter; do not list it here
+    # as a raw IP — it will vary by environment
+  deny_by_default: true

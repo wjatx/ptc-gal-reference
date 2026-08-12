@@ -1,0 +1,73 @@
+# The peer airlock endpoint for demonstration 2 (#250 Phase 5).
+#
+# A fourth workload under a FIFTH ServiceAccount, holding nothing. It mounts no PVC
+# and no connector secret; the only thing it is given is the shared transport token,
+# which is the credential for talking TO it, not a credential it can spend.
+#
+# It runs `peer-receiver.py` off the drill ConfigMap on the same image every other leg
+# uses — deliberately not a second build (20-builds.yaml's whole argument).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: safe-agents-peer
+  namespace: safe-agents
+  labels:
+    app.kubernetes.io/name: safe-agents
+    app.kubernetes.io/component: peer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: safe-agents
+      app.kubernetes.io/component: peer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safe-agents
+        app.kubernetes.io/component: peer
+    spec:
+      serviceAccountName: safe-agents-peer
+      containers:
+        - name: peer
+          image: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-missileer:arc
+          imagePullPolicy: Always
+          command: ["python3", "/opt/drill/peer-receiver.py"]
+          ports:
+            - { name: http, containerPort: 8081 }
+          env:
+            - { name: PEER_PORT, value: "8081" }
+            - { name: PEER_TOKEN_HEADER, value: "x-peer-token" }
+            # The SAME per-run token the broker's peer descriptor carries. Minted by
+            # cluster-arc-run.sh and destroyed with the namespace; the receiver
+            # refuses to start without it, so an ungated endpoint cannot make the
+            # allowed branch look like it worked.
+            - name: PEER_TOKEN
+              valueFrom:
+                secretKeyRef: { name: safe-agents-peer-token, key: token }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 3
+            failureThreshold: 20
+          volumeMounts:
+            - { name: drill, mountPath: /opt/drill, readOnly: true }
+      volumes:
+        - name: drill
+          configMap:
+            name: safe-agents-drill-scripts
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: safe-agents-peer
+  namespace: safe-agents
+  labels:
+    app.kubernetes.io/name: safe-agents
+    app.kubernetes.io/component: peer
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: safe-agents
+    app.kubernetes.io/component: peer
+  ports:
+    - { name: http, port: 8081, targetPort: http }

@@ -1,0 +1,39 @@
+# agents/smoke-ec2.yaml — deployment manifest for a smoke-deploy of the EC2 arm.
+#
+# Purpose: proves the EC2 arm adapter (sa#33) end-to-end — provision → deploy →
+# smoke — in the development environment. Targets the test-stub agent (the
+# runner-contract reference implementation) so the smoke runs without a real
+# Claude session. The coordinator runs the live deploy; CI uses --dry-run.
+#
+# The pipeline reads this file with:
+#   python -m safe_agents.pipeline.cli agents/smoke-ec2.yaml --dry-run --env development
+
+name: smoke-ec2
+
+# ── Manifest (pipeline-facing) ────────────────────────────────────────────────
+# agent_package points the smoke phase at the conformance fixture (agents/test-stub)
+# rather than agents/smoke-ec2 (which does not exist as a package directory).
+agent_package: test-stub
+repo: git@github.com:controlled-agents/safe-agents.git
+deploy_key_secret: smoke-ec2/deploy-key
+arm: ec2                          # always-on EC2; broker co-placed as local sidecar
+policy: policies/smoke-ec2.yaml  # egress: broker endpoint + api.anthropic.com ONLY
+secrets:
+  runner_keys: smoke-ec2/runner-keys           # non-connector runtime config only
+  broker_connector_keys: smoke-ec2/broker-keys # connector creds → broker store ONLY
+  oauth_token: smoke-ec2/claude-oauth-token    # model brain; not a connector
+
+smoke:
+  read_only: true
+  prompt: >-
+    You are read-only. In ONE sentence, what does the test-stub agent do?
+  expect_substring: test
+
+# ── Envelope (broker-facing) ──────────────────────────────────────────────────
+envelope:
+  polarity: abstain             # silence is safe for this smoke stub
+  caps:
+    actions_per_run: 0          # no actions — smoke only
+  allowlists:
+    tools: []                   # no tools registered; smoke only
+  high_stakes: false

@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""
+destroy-image — tear down all bake artifacts for a safe-agents arm.
+
+Removes every artifact the Image Builder bake cycle created:
+  - Base AMIs tagged safe-agents:ami=base, plus their backing EBS snapshots.
+  - Image Builder pipeline, image build versions, recipe, infra-config,
+    dist-config, and component build versions.
+  - The S3 deploy bucket (empties it first, then deletes it).
+  - The Image Builder IAM role + instance profile.
+
+NEVER touches infra stacks (VPC, agentRole, DynamoDB tables, CloudFormation
+stacks). Those are owned by infra/ and removed via `cdk destroy`.
+
+Usage (from repo root):
+    cd core && .venv/bin/python bin/destroy-image [--env development] [--dry-run]
+
+Tip: run core/bin/teardown first to remove the arm instance; then run this
+script to remove the bake estate. Together they bring the full arm to ZERO
+orphans.
+"""
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+# Ensure the repo root is on sys.path so safe_agents.* is importable when run from repo root.
+_repo_root = Path(__file__).resolve().parent.parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
+from safe_agents.pipeline.aws_interface import LiveAWS  # noqa: E402
+from safe_agents.arms.ec2.ami.teardown import bake_teardown  # noqa: E402
+from safe_agents.arms.ec2.ami import teardown as ec2_bake  # noqa: E402
+from safe_agents.arms.rhel_openshell.ami import teardown as rhel_bake  # noqa: E402
+
+# Per-arm bake-artifact naming. The teardown engine (bake_teardown) is shared;
+# only the resource prefix / AMI tag / IB role+profile names differ per arm.
+_ARM_BAKE = {
+    "ec2": {
+        "ib_role_name": ec2_bake.DEFAULT_IB_ROLE_NAME,
+        "ib_profile_name": ec2_bake.DEFAULT_IB_PROFILE_NAME,
+        "ib_resource_prefix": ec2_bake.IB_RESOURCE_PREFIX,
+        "ami_tag_filter": ec2_bake.AMI_TAG_FILTER,
+    },
+    "rhel-openshell": {
+        "ib_role_name": rhel_bake.DEFAULT_IB_ROLE_NAME,
+        "ib_profile_name": rhel_bake.DEFAULT_IB_PROFILE_NAME,
+        "ib_resource_prefix": rhel_bake.IB_RESOURCE_PREFIX,
+        "ami_tag_filter": rhel_bake.AMI_TAG_FILTER,
+    },
+}
+
+# Back-compat aliases (default flag values reference the EC2 arm's names).
+DEFAULT_IB_ROLE_NAME = ec2_bake.DEFAULT_IB_ROLE_NAME
+DEFAULT_IB_PROFILE_NAME = ec2_bake.DEFAULT_IB_PROFILE_NAME
+IB_RESOURCE_PREFIX = ec2_bake.IB_RESOURCE_PREFIX
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="destroy-image",
+        description=(
+            "Tear down all bake artifacts for a safe-agents arm: AMIs, snapshots, "
+            "Image Builder resources, deploy bucket, and the IB IAM role+profile. "
+            "Idempotent: a second run is a clean no-op. "
+            "NEVER removes infra stacks."
+        ),
+    )
+    parser.add_argument(
+        "--env",
+        default="development",
+        choices=["development", "staging", "production"],
+        dest="environment",
+        metavar="ENV",
+        help="Deployment environment (selects the deploy bucket; default: development)",
+    )
+    parser.add_argument(
+        "--arm",
+        default="ec2",
+        choices=sorted(_ARM_BAKE),
+        dest="arm",
+        metavar="ARM",
+        help=(
+            "Which arm's bake artifacts to remove. Selects the resource-name "
+            "convention + AMI tag (ec2: safe-agents:ami=base; rhel-openshell: "
+            "safe-agents:ami=base-rhel). Default: ec2"
+        ),
+    )
+    parser.add_argument(
+        "--ib-role",
+        default=None,
+        dest="ib_role_name",
+        metavar="ROLE",
+        help=(
+            "IAM role name for the Image Builder build instance "
+            "(default: the selected arm's convention)"
+        ),
+    )
+    parser.add_argument(
+        "--ib-profile",
+        default=None,
+        dest="ib_profile_name",
+        metavar="PROFILE",
+        help=(
+            "IAM instance profile name for the Image Builder build instance "
+            "(default: the selected arm's convention)"
+        ),
+    )
+    parser.add_argument(
+        "--ib-prefix",
+        default=None,
+        dest="ib_resource_prefix",
+        metavar="PREFIX",
+        help=(
+            "Name prefix for Image Builder resources "
+            "(default: the selected arm's convention)"
+        ),
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Print what would be removed without removing anything",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=False,
+        help="Enable debug logging",
+    )
+    args = parser.parse_args()
+
+    # Fill unset --ib-* flags from the selected arm's naming convention.
+    arm_bake = _ARM_BAKE[args.arm]
+    if args.ib_role_name is None:
+        args.ib_role_name = arm_bake["ib_role_name"]
+    if args.ib_profile_name is None:
+        args.ib_profile_name = arm_bake["ib_profile_name"]
+    if args.ib_resource_prefix is None:
+        args.ib_resource_prefix = arm_bake["ib_resource_prefix"]
+    args.ami_tag_filter = arm_bake["ami_tag_filter"]
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.INFO,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+
+    if args.dry_run:
+        _print_dry_run_plan(args)
+        sys.exit(0)
+
+    aws = LiveAWS()
+    print(
+        f"Tearing down {args.arm!r} bake artifacts for "
+        f"environment={args.environment!r} ..."
+    )
+
+    report = bake_teardown(
+        aws,
+        environment=args.environment,
+        ib_role_name=args.ib_role_name,
+        ib_profile_name=args.ib_profile_name,
+        ib_resource_prefix=args.ib_resource_prefix,
+        ami_tag_filter=args.ami_tag_filter,
+    )
+
+    _print_report(report, args.environment)
+
+    # Exit non-zero only if nothing was removed AND nothing was expected to be gone
+    # already. A fully-empty run (all already-gone) is still success.
+    sys.exit(0)
+
+
+def _print_dry_run_plan(args) -> None:
+    """Print a teardown plan without making any AWS calls."""
+    from safe_agents.arms.ec2.ami.teardown import DEPLOY_BUCKET_TEMPLATE  # noqa: PLC0415
+
+    bucket = DEPLOY_BUCKET_TEMPLATE.format(environment=args.environment)
+    ami_tag = getattr(args, "ami_tag_filter", {"safe-agents:ami": "base"})
+    ami_tag_str = ",".join(f"{k}={v}" for k, v in ami_tag.items())
+    lines = [
+        "DRY-RUN: would remove the following bake artifacts",
+        f"  arm:                {args.arm}",
+        f"  environment:        {args.environment}",
+        "",
+        "  [Image Builder]",
+        f"  pipeline:           {args.ib_resource_prefix}-pipeline (by name prefix)",
+        f"  image build vers.:  all under {args.ib_resource_prefix}/* (list + delete each)",
+        f"  recipe:             {args.ib_resource_prefix} (by name prefix)",
+        f"  infra-config:       {args.ib_resource_prefix}-infra (by name prefix)",
+        f"  dist-config:        {args.ib_resource_prefix}-dist (by name prefix)",
+        f"  component bld vers: all under {args.ib_resource_prefix}/* (list-build-versions + delete)",
+        "    SHARP EDGE: components deleted by build-version ARN, not version ARN",
+        "",
+        "  [EC2 AMIs + snapshots]",
+        f"  AMIs:               tagged {ami_tag_str}",
+        "  snapshots:          backing snapshots for each AMI",
+        "",
+        "  [S3]",
+        f"  deploy bucket:      s3://{bucket} (empty then delete)",
+        "",
+        "  [IAM]",
+        f"  IB instance profile: {args.ib_profile_name}",
+        f"  IB role:            {args.ib_role_name} (detach managed policies first)",
+        "",
+        "  [NEVER removed]",
+        "  infra stacks (VPC / base agentRole / DynamoDB / CloudFormation stacks)",
+    ]
+    print("\n".join(lines))
+
+
+def _print_report(report: dict, environment: str) -> None:
+    """Print the removal report in a readable format."""
+    from safe_agents.arms.ec2.ami.teardown import DEPLOY_BUCKET_TEMPLATE  # noqa: PLC0415
+
+    bucket = DEPLOY_BUCKET_TEMPLATE.format(environment=environment)
+
+    def _list_or_none(key: str, label: str) -> None:
+        items = report.get(key, [])
+        if items:
+            print(f"  {label}:")
+            for item in items:
+                print(f"    {item}")
+        else:
+            print(f"  {label}: (none / already-gone)")
+
+    print()
+    print("Bake-artifact teardown complete.")
+    print()
+    print("Image Builder:")
+    _list_or_none("ib_pipelines_deleted", "  pipelines deleted")
+    _list_or_none("ib_images_deleted", "  image build versions deleted")
+    _list_or_none("ib_recipes_deleted", "  recipes deleted")
+    _list_or_none("ib_dist_configs_deleted", "  dist-configs deleted")
+    _list_or_none("ib_infra_configs_deleted", "  infra-configs deleted")
+    _list_or_none("ib_components_deleted", "  component build versions deleted")
+    print()
+    print("AMIs + snapshots:")
+    _list_or_none("amis_deregistered", "  AMIs deregistered")
+    _list_or_none("amis_already_gone", "  AMIs already gone")
+    _list_or_none("snapshots_deleted", "  snapshots deleted")
+    _list_or_none("snapshots_already_gone", "  snapshots already gone")
+    print()
+    print("S3:")
+    obj_count = report.get("bucket_objects_deleted", 0)
+    print(f"  s3://{bucket}: {obj_count} object(s) deleted")
+    if report.get("bucket_deleted"):
+        print(f"  bucket deleted: s3://{bucket}")
+    elif report.get("bucket_already_gone"):
+        print(f"  bucket already gone: s3://{bucket}")
+    print()
+    print("IAM:")
+    if report.get("ib_profile_removed"):
+        print("  instance profile removed")
+    else:
+        print("  instance profile: already-gone")
+    detached = report.get("ib_role_managed_policies_detached", [])
+    if detached:
+        print(f"  managed policies detached: {len(detached)}")
+        for arn in detached:
+            print(f"    {arn}")
+    if report.get("ib_role_deleted"):
+        print("  IAM role deleted")
+    elif report.get("ib_role_already_gone"):
+        print("  IAM role: already-gone")
+
+
+if __name__ == "__main__":
+    main()

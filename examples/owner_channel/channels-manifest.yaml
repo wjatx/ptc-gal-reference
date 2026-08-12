@@ -1,0 +1,56 @@
+# owner-channel/channels-manifest.yaml — FICTIONAL example consumer (sa#176 owner channel).
+#
+# The channels analogue of the broker AgentManifests in this directory: it wires the
+# inbound airlock ENTIRELY as config. Unlike webhook-peer (where a PEER agent POSTs a
+# full EventTrigger over the signed webhook), here a HUMAN OWNER sends a RAW command
+# over an authenticated transport (e.g. a chat app) and the owner adapter's `normalize`
+# CONSTRUCTS a fresh-chain EventTrigger from it. This manifest says which owner identity
+# is trusted, as which principal, and at what sender class. All values here are OBVIOUSLY
+# EXAMPLE — a real deployment supplies its own manifest in its own repo
+# (channels/ADAPTERS.md §"Reference bindings").
+#
+# This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
+
+# The receiver's provenance zone, stamped onto every accepted envelope at gate 8.
+zone: channels
+
+# The owner adapter (sa#176): the human owner proves authenticity with a shared secret
+# token in this header (the token itself lives in Secrets Manager, never in the
+# manifest). `kind: owner` selects OwnerInboundAdapter via ADAPTER_REGISTRY; the default
+# (kind absent) stays the signed-webhook adapter, so this is an explicit opt-in.
+adapter:
+  kind: owner
+  channel_type: owner
+  token_header: x-airlock-token
+
+# Friendly-name → principal indirection, consumed ONLY by the owner adapter's `normalize`
+# (a non-owner manifest that sets `routing` is a load error). The leading whitespace token
+# of the raw command is the address; a HIT here maps the friendly token to the deployment
+# principal, a MISS passes the raw token through as the *claimed* principal so gate 5
+# rejects it `principal_mismatch`. This is ergonomic indirection, NOT a second allow-list —
+# the trust map below stays the SOLE authorization authority (gate 5 never sees the token).
+# At N=1 every address maps to the one example principal; the reserved `/approve` and
+# `/flag` verbs are registered here too so an owner's approval / flag reply routes to the
+# same principal (a reserved verb absent here resolves to itself and gate-5-drops).
+routing:
+  "/observer": "owner-example-agent"
+  "/approve": "owner-example-agent"
+  "/flag": "owner-example-agent"
+
+# The trust map — exact-match membership, the ONLY place a sender becomes known. An empty
+# map (the base default) drops everything; this one row admits a single example owner.
+# channel_identity is matched against the adapter's NORMALIZED identity (`.strip().casefold()`),
+# so it is written lower-case here. sender_class `owner` is a FLOOR the airlock stamps at
+# gate 8 — it raises the owner's action surface but is NEVER a grant: the broker still
+# decides every call, and there is no owner auto-allow (channels/TRUST-MAPPING.md).
+trust_map:
+  - channel_type: owner
+    channel_identity: "owner@example.com"
+    principal: owner-example-agent
+    sender_class: owner
+
+# The injection screen is ABSENT ⇒ OFF — the friction-doctrine default
+# (docs/friction-doctrine.md). An authenticated owner command still rides through as
+# `owner` provenance; authenticity is not a bypass of the broker's per-call decision.
+verdict_sink: false
+dedupe_ttl_days: 30

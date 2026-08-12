@@ -1,0 +1,77 @@
+# The durability leg: a SECOND pod against the same PVC, running no ceremony.
+# Split into its own file so the driver can create it strictly AFTER the arc Job
+# has completed — they contend for a ReadWriteOnce volume, and a single file
+# applied at once would race them.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: safe-agents-serve
+  namespace: safe-agents
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safe-agents
+        app.kubernetes.io/component: serve
+    spec:
+      # The serving identity, NOT the checker: this leg runs no ceremony and
+      # signs nothing, so it gets no issuer Secret mounted at all. That the arc's
+      # output still serves without it is part of what the leg shows.
+      serviceAccountName: safe-agents-broker
+      restartPolicy: Never
+      containers:
+        - name: serve
+          image: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-missileer:arc
+          # A MUTABLE TAG NEEDS AN EXPLICIT PULL POLICY. `:arc` is not `:latest`,
+          # so Kubernetes defaults to IfNotPresent — and because every run
+          # rebuilds the SAME tag, a node that already has an older `:arc`
+          # silently keeps running it. That failure is quiet and misleading: the
+          # pod comes up healthy and fails somewhere unrelated to what changed.
+          # (Found here when a rebuilt image kept reporting the pre-Phase-3
+          # "cannot derive the ceremony identity from AWS STS", which is the
+          # correct behaviour of code that never heard of the new selector.)
+          imagePullPolicy: Always
+          command: ["bash", "/opt/drill/cluster-serve.sh"]
+          env:
+            - { name: BROKER_STORE, value: sqlite }
+            - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
+            # The #203 split — READ-ONLY here too, and that is free strengthening
+            # rather than a requirement of this phase. The serving broker runs
+            # BROKER_GRANT_LOAD=read, which is get_grant only and never a write,
+            # so it has no business holding write access to the grant space. It
+            # mirrors the cloud floor, where brokerRole is already read-only on
+            # the grants table.
+            - { name: BROKER_SQLITE_GRANTS_PATH, value: /var/lib/broker-grants/grants.db }
+            - { name: BROKER_SQLITE_GRANTS_READONLY, value: "1" }
+            - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
+            - { name: BROKER_SECRETS, value: dir }
+            - { name: BROKER_SECRETS_DIR, value: /run/connector-secrets }
+            # The #310 split. Its own mount, and this is the ONLY leg that gets
+            # it read-write — the tape records brokered calls, and this is the
+            # only leg that makes any. Note what that does and does not buy:
+            # a ceremony leg can no longer forge or erase these records, but the
+            # broker itself still can, and the unkeyed chain would re-verify
+            # clean afterwards. Defending the tape against its own writer needs
+            # off-device append-only durability, not a mount (#310).
+            - { name: BROKER_AUDIT_PATH, value: /var/lib/broker-audit/audit.jsonl }
+            - { name: BROKER_GRANT_LOAD, value: read }
+            - name: BROKER_HMAC_KEY
+              valueFrom:
+                secretKeyRef: { name: safe-agents-hmac, key: hmac-key }
+          volumeMounts:
+            - { name: store, mountPath: /var/lib/broker, subPath: work }
+            - { name: store, mountPath: /var/lib/broker-grants, subPath: grants, readOnly: true }
+            - { name: store, mountPath: /var/lib/broker-audit, subPath: audit }
+            - { name: connector-secrets, mountPath: /run/connector-secrets, readOnly: true }
+            - { name: drill, mountPath: /opt/drill, readOnly: true }
+      volumes:
+        - name: store
+          persistentVolumeClaim:
+            claimName: safe-agents-store
+        - name: connector-secrets
+          secret:
+            secretName: safe-agents-connector-secrets
+        - name: drill
+          configMap:
+            name: safe-agents-drill-scripts

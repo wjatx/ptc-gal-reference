@@ -1,0 +1,49 @@
+# The sqlite store, on a volume that OUTLIVES the pod.
+#
+# This claim is not the durability proof — a PVC in a YAML file is not evidence.
+# The proof is cluster-serve.sh running in a second pod and serving what the
+# first pod's ceremony wrote. This just gives it somewhere to survive.
+#
+# ReadWriteOnce is correct and not a limitation being worked around: the four
+# legs run SEQUENTIALLY (each pod reaches Completed before the next starts), and
+# one-writer-at-a-time is what a sqlite file wants anyway. If a future phase
+# needs the ceremony and the broker running concurrently, that is a
+# store-contract question, not a storage-class one.
+#
+# ONE claim, THREE subPaths (#203, #310). The asymmetry is per-volumeMount, which
+# is why one ReadWriteOnce claim is enough — a mount is read-only per container,
+# not per volume, and the kernel enforces it regardless of file ownership.
+#
+#   work/    the maker-writable scratch space: the working sqlite store, the
+#            snapshot, the proposal-id and ceremony-pods breadcrumbs. Read-write
+#            in every leg, and deliberately so — this is the half the legs use to
+#            hand work to each other.
+#   grants/  the checker-writable key space (GRANT#/RECORD#/TOOLDEF#/TOOLREC#).
+#            Read-only in the maker and serve pods (#203).
+#   audit/   the audit tape. Read-write in the BROKER pod alone; read-only in all
+#            three ceremony legs (#310).
+#
+# `audit/` is its own subPath and not a file in `work/` for a reason worth
+# stating, because the two-subPath version looked fine: the tape used to live in
+# the mutually-writable half, so every leg could rewrite every other leg's
+# records. The chain does not save you there — it is unkeyed SHA-256
+# (`broker/audit/_hash.py`), so anyone holding write access re-chains the whole
+# file end to end and the tape verifies clean. Read-only for non-writers IS the
+# control; the chain only detects an edit by someone who could not rewrite the
+# rest.
+#
+# What this does NOT buy: it does not defend the tape against the broker itself.
+# The one identity that must write the tape can also rewrite it, and no mount
+# topology fixes that — only off-device append-only durability does (S3 Object
+# Lock on the cloud floor; deliberately not taken here, #310).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: safe-agents-store
+  namespace: safe-agents
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""
+Teardown entrypoint — discover and remove all resources the arm provisioned.
+
+Usage:
+    python3 core/bin/teardown agents/smoke-ec2.yaml [--env development] [--dry-run]
+
+From the repo root (with core/ on sys.path via the venv):
+    cd core && .venv/bin/python bin/teardown ../agents/smoke-ec2.yaml --dry-run
+
+What it does:
+    Reads the agent deployment manifest, discovers every resource that
+    provision created (EC2 instances, per-agent instance profile, inline
+    IAM policy) by the standard tag set, and removes them.
+
+    NEVER removes infra foundation resources (VPC, base agentRole, DynamoDB
+    tables, or CloudFormation stacks). Those are owned by infra/ stacks.
+
+    Idempotent: safe to run twice — a second run is a clean no-op.
+"""
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+# Ensure the repo root is on sys.path so safe_agents.* is importable when run from repo root.
+_repo_root = Path(__file__).resolve().parent.parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
+from safe_agents.pipeline.pipeline import run_pipeline  # noqa: E402
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="teardown",
+        description=(
+            "Discover and remove all resources the EC2 arm provisioned for an agent. "
+            "Idempotent: a second run is a clean no-op."
+        ),
+    )
+    parser.add_argument(
+        "manifest",
+        help="Path to the agent deployment manifest YAML (e.g. agents/smoke-ec2.yaml)",
+    )
+    parser.add_argument(
+        "--env",
+        default="development",
+        choices=["development", "staging", "production"],
+        dest="environment",
+        metavar="ENV",
+        help="Deployment environment (default: development)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Print the teardown plan without removing anything",
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=False,
+        help="Enable debug logging",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+
+    manifest_path = Path(args.manifest).resolve()
+
+    result = run_pipeline(
+        manifest_path,
+        dry_run=args.dry_run,
+        environment=args.environment,
+        phases=("teardown",),
+    )
+    result.print_plan()
+    sys.exit(0 if result.success else 1)
+
+
+if __name__ == "__main__":
+    main()

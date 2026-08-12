@@ -1,0 +1,56 @@
+# confidence_budget/manifest.yaml — FICTIONAL example consumer for the confidence
+# knob (#184 — the calibrated-uncertainty floor, Pillar 4).
+#
+# The base ships the MECHANISM: the ConfidenceArtifact contract, the deterministic
+# meets_bar predicate, and the error_prob × blast_radius budget draw
+# (safe_agents/broker/schemas/evidence.py, broker/EVIDENCE.md). EVERY number below is
+# CONSUMER policy — a bar, a set of accepted methods, an error budget, blast weights.
+# The base never defaults one, and the below-bar POLARITY (what a below-bar write
+# routes to) is re-derived per agent (reporter_policy.py), never in the base.
+#
+# This is a broker-facing AgentManifest (broker/schemas/manifest.py, extra="forbid").
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: confidence-reporter
+  skill: reporter
+  user: data-consumer
+  tier: B
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+grant_classes:
+  - report.publish
+  - draft.save
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# report.publish: an external, IRREVERSIBLE write — the blast derivation reads this
+#   (external ∧ reversible is not True) and returns "high" all on its own.
+# draft.save: an internal write — derives to "medium"; the high_blast list below
+#   TIGHTENS it to high (a tighten-only demonstration).
+tool_ops:
+  - {tool: report, op: publish, effect: write, external: true, reversible: false}
+  - {tool: draft, op: save, effect: write, external: false}
+
+# ── Risk envelope ───────────────────────────────────────────────────────────
+# polarity: abstain — silence is the safe outcome for this reporter, so a below-bar
+# write becomes the broker's abstain + escalation (see reporter_policy.py). Every
+# number in the confidence block is THIS consumer's policy, not a base default.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_utc_day: 20        # consumer policy: at most 20 writes/op/day
+  allowlists:
+    tools:
+      - report.publish
+      - draft.save
+  confidence:
+    min_confidence: 0.85           # consumer policy: the per-call bar
+    methods: [self-consistency, conformal]   # consumer policy: accepted methods
+    error_budget_tolerance: 0.5    # consumer policy: per-UTC-day Σ error_prob × blast_radius
+    blast_weights:                 # consumer policy: the blast_radius per class
+      low: 0.0001
+      medium: 0.01
+      high: 1.0
+    high_blast:                    # tighten-only: an internal write this consumer
+      - draft.save                 # treats as high-blast anyway (never lowers a class)
+  high_stakes: true

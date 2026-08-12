@@ -1,0 +1,39 @@
+# owner-channel/channels-manifest-gal-development.yaml — the GAL terminal-proof (sa#4)
+# DEVELOPMENT-floor cutover variant. Identical to channels-manifest-development.yaml
+# except every route and the one trust-map row point at the FRESH principal
+# `gal-terminal-agent` (the trust map forbids duplicate (channel_type, channel_identity)
+# keys, so the owner identity maps to exactly ONE principal per manifest — this variant
+# DISPLACES the reference principal for the drill window, the same one-adapter-per-airlock
+# cutover that displaced webhook-peer). Baked in via
+# `--build-arg MANIFEST_FILE=channels-manifest-gal-development.yaml`.
+#
+# This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
+
+zone: channels
+
+adapter:
+  kind: owner
+  channel_type: owner
+  token_header: x-airlock-token
+
+# Reserved verbs `/approve` and `/flag` MUST be routed or they gate-5-drop.
+routing:
+  "/observer": "gal-terminal-agent"
+  "/approve": "gal-terminal-agent"
+  "/flag": "gal-terminal-agent"
+
+trust_map:
+  - channel_type: owner
+  # SET THIS to the deploying operator's own channel identity before deploying.
+  # It is an AUTHORIZATION row, not a label: whoever is named here is stamped
+  # sender_class `owner` at gate 8 and can drive /approve and /flag. A tracked
+  # example must therefore never carry a real address — copying this file with
+  # someone else's identity in it grants that person the owner surface. There is
+  # no env substitution in the manifest loader today, so this is a literal edit
+  # at deploy time (see #302 for making it a deploy-bound value).
+    channel_identity: "owner@example.com"
+    principal: gal-terminal-agent
+    sender_class: owner
+
+verdict_sink: false
+dedupe_ttl_days: 30

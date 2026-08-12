@@ -1,0 +1,26 @@
+{
+  "name": "safe-agents-base-rhel",
+  "description": "Base AMI for the safe-agents rhel-openshell arm: RHEL 9 x86_64 + toolchain + Claude Code CLI. Baked in CI (RHUI + internet egress); the deployed box needs no internet at runtime.",
+  "semanticVersion": "1.0.0",
+  "components": [
+    {
+      "componentArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:component/safe-agents-base-rhel/1.0.0"
+    }
+  ],
+  "parentImage": "${RHEL9_PARENT_AMI}",
+  "blockDeviceMappings": [
+    {
+      "deviceName": "/dev/sda1",
+      "ebs": {
+        "encrypted": true,
+        "volumeSize": 30,
+        "volumeType": "gp3",
+        "deleteOnTermination": true
+      }
+    }
+  ],
+  "tags": {
+    "Project": "safe-agents",
+    "ManagedBy": "safe-agents-image-builder"
+  }
+}

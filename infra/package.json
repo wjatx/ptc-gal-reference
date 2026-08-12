@@ -1,0 +1,25 @@
+{
+  "name": "@safe-agents/infra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "safe-agents platform foundation — layered CDK (Network / State / Identity)",
+  "license": "MIT",
+  "bin": {
+    "safe-agents-infra": "bin/safe-agents.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "synth": "cdk synth",
+    "test": "ts-node --prefer-ts-exts tests/conformance.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "aws-cdk": "2.1128.1",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.3"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "2.260.0",
+    "constructs": "^10.6.0"
+  }
+}

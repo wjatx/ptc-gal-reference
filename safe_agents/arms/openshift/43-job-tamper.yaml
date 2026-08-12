@@ -1,0 +1,68 @@
+# Leg 4 of 5 — the AUDIT TAMPER attempt, under the MAKER ServiceAccount (#310).
+#
+# Runs LAST, and the ordering is the whole point. The broker is the only leg that
+# writes the tape, and it runs immediately before this one, so by the time this
+# pod starts there are real records on the volume to go after. An attempt made
+# earlier — from the propose leg, say — would only show that a pod cannot create
+# a file in an empty directory, which is a much weaker sentence than the one this
+# leg is here to support:
+#
+#   a ceremony leg cannot forge or erase ANOTHER leg's records.
+#
+# Why it is a separate Job rather than a step inside cluster-propose.sh: the
+# claim is about a credential that is not the writer's, exercised against a
+# populated tape. Only a pod scheduled after the broker's can do that, and a Job
+# is how this arm expresses "a different pod, a different credential".
+#
+# This pod deliberately mounts almost nothing. No grant store, no issuer key, no
+# connector secrets, no HMAC key — the chain is unkeyed SHA-256, so verifying it
+# needs no credential at all, and that is itself part of demonstration 3:
+# "independently verifiable" means verifiable by something that is not the sink
+# that wrote it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: safe-agents-tamper
+  namespace: safe-agents
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safe-agents
+        app.kubernetes.io/component: tamper
+    spec:
+      # The MAKER, on purpose: the least-privileged ceremony credential, and the
+      # one whose exclusion from the grant store #203 already established. If it
+      # could rewrite the tape, "the maker cannot write a grant row" would be
+      # worth much less — it could simply erase the record of trying.
+      serviceAccountName: safe-agents-maker
+      restartPolicy: Never
+      containers:
+        - name: tamper
+          image: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-missileer:arc
+          # A MUTABLE TAG NEEDS AN EXPLICIT PULL POLICY — see 41-job-ratify.yaml.
+          imagePullPolicy: Always
+          command: ["bash", "/opt/drill/cluster-tamper.sh"]
+          env:
+            # Named so the script attacks the same path the broker was configured
+            # to write, rather than a path this file invented — a hardcoded
+            # string here could drift from 42-job-serve.yaml and the leg would go
+            # on passing while attacking nothing.
+            - { name: BROKER_AUDIT_PATH, value: /var/lib/broker-audit/audit.jsonl }
+          volumeMounts:
+            # The tape, read-only. This is the mount under test.
+            - { name: store, mountPath: /var/lib/broker-audit, subPath: audit, readOnly: true }
+            # The working half, read-write, exactly as the ceremony legs have it.
+            # It is here as a CONTROL: it proves this pod is not simply unable to
+            # write anything at all, which is what a misconfigured volume or a
+            # read-only root filesystem would look like from the inside.
+            - { name: store, mountPath: /var/lib/broker, subPath: work }
+            - { name: drill, mountPath: /opt/drill, readOnly: true }
+      volumes:
+        - name: store
+          persistentVolumeClaim:
+            claimName: safe-agents-store
+        - name: drill
+          configMap:
+            name: safe-agents-drill-scripts

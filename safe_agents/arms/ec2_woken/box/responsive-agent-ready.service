@@ -1,0 +1,38 @@
+# responsive-agent-ready.service — box-side drain loop for the ec2-woken arm (sa#34 seam, sa#98 loop).
+#
+# A systemd unit installed on the EC2 agent box. The box is booted by the airlock Lambda's
+# ec2:StartInstances; on boot this unit signals readiness (emit-runner-ready.sh) and then runs
+# the drain loop (drain.sh): drain the airlock SQS queue, run each message as a confined +
+# brokered agent turn (run-brokered.sh), then self-stop when idle so the box sleeps until the
+# next wake.
+#
+# Agent-agnostic + agent-name-parameterized: the per-agent config (AGENT_NAME, INBOUND_QUEUE_URL,
+# SA_BROKER_DNS, AGENT_RUNS_TABLE, AWS_DEFAULT_REGION, IDLE_POLLS, SA_OAUTH_SECRET_ID, ...) is
+# supplied by the EnvironmentFile the box provision writes at /etc/safe-agents/agent.env. Nothing
+# about any specific agent or channel is baked into this unit.
+#
+# Install (done by box_provision.py user-data, sa#98):
+#   install -m0755 emit-runner-ready.sh run-brokered.sh drain.sh   /opt/safe-agents/bin/
+#   install -m0644 drain_logic.py                                  /opt/safe-agents/bin/
+#   cp responsive-agent-ready.service                              /etc/systemd/system/
+#   systemctl enable --now responsive-agent-ready.service
+
+[Unit]
+Description=safe-agents ec2-woken drain loop (drain airlock SQS -> confined+brokered run -> self-stop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Per-agent config written by the box provision. One box serves one agent (no %i template).
+EnvironmentFile=/etc/safe-agents/agent.env
+# Signal readiness first, then run the drain loop. drain.sh self-stops the instance when idle.
+ExecStartPre=/opt/safe-agents/bin/emit-runner-ready.sh
+ExecStart=/opt/safe-agents/bin/drain.sh
+# The box holds the broker path only; the drain runs as an unprivileged, connector-credential-free
+# user. AWS control-plane calls (SQS, ec2:StopInstances) use the instance profile via IMDS.
+User=safe-agents
+Group=safe-agents
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+# self-stop-on-timeout.timer — box lifetime cap (sa#98 belt-and-suspenders).
+#
+# Fires self-stop-on-timeout.service once, 3h after boot. Installed + enabled by
+# box_provision.render_box_user_data alongside the drain loop. The drain loop's own idle
+# self-stop is the normal path; this timer only matters if that path hangs. Threshold matches the
+# operator alerter's default (observability/hung-ec2-alert, 3h) so the box caps its own cost at or
+# before the point the operator would be paged.
+
+[Unit]
+Description=safe-agents ec2-woken box lifetime cap timer (self-stop 3h after boot)
+
+[Timer]
+# 3h after boot. AccuracySec keeps the wake cheap; Persistent is irrelevant (boot-relative).
+OnBootSec=3h
+AccuracySec=1min
+Unit=self-stop-on-timeout.service
+
+[Install]
+WantedBy=timers.target

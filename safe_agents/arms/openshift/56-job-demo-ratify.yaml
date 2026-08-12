@@ -1,0 +1,75 @@
+# The checker half of the Phase 5 admission (#250 Phase 5).
+#
+# Its own file so the driver can order it strictly after the propose half — the same
+# reason the Phase 3 legs are split. A proposal must exist before it can be burned,
+# and the two contend for the ReadWriteOnce volume.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: safe-agents-demo-ratify
+  namespace: safe-agents
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safe-agents
+        app.kubernetes.io/component: demo-ratify
+    spec:
+      # The other credential. It is the only one with the issuer key mounted, and the
+      # only one whose mount of the grant space is writable.
+      serviceAccountName: safe-agents-checker
+      restartPolicy: Never
+      containers:
+        - name: ratify
+          image: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-missileer:arc
+          imagePullPolicy: Always
+          command: ["bash", "/opt/drill/cluster-demo-admit.sh", "ratify"]
+          env:
+            - { name: BROKER_CEREMONY_IDENTITY, value: serviceaccount }
+            - { name: BROKER_STORE, value: sqlite }
+            - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
+            - { name: BROKER_SQLITE_GRANTS_PATH, value: /var/lib/broker-grants/grants.db }
+            - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
+            - { name: BROKER_SECRETS, value: dir }
+            - { name: BROKER_SECRETS_DIR, value: /run/connector-secrets }
+            # The #226 issuer-key check refuses a group/other-readable file, and a
+            # projected Secret volume under an fsGroup gets 0440 OR-ed in regardless of
+            # defaultMode (#282) — so the check can never pass on the projection.
+            #
+            # ISSUER_SIGNING_KEY_FILE is NOT set here: the script stages a private 0600
+            # copy and exports the
+            # path itself, exactly as cluster-ratify.sh does. Pointing this at the
+            # projection would fail #226's mode check; pointing it at the staging dir
+            # before the copy exists would fail more confusingly.
+            - { name: PROJECTED_KEY, value: /run/issuer-projected/issuer.pem }
+            - { name: PRIVATE_KEY, value: /run/issuer-private/issuer.pem }
+            # The SAME key id the Phase 3 legs sign under (39-job-bootstrap.yaml,
+            # 41-job-ratify.yaml). A signer without one is refused outright — a record
+            # whose key_id no verifier can resolve is unverifiable evidence, so the
+            # refusal is correct. It must match, or this admission would be signed
+            # under an identity the rest of the ledger does not know.
+            - { name: ISSUER_SIGNING_KEY_ID, value: openshift-drill-issuer-1 }
+            - { name: ISSUER_SIGNING_ZONE, value: local }
+            - name: BROKER_HMAC_KEY
+              valueFrom:
+                secretKeyRef: { name: safe-agents-hmac, key: hmac-key }
+          volumeMounts:
+            - { name: store, mountPath: /var/lib/broker, subPath: work }
+            - { name: store, mountPath: /var/lib/broker-grants, subPath: grants }
+            - { name: connector-secrets, mountPath: /run/connector-secrets, readOnly: true }
+            - { name: issuer, mountPath: /run/issuer-projected, readOnly: true }
+            - { name: issuer-private, mountPath: /run/issuer-private }
+            - { name: drill, mountPath: /opt/drill, readOnly: true }
+      volumes:
+        - name: store
+          persistentVolumeClaim: { claimName: safe-agents-store }
+        - name: connector-secrets
+          secret: { secretName: safe-agents-connector-secrets }
+        - name: issuer
+          secret: { secretName: safe-agents-issuer }
+        # Memory-backed: the private copy never touches the PVC or a disk.
+        - name: issuer-private
+          emptyDir: { medium: Memory }
+        - name: drill
+          configMap: { name: safe-agents-drill-scripts }

@@ -1,0 +1,38 @@
+# Demonstration 1's caller (#250 Phase 5) — the agent again, in its own sandbox.
+#
+# Same ServiceAccount and same `component: agent` label as the other agent legs, so the
+# Phase 4 NetworkPolicy binds unchanged. That is load-bearing rather than tidy: act 0
+# of the script proves the sandbox is REAL (capabilities dropped, external egress
+# dropped) before act 2 claims it permitted anything, and it can only prove that if the
+# same policy that constrained the Phase 4 leg constrains this one.
+#
+# It mounts nothing but the drill scripts. `/tmp` is the container's own filesystem —
+# the agent writes and runs a program there, which is the point of act 1.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: safe-agents-demo-sandbox
+  namespace: safe-agents
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safe-agents
+        app.kubernetes.io/component: agent
+    spec:
+      serviceAccountName: safe-agents-agent
+      restartPolicy: Never
+      containers:
+        - name: demo
+          image: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-missileer:arc
+          imagePullPolicy: Always
+          command: ["bash", "/opt/drill/cluster-demo-sandbox.sh"]
+          env:
+            - { name: AGENT_BROKER_URL, value: "http://safe-agents-broker.safe-agents.svc:8080" }
+          volumeMounts:
+            - { name: drill, mountPath: /opt/drill, readOnly: true }
+      volumes:
+        - name: drill
+          configMap:
+            name: safe-agents-drill-scripts

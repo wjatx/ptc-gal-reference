@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""
+CLI: validate a single agent deployment manifest (sa#41).
+
+Usage:
+    python core/bin/validate-manifest agents/<name>.yaml [--offline] [--repo-root DIR]
+
+Combines load_manifest() (structural YAML checks) with validate_manifest_extended()
+(envelope + policy checks). Exits 0 on success, 1 on validation failure.
+
+--offline  Skip broker-dependent checks (default; safe until sa#12 lands).
+--repo-root DIR  Resolve policy file relative to DIR and check its content.
+                 When omitted, policy file content checks are skipped.
+"""
+import argparse
+import sys
+from pathlib import Path
+
+# Allow running as: python core/bin/validate-manifest ... (from repo root)
+# or from core/: python bin/validate-manifest ...
+_this_dir = Path(__file__).parent
+_repo_root = _this_dir.parent.parent
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
+from safe_agents.pipeline.manifest import ManifestError  # noqa: E402
+from safe_agents.pipeline.validate import validate_manifest  # noqa: E402
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="validate-manifest",
+        description=(
+            "Load and fully validate an agent deployment manifest. "
+            "Exits 0 on success, 1 on any validation failure."
+        ),
+    )
+    parser.add_argument(
+        "manifest",
+        metavar="MANIFEST",
+        help="Path to the agents/<name>.yaml manifest file.",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        default=True,
+        help=(
+            "Skip broker-dependent checks (default; safe until sa#12 lands). "
+            "This flag is accepted for explicitness."
+        ),
+    )
+    parser.add_argument(
+        "--repo-root",
+        metavar="DIR",
+        default=None,
+        help=(
+            "Resolve policy file relative to DIR and check its content. "
+            "When omitted, policy file content checks are skipped."
+        ),
+    )
+    args = parser.parse_args()
+
+    manifest_path = Path(args.manifest)
+    repo_root = Path(args.repo_root) if args.repo_root else None
+
+    try:
+        validate_manifest(manifest_path, repo_root=repo_root, offline=args.offline)
+    except ManifestError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"OK: {manifest_path}")
+
+
+if __name__ == "__main__":
+    main()

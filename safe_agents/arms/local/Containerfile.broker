@@ -1,0 +1,107 @@
+# Containerfile.broker — THE BASE BROKER IMAGE, and the local/Mac arm's broker box
+# (#98 two-box topology).
+#
+# Despite living under arms/local, this is not a local-only prototype: it is the base
+# of the whole consumer-broker image lineage (docs/broker-image-cutover.md). Consumers
+# build `FROM ${BASE_IMAGE}` and add only their own manifests/connectors —
+# examples/restricted_mcp_server, examples/alpaca_paper_drill, and a consumer agent's,
+# the last of which is what PRODUCTION runs. Anything changed here reaches all of them, so
+# changes must stay additive unless a consumer rebuild is being coordinated.
+#
+# Build from the REPO ROOT (it installs the safe-agents SDK + COPYs the model-proxy stub):
+#   podman build -t safe-agents-local-broker:dev -f safe_agents/arms/local/Containerfile.broker .
+#
+# One broker process serving the two surfaces the confined agent reaches over the network:
+#   :8443  model-inference forward proxy (allowlist api.anthropic.com)  [needs NAT egress]
+#   :8080  brokered tool-call API (the BrokerRuntime)
+#
+# The backends are env-selected, not baked (broker_server.py's three switches): the
+# memory arm keeps in-memory fakes for a smoke, and the durable arms take a real store,
+# audit tape and credential provider. The entrypoint starts BOTH surfaces; a deployment
+# that wants only the tool API overrides the command.
+FROM python:3.12-slim
+
+# Install the safe-agents SDK (sa#106) so `safe_agents.broker.*` resolves as an installed
+# package — a single source of truth for the runtime deps (pydantic, PyYAML) via pyproject,
+# rather than hand-maintained pins. The `aws` extra adds boto3, needed only when the stores are
+# DynamoDB-backed (BROKER_STORE=dynamo); boto3 stays lazy-imported in the broker library.
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY safe_agents ./safe_agents
+RUN pip install --no-cache-dir ".[aws]"
+
+# The model-proxy stub runs as a standalone script (not a module), so copy it to a fixed path.
+COPY safe_agents/arms/ec2/bootstrap/scripts/model-proxy-stub.py /app/model-proxy-stub.py
+COPY safe_agents/arms/local/broker-entrypoint.sh /app/broker-entrypoint.sh
+
+# --- Arbitrary-UID ("SCC-safe") hardening (#249) -----------------------------
+# OpenShift's default SCC IGNORES `USER` and runs the container as a random high
+# UID from the namespace's range, in GID 0, with no writable $HOME. So "non-root"
+# is not the property that matters — "works as an ARBITRARY UID" is, and this
+# image already had a non-root user while being broken for exactly that reason.
+# That is the trap: it looks solved.
+#
+# PROVENANCE — OBSERVED as of 2026-07-27, on OpenShift 4.20.29. This image was
+# built by an in-cluster BuildConfig and run under `restricted-v2` (annotation
+# checked, not assumed); the platform assigned `runAsUser=1000850000`,
+# `fsGroup=1000850000`, `runAsGroup` unset so the primary gid falls to 0. $HOME
+# was writable, /app stayed read-only, the projected secrets mount was readable,
+# and the ceremony arc ran to an executed brokered call
+# (safe_agents/arms/openshift/, #250 Phase 2). The paragraph above is no longer
+# a documentation claim.
+#
+# TWO THINGS THE EMULATION GOT WRONG, both discovered by that first real pod:
+#
+#   * A random UID DOES get an /etc/passwd entry. CRI-O synthesizes one, exactly
+#     as podman does — `1000850000:x:1000850000:0:1000850000 user:/home/broker:
+#     /sbin/nologin`. The podman drill's `--passwd=false` therefore makes the
+#     drill STRICTER than the platform rather than more faithful to it. Harmless
+#     as a test posture (running without an entry is a superset), but the
+#     rationale was false.
+#   * Consequently the ceremony identity does NOT degrade to
+#     `unknown-user@<host>`: `getpass.getuser()` resolves through the synthesized
+#     entry and the records read `local-solo:1000850000@<pod-name>#maker`. The
+#     note further down about that degradation describes the podman drill, not a
+#     pod.
+#
+# Which relocates why the $HOME hardening below is load-bearing. It is not that
+# the passwd lookup FAILS — it succeeds. It is that the synthesized entry's home
+# directory is whatever `ENV HOME` says, and on an image without one it is `/`,
+# which an arbitrary UID cannot write. Setting HOME explicitly is what makes the
+# lookup land somewhere real.
+#
+# The `broker` user and group STAY, and the hardening is purely additive. Three
+# consumer images build FROM this base and every one does `COPY
+# --chown=broker:broker` + `USER broker` — examples/restricted_mcp_server,
+# examples/alpaca_paper_drill, and a consumer agent's, which is what PRODUCTION runs
+# (docs/broker-image-cutover.md). Dropping the user to satisfy the SCC would be a
+# cross-repo break for no gain; both execution modes work as written below.
+#
+# Two things an arbitrary UID needs and this image did not give it:
+#
+#   * Group 0 must be able to write $HOME. OpenShift puts the random UID in GID 0,
+#     so root-group ownership plus group-write is the standard way to hand it a
+#     writable directory. /app is deliberately NOT made writable — application code
+#     the runtime user can rewrite is a posture regression, and nothing writes there
+#     (the sqlite db and the audit tape are both named-or-refuse and mounted).
+#   * HOME must not depend on where a passwd lookup POINTS. Setting it explicitly
+#     to the same path the `broker` user already gets keeps the podman run
+#     byte-for-byte and gives the arbitrary UID a real directory — and, as the
+#     first real pod showed, is also what the runtime-synthesized passwd entry
+#     inherits as its home field.
+#
+# NB under the podman drill's `--passwd=false` the ceremony's OS-derived operator
+# half degrades to `unknown-user@<host>` (`ceremony_identity._derive_operator`
+# survives a missing passwd entry). On a real pod it does not degrade — see the
+# provenance note above. Either way this is left ALONE deliberately: baking
+# LOGNAME=broker would make getpass.getuser() report an operator the process is
+# not running as, putting a false name in a signed ledger record. maker != checker
+# compares ROLES, not this string, so the security property is unaffected.
+RUN useradd -m broker \
+    && usermod -aG 0 broker \
+    && chgrp -R 0 /home/broker \
+    && chmod -R g=u /home/broker
+ENV HOME=/home/broker
+USER broker
+EXPOSE 8080 8443
+ENTRYPOINT ["bash", "/app/broker-entrypoint.sh"]

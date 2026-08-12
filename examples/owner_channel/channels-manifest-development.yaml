@@ -1,0 +1,47 @@
+# owner-channel/channels-manifest-development.yaml — the DEVELOPMENT-floor deployment
+# variant of channels-manifest.yaml (which stays the fictional reference). Same shape,
+# one real value: the trust map admits the actual dev-floor owner identity. Baked into
+# the dev airlock image via `--build-arg MANIFEST_FILE=channels-manifest-development.yaml`
+# (the webhook-peer screened-variant pattern).
+#
+# This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
+
+zone: channels
+
+# The owner adapter (sa#176): the human owner proves authenticity with a shared secret
+# token in this header (the token itself lives in Secrets Manager, never in the
+# manifest). `kind: owner` selects OwnerInboundAdapter via ADAPTER_REGISTRY.
+adapter:
+  kind: owner
+  channel_type: owner
+  token_header: x-airlock-token
+
+# Friendly-name → principal indirection, consumed ONLY by the owner adapter's
+# `normalize`. At N=1 every address maps to the one principal; the reserved `/approve`
+# and `/flag` verbs route an owner's approval / flag reply to the same principal (a
+# reserved verb absent here would resolve to itself and gate-5-drop as principal_mismatch).
+routing:
+  "/observer": "owner-example-agent"
+  "/approve": "owner-example-agent"
+  "/flag": "owner-example-agent"
+
+# The trust map — exact-match membership, the ONLY place a sender becomes known.
+# channel_identity is matched against the adapter's NORMALIZED identity
+# (`.strip().casefold()`), so it is written lower-case. sender_class `owner` is a FLOOR
+# stamped at gate 8 — never a grant: the broker still decides every call.
+trust_map:
+  - channel_type: owner
+  # SET THIS to the deploying operator's own channel identity before deploying.
+  # It is an AUTHORIZATION row, not a label: whoever is named here is stamped
+  # sender_class `owner` at gate 8 and can drive /approve and /flag. A tracked
+  # example must therefore never carry a real address — copying this file with
+  # someone else's identity in it grants that person the owner surface. There is
+  # no env substitution in the manifest loader today, so this is a literal edit
+  # at deploy time (see #302 for making it a deploy-bound value).
+    channel_identity: "owner@example.com"
+    principal: owner-example-agent
+    sender_class: owner
+
+# The injection screen is ABSENT ⇒ OFF — the friction-doctrine default.
+verdict_sink: false
+dedupe_ttl_days: 30

@@ -1,0 +1,197 @@
+schemaVersion: 1.0
+
+# safe-agents base-AMI component for the rhel-openshell arm (AWSTOE format).
+#
+# Target platform: x86_64 Red Hat Enterprise Linux 9 (OpenShell + this arm are
+# x86_64 only; arm64 is not supported).
+#
+# Bakes the exact internet-dependent toolchain the RHEL box installs at boot today
+# (user-data.sh.tmpl root essentials + bootstrap.sh autonomous 'always' steps), so
+# the deployed box — placed in the ISOLATED no-NAT agent subnet (sa#35) — needs no
+# internet to complete boot:
+#   - SSM agent            (user-data.sh.tmpl step 1; RHEL AMIs omit it)
+#   - AWS CLI v2 (x86_64)  (user-data.sh.tmpl step 4; RHEL AMIs omit it)
+#   - core dnf toolchain   (bootstrap/scripts/install-tools.sh)
+#   - Node.js 20.x         (bootstrap/scripts/install-tools.sh; needed by the Claude CLI)
+#   - uv + ruff            (bootstrap/scripts/install-python-env.sh)
+#   - Claude Code CLI      (bootstrap/scripts/setup-claude.sh — HARNESS-COUPLING block)
+#
+# The bake runs in CI where the RHUI repos (RHEL marketplace AMIs are RHUI-entitled)
+# and the internet are reachable. NONE of these installs run over the network at agent
+# runtime — that is the whole point of sa#109.
+#
+# RHEL-specific invariants (do NOT break these):
+#   - nftables is ALREADY present on the RHEL 9 marketplace AMI and is the NAT tool the
+#     arm's agent-netns-setup.sh uses. Do NOT install iptables — RHEL uses nft.
+#   - SELinux runs in Enforcing mode on RHEL AMIs; the arm relies on restorecon. This
+#     component MUST NOT disable SELinux (the validate phase asserts it stayed Enforcing).
+#
+# Deploy with:
+#   aws imagebuilder create-component \
+#     --name safe-agents-base-rhel \
+#     --semantic-version 1.0.0 \
+#     --platform Linux \
+#     --supported-os-versions '["Red Hat Enterprise Linux 9"]' \
+#     --data file://component-base.yaml \
+#     --region <REGION>
+#
+# HARNESS-COUPLING BLOCK: only the ClaudeCodeCLI step below couples safe-agents
+# to Claude Code specifically. All other steps are harness-neutral.
+# To swap harnesses: replace ONLY that step.
+
+phases:
+  - name: build
+    steps:
+      - name: UpdateOS
+        action: ExecuteBash
+        inputs:
+          commands:
+            # RHUI repos are reachable during the bake (marketplace AMI is RHUI-entitled).
+            - dnf update -y --quiet
+
+      - name: EnableRepos
+        action: ExecuteBash
+        inputs:
+          commands:
+            # EPEL: htop / bat / ripgrep live here, not BaseOS/AppStream (mirrors
+            # install-tools.sh). CRB is required by some EPEL packages on RHEL 9;
+            # both the RHUI and the standard repo names are tried.
+            - dnf install -y "https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm" || true
+            - dnf config-manager --set-enabled codeready-builder-for-rhel-9-rhui-rpms 2>/dev/null || dnf config-manager --set-enabled crb 2>/dev/null || true
+
+      - name: InstallToolchain
+        action: ExecuteBash
+        inputs:
+          commands:
+            # Core dnf toolchain — the exact BaseOS/AppStream set install-tools.sh installs.
+            # --allowerasing: RHEL 9 ships curl-minimal; installing full curl conflicts, so
+            #                 dnf swaps them instead of aborting.
+            # python3 / python3-pip — runner scripts + tooling.
+            # python3-pyyaml — the conformance harness imports yaml on the system python3;
+            #                  the harness arrives via S3 at boot but the import is at runtime.
+            # No iptables here: RHEL uses nftables (already on the AMI); agent-netns-setup.sh
+            # is nft-based. Baking iptables would fight the arm's nft NAT rules.
+            - >-
+              dnf install -y --allowerasing
+              git jq unzip tar curl wget buildah skopeo tree tmux vim make gcc gcc-c++
+              openssl-devel bzip2-devel libffi-devel zlib-devel readline-devel sqlite-devel xz-devel
+              python3 python3-pip python3-pyyaml
+            - dnf install -y htop bat ripgrep 2>/dev/null || true
+
+      - name: InstallGitHubCLI
+        action: ExecuteBash
+        inputs:
+          commands:
+            # gh (mirrors install-tools.sh). Repo add + install at bake time.
+            - dnf install -y 'dnf-command(config-manager)'
+            - dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
+            - dnf install -y gh
+
+      - name: InstallNode
+        action: ExecuteBash
+        inputs:
+          commands:
+            # Node.js 20.x LTS via NodeSource (mirrors install-tools.sh). Required by the
+            # Claude Code CLI installed below.
+            - curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+            - dnf install -y nodejs
+
+      - name: InstallSSMAgent
+        action: ExecuteBash
+        inputs:
+          commands:
+            # RHEL marketplace AMIs do not bundle the SSM agent (user-data.sh.tmpl step 1
+            # installs it at boot today). Bake it so the no-NAT box is SSM-manageable
+            # immediately. x86_64 RPM (this arm is x86_64 only).
+            - dnf install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+            - systemctl enable amazon-ssm-agent
+
+      - name: InstallAWSCLI
+        action: ExecuteBash
+        inputs:
+          commands:
+            # AWS CLI v2 via the official x86_64 installer (user-data.sh.tmpl step 4 does this
+            # at boot today). run-brokered.sh calls 'aws secretsmanager' + 'aws dynamodb' at
+            # runtime; the CLI must be pre-installed because the box has no internet then.
+            - curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+            - unzip -q /tmp/awscliv2.zip -d /tmp
+            - /tmp/aws/install
+            - rm -rf /tmp/aws /tmp/awscliv2.zip
+
+      - name: InstallPythonEnv
+        action: ExecuteBash
+        inputs:
+          commands:
+            # uv + ruff (mirrors install-python-env.sh). Installed to a system location so
+            # they are on PATH for the dev user at runtime. UV_TOOL_BIN_DIR is load-bearing:
+            # without it, `uv tool install` as root drops ruff into /root/.local/bin where
+            # the dev user's `command -v ruff` guard (install-python-env.sh) cannot see it,
+            # and the boot-time fallback install would then need egress the no-NAT box lacks.
+            - python3 -m pip install --upgrade pip
+            - curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+            - env UV_TOOL_BIN_DIR=/usr/local/bin /usr/local/bin/uv tool install ruff --force 2>/dev/null || python3 -m pip install ruff
+
+      # -- HARNESS-COUPLING BLOCK START --------------------------------------
+      # This step is the ONLY place this bake couples to Claude Code specifically
+      # (mirrors bootstrap/scripts/setup-claude.sh). All other steps are harness-neutral.
+      # To swap harnesses: replace ONLY this step.
+      #
+      # Installs the Claude Code CLI globally via npm (requires nodejs, above).
+      # Token injection happens at run time from Secrets Manager (run-brokered.sh), NOT here.
+      - name: ClaudeCodeCLI
+        action: ExecuteBash
+        inputs:
+          commands:
+            - npm install --global --quiet @anthropic-ai/claude-code
+      # -- HARNESS-COUPLING BLOCK END ----------------------------------------
+
+      - name: CreateDirectoryLayout
+        action: ExecuteBash
+        inputs:
+          commands:
+            # /opt/agents            — agent packages extracted here at boot.
+            # /opt/broker            — broker sidecar binary + credentials (brokerRole only).
+            # /opt/safe-agents/core  — platform/contract bundle lands here at boot (harness).
+            # /opt/safe-agents/bin   — the arm's confined-run executables (run-brokered.sh,
+            #                          agent-netns-setup.sh) install here; bootstrap restorecon's them.
+            - mkdir -p /opt/agents /opt/broker /opt/safe-agents/core /opt/safe-agents/bin
+            - chmod 755 /opt/agents /opt/broker /opt/safe-agents /opt/safe-agents/core /opt/safe-agents/bin
+
+      - name: VerifyInstalls
+        action: ExecuteBash
+        inputs:
+          commands:
+            # Fail the bake early rather than ship a broken AMI.
+            - git --version
+            - python3 --version
+            - node --version
+            - export PATH="/usr/local/bin:$PATH"; which claude
+            - aws --version
+            # nftables must be present (the arm's NAT tool). If this ever fails the AMI
+            # would break agent-netns-setup.sh — so assert it, and never install iptables.
+            - command -v nft
+            - test -x /usr/bin/amazon-ssm-agent -o -x /usr/local/bin/amazon-ssm-agent -o -f /usr/lib/systemd/system/amazon-ssm-agent.service
+
+  - name: validate
+    steps:
+      - name: ValidateDirectoryLayout
+        action: ExecuteBash
+        inputs:
+          commands:
+            - test -d /opt/agents
+            - test -d /opt/broker
+            - test -d /opt/safe-agents/bin
+            - export PATH="/usr/local/bin:$PATH"; which claude
+            - aws --version
+            # The harness imports yaml; verify the system python3 can import it.
+            - python3 -c "import yaml; print('pyyaml ok')"
+
+      - name: ValidateSelinuxAndNft
+        action: ExecuteBash
+        inputs:
+          commands:
+            # SELinux MUST remain Enforcing — the arm relies on restorecon; a bake that
+            # silently disabled it would be a latent confinement failure.
+            - test "$(getenforce)" = "Enforcing"
+            # nftables (the arm's NAT tool) present; iptables MUST NOT have been baked in.
+            - command -v nft

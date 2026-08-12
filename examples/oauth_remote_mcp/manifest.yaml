@@ -1,0 +1,118 @@
+# oauth_remote_mcp/manifest.yaml — FICTIONAL example consumer for REMOTE MCP
+# credential delivery (#237, MCP-HOST.md M25 / CONNECTOR-AUTH C10).
+#
+# The remote sibling of examples/oauth_api (which proves the oauth_refresh
+# strategy itself) and of examples/alpaca_paper_drill (which proves spawn-time
+# env_map delivery to a stdio MCP child). What is new here is the DELIVERY half
+# for a vendor-hosted MCP server: there is no child process, so there is no
+# environment to inject — the credential rides the request as a header.
+#
+# Note what this example does NOT contain: a connector class, a provider path, a
+# new auth strategy, or a line of consumer code. That is the point. The server is
+# natively constructed by build_runtime from `mcp_servers`, the credential is
+# resolved by the base's closed CredentialProvider catalog, and `header_map` is
+# pure data saying where the resolved credential goes. A consumer wiring a
+# vendor's authenticated MCP server writes only this file.
+#
+# See broker/CONNECTOR-AUTH.md ("Per-connect delivery") for the contract, and
+# safe_agents/broker/tests/test_mcp_remote_oauth.py for the wire-level proof
+# against a toy server that genuinely 401s an unauthenticated request.
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: oauth-remote-mcp-reader
+  skill: reader
+  user: research-consumer
+  tier: B
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+grant_classes:
+  - vendor_mcp.search_docs
+  - vendor_mcp.get_doc
+
+# ── Connectors ────────────────────────────────────────────────────────────────
+# The server_id must appear here or the manifest refuses at load: construction
+# config nothing wires is dead config. There is deliberately NO
+# connector_providers entry — a natively constructed MCP server supersedes the
+# provider class, and declaring both is refused as ambiguous.
+connectors:
+  - vendor_mcp
+
+# connector_secrets names the secret LEAF holding the long-lived REFRESH token
+# (never a value, never a full id — a bare leaf under <prefix>/connectors/,
+# sa#164). It is also the default leaf oauth_refresh would read; named
+# explicitly in params below for clarity.
+connector_secrets:
+  vendor_mcp: "vendor-mcp-refresh-token"
+
+# ── MCP server declaration — key #1 of two-key admission (#174) ───────────────
+# Remote transport: `url` instead of a spawn block. Same image-baked-only power
+# class as `command` — the envelope store loads an Envelope, which has no
+# mcp_servers field, so nothing store-loaded can point this at another host.
+# Declaring a tool here does NOT make it callable: an HMAC'd registry row
+# admitted through the maker≠checker ceremony must also activate it at a
+# matching discovery hash.
+mcp_servers:
+  vendor_mcp:
+    transport: "streamable-http"
+    url: "https://mcp.vendor.example/mcp"
+    tools:
+      - {tool_name: search_docs, structured_output: true}
+      - {tool_name: get_doc, structured_output: true}
+    # respawn is ON here, and for this consumer that is a CREDENTIAL decision as
+    # much as an availability one (M25). An expired access token surfaces as a
+    # transport-family death; the credential re-resolves per CONNECT, so the
+    # reconnect is what re-mints it. With respawn absent — the shipped default —
+    # the M19 fork would leave the session dead and the token would never be
+    # renewed. A remote server on an expiring credential wants this block.
+    respawn:
+      max_attempts: 2
+      backoff_seconds: 1.0
+
+# ── Credential resolution + delivery (#173 strategy, #237 delivery) ───────────
+# strategy: how the credential is OBTAINED. The broker reads the refresh token
+# from the named leaf and mints a short-lived access token via the refresh grant;
+# the refresh token never leaves the broker (doctrine 1). `client_secret_leaf` is
+# omitted because this is a public client — exactly the
+# `token_endpoint_auth_methods_supported: ["none"]` case.
+#
+# header_map: where the resolved credential GOES. `scheme: Bearer` frames the
+# minted token as `Authorization: Bearer <token>`. The scheme lives here, not in
+# the strategy, because it is transport framing rather than credential material —
+# which is why this whole feature needed no new AuthStrategy. It is validated as
+# a single RFC 7235 token, so it is a scheme name and never a template.
+connector_auth:
+  vendor_mcp:
+    strategy: oauth_refresh
+    params:
+      token_url: "https://auth.vendor.example/oauth/token"
+      client_id: "example-client"
+      refresh_token_leaf: "vendor-mcp-refresh-token"
+    header_map:
+      Authorization: {scheme: Bearer}
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# Every declared MCP tool MUST carry an external ToolOp or the manifest refuses:
+# the base classifies an MCP call by code-resident facts, never by anything the
+# server asserts at discovery time. `external: true` is structural for a remote
+# MCP tool — the server is outside the broker's trust boundary by construction,
+# and no server-advertised hint may lower it.
+tool_ops:
+  - {tool: vendor_mcp, op: search_docs, effect: read, external: true, egress_arg: query}
+  - {tool: vendor_mcp, op: get_doc, effect: read, external: true, egress_arg: doc_id}
+
+# ── Risk envelope ─────────────────────────────────────────────────────────────
+# polarity: abstain — silence is safe for a read-only researcher with no
+# effecting capability. trusted_read_sources is deliberately EMPTY: both tools
+# declare structured_output, so trusting them would be *legal*, and it is still
+# declined. A vendor-hosted server's output is someone else's text arriving over
+# someone else's TLS; the default (taint it) is the honest posture, and the knob
+# exists for sources a consumer genuinely controls.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 100
+  allowlists:
+    tools:
+      - vendor_mcp.search_docs
+      - vendor_mcp.get_doc

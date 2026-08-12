@@ -1,0 +1,56 @@
+# The maker half of the Phase 5 admission: a SECOND tool through the ceremony, under
+# the same two credentials (#250 Phase 5). Its pair is 56-job-demo-ratify.yaml, split
+# so the driver can order them strictly.
+#
+# The broker Deployment is scaled to ZERO while these run. That is the same
+# one-writer-at-a-time rule 30-storage.yaml states for the ceremony legs, and it has a
+# second effect worth naming: the broker's admitted-tool registry is built at boot, so
+# the restart afterwards is what makes the new admission visible. A broker left running
+# across this would keep serving the OLD registry and `list_entries` would still refuse
+# — with a perfectly correct-looking "never admitted" message.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: safe-agents-demo-propose
+  namespace: safe-agents
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: safe-agents
+        app.kubernetes.io/component: demo-propose
+    spec:
+      serviceAccountName: safe-agents-maker
+      restartPolicy: Never
+      containers:
+        - name: propose
+          image: image-registry.openshift-image-registry.svc:5000/safe-agents/safe-agents-missileer:arc
+          imagePullPolicy: Always
+          command: ["bash", "/opt/drill/cluster-demo-admit.sh", "propose"]
+          env:
+            - { name: BROKER_CEREMONY_IDENTITY, value: serviceaccount }
+            - { name: BROKER_STORE, value: sqlite }
+            - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
+            # Read-only here, exactly as in the Phase 3 propose leg (#203): the maker
+            # proposes, it does not write the grant key space.
+            - { name: BROKER_SQLITE_GRANTS_PATH, value: /var/lib/broker-grants/grants.db }
+            - { name: BROKER_SQLITE_GRANTS_READONLY, value: "1" }
+            - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
+            - { name: BROKER_SECRETS, value: dir }
+            - { name: BROKER_SECRETS_DIR, value: /run/connector-secrets }
+            - name: BROKER_HMAC_KEY
+              valueFrom:
+                secretKeyRef: { name: safe-agents-hmac, key: hmac-key }
+          volumeMounts:
+            - { name: store, mountPath: /var/lib/broker, subPath: work }
+            - { name: store, mountPath: /var/lib/broker-grants, subPath: grants, readOnly: true }
+            - { name: connector-secrets, mountPath: /run/connector-secrets, readOnly: true }
+            - { name: drill, mountPath: /opt/drill, readOnly: true }
+      volumes:
+        - name: store
+          persistentVolumeClaim: { claimName: safe-agents-store }
+        - name: connector-secrets
+          secret: { secretName: safe-agents-connector-secrets }
+        - name: drill
+          configMap: { name: safe-agents-drill-scripts }

@@ -1,0 +1,35 @@
+# Claude Code Remote Control — systemd USER service.
+# Faithful snapshot from a development harness (systemd/claude-remote-control.service).
+#
+# GATED: installed only in SA_PROFILE=interactive (bootstrap.sh copies this to
+# ~/.config/systemd/user/). NOT auto-enabled — requires a one-time interactive
+# /login before enabling. Autonomous agents never enable this service.
+#
+# Why a USER service (not system):
+#   1. Remote Control needs the user session environment to resolve the /login token.
+#   2. A *system* service can't exec from /home under SELinux (user_home_t -> 203/EXEC).
+#      The user manager is unconfined and can.
+#
+# One-time setup (over SSM, as the dev user):
+#     claude        # then: /login -> claude.ai, browser/device flow
+#     loginctl enable-linger "$USER"
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now claude-remote-control
+#     tmux attach -t rc          # view/take over
+#
+# Auth note: do NOT set CLAUDE_CODE_OAUTH_TOKEN — Remote Control rejects it.
+# It needs a full-scope claude.ai login (token cached in ~/.claude after /login).
+
+[Unit]
+Description=Claude Code Remote Control (tmux session 'rc')
+After=default.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/rhel-bootstrap/bin/start-remote-control.sh
+ExecStop=/bin/sh -c 'tmux kill-session -t rc 2>/dev/null || true'
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

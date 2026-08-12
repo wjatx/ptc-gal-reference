@@ -1,0 +1,34 @@
+# agents/smoke-rhel-openshell.yaml — deployment manifest for the RHEL+OpenShell arm smoke test.
+#
+# Purpose: proves the rhel-openshell arm adapter (sa#91) end-to-end
+# provision → deploy → smoke in the development environment. Targets the
+# test-stub agent (runner-contract reference implementation) so smoke runs
+# without a real Claude session. The coordinator runs the live deploy (#93);
+# CI uses --dry-run.
+#
+# The pipeline reads this file with:
+#   python -m safe_agents.pipeline.cli agents/smoke-rhel-openshell.yaml --dry-run --env development
+
+name: smoke-rhel-openshell
+
+# ── Manifest (pipeline-facing) ────────────────────────────────────────────────
+# agent_package points the smoke phase at the conformance fixture (agents/test-stub)
+# rather than agents/smoke-rhel-openshell (which does not exist as a package dir).
+agent_package: test-stub
+repo: git@github.com:controlled-agents/safe-agents.git
+deploy_key_secret: smoke-rhel-openshell/deploy-key
+arm: rhel-openshell
+policy: policies/smoke-rhel-openshell.yaml
+secrets:
+  runner_keys: smoke-rhel-openshell/runner-keys
+  broker_connector_keys: smoke-rhel-openshell/broker-keys
+  oauth_token: smoke-rhel-openshell/claude-oauth-token
+
+envelope:
+  polarity: abstain
+
+smoke:
+  read_only: true
+  prompt: >-
+    You are read-only. In ONE sentence, what does the test-stub agent do?
+  expect_substring: test

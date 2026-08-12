@@ -1,0 +1,109 @@
+# restricted_mcp_server/manifest.yaml — FICTIONAL example consumer for the
+# restrict-by-construction MCP archetype (#174, broker/MCP-HOST.md).
+#
+# The "missileer" of MCP hosts: a bespoke server (server.py) exposes ONLY safe,
+# read-only tools, so the dangerous op is ABSENT from the tool set — not merely
+# denied. This manifest declares the TWO-KEY MCP admission half (key #1, the
+# image-baked namespace) for exactly the tools the server exposes:
+#
+#   mcp_servers.ledger  — Layer 1 (code-provenance): the (server_id, tool_name)
+#                         namespace a later signed registry row may ACTIVATE. A
+#                         discovered tool outside this set is never admissible.
+#   tool_ops            — every declared MCP tool's external-read classification;
+#                         the manifest half must be COMPLETE (a declared tool with
+#                         no ToolOp refuses at load), so the broker classifies an
+#                         MCP call by code-resident facts, never the server's word.
+#
+# There is no append/delete/admin tool to declare here because the server exposes
+# none — restrict-by-construction removes the capability from existence, upstream
+# of anything the registry or the PDP would decide.
+#
+# Validated against broker/schemas/manifest.py (AgentManifest, extra="forbid").
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: ledger-reader
+  skill: reader
+  user: bookkeeping-consumer
+  tier: B
+
+# ── Granted action classes ────────────────────────────────────────────────────
+# The two reads plus ONE outbound capability: publish a digest to a peer agent's
+# airlock. peer.publish is what gives the M9 taint floor live teeth on this
+# principal — an UNTRUSTED MCP read (list_entries) taints the turn, so a
+# same-turn publish rides the STANDING tainted_external_write cut and escalates;
+# a TRUSTED read (get_entry, structured + trusted below) does not taint, so the
+# same publish flows. Both branches on one small surface.
+grant_classes:
+  - ledger.get_entry
+  - ledger.list_entries
+  - peer.publish
+
+# ── Connectors (names) ───────────────────────────────────────────────────────
+# `ledger` is constructed NATIVELY by build_runtime from the spawn config in
+# mcp_servers below (#221 — no connector_providers class in between); `peer` is
+# the base builtin transport connector (#172).
+connectors:
+  - ledger
+  - peer
+
+# ── MCP server namespace + native spawn config (#174 / #221) ──────────────────
+# Key #1 of two-key admission: the image-baked declaration of the ledger
+# server's tool namespace. Both tools return STRUCTURED output, so either may
+# legally be named in envelope.trusted_read_sources (below). Absent here →
+# uncallable no matter what any store row or the live server advertises.
+#
+# `command` makes the declaration SPAWNABLE: build_runtime composes the base
+# McpConnector + stdio_host_factory + the admitted-tool registry itself, and the
+# server runs as a stdio child of the broker task. The block names code to run,
+# so it is honored only from the image-baked manifest (same power class as
+# connector_providers; docs/config-provenance.md). python3 resolves on the
+# broker's PATH (the image's interpreter; the active venv on a laptop) and -m
+# resolves the module from the broker's cwd (/app in the image; the repo root
+# locally) — no cwd override needed.
+mcp_servers:
+  ledger:
+    command: python3
+    args: ["-m", "examples.restricted_mcp_server.server"]
+    tools:
+      - {tool_name: get_entry, structured_output: true}
+      - {tool_name: list_entries, structured_output: true}
+
+# ── Connector secret (sa#164 leaf convention) ─────────────────────────────────
+# The Doer resolves a credential for EVERY connector before dispatch, so even a
+# credential-less local MCP server needs a provisioned leaf (an empty-string
+# placeholder secret is fine). Bare LEAF, never a value or full path: resolved
+# under the broker secret prefix as <prefix>/connectors/ledger-mcp-placeholder.
+connector_secrets:
+  ledger: "ledger-mcp-placeholder"
+  # The peer transport descriptor ({url, token_header, token} JSON), same shape
+  # as examples/emailer — provisioned on the floor before the drill's publish leg.
+  peer: "peer-mcp-example"
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# Every declared MCP tool needs its external-read ToolOp: tool == server_id,
+# op == tool_name, external: true. An MCP tool response is an external read that
+# taints the turn (source connector:ledger.<tool_name>) unless trusted below.
+# get_entry egresses the agent-composed entry_id; list_entries' limit is a bounded
+# int, not a composed egress channel.
+tool_ops:
+  - {tool: ledger, op: get_entry, effect: read, external: true, egress_arg: entry_id}
+  - {tool: ledger, op: list_entries, effect: read, external: true}
+  - {tool: peer, op: publish, effect: write, external: true, reversible: true}
+
+# ── Risk envelope ─────────────────────────────────────────────────────────────
+# polarity: abstain — silence is the safe outcome for a read-only ledger reader.
+# trusted_read_sources: get_entry is a single-record structured lookup, so trusting
+# it (suppressing its response taint) is legal — it is structured_output: true.
+# Naming a free-text tool here would be REFUSED at manifest load.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 50
+  allowlists:
+    tools:
+      - ledger.get_entry
+      - ledger.list_entries
+      - peer.publish
+  trusted_read_sources:
+    - connector:ledger.get_entry

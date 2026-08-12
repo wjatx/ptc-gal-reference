@@ -1,0 +1,23 @@
+# Containerfile — the channels drain worker, as a Lambda container image (sa#155).
+#
+# Reference-tier (channels/DRAIN.md §"Reference binding"): the base image a
+# consumer FROMs to add its own AgentManifest + Receiver (see
+# examples/missileer/Containerfile.drain). Sibling of the airlock's base image
+# (safe_agents/channels/airlock/Containerfile) — same posture, different entrypoint.
+#
+# Build from the REPO ROOT (the build context is the repo root so `safe_agents`
+# and pyproject are visible), targeting arm64 to match the Lambda arch:
+#   podman build --platform linux/arm64 \
+#     -t safe-agents-channels-drain:dev \
+#     -f safe_agents/channels/drain/Containerfile .
+FROM public.ecr.aws/lambda/python:3.13
+
+# Install the safe-agents SDK (+ the `aws` extra for boto3) into the image;
+# pydantic and PyYAML arrive as base package deps. The pyproject is the single
+# source of truth for pins. WORKDIR is the Lambda task root (/var/task).
+COPY pyproject.toml README.md LICENSE ./
+COPY safe_agents ./safe_agents
+RUN pip install --no-cache-dir ".[aws]"
+
+# The Lambda runtime imports this dotted path and calls handler(event, context).
+CMD ["safe_agents.channels.drain.handler.handler"]

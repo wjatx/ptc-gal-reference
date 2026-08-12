@@ -1,0 +1,65 @@
+# The declarative half of the OpenShift arm: everything that can exist before an
+# image does.
+#
+#   oc apply -k safe_agents/arms/openshift/
+#
+# The Jobs are deliberately NOT here. They reference an ImageStreamTag that does
+# not exist until the BuildConfigs have run, so applying them with the rest would
+# just produce two pods in ImagePullBackOff. `cluster-arc-run.sh` applies
+# 40-jobs.yaml after the builds complete; that ordering is the driver's only real
+# job beyond minting the two per-run secrets.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - 00-namespace.yaml
+  - 10-serviceaccounts.yaml
+  - 20-builds.yaml
+  - 30-storage.yaml
+  - 31-connector-secrets.yaml
+  # Phase 4. The Service and the NetworkPolicies are declarative and image-free, so
+  # they belong here; the broker Deployment does NOT, for the same reason the Jobs
+  # do not -- it names an ImageStreamTag that has to be built first.
+  #
+  # Applying the policies EARLY is deliberate. They select pods by label, so they
+  # bind the moment the agent pod appears; applying them alongside the agent Job
+  # would leave a window in which the pod is running unconstrained, and a drill that
+  # passes in that window has proven nothing about the policy.
+  - 51-service-broker.yaml
+  - 60-networkpolicy.yaml
+
+# The drill scripts ride in as a ConfigMap rather than a third image layer, which
+# mirrors what the podman drill does with a bind mount and keeps the built image
+# identical to the one CI and the laptop build.
+configMapGenerator:
+  - name: safe-agents-drill-scripts
+    namespace: safe-agents
+    files:
+      # Sourced by the legs below, not executed. It has to ride in the same ConfigMap
+      # because `source "$(dirname "$0")/negative-proof.sh"` resolves inside the pod.
+      - negative-proof.sh
+      - cluster-bootstrap.sh
+      - cluster-propose.sh
+      - cluster-ratify.sh
+      - cluster-serve.sh
+      - cluster-tamper.sh
+      - cluster-agent.sh
+      # Phase 5. peer-receiver.py is a SCRIPT, not a leg — it rides here for the
+      # same reason the others do, so the peer needs no image of its own.
+      - peer-receiver.py
+      # #154. The unbrokered baseline — the control for every refusal in this arm.
+      - cluster-demo-baseline.sh
+      - cluster-demo-admit.sh
+      - cluster-demo-taint.sh
+      - cluster-demo-sandbox.sh
+      # Phase 6.1. Posture from inside a pod — the report generated where the
+      # containment is, rather than on a laptop describing it. Absent from the public
+      # reference implementation; drop this line there along with the two files.
+      - cluster-posture.sh
+
+# A name-suffix hash would be correct for a rolling Deployment (it forces a
+# restart when the content changes) and is wrong here: the Jobs name this
+# ConfigMap literally, and these are one-shot pods that are deleted and recreated
+# per run anyway.
+generatorOptions:
+  disableNameSuffixHash: true

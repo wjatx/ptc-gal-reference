@@ -1,0 +1,17 @@
+# policies/smoke-ec2.yaml — network-egress confinement policy for the smoke-ec2 box
+# (the AL2023/EC2 arm smoke fixture).
+#
+# Under the broker model the agent process may reach only the broker endpoint and
+# api.anthropic.com. Connector IPs must never appear in agent_egress; all connector
+# traffic routes through the broker.
+#
+# Enforcement on the EC2 arm: a confined network namespace whose only outbound route
+# is the broker, plus a domain-allowlisted broker model-proxy for api.anthropic.com.
+# The broker endpoint is added implicitly by the arm adapter at deploy time.
+
+agent_egress:
+  allow_hosts:
+    - api.anthropic.com    # model API (required for all arms; reached only via the broker proxy)
+    # broker endpoint is added implicitly by the arm adapter; do not list it here
+    # as a raw IP — it will vary by environment
+  deny_by_default: true

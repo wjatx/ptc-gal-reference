@@ -1,0 +1,97 @@
+# alpaca_paper_drill/manifest.yaml — the #221 Phase-1 drill consumer.
+#
+# DRILL-SCOPED: this manifest exists to prove the native MCP construction +
+# spawn-time env-auth path against a REAL third-party server
+# (alpaca-mcp-server, pinned) with PAPER keys, entirely on a laptop.
+# Production adoption of an Alpaca MCP surface is a consumer agent's later
+# decision, in its own repo, under its own GAL climb — never this file.
+#
+# The three declared tools are the CEILING, and the ceiling is read-only:
+# account info + market clock + one market-data lookup. Per the #221 epic
+# constraint, no order / position-closing / account-mutating tool ever enters
+# this block (test_manifest_validates.py machine-checks the absence — the
+# missileer posture applied to a server we DON'T control: the dangerous tools
+# exist server-side, so here they stay UNDECLARED, hence structurally
+# uncallable no matter what any store row or the live server advertises).
+#
+# Paper trading is pinned in the STATIC spawn env — manifest-declared, image-
+# baked, never left to the secret or the server default. The credential half
+# arrives via connector_auth.env_map (the two halves are disjoint at load):
+# the stored leaf's ALPACA_KEY/ALPACA_SECRET fields are renamed at spawn to
+# the ALPACA_API_KEY/ALPACA_SECRET_KEY vars the server expects — mapping as
+# data, no consumer code (CONNECTOR-AUTH.md C9).
+
+# ── Principal (drill-scoped) ──────────────────────────────────────────────────
+principal:
+  agentId: alpaca-paper-drill
+  skill: market-reader
+  user: drill-operator
+  tier: B
+
+# ── Granted action classes — reads only ───────────────────────────────────────
+grant_classes:
+  - alpaca.get_account_info
+  - alpaca.get_clock
+  - alpaca.get_stock_latest_quote
+
+# ── Connectors ────────────────────────────────────────────────────────────────
+# `alpaca` is constructed NATIVELY by build_runtime from the spawn config below.
+connectors:
+  - alpaca
+
+# ── MCP server namespace + native spawn config (#174 / #221) ──────────────────
+# Pinned version: a third-party server runs INSIDE the broker task, so the
+# version is part of the reviewed surface — an upgrade is a re-vet trigger (its
+# changed tool descriptions will drift-quarantine admitted tools; that is the
+# design working, plan the re-vet ceremony into any bump).
+mcp_servers:
+  alpaca:
+    command: uvx
+    args: ["alpaca-mcp-server==2.1.1"]
+    env:
+      ALPACA_PAPER_TRADE: "true"
+    tools:
+      - {tool_name: get_account_info, structured_output: true}
+      - {tool_name: get_clock, structured_output: true}
+      - {tool_name: get_stock_latest_quote, structured_output: true}
+
+# ── Connector secret (sa#164 leaf convention) ─────────────────────────────────
+# The leaf VALUE is a flat JSON string map: {"ALPACA_KEY": "...",
+# "ALPACA_SECRET": "..."} — field names as provisioned, renamed by env_map
+# below. Floor leaf <prefix>/connectors/alpaca-mcp-paper is Phase-2
+# provisioning; the local proof serves it from a 0600 BROKER_SECRETS_FILE.
+connector_secrets:
+  alpaca: "alpaca-mcp-paper"
+
+# ── Spawn-time credential delivery (#221, CONNECTOR-AUTH.md C9) ───────────────
+# strategy defaults to static_secret; env_map is the explicit allowlist — a
+# credential field not named here never reaches the child.
+connector_auth:
+  alpaca:
+    env_map:
+      ALPACA_API_KEY: ALPACA_KEY
+      ALPACA_SECRET_KEY: ALPACA_SECRET
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# All external reads. get_stock_latest_quote's symbol argument is agent-
+# composed egress; production adoption should declare its egress_arg once the
+# adopted server's schema is pinned (the drill leaves the query-egress knobs at
+# envelope defaults).
+tool_ops:
+  - {tool: alpaca, op: get_account_info, effect: read, external: true}
+  - {tool: alpaca, op: get_clock, effect: read, external: true}
+  - {tool: alpaca, op: get_stock_latest_quote, effect: read, external: true}
+
+# ── Risk envelope ─────────────────────────────────────────────────────────────
+# polarity: abstain — a read-only market reader that goes silent is safe.
+# No trusted_read_sources: every Alpaca response taints its turn (the floor
+# default); nothing here writes, so taint has no release valve to need.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_run: 25
+  allowlists:
+    tools:
+      - alpaca.get_account_info
+      - alpaca.get_clock
+      - alpaca.get_stock_latest_quote

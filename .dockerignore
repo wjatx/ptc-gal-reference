@@ -1,0 +1,28 @@
+# Build-context exclusions, shared by EVERY build path — the podman drill
+# (safe_agents/arms/local/container-arc-run.sh), the CI container-arc job, the
+# OpenShift BuildConfigs (safe_agents/arms/openshift/), and a consumer agent's
+# own image build. ONE context definition on purpose: a per-path exclusion
+# list is how the cluster and the laptop end up disagreeing about an image that
+# has the same name in both places.
+#
+# Nothing listed here is COPYed by any Containerfile. The base image copies
+# pyproject.toml, README.md, LICENSE, safe_agents/, and one ec2 bootstrap
+# script; consumer layers copy their own examples/ subdirectory.
+#
+# This exists because the context was 634 MB, of which ~570 MB was virtualenvs
+# and node_modules — irrelevant to a podman build on a warm cache, fatal to a
+# binary BuildConfig that uploads the context to the cluster on every build.
+
+.git
+.venv
+**/.venv
+infra/node_modules
+infra/cdk.out
+**/__pycache__
+**/*.pyc
+.pytest_cache
+**/.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage

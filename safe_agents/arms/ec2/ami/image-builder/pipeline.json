@@ -1,0 +1,17 @@
+{
+  "name": "safe-agents-base-pipeline",
+  "description": "Builds the safe-agents base AMI (AL2023 arm64) on demand or weekly. The bake runs in CI where internet egress exists; the resulting AMI is referenced by provision.py at deploy time.",
+  "imageRecipeArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:image-recipe/safe-agents-base/1.0.0",
+  "infrastructureConfigurationArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:infrastructure-configuration/safe-agents-base-infra",
+  "distributionConfigurationArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:distribution-configuration/safe-agents-base-dist",
+  "enhancedImageMetadataEnabled": false,
+  "schedule": {
+    "scheduleExpression": "cron(0 2 ? * SUN *)",
+    "pipelineExecutionStartCondition": "EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE"
+  },
+  "status": "ENABLED",
+  "tags": {
+    "Project": "safe-agents",
+    "ManagedBy": "safe-agents-image-builder"
+  }
+}

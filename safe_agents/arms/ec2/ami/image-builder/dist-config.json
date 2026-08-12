@@ -1,0 +1,23 @@
+{
+  "name": "safe-agents-base-dist",
+  "description": "AMI distribution configuration for the safe-agents base AMI. Tags the output AMI with the load-bearing safe-agents:ami=base tag so provision.py can select the newest bake by tag.",
+  "distributions": [
+    {
+      "region": "${AWS_REGION}",
+      "amiDistributionConfiguration": {
+        "name": "safe-agents-base-{{imagebuilder:buildDate}}",
+        "description": "safe-agents base AMI - AL2023 arm64 + toolchain + Claude Code CLI",
+        "amiTags": {
+          "safe-agents:ami": "base",
+          "safe-agents:ami-version": "{{imagebuilder:buildDate}}",
+          "Project": "safe-agents",
+          "ManagedBy": "safe-agents-image-builder"
+        }
+      }
+    }
+  ],
+  "tags": {
+    "Project": "safe-agents",
+    "ManagedBy": "safe-agents-image-builder"
+  }
+}

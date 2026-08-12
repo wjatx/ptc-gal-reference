@@ -1,0 +1,20 @@
+# Containerfile — the confined agent for the local/Mac arm (sa#39 / sa#98 prototype).
+#
+# A Podman container IS a netns + fs/pid isolation, so it is the local equivalent of the
+# RHEL/EC2 agent-ns: the container is the OpenShell-style sandbox (#39) AND the netns
+# egress boundary (#35/#97). The agent runs here as an unprivileged user; its only model
+# egress is the broker model-proxy on the host (HTTPS_PROXY). iproute2 is included so the
+# in-container confinement step can blackhole the default route and leave only the broker
+# reachable (Stage 2).
+FROM node:22-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends iproute2 curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# The model brain — same CLI the autonomous arms install.
+RUN npm install -g @anthropic-ai/claude-code
+
+RUN useradd -m agent
+USER agent
+WORKDIR /home/agent

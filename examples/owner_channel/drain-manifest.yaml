@@ -1,0 +1,83 @@
+# owner-channel/drain-manifest.yaml — FICTIONAL example consumer (owner-command inbound
+# archetype, the human-as-owner complement to webhook-peer's peer-agent archetype).
+#
+# owner-channel's airlock (channels-manifest.yaml) admits its one mapped owner and stamps
+# `sender_class: owner`; this manifest is the broker-facing side of the SAME consumer, so
+# an accepted owner COMMAND envelope can drain to a durable record. (An owner APPROVAL
+# envelope — `/approve <id> yes|no` — forks in the base drain handler to
+# approve_intent/reject_intent BEFORE the receiver runs, so it needs no grant here.) It is
+# abstain-safe by construction: the only granted op is an observation (ledger.append), and
+# no effecting op exists in the served registry to escalate to — a fully compromised drain
+# path can still only record the command it saw. sender_class `owner` raises the action
+# surface, never the outcome: the broker still decides every call.
+#
+# This is a broker-facing AgentManifest (broker/schemas/manifest.py, extra="forbid"),
+# distinct from the channels-side ChannelsManifest (channels-manifest.yaml) that gates the
+# airlock. grant_classes name base action classes; connectors resolve against the
+# manifest's connector_providers FIRST, then the base registry.
+
+# ── Principal (fictional) ─────────────────────────────────────────────────────
+principal:
+  agentId: owner-example-agent
+  skill: observer
+  user: owner-relay
+  tier: B
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+# Record what an accepted owner command said. No effecting op is granted — there
+# is nothing here for a compromised drain path to escalate into.
+grant_classes:
+  - ledger.append
+
+# ── Connectors (names; provider-first, then the base registry) ────────────────
+connectors:
+  - ledger
+
+# ── Consumer-supplied connector + secret mapping (the sa#141 seam) ────────────
+# owner-channel uses the base LedgerConnector (no connector_providers override needed),
+# but redirects it to its OWN Secrets Manager leaf so its ledger destination never
+# collides with the other examples' leaves. connector_secrets maps a connector to its
+# Secrets Manager LEAF (never a value, never a full id): the Doer fetches the leaf
+# `ledger-owner-example` instead of the default leaf `ledger`. That leaf is resolved under
+# the broker secret prefix — with BROKER_SECRET_PREFIX=safe-agents/development it becomes
+# `safe-agents/development/connectors/ledger-owner-example` (sa#164 bare-leaf rule).
+# Declare a bare leaf, never a pre-prefixed path, so the manifest stays env-agnostic and
+# inside the `<prefix>/connectors/*` IAM grant.
+#
+# The seeded credential JSON at that leaf is `{"bucket": <ledger-bucket>, "prefix":
+# "owner-channel/"}` — so, per LedgerConnector's key layout (<prefix><agent>/deltas/
+# <run_id>.jsonl), an accepted owner command's ledger_delta lands at
+# `owner-channel/owner-example-agent/deltas/evt-<digest>.jsonl`: credential prefix
+# `owner-channel/` (this consumer's own namespace) plus the agent segment
+# `owner-example-agent` (this manifest's principal, also `OwnerCommandReceiver`'s
+# `_AGENT_SEGMENT`).
+connector_secrets:
+  ledger: "ledger-owner-example"
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# The broker resolves the granted (tool, op) against THIS table; the base names no
+# op. Copied from the base copyable CATALOG (safe_agents.broker.manifest.CATALOG).
+tool_ops:
+  - {tool: ledger, op: append, effect: write, external: false, reversible: true}
+
+# counter_period (#212) is deliberately NOT declared here: the reference consumer
+# runs on the utc-day default (byte-for-byte the pre-#212 counter coordinate).
+# See drain-manifest-gal-terminal.yaml for the utc-hour development-speed variant.
+
+# ── Risk envelope ─────────────────────────────────────────────────────────────
+# polarity: abstain — silence is the safe outcome; recording nothing is always
+# safe here. Sized for a steady owner-command stream; see missileer/manifest.yaml
+# for the scoped-daily-budget note on the daily cap.
+# Cap tightened 100→80 (canonical #163 spelling) 2026-07-16: a REAL
+# envelope-affecting change, deliberately — the #206 far-jump drill needs the
+# in-force envelope hash to churn so the quarantine → ceremony re-seed
+# re-attestation path is exercised live. 80/day still clears the observed
+# owner-command volume by an order of magnitude.
+envelope:
+  polarity: abstain
+  caps:
+    actions_per_utc_day: 80
+  allowlists:
+    tools:
+      - ledger.append
+  high_stakes: false

@@ -1,0 +1,58 @@
+# owner-channel/drain-manifest-gal-terminal.yaml — the GAL terminal-proof FRESH principal
+# (sa#4 epic close). Identical in shape and envelope to drain-manifest.yaml; the ONLY
+# deltas are the principal identity and the receiver that pairs with it
+# (gal_terminal_receiver.py). Fresh on purpose: the terminal proof drills the whole grant
+# lifecycle from bootstrap on a grant with no drill-scarred history (GAL §12).
+#
+# Ledger layout note: this manifest reuses the owner-channel connector leaf
+# (ledger-owner-example), so records land under the same credential prefix but a distinct
+# agent segment: owner-channel/gal-terminal-agent/deltas/evt-<digest>.jsonl — no collision
+# with the reference principal's records.
+
+# ── Principal (the fresh GAL terminal-proof identity) ─────────────────────────
+principal:
+  agentId: gal-terminal-agent
+  skill: observer
+  user: owner-relay
+  tier: B
+
+# ── Granted action classes (served registry == exactly these) ─────────────────
+grant_classes:
+  - ledger.append
+
+# ── Connectors (names; provider-first, then the base registry) ────────────────
+connectors:
+  - ledger
+
+# ── Consumer-supplied secret mapping (sa#141 seam; sa#164 bare-leaf rule) ─────
+connector_secrets:
+  ledger: "ledger-owner-example"
+
+# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+tool_ops:
+  - {tool: ledger, op: append, effect: write, external: false, reversible: true}
+
+# ── Counter period (#212) — the time-scale knob, hour-bucketed HERE ───────────
+# This fresh-principal manifest is the development-speed lifecycle example: with
+# utc-hour, evidence windows / caps / dwell all bucket per UTC hour, so the full
+# GAL arc (accumulate → propose → promote → breach → demote → re-climb) runs in
+# ~an hour of genuinely elapsed periods instead of days. Authority-shaping →
+# image-baked here, never store-mutable; ceremony commands must name the SAME
+# period (--period utc-hour) or they read zero evidence. The reference consumer
+# (drain-manifest.yaml) deliberately stays on the utc-day default. NEVER a fake
+# clock — real time elapses, only the bucket size differs.
+counter_period: utc-hour
+
+# ── Risk envelope (same abstain-safe shape as the reference consumer) ─────────
+envelope:
+  polarity: abstain
+  caps:
+    # The honest spelling under counter_period: utc-hour (#212) — 100 appends
+    # per UTC HOUR here. Same field as actions_per_utc_day (validation alias;
+    # canonical dump key unchanged, so the envelope hash never churns on the
+    # spelling).
+    actions_per_period: 100
+  allowlists:
+    tools:
+      - ledger.append
+  high_stakes: false

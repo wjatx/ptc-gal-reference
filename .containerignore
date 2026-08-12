@@ -1,0 +1,8 @@
+# Keep build cruft out of Podman/Docker build contexts.
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.git
+**/node_modules
+infra/cdk.out

@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# cloud-init thin launcher — RHEL+OpenShell arm (arm=rhel-openshell), sa#91.
+#
+# Rendered by safe_agents/arms/rhel_openshell/provision.py from this template before
+# RunInstances. Template parameters (replaced at render time — never hardcoded here):
+#   {{name}}              agent name from the deployment manifest
+#   {{arm}}               arm identifier (always "rhel-openshell" for this template)
+#   {{oauth_token}}       Secrets Manager secret id for the Claude Code OAuth token
+#   {{environment}}       deployment environment: development|staging|production
+#   {{broker_dns}}        the broker SERVICE DNS (broker.safe-agents.local), sa#35
+#   {{agent_runs_table}}  the agent-runs DynamoDB table name (run records)
+#   {{region}}            deployment region (for the runtime AWS clients)
+#
+# Bootstrap model (re-derived clean from a development harness's infrastructure/dev-box.yaml):
+#
+#   This script is the ROOT-ONLY pre-bootstrap section. It performs the essentials
+#   that must run as root BEFORE handing off to the snapshotted bootstrap.sh:
+#
+#     1. Install SSM agent (RHEL marketplace AMIs omit it — must be first so we
+#        can always connect via Session Manager even if later steps fail).
+#     2. Set cgroups v2 delegation BEFORE the dev user's systemd manager starts
+#        (required by rootless podman + OpenShell sandbox creation).
+#     3. Create dev user with NOPASSWD sudo.
+#     4. Install AWS CLI v2 (RHEL marketplace AMIs also omit it).
+#     5. Pull agent code bundle from S3.
+#     6. Pull platform/contract bundle from S3 (harness at /opt/safe-agents/core/contract).
+#     7. Pull rhel-bootstrap bundle from S3 (the snapshotted bootstrap scripts).
+#     8. Invoke bootstrap.sh as the dev user — the heavy install (toolchain, podman,
+#        Claude Code, OpenShell, systemd units, broker sidecar stub) runs there.
+#
+#   The heavy install moved to bootstrap/ so this file stays well under the 25,600-byte
+#   cloud-init user-data limit (already gzip-encoded; provision.py compresses before upload).
+#
+# Two-identity split (arms.md + sa#33):
+#   Agent process  — agentRole instance profile; zero connector authority.
+#   Broker sidecar — brokerRole credentials injected separately; holds connector creds.
+#
+# Architecture references: core/arms.md §rhel-openshell, core/PORTING.md.
+set -euo pipefail
+
+AGENT_NAME="{{name}}"
+AGENT_ARM="{{arm}}"
+OAUTH_TOKEN_SECRET="{{oauth_token}}"
+ENVIRONMENT="{{environment}}"
+BROKER_DNS="{{broker_dns}}"
+AGENT_RUNS_TABLE="{{agent_runs_table}}"
+REGION="{{region}}"
+
+AGENT_DIR="/opt/agents/${AGENT_NAME}"
+LOG_FILE="/var/log/agent-bootstrap-${AGENT_NAME}.log"
+FAIL_MARKER="/var/log/agent-bootstrap-${AGENT_NAME}.FAILED"
+
+S3_BUCKET="safe-agents-${ENVIRONMENT}-deploy"
+S3_KEY="agents/${AGENT_NAME}/current/bundle.tar.gz"
+
+exec > >(tee -a "${LOG_FILE}") 2>&1
+set -x
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Bootstrap start: agent=${AGENT_NAME} arm=${AGENT_ARM} env=${ENVIRONMENT}"
+
+# Error handler: write a failure marker so post-boot inspection can detect a
+# silent cloud-init death without digging through the full log.
+_bootstrap_err() {
+    local _exit=$? _line=$LINENO _cmd="${BASH_COMMAND}"
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] BOOTSTRAP FAILED: exit=${_exit} line=${_line} cmd=${_cmd}"
+    echo "BOOTSTRAP_FAILED exit=${_exit} line=${_line} cmd=${_cmd}" > "${FAIL_MARKER}"
+}
+trap '_bootstrap_err' ERR
+
+# ── Step 1: SSM agent ─────────────────────────────────────────────────────────
+# RHEL marketplace AMIs do not bundle the SSM agent. Install it FIRST so that
+# Session Manager access is available even if later steps fail. RHEL uses the
+# linux_amd64 RPM (this arm is x86_64 only; OpenShell does not support arm64).
+dnf -y install \
+    https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm \
+    || true
+systemctl enable --now amazon-ssm-agent || true
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SSM agent installed and enabled"
+
+# ── Step 2: cgroups v2 delegation ─────────────────────────────────────────────
+# Rootless podman and OpenShell sandbox creation require cpu/cpuset/io/memory/pids
+# controller delegation on user@.service slices. This MUST be configured BEFORE the
+# dev user's systemd manager first starts — the user@ service template is read at
+# login time. Do not restart user@ here; that would kill the running bootstrap.
+mkdir -p /etc/systemd/system/user@.service.d
+printf '[Service]\nDelegate=cpu cpuset io memory pids\n' \
+    > /etc/systemd/system/user@.service.d/delegate.conf
+systemctl daemon-reload
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] cgroups v2 controller delegation configured (cpu cpuset io memory pids)"
+
+# ── Step 3: dev user ──────────────────────────────────────────────────────────
+# The agent process runs as 'dev' (non-root) to satisfy OpenShell rootless podman.
+id -u dev &>/dev/null || useradd -m -s /bin/bash dev
+echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-dev
+chmod 440 /etc/sudoers.d/90-dev
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] dev user created (NOPASSWD sudo)"
+
+# ── Step 4: AWS CLI v2 ────────────────────────────────────────────────────────
+# The prebuilt safe-agents RHEL AMI (sa#109) bakes the CLI into /usr/local/bin,
+# which is NOT on cloud-init's root PATH — export it BEFORE the guard. Only the
+# marketplace-AMI fallback installs from upstream; that needs egress, and this box
+# sits in the isolated no-NAT subnet, so an unconditional install would trip the
+# ERR trap here and kill bootstrap before the S3 bundle pulls even run.
+export PATH=/usr/local/bin:$PATH
+if command -v aws &>/dev/null; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AWS CLI already present (baked AMI): $(aws --version 2>&1)"
+else
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AWS CLI not found — marketplace AMI fallback, installing from upstream (requires egress)"
+    dnf -y install unzip
+    curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+    (cd /tmp && unzip -q awscliv2.zip && ./aws/install)
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AWS CLI v2 installed"
+fi
+
+# ── Step 5: Pull agent code bundle from S3 ────────────────────────────────────
+mkdir -p "${AGENT_DIR}"
+aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}" /tmp/agent-bundle.tar.gz
+tar -xzf /tmp/agent-bundle.tar.gz -C "${AGENT_DIR}" --strip-components=1
+rm -f /tmp/agent-bundle.tar.gz
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Agent bundle unpacked to ${AGENT_DIR}"
+
+# ── Step 6: Pull platform/contract bundle from S3 ─────────────────────────────
+PLATFORM_CONTRACT_KEY="platform/contract/bundle.tar.gz"
+mkdir -p /opt/safe-agents/core
+aws s3 cp "s3://${S3_BUCKET}/${PLATFORM_CONTRACT_KEY}" /tmp/platform-contract.tar.gz
+tar -xzf /tmp/platform-contract.tar.gz -C /opt/safe-agents/core
+rm -f /tmp/platform-contract.tar.gz
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Platform contract unpacked to /opt/safe-agents/core/contract"
+
+# ── Step 7: Pull rhel-bootstrap bundle from S3 ────────────────────────────────
+# The snapshotted bootstrap scripts (install-tools.sh, install-openshell.sh,
+# setup-claude.sh, etc.) are delivered via this bundle so bootstrap.sh does the
+# heavy install. This avoids keeping the full toolchain install in user-data and
+# keeps this file well under the 25,600-byte cloud-init limit.
+RHEL_BOOTSTRAP_KEY="platform/rhel-bootstrap/bundle.tar.gz"
+BOOTSTRAP_DIR="/home/dev/rhel-bootstrap"
+mkdir -p "${BOOTSTRAP_DIR}"
+aws s3 cp "s3://${S3_BUCKET}/${RHEL_BOOTSTRAP_KEY}" /tmp/rhel-bootstrap.tar.gz
+tar -xzf /tmp/rhel-bootstrap.tar.gz -C "${BOOTSTRAP_DIR}" --strip-components=1
+chown -R dev:dev "${BOOTSTRAP_DIR}"
+chmod +x "${BOOTSTRAP_DIR}/bootstrap.sh" "${BOOTSTRAP_DIR}/scripts/"*.sh 2>/dev/null || true
+rm -f /tmp/rhel-bootstrap.tar.gz
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] RHEL bootstrap bundle extracted to ${BOOTSTRAP_DIR}"
+
+# ── Step 8: Invoke bootstrap.sh as the dev user ───────────────────────────────
+# bootstrap.sh is the LIVE-VERIFIED, snapshotted install script. It runs as dev
+# (required for rootless podman + OpenShell user bus). The SA_* env vars are
+# passed through so bootstrap.sh can write the correct systemd units and sidecar.
+#
+# XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS are set so that `systemctl --user`
+# commands inside bootstrap.sh (and install-openshell.sh) can reach the dev user's
+# systemd manager (linger alone is not enough under `sudo -u dev`).
+loginctl enable-linger dev
+sudo -u dev -H \
+    SA_AGENT_NAME="${AGENT_NAME}" \
+    SA_OAUTH_TOKEN_SECRET="${OAUTH_TOKEN_SECRET}" \
+    SA_ENVIRONMENT="${ENVIRONMENT}" \
+    SA_ARM="${AGENT_ARM}" \
+    SA_PROFILE="${SA_PROFILE:-autonomous}" \
+    SA_BROKER_DNS="${BROKER_DNS}" \
+    SA_AGENT_RUNS_TABLE="${AGENT_RUNS_TABLE}" \
+    SA_REGION="${REGION}" \
+    bash -lc '
+      export PATH=/usr/local/bin:$HOME/.local/bin:$PATH
+      export XDG_RUNTIME_DIR=/run/user/$(id -u)
+      export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+      exec /home/dev/rhel-bootstrap/bootstrap.sh
+    '
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Bootstrap complete: agent=${AGENT_NAME}"
