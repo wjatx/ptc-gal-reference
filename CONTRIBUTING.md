@@ -28,30 +28,33 @@ runbooks; `infra/` is AWS CDK; `examples/` holds worked consumers. Start with
 [`docs/lf-notional-architecture.md`](docs/lf-notional-architecture.md) for how
 the pieces fit and [`ARCHITECTURE.md`](ARCHITECTURE.md) for the technical floor.
 
-## How this repository relates to its source
+## How this repository is maintained
 
-**This tree is extracted from a private working repository by a declared
-manifest.** You should know what that means before you spend an afternoon on a
-patch:
+**This repository is the canonical home for the implementation.** Work lands here,
+in `main`, and stays here. Nothing regenerates this tree, nothing is copied in from
+elsewhere, and no process reverts a merged change.
 
-- **Your contribution lands here, in `main`.** This repository is where PRs are
-  opened, reviewed and merged, including ours.
-- **We back-port accepted contributions into the private source before the next
-  extraction.** The extraction rebuilds this tree from the source, so a change
-  that exists only here would be reverted by the next one. Preventing that is our
-  job, not yours: a sync check lists every commit here that is not yet
-  represented in the source, and the extraction is blocked while that list is
-  non-empty.
-- **If you ever see a PR from us that reverts your merged change, that is a bug
-  in our process.** Say so on the PR. We would rather hear it loudly.
-- **Three files are generated and cannot be edited here:** `README.md`,
-  `LICENSE`, and `pyproject.toml`. They are produced by the extraction rather
-  than copied, so an edit to them would be overwritten. File an issue describing
-  the change instead and we will make it at the source.
+That was not always true. Until 2026-08-23 this tree was cut from a private working
+repository by a declared manifest, and contributions had to be back-ported there
+before the next cut or they would be silently erased. **That extraction is retired.**
+The private repository holds the design corpus, the working history and unreleased
+concepts behind this implementation; it no longer produces this tree, and this tree
+no longer waits on it.
 
-Nothing else in this tree is generated. Everything under `safe_agents/`,
-`docs/`, the contract directories, `examples/` and `infra/` is ordinary source
-you can edit in place.
+What that means for you as a contributor:
+
+- **Your contribution lands here and is durable.** Once merged to `main` it is part
+  of the implementation. There is no second tree it has to survive.
+- **Every file in this repository is ordinary source you can edit in place**,
+  including `README.md`, `LICENSE`, `pyproject.toml`, `CONTRIBUTING.md`,
+  `SECURITY.md` and `CODE_OF_CONDUCT.md`. These six were previously generated and
+  could not be edited here. That restriction is gone.
+- **The specifications live elsewhere and are governed separately.** PTC and GAL are
+  maintained at [wjatx/ptc-gal-standards](https://github.com/wjatx/ptc-gal-standards)
+  under the Community Specification License 1.0. A change to what a clause *requires*
+  belongs there. A change to how this implementation *satisfies* a clause belongs
+  here. When the two disagree, the specification is authoritative and the mismatch is
+  a bug in this repository.
 
 ## Setting up a dev environment
 
