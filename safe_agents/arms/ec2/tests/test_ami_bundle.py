@@ -496,12 +496,15 @@ def test_component_does_not_install_awscli2_via_dnf() -> None:
         )
 
 
-#: Any org's copy of this repo, in either clone spelling. Deliberately NOT the
-#: literal path: this assertion pinned `Third-Ralph/safe-agents` and the repo
-#: moved to `controlled-agents` (#290), at which point the guard would have
-#: passed no matter what the component cloned. A guard that names a mutable
-#: identifier stops guarding the moment that identifier changes, silently.
-_PRIVATE_REPO_CLONE = re.compile(r"github\.com[:/][\w.-]+/safe-agents")
+#: Any org's copy of this repo, under either name it has carried. Deliberately
+#: NOT a literal path: this assertion once pinned `Third-Ralph/safe-agents`, the
+#: repo moved org, and the guard would have passed no matter what the component
+#: cloned. It then pinned the name `safe-agents`, and the repo was renamed again.
+#: A guard that names a mutable identifier stops guarding the moment that
+#: identifier changes, silently, so both names are matched under any org.
+_PRIVATE_REPO_CLONE = re.compile(
+    r"github\.com[:/][\w.-]+/(?:safe-agents|ptc-gal-reference)"
+)
 
 
 def test_component_does_not_clone_private_repo() -> None:
