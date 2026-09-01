@@ -161,7 +161,7 @@ epic **#75**. No new issue; this is existing deferred work, and the paper is a r
 
 ## 8. Where this is worth citing
 
-`docs/lf-standards-brief.md:12-14` and `spec/PTC-SPEC.md:761-768` both assert the premise without an
+`docs/lf-standards-brief.md:12-14` and `ptc-gal-standards/PTC-SPEC.md:761-768` both assert the premise without an
 external citation. Both are review surfaces, and the LF brief is in front of a body that will probe
 overclaims. A peer-reviewed, quantified citation for "a system prompt is advice to the component
 under attack" is worth more there than anywhere else. Adding it is a separate edit, deliberately not
@@ -235,7 +235,7 @@ both directions: over-refusal (9.1, 9.3) and under-refusal (9.2).
 That matters here because three of our surfaces key their mitigation on an adversary being present,
 and none of them would fire on any of the three observations.
 
-- **`spec/GAL-SPEC.md` §8.1 (Evidence poisoning) keyed on taint. Fixed 2026-08-03.** The banked
+- **`ptc-gal-standards/GAL-SPEC.md` §8.1 (Evidence poisoning) keyed on taint. Fixed 2026-08-03.** The banked
   answer was taint-aware evidence windows, and the normative sentence was that deployments "SHOULD
   treat evidence windows overlapping known-tainted activity with suspicion at ratification".
   Grooming a promotion needs no tainted turn. Every prompt in 9.2 was clean, and a promotion
@@ -250,7 +250,7 @@ and none of them would fire on any of the three observations.
   judges *that* the agent went silent and never *why* (`:88-91`). 9.3 is that failure with no poison
   in it. The mechanism still catches it, because a timestamp comparison does not care about cause,
   but the doctrine's stated trigger is narrower than its own mechanism. Open as **#343**.
-- **`spec/PTC-SPEC.md:752-760` inherits the same framing** in the residual-risk section, where the
+- **`ptc-gal-standards/PTC-SPEC.md:752-760` inherits the same framing** in the residual-risk section, where the
   cost of tightening is otherwise stated well: "Every floor here answers a **poisoned input** by
   escalating or refusing." 9.3 was an agent that escalated nothing and refused everything, with no
   poisoned input anywhere in it. Open as **#343**, deliberately split from #342 so a GAL bump and a

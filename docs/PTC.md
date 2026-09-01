@@ -133,7 +133,7 @@ data must not influence a higher-integrity action without a logged endorsement):
   every inter-agent and agent-to-service call; PTC puts non-repudiation on the message instead. The
   properties are not equivalent: a signature survives the relay hops that terminate a TLS session,
   which is what a multi-zone mesh needs, while mTLS authenticates a peer the chain does not
-  otherwise identify. A deployment should do both. `spec/PTC-SPEC.md` §1.2 carries the normative
+  otherwise identify. A deployment should do both. `ptc-gal-standards/PTC-SPEC.md` §1.2 carries the normative
   wording; claiming conformance to the mTLS clause would be false.
 
 ## 7. Content model — replayable index, layered disclosure
@@ -183,7 +183,7 @@ Not a limitation, the correct expression of what PTC can currently prove.
 the provenance ceiling, but the response-time bound is independent — no provenance maturity shortens
 the window between a high-blast act and its detection, so GAL's always-human rule for high-blast
 still holds (signing raises the ceiling; it does not place a human inside the window).
-`spec/PTC-SPEC.md` §7 and `spec/GAL-SPEC.md` §6.4.4 are normative.
+`ptc-gal-standards/PTC-SPEC.md` §7 and `ptc-gal-standards/GAL-SPEC.md` §6.4.4 are normative.
 
 ## 10. Conformance & what already exists
 

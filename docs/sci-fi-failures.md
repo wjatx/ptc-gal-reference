@@ -525,8 +525,8 @@ a matter of the machine's character.
 
 ## Related
 
-- `docs/PTC.md` and `spec/PTC-SPEC.md`: the trust layer; the PTC-N clause IDs cited above.
-- `docs/GAL.md` and `spec/GAL-SPEC.md`: the autonomy layer; the GAL-N clause IDs cited above.
+- `docs/PTC.md` and `ptc-gal-standards/PTC-SPEC.md`: the trust layer; the PTC-N clause IDs cited above.
+- `docs/GAL.md` and `ptc-gal-standards/GAL-SPEC.md`: the autonomy layer; the GAL-N clause IDs cited above.
 - `ARCHITECTURE.md`: the three broker invariants and the seven base schemas.
 - `docs/friction-doctrine.md`: the gate-vs-log rule, and why most of these controls ship OFF.
 - `docs/deterministic-gate.md`: the model may only surface a concern; the gate decides.

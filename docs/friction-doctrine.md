@@ -3,9 +3,8 @@
 **Status: decided (2026-07-07).** This records the product-design rule that came out of the
 post-sa#137 review ("are we over-applying security at every granular step an agent can take?"),
 so future gating features are weighed against it instead of re-litigating the tradeoff. The
-repo already has a rule for *where code lives* (base vs consumer — see `broker-debaking-epic.md`
-and the pattern-not-instance discipline); this is the companion rule for *when to gate vs when
-to observe*.
+repo already has a rule for *where code lives* (base vs consumer — the pattern-not-instance
+discipline); this is the companion rule for *when to gate vs when to observe*.
 
 ## The problem it fixes
 
@@ -54,7 +53,7 @@ costs trust-center complexity (rules, facts, audits) even at zero consumer frict
 ## Availability / forced-abstention — a per-polarity floor concern (sa#159)
 
 **Status: decided (2026-07-09); promoted to the normative spec tier 2026-07-25.** This section is
-now the design rationale behind `spec/PTC-SPEC.md` §6.12 and clauses PTC-42/PTC-43, which state the
+now the design rationale behind `ptc-gal-standards/PTC-SPEC.md` §6.12 and clauses PTC-42/PTC-43, which state the
 liveness contract and the de-amplify-never-shed rule as conformance requirements. Change this
 section and the spec together, or they drift; the spec is what an external implementer reads.
 

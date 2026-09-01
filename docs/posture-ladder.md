@@ -6,7 +6,7 @@ to it was citing something unwritten. This document is the referent.
 
 **A word this ladder deliberately does not use.** Its positions were called "rungs" until
 2026-08-11, when that word was reserved for the *autonomy* ladder, which is normative in
-`spec/GAL-SPEC.md` §4.1 and implemented in `safe_agents/broker/grants/rung.py`. Two ladders sharing
+`ptc-gal-standards/GAL-SPEC.md` §4.1 and implemented in `safe_agents/broker/grants/rung.py`. Two ladders sharing
 one word is a homonym a reader has no way to resolve, and the autonomy sense is the filed one, so
 the posture sense moved. A position here is a **posture**: posture 1, posture 2, posture 3. See
 `GLOSSARY.md` for the reservation and both ladders side by side.

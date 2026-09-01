@@ -1,8 +1,8 @@
 # Canonical-serialization migration — runbook
 
 Written 2026-07-28, NOT YET EXECUTED. Companion to `docs/operator-identities.md` (who runs what
-under which role) and to `archives/2026-07-25-246-epoch-cut/README.md` (the #246 precedent this
-follows). The change it migrates: `canonical_grant_payload` and `proposal_to_json` were sorted-keys
+under which role); it follows the precedent set by the #246 epoch cut. The change it migrates:
+`canonical_grant_payload` and `proposal_to_json` were sorted-keys
 + ASCII but **not compact**, so they emitted Python's default `", "` / `": "` whitespace. Both now
 use `separators=(",", ":")`, matching `canonical_record_payload`, `canonical_ack_payload` and
 `safe_agents/channels/signing.py`. The rule is stated normatively in `broker/SCHEMAS.md` §1 and pinned by
@@ -85,8 +85,8 @@ manifest's granted classes; **never `Scan` from an acting role** — no acting r
 **1. Archive (the epoch cut, a git-tracked ceremony artifact).** Export the exact `GRANT#` and
 `RECORD#` items verbatim into `archives/<date>-canonicalization/<ENV>-grants-pre-canonical.json`,
 with a `README.md` stating what the artifact is, why delete+re-mint rather than transform, and the
-provenance (session summary reference). Follow
-`archives/2026-07-25-246-epoch-cut/README.md` for the wording.
+provenance (session summary reference). Match the wording convention the #246 epoch cut
+established.
 
 **2. Delete the archived `GRANT#` and `RECORD#` items.** Leave `ENVELOPE#`, `PROPOSAL#`, `ACK#` and
 every MCP item alone — none of them changed shape.

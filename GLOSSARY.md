@@ -236,7 +236,7 @@ something different at each. See `docs/posture-ladder.md`.
 
 **Why these are not "rungs".** Both ladders were called ladders and both had their positions called
 rungs, which left one word meaning two things in documents that use both. **Bare "rung" is
-reserved for the autonomy ladder** [ruled 2026-08-11], where it is normative in `spec/GAL-SPEC.md`
+reserved for the autonomy ladder** [ruled 2026-08-11], where it is normative in `ptc-gal-standards/GAL-SPEC.md`
 §4.1 and implemented as `safe_agents/broker/grants/rung.py`; a position on the posture ladder is a
 **posture**. The design corpus in the sibling `auto-agents` repository reserves the word the same
 way. A sentence that says "rung" and means deployment posture is stale, not a third sense.

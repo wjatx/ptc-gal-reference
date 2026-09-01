@@ -159,7 +159,7 @@ says so, the drill says so, and the report could just repeat it. A report that r
 manifests assert is a manifest summary wearing a report's clothes, and this audience is best
 equipped to catch precisely that.
 
-So the honest split is: `cluster.py` reports what it can **observe** from inside the pod — the
+So the honest split is: the posture command reports what it can **observe** from inside the pod — the
 ServiceAccount it runs as, the uid and capability mask the SCC left it, which authority mounts
 exist — and for the two refusals it reports `unknown` and **names `cluster-agent.sh`**, which
 attempts them for real a few steps earlier. The drill proves them; the report declines to take
@@ -436,7 +436,9 @@ names what its neighbours do better is easier to trust about what it claims for 
   grant, secret or mount: a stdio child has no network surface for the egress policy to allow and
   needs no credential, which is the restrict-by-construction archetype paying off in the leg that
   was added last.
-- `59-job-posture.yaml` / `cluster-posture.sh` — Phase 6.1. Runs under the **agent**
+- The Phase 6.1 posture leg — **not shipped in this tree** (it reports through a product wrapper
+  this repository does not include, so its Job and driver script are absent; see the note at the
+  top of `kustomization.yaml`). Where it runs, it runs under the **agent**
   ServiceAccount and carries the agent's pod label, so the report is generated under the same
   SCC and the same default-deny egress policy as the workload it describes. A posture report
   produced in an unconstrained pod would observe an unconstrained pod and say so correctly,

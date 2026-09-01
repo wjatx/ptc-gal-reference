@@ -4,8 +4,8 @@
 > them. This document states what the reference implementation supports, what it does not, and
 > where its evidence stops. It is written to be probed.
 >
-> Specifications: `PTC-SPEC.md` and `GAL-SPEC.md`, licensed `Community-Spec-1.0`. The reference
-> implementation is licensed Apache-2.0.
+> Specifications: `ptc-gal-standards/PTC-SPEC.md` and `ptc-gal-standards/GAL-SPEC.md`, licensed
+> `Community-Spec-1.0`. The reference implementation is licensed Apache-2.0.
 
 ## What it is
 

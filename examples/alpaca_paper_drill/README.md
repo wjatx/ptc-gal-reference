@@ -5,8 +5,7 @@ against a REAL third-party server: Alpaca's official `alpaca-mcp-server`
 (pinned `==2.1.1`), paper keys only — first entirely on a laptop (Phase 1,
 2026-07-18), then through a DEPLOYED broker task on the `development` floor
 (Phase 2, 2026-07-19: `Containerfile.broker` here is that consumer image —
-uvx-in-image with a pre-warmed pinned cache; the floor datum lives in
-`session-summaries/2026-07-19-mcp-221-phase2-floor-drill.md`).
+uvx-in-image with a pre-warmed pinned cache).
 
 This is **drill scope**, not production adoption. Production adoption of an
 Alpaca MCP surface is a consumer agent's later decision, in its own repo, behind
@@ -64,7 +63,7 @@ set -a && source ~/.secrets/alpaca.txt && set +a && \
 
 - **The pin is load-bearing.** A version bump changes tool descriptions →
   admitted tools drift-quarantine at connect. That is the design working; plan
-  the re-vet ceremony into any upgrade (`NEXT_SESSION-mcp.md`).
+  the re-vet ceremony into any upgrade.
 - **Toolset filtering exists server-side** (`ALPACA_TOOLSETS`, v2): a Phase-2
   floor image can additionally shrink the advertised set (e.g.
   `account,stock-data`) — missileer-style absence UNDER the broker's admission

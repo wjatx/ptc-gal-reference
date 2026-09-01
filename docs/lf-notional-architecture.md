@@ -5,8 +5,8 @@
 > objects that cross those boundaries, and what happens on a single tool call. It is descriptive
 > rather than normative. Where this document and a specification disagree, the specification wins.
 >
-> Specifications: `PTC-SPEC.md` (Provenance & Trust Context) and `GAL-SPEC.md` (Grant & Autonomy
-> Lifecycle). Licensed `Community-Spec-1.0`.
+> Specifications: `ptc-gal-standards/PTC-SPEC.md` (Provenance & Trust Context) and
+> `ptc-gal-standards/GAL-SPEC.md` (Grant & Autonomy Lifecycle). Licensed `Community-Spec-1.0`.
 
 ## The one commitment everything else follows from
 

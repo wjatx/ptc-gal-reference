@@ -6,7 +6,7 @@
 > **built, live-drilled end-to-end, and its epic is closed** (sa#4, 2026-07-15 — §11/§12). The
 > name **GAL is final** (maintainer, 2026-07-24); code and schemas stay name-agnostic regardless, as good
 > practice rather than as a naming hedge (same rule as PTC). The normative draft is
-> `spec/GAL-SPEC.md`. The state machine itself is contract-tier in
+> `ptc-gal-standards/GAL-SPEC.md`. The state machine itself is contract-tier in
 > `broker/grant-lifecycle.md` — this doc is the protocol spine over it: the industry position,
 > the conformance roles, and the joins to PTC and the evidence contracts.
 
@@ -96,7 +96,7 @@ The only upward path. Three locked properties (2026-07-11):
    human and not merely a stringent predicate:* control response time. The after-the-fact
    controls (demotion, the ledger audit, an off-path observer) bound a bad grant's *duration*,
    never the blast of a single exercise of it, so only a human inside the window fits a high-blast
-   act — `spec/GAL-SPEC.md` §6.4.4 is normative; the doctrine underneath it is decision- versus
+   act — `ptc-gal-standards/GAL-SPEC.md` §6.4.4 is normative; the doctrine underneath it is decision- versus
    effect-divergence, and the rule that an audit trail is only as trustworthy as its writer.
 2. **The different-model-family LLM checker (#58) is a configurable evidence reviewer feeding the
    gate, never the gate itself.** It can raise suspicion and attach findings to the evidence
@@ -223,7 +223,7 @@ for autonomous cross-mesh high-blast. GAL adds the operational half of the join:
 ## 10. Open problems (banked)
 
 - **Evidence poisoning.** Two cases, and the mitigation for the first does nothing about the
-  second (#342; `spec/GAL-SPEC.md` §8.1 is normative and was corrected 2026-08-03 in `0.2.2-draft`).
+  second (#342; `ptc-gal-standards/GAL-SPEC.md` §8.1 is normative and was corrected 2026-08-03 in `0.2.2-draft`).
   *Tainted grooming*: an injected input shapes behavior and the turn carries taint. Do tainted-turn
   outcomes count toward the evidence window, at full or discounted weight? Excluding them starves
   evidence (an availability lever, `docs/friction-doctrine.md` §availability); including them lets

@@ -200,8 +200,8 @@ The wiring slice (`test_confidence_wiring.py`, W1–W10) pins four further claus
 This change churns **every** envelope hash (it retires the `abstention_thresholds` placeholder and
 renames the cap), and a pre-#184 stored envelope dump — which carries `"abstention_thresholds": null`
 — **fails validation loudly at boot**. That is the intended fail-closed path, not a regression: re-run
-seed_envelope → seed_grants per principal to cure it (`docs/broker-image-cutover.md`; a far-jump broker
-redeploy already re-seeds grants per the cross-version reseed rule). No compat shim.
+seed_envelope → seed_grants per principal to cure it (a far-jump broker redeploy already re-seeds
+grants per the cross-version reseed rule). No compat shim.
 
 ## Deferred (this contract's edges)
 

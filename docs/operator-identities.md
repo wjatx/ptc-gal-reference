@@ -41,8 +41,7 @@ Notes:
   operator/programmatic path and is the one a wrapper's `posture` command shells out to; its first
   live run was
   2026-08-05 against `safe-agents-development-grants` under AuditorRole (keyed, verify-keys,
-  clean exit 0, counts identical to the pytest path —
-  `session-summaries/2026-08-05-keyed-audit-capture.md`). `test_grants_audit_live` remains the
+  clean exit 0, counts identical to the pytest path). `test_grants_audit_live` remains the
   floor path the CI workflow runs — unchanged. Both share `run_audit`, so they cannot disagree
   about the rules, only about how the table is reached.
 

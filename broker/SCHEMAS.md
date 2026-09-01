@@ -255,7 +255,7 @@ Per-field notes:
   `args` field specifies the substituted call rather than offering a rewriting seam. Pinned by
   `test_pdp.py::test_transform_passes_args_through_byte_for_byte`.
 
-  **Specified and not yet built:** `spec/PTC-SPEC.md` §PTC-25 requires `transform` to produce a
+  **Specified and not yet built:** `ptc-gal-standards/PTC-SPEC.md` §PTC-25 requires `transform` to produce a
   substituted operation *plus* clamped arguments, and carries the implementation-status marker
   saying the argument half is unbuilt here (tracking **#358**). So this is a design requirement the
   code has not reached, not a verb that was never meant to clamp — the spec states the blueprint and

@@ -176,7 +176,8 @@ inheriting, already proven live.
 - [ ] Provision + run the smoke capstone; confirm smoke-egress passes, a brokered trade round-trips
       with an audit record, the daily schedule fires a RunTask, and the agent holds no secret.
 - [ ] Retire the agent-local scheduling/creds once the Fargate schedule + broker cover them. (Keep
-      `inbound-airlock.yaml` only if you later add an event-driven wake path — see the ec2-woken note.)
+      your own inbound-airlock stack only if you later add an event-driven wake path — see the
+      ec2-woken note.)
 
 ## 10. The all-Fargate conversational pattern (daily message + replies)
 
