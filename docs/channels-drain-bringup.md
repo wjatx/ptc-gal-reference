@@ -6,7 +6,7 @@ broker read-state seed (envelope → grants → **connector secrets**) for each,
 and the live smokes. Companion to `docs/channels-airlock-bringup.md` (the inbound half) and
 `channels/DRAIN.md` §"Reference binding"; the broker analog is `docs/broker-service-bringup.md`.
 
-As of sa#166 there are TWO drains, each with its own queue and its own audit-chain prefix (a
+There are TWO drains, each with its own queue and its own audit-chain prefix (a
 drain's S3 audit sink resumes a hash chain by prefix, and its Lambda is reservedConcurrency:1, so
 two drains cannot share a queue or a prefix):
 
@@ -19,9 +19,9 @@ two drains cannot share a queue or a prefix):
 
 All commands from the repo root unless noted. `us-east-1`, `development`.
 
-> **Environment ownership (sa#111).** This targets `development`, the platform's ephemeral floor.
-> `production` is a real consumer's infrastructure — never deploy over it without coordinating
-> (`docs/environments.md`).
+> **Environment ownership.** This targets `development`, an ephemeral floor. A durable
+> environment may be carrying a live consumer: never deploy over one without checking who depends
+> on it (`docs/environments.md`).
 
 ## 0. Prereqs
 

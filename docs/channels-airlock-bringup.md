@@ -6,9 +6,9 @@ deploy, the consumer image layer, the secret seed, and the screened variant. Com
 
 All commands from the repo root unless noted. `us-east-1`, `development`.
 
-> **Environment ownership (sa#111).** This runbook targets `development`, the platform's ephemeral
-> floor. The same sequence works for a durable environment's first bringup, but `production` is a
-> real consumer's infrastructure — never deploy over it without coordinating
+> **Environment ownership.** This runbook targets `development`, an ephemeral floor. The same
+> sequence works for a durable environment's first bringup, but a durable environment may be
+> carrying a live consumer: never deploy over one without checking who depends on it
 > (`docs/environments.md`).
 
 ## 0. Prereqs

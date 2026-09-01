@@ -7,11 +7,11 @@ This runbook captures it (learned the hard way; see the "why it bites" notes).
 
 All commands from the repo root unless noted. `us-east-1`, `development`.
 
-> **Environment ownership (sa#111).** This runbook targets `development`, the platform's
-> ephemeral floor — the routine teardown it describes is only sanctioned *there*. The same
-> sequence works for a durable environment's first bringup (substitute the environment name),
-> but `production` is a real consumer's infrastructure: never tear it down or redeploy over it
-> without coordinating. See `docs/environments.md`.
+> **Environment ownership.** This runbook targets `development`, an ephemeral floor, and the
+> routine teardown it describes is sanctioned only there. The same sequence works for a durable
+> environment's first bringup (substitute the environment name), but a durable environment may be
+> carrying a live consumer: never tear one down or redeploy over it without checking who depends
+> on it. See `docs/environments.md`.
 
 > **Network mode.** The deployed default is now **open mode** (`secureNetwork` off): the broker
 > task runs in a public subnet with a public IP, no NAT/interface endpoints. This runbook's

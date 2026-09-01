@@ -6,10 +6,9 @@ text came from, and finds they infer it from writing style and lexical choice ra
 `<system>` / `<user>` / `<tool>` / `<think>` tags around it. It reached us through MIT Technology
 Review's 2026-07-30 coverage.
 
-This lives in `docs/references/` (design inputs we build on), **not** `research/` (market awareness
-under the firewall rule). The firewall exists for competitor features. A peer-reviewed result is a
-legitimate design input, and `research/README.md`'s own source order ranks standards and academic
-texts above vendor studies.
+This lives in `docs/references/`, which holds the external material the design is built on. A
+peer-reviewed result is a legitimate design input, and it ranks above a vendor's account of its
+own product as a source.
 
 The reason it is worth a file: the paper supplies external, quantified evidence for a premise several
 of our published claims rest on, including one that is now in front of the Linux Foundation
@@ -174,9 +173,8 @@ Three informal observations, run by the maintainer against `gpt-oss:20b` under `
 agent harness. They are **n=1, uncontrolled, and not a replication**: no ASR measurement, no
 ablation, no probes. Treat them as existence proofs, not as data.
 
-The raw transcript is `local-tests/crescendo-attack.md`, which is **gitignored on purpose**
-(`.gitignore:49`). It contains synthesis detail that must not enter a repo heading for public
-release. Nothing below reproduces it; the findings are all structural.
+The raw transcript is deliberately not published: it contains synthesis detail that should not be
+reproduced. Nothing below reproduces it, and the findings are all structural.
 
 ### 9.1 A refusal in turn N contaminates turn N+1
 
