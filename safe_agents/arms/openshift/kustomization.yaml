@@ -1,14 +1,9 @@
-# ── EXTRACT ASSET ─────────────────────────────────────────────────────────────
-# Identical to the source kustomization.yaml except that the Phase 6.1 posture leg
-# is absent. That leg reports through a product wrapper this tree does not ship, so
-# in the public reference implementation it could only ever skip — while naming the
-# product and describing an absent component. Its two files are excluded from the
-# manifest; kustomize's configMapGenerator would fail on a listed-but-missing file,
-# which is why this list differs and the file is an asset rather than a copy.
+# The Phase 6.1 posture leg is deliberately absent from this list. That leg reports
+# through a product wrapper this repository does not ship, so here it could only ever
+# skip, while naming the product and describing a component that is not present. Its
+# two files are excluded, and kustomize's configMapGenerator fails on a listed-but-
+# missing file, which is why they are absent from the list rather than commented out.
 #
-# KEPT IN SYNC BY extract/check_assets.py, which asserts this file equals the source
-# minus exactly that block. Do not hand-edit: change the source and re-generate.
-# ──────────────────────────────────────────────────────────────────────────────
 # The declarative half of the OpenShift arm: everything that can exist before an
 # image does.
 #

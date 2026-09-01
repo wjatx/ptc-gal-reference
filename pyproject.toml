@@ -1,13 +1,3 @@
-# ── EXTRACT ASSET ─────────────────────────────────────────────────────────────
-# This file REPLACES the source pyproject.toml when the public reference
-# implementation is cut. It exists for one reason: the source declares a console
-# script pointing into a package the cut excludes, and shipping that would put a
-# broken command in public package metadata.
-#
-# MAINTENANCE HAZARD, stated because it is real: this is a full copy, so a
-# dependency or version change in the source pyproject.toml does NOT reach here.
-# Re-generate it from the source when either changes. Nothing enforces that yet.
-# ──────────────────────────────────────────────────────────────────────────────
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -17,10 +7,8 @@ name = "safe-agents"
 version = "0.72.0"
 description = "safe-agents — the trusted-autonomy base platform SDK (deterministic tool broker, agent pipeline, cloud arms, runner-contract harness)."
 readme = "README.md"
-# Declared as an SPDX expression rather than a file reference. This repo is private and carries no
-# LICENSE file [ruling: maintainer, 2026-08-10]; the public reference implementation extracted from it does,
-# supplied as extract/assets/LICENSE. A `file = "LICENSE"` reference would break the build here and
-# resolve differently there, which is exactly the two-truths shape the one-way extract avoids.
+# Declared as an SPDX expression rather than a file reference. The LICENSE file is at the repo
+# root; the expression is what package metadata consumers read, and it cannot drift from a path.
 license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
 # Hard runtime deps: the schemas need pydantic; the pipeline/watcher parse YAML
