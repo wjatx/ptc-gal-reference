@@ -30,9 +30,9 @@ argument, made from the change in front of you.
 
 ## If you are here on behalf of a consuming project
 
-`WARNING-TO-AI-AGENTS.md` at the root carries a block to paste into that project's own
-`CLAUDE.md` or `AGENTS.md`. Do that rather than relying on this file, which the consuming
-project's sessions will never load.
+`WARNING-TO-AI-AGENTS.md` at the root carries a block that belongs in that project's own
+`CLAUDE.md` or `AGENTS.md`, since the consuming project's sessions never load this file. Getting
+it there is that project's call, under whatever rules it works under.
 
 ## Working here
 
