@@ -42,9 +42,10 @@ cd infra && npx cdk synth -c environment=development   # refresh the SG template
 python3 infra/scripts/gen-egress-snapshot.py            # rewrite infra/snapshots/*.json
 ```
 
-CI (the `infra-conformance` job in `.github/workflows/platform-ci.yml`) re-runs `cdk synth` + the
-generator on every PR and fails on any `git diff` in `infra/snapshots/` — so the committed snapshot
-cannot silently lag the synth template or the bootstrap scripts. The snapshot rules are normalised
+That check belongs in CI: re-run `cdk synth` and the generator on every change, and fail on any
+`git diff` in `infra/snapshots/`, so the committed snapshot cannot silently lag the synth template
+or the bootstrap scripts. This repository ships no workflow of its own, so run the two commands
+above by hand until you have wired the check into yours. The snapshot rules are normalised
 to a region-independent,
 human-meaningful form (`sg:broker`, `prefixlist:s3`, `cidr:0.0.0.0/0`) rather than raw
 CloudFormation refs, so the same canonical rule is comparable to a live `DescribeSecurityGroupRules`

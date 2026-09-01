@@ -47,8 +47,8 @@ A first run spends most of its time in the two in-cluster builds; `SKIP_BUILD=1`
 them. The drill discards the previous run's store by default (`KEEP_STORE=1` to keep it), so
 re-running is always safe.
 
-**One known diff, 2026-08-12 (#385).** The posture ladder's positions were renamed from "rung N"
-to "posture N", so `cluster-arc-run.sh` and `cluster-posture.sh` now print `Posture 2` where the
+**One known diff, 2026-08-12.** The posture ladder's positions were renamed from "rung N"
+to "posture N", so `cluster-arc-run.sh` now prints `Posture 2` where the
 captured log reads `Rung 2`. The log is deliberately NOT hand-corrected — editing recorded output
 to match a change we made is manufacturing evidence — so it carries the old word until the next
 cluster re-capture. Three lines, all prose in a `printf`; no predicate moved.
@@ -115,7 +115,7 @@ That is the point rather than an inconvenience: a pod cannot hold both halves.
 | `safe-agents-demo-taint` | `safe-agents-agent` | **demonstration 2** — the same `peer.publish` allowed on a clean turn and held on a tainted one |
 | `safe-agents-agent` | `safe-agents-agent` | holds **nothing** — no mount, no Secret, no RoleBinding. External egress dropped, the broker Secret refused **403**, the pod that would mount it refused **403**, and a brokered call through the broker executes anyway (Phase 4) |
 | `safe-agents-demo-baseline` | `safe-agents-agent` | **the control (#154)** — the agent spawns the ledger server itself and calls the *unadmitted* tool with no broker in the path. It **works**. The identical call through the broker is refused, while a different one executes |
-| `safe-agents-posture` | `safe-agents-agent` | **Phase 6.1** — a posture report generated *inside* a pod, in cluster vocabulary, and asserted to report the egress and RBAC refusals as **`unknown`** rather than claiming them |
+| `safe-agents-posture` (not shipped in this tree) | `safe-agents-agent` | **Phase 6.1** — a posture report generated *inside* a pod, in cluster vocabulary, and asserted to report the egress and RBAC refusals as **`unknown`** rather than claiming them |
 
 ### The control, and why it has to run at 10b
 
@@ -146,6 +146,10 @@ by name rather than merely failing.
 - **Real harm.** The blast radius is a fictional ledger, on purpose. What is real is the mechanism.
 
 ### Why the posture leg reports `unknown` for things the drill just proved
+
+The leg itself is not shipped here: it reports through a product wrapper this repository does not
+include, which is why its Job and driver script are absent from the manifest. The rule it follows
+is worth stating anyway, because it is the rule the rest of this arm runs on.
 
 The one line in that table worth arguing with. Steps 10 and 14 demonstrate that egress is dropped
 and the Secret is refused; step 15 then runs a report that says both are **unknown**, and the leg
