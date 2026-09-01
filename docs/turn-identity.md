@@ -15,7 +15,8 @@ Two holes followed:
 1. **Taint was discarded per call.** The self-ingested taint died when the HTTP response returned, so
    a read in call 1 never reached a write in call 2.
 2. **The agent chose the turn id.** Even had we persisted the context by `turn_id`, the agent supplies
-   that id (via `idempotency_key` in the POST body). Per `memory/TAINT.md` Rule 2, an agent could
+   that id (via `idempotency_key` in the POST body). Per the memory-side Rule 2 in
+   `broker/TAINT.md` §8, an agent could
    declare a fresh turn after every read to shed taint before a write — laundering untrusted content
    into a "clean" premise by going *around* the airlock in time.
 
@@ -65,7 +66,7 @@ In `safe_agents/broker/runtime/pep.py`:
 
 The agent therefore supplies **neither the turn id nor the rollover signal**. Clearing taint is a
 broker-side event only (a `new_turn()` call, or session expiry / process restart) — never anything the
-agent controls, exactly as `memory/TAINT.md` requires.
+agent controls, exactly as `broker/TAINT.md` §8 requires.
 
 ## Rollover policy (the conservative default)
 

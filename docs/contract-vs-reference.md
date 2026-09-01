@@ -45,7 +45,7 @@ outsource it and the platform's claims are no longer the platform's to make.
 | **Model access** | model channel named as an accepted-uninspected egress boundary | `docs/model-egress.md` (the confinement obligation) | per-arm netns + broker-proxy mechanics | #125 |
 | **Identity & turns** | broker-owned turn boundary; zone = principal | `docs/turn-identity.md`, `docs/subagent-identity.md`; principal fields in the schemas | broker session mechanics (sa#136, landed) | — |
 | **Grants & graduated autonomy** | grants gate every call; quarantine on hash mismatch | Grant + PromotionRecord schemas; rung state-machine semantics; actionClass derivation from ToolOp fields (no base catalog — #189) | promotion/demotion predicates; the seed→ceremony path | #53, #55, #57–#60, #123 |
-| **Memory** | memory is a taint source; labels ride write → storage → read-back, non-strippably (`memory/TAINT.md`) | record schema; the three-op interface (resolve/search/write) + gate routing; DLP gate semantics; quarantine-not-delete; the memory-provider seam | OKF vault + loader; DynamoDB/pgvector stores; trace retention; async memory-builder | #3, #69, #71, #73, #75, #77, #79 |
+| **Memory** (no subsystem ships here; an agent brings its own) | memory is a taint source; labels ride write → storage → read-back, non-strippably (`broker/TAINT.md` §8) | record schema; the three-op interface (resolve/search/write) + gate routing; DLP gate semantics; quarantine-not-delete; the memory-provider seam | OKF vault + loader; DynamoDB/pgvector stores; trace retention; async memory-builder | #3, #69, #71, #73, #75, #77, #79 |
 | **Audit** | written broker-side under a separate identity | AuditRecord schema; completeness + retention standard | off-substrate chain verifier; digest sink | #26, #66, #67 |
 | **Channels & airlock** | inbound content is untrusted until mapped | channel-adapter interface; trust-mapping framework; injection-screening standard | specific adapters (Telegram today); dispatch/routing | #43, #80, #81, #82 |
 | **Event-driven work** | — | EventTrigger envelope schema; ephemeral-worker lifecycle contract; maker≠checker gate semantics | the event-driven example agents | #74, #76, #78 |
@@ -110,6 +110,5 @@ today); a live consumer agent already models the consumer-repo side.
   *whether a shipped control gates or logs*. A contract can mandate a gate exists while the
   envelope knob decides its strictness.
 - `consumer-image-contract.md`, `core/RUNNER-CONTRACT.md` — the in-repo exemplars of the genre.
-- `memory/README.md` §"Contract vs reference" — the first subsystem restated under this lens.
-- `broker/TAINT.md`, `memory/TAINT.md` — floor standards referenced by the sweep.
+- `broker/TAINT.md` — the floor standard referenced by the sweep.
 - sa#106 (installable SDK) — the packaging boundary this taxonomy feeds.

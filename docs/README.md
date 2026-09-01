@@ -63,7 +63,7 @@ it rather than copy it.
 - `contract-vs-reference.md` — the packaging doctrine (2026-07-08): for each part of an agent
   harness, whether the base ships a floor invariant, a contract + conformance tests, a reference
   implementation, or nothing (product/consumer layer). Companion axis to `friction-doctrine.md`;
-  and the tier map the SDK boundary reads from. First applied in `memory/README.md` §"Contract vs reference".
+  and the tier map the SDK boundary reads from.
 - `config-provenance.md` — the third doctrine lens (sibling to `friction-doctrine.md` and
   `contract-vs-reference.md`): config stratifies by injection power — code-provenance (image-baked
   only) > store (ceremonied, integrity-protected) > deploy (topology) > secrets (leaves) — a Biba
@@ -74,8 +74,8 @@ it rather than copy it.
   what you may *say* about what you built. Three postures by where the boundary is (a plain wrapper,
   same OS user · a wrapper plus a sandbox, agent inside and gateway outside · the cloud floor with
   IAM), the rule that every posture claim names its posture or is an overclaim, the per-harness
-  wrap-durability table with its coverage-artifact caveat, and the cheap half of the wrap story (the agent asks,
-  the broker performs). Executable form: a wrapper's `posture` command.
+  wrap-durability table with its coverage-artifact caveat, and the cheap half of the wrap story
+  (the agent asks, the broker performs). Executable form: a wrapper's `posture` command.
 - `self-application.md` — the scope lens, written for the coding agents that read this repo as
   often as people do: these controls govern a running agent's authority at run time, and are not a
   development methodology. Carries the symptom list, the two cases where transferring a control to

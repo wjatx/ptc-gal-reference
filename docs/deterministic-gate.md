@@ -61,9 +61,9 @@ When the agent writes to memory, the intent is that the broker stamps provenance
 time, so a tainted source can never write untainted memory (no laundering), and the block/clear
 decision is a deterministic DLP rule — an optional LLM classifier may only *raise* suspicion, never
 clear it. **Status: designed, not built.** The hook exists (`TurnContext.ingest_memory_taint`) but no
-broker path calls it yet; the mechanism is scoped to the memory epic **#75** (`memory/README.md`,
-`broker/TAINT.md` §8). This section states the target so the invariant is complete; the code is the
-one deferred piece.
+broker path calls it yet, and this platform ships no memory subsystem for it to serve
+(`broker/TAINT.md` §8 states the floor any such memory must satisfy). This section states the
+target so the invariant is complete; the code is the one deferred piece.
 
 ## Where the model legitimately enters — and only there
 
@@ -113,7 +113,7 @@ table says what the rules *mean*; the corpus says what the gate *does everywhere
 whole reachable input space — every combination of every field the engine reads — runs each point
 through the real `decide()`, and pins a single SHA-256 over the canonicalized `(input, decision)`
 pairs. The space decomposes as **24 call points × 3,072 fact points = 73,728**, which is the figure
-`docs/PTC.md` §5, `docs/lf-standards-brief.md` and `spec/PTC-SPEC.md` cite.
+`docs/PTC.md` §5, `docs/lf-standards-brief.md` and `ptc-gal-standards/PTC-SPEC.md` cite.
 
 It exists for two jobs:
 

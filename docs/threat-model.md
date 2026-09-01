@@ -21,8 +21,7 @@ sweeps whose per-row entry points and defenses were read at the cited `file:line
 by hand against the six governing contracts (`ARCHITECTURE.md`, `docs/deterministic-gate.md`,
 `docs/model-egress.md`, `broker/TAINT.md`, `channels/TRUST-MAPPING.md`, `channels/SCREENING.md`),
 each read in full in the writing session, then attacked by a cold three-agent adversarial pass that
-did not write the doc (`assumption-tests/2026-08-04-threat-model-register.md`); the overstatements
-and missing rows it found are folded in.
+did not write the doc; the overstatements and missing rows it found are folded in.
 
 Not covered by the sweep, and named so their absence is visible rather than silent:
 `safe_agents/connectors/` internals, `safe_agents/channels/signing.py` internals, and `infra/` IAM policies.
@@ -168,7 +167,7 @@ gap this table exists to make visible.
 | # | Channel | Enters at | Mechanical defense | Pinned by |
 |---|---|---|---|---|
 | 16 | Peer publish from a possibly-injected sender | `safe_agents/channels/publish.py:27` | `stamp_outbound` has no agent label parameter, so the sending-zone hop label can only come from the broker-held turn taint the trusted caller passes (a signature-level guarantee plus caller contract; no base consumer wires it yet); the signer resolves broker-side; a tainted publish is an external write and escalates through the standing cut | `test_publish.py:95,134` |
-| 17 | Memory: persisted content re-read into later context | none (design only) | None on `main`. The contract (mandatory taint block at write, taint-preserving read-back) is design in `memory/BUILD.md` and `broker/TAINT.md` §8, deferred to the memory epic (#75) | none |
+| 17 | Memory: persisted content re-read into later context | none (design only) | None on `main`. The contract (mandatory taint block at write, taint-preserving read-back) is stated in `broker/TAINT.md` §8, and this platform ships no memory subsystem to implement it | none |
 
 ## 5. Limit statements — what each mechanism does not buy
 

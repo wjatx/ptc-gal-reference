@@ -5,8 +5,9 @@ the taint-completeness epic (sa#142): the normative floor every consumer inherit
 describes behavior not yet built it is marked **[deferred]** and names the epic that owns it — never
 presented as current. Schemas are referenced, never duplicated (`broker/SCHEMAS.md`); per-agent
 thresholds are out of scope (consumer envelope policy — `docs/friction-doctrine.md`). The
-memory-subsystem application of this floor is `memory/TAINT.md`, whose **Rules 1–2 this standard
-adopts**. Code paths below are under `safe_agents/broker/`. §1.1 adopts the **Biba integrity
+platform ships no memory subsystem, so the memory-side application of this floor is stated
+directly in §8 rather than deferred to a separate standard. Code paths below are under
+`safe_agents/broker/`. §1.1 adopts the **Biba integrity
 lattice** (#169) as the model behind taint — the vocabulary and no-write-up rule are normative; the
 full multi-level enforcement is marked **[deferred]** there.
 
@@ -110,7 +111,7 @@ loop driver that owns the runtime object), or session expiry / process restart.
 
 **Cannot clear:** model output, a later clean read in the same turn, or anything the agent does.
 There is **deliberately no taint-clearing broker API** (#46: clearing is a human/harness action, not
-a code path the agent can reach). This is `memory/TAINT.md` Rule 2 enforced at the turn boundary.
+a code path the agent can reach). This is the memory-side Rule 2 of §8, enforced at the turn boundary.
 
 ## 5. The escalation floor by action class
 
@@ -175,8 +176,8 @@ source across the write/read boundary:
    carries `taint: true` with no external call of its own) **rides with the memory epic**, not this
    phase.
 
-Implementation belongs to the memory epic — **#75** (filter-on-write DLP + taint propagation),
-cross-ref #69 / #71 / #73 / #77 / #79. `memory/TAINT.md` is the memory-subsystem application of this
-floor, and its **Rules 1–2 are the memory-side floor this standard adopts**: no high-blast action
-rests on a memory-derived premise alone, and memory must never launder untrusted content into a
-trusted premise.
+This platform ships no memory subsystem, and an agent standing on it brings whatever memory its
+own harness provides. So the memory-side floor is stated here rather than in a standard of its
+own, as **two rules** any such memory must satisfy: no high-blast action rests on a
+memory-derived premise alone, and memory must never launder untrusted content into a trusted
+premise.
