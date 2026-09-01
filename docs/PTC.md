@@ -1,10 +1,11 @@
 # PTC — Provenance & Trust Context
 
-> **Status: DRAFT OUTLINE (2026-07-10; status refresh 2026-07-21).** The spine spec for
-> safe-agents' trust layer, converged in design discussion; not yet ratified as a normative spec
-> (#178), but the build phases beneath it are **complete and running in production** (§11). This is
-> the outline the normative spec + conformance suite grows from. Grounded in the landscape survey
-> `docs/references/trust-context-landscape.md` (which confirms no such standard exists today).
+> **Status: design spine, superseded as normative text.** The reasoning behind the trust layer,
+> converged in design discussion and written before the specification existed. The normative text
+> is `ptc-gal-standards/PTC-SPEC.md`, and where this document and the specification disagree, the
+> specification wins. This one is kept for the argument it carries and for the landscape survey it
+> rests on (`docs/references/trust-context-landscape.md`). For what is demonstrated against what is
+> asserted, read `docs/lf-reference-implementation.md`.
 
 ## 1. What PTC is, in one sentence
 

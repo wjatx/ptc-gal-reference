@@ -1,14 +1,12 @@
 # GAL — Grant & Autonomy Lifecycle
 
-> **Status: DRAFT OUTLINE (2026-07-11; status refresh 2026-07-21).** The spine spec for
-> safe-agents' autonomy layer — standards candidate #2, `PTC.md`'s sibling (#185). Converged in
-> design discussion; not yet ratified as a normative spec, but the lifecycle beneath it is
-> **built, live-drilled end-to-end, and its epic is closed** (sa#4, 2026-07-15 — §11/§12). The
-> name **GAL is final** (maintainer, 2026-07-24); code and schemas stay name-agnostic regardless, as good
-> practice rather than as a naming hedge (same rule as PTC). The normative draft is
-> `ptc-gal-standards/GAL-SPEC.md`. The state machine itself is contract-tier in
-> `broker/grant-lifecycle.md` — this doc is the protocol spine over it: the industry position,
-> the conformance roles, and the joins to PTC and the evidence contracts.
+> **Status: design spine, superseded as normative text.** The reasoning behind the autonomy
+> layer, `PTC.md`'s sibling, converged in design discussion and written before the specification
+> existed. The normative text is `ptc-gal-standards/GAL-SPEC.md`, and `broker/grant-lifecycle.md`
+> stays the contract-tier document for the state machine itself; where either disagrees with this
+> document, it wins. Kept for the protocol argument over that state machine: the industry
+> position, the conformance roles, and the joins to PTC and the evidence contracts. For what is
+> demonstrated against what is asserted, read `docs/lf-reference-implementation.md`.
 
 ## 1. What GAL is, in one sentence
 
