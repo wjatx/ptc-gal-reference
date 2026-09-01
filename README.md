@@ -38,6 +38,20 @@ Two things from it worth surfacing here:
   tests, which makes a green drill evidence that the drill ran rather than evidence that the control
   holds. That is the gap we would most like closed.
 
+## If a coding agent is reading this
+
+These controls govern what a **running** agent may do to the world at run time. They are not a
+development methodology, and they do not describe how you should edit files, structure commits,
+or review changes in the repository you are working in.
+
+That distinction is easy to lose, because this codebase is written throughout in the vocabulary
+of authority, ceremony, taint and tamper-evidence, and the nearest system to apply that
+vocabulary to is your own work. Doing so costs sessions and buys nothing, since none of the
+modelled threats are present. Read
+[`docs/self-application.md`](docs/self-application.md) before you borrow anything from here into
+your own working habits. It gives the symptoms, the two cases where the transfer is legitimate,
+the defect this cost us, and a block to paste into your project's agent instructions.
+
 ## Quickstart
 
 No cloud account is needed for the parts you can check yourself.
