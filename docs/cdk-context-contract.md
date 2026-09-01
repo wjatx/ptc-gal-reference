@@ -1,7 +1,7 @@
 # CDK context contract — every value a deploy can be given, and what happens without it
 
 `infra/` takes all of its deploy-time configuration from CDK context, passed as `-c key=value` at
-synth or deploy. There are **24 keys**. `infra/cdk.json` supplies a value for none of them (its
+synth or deploy. There are **25 keys**. `infra/cdk.json` supplies a value for none of them (its
 `context` block holds two CDK feature flags), so every deploy either passes a key explicitly or
 gets the code's default.
 
@@ -17,7 +17,7 @@ required in the sense of stopping you. Sort by what a missing value *does*:
 |---|---|---|
 | **(a) Hard fail** | synth or deploy stops with an error naming the key | 6 |
 | **(b) Silent degradation** | deploy succeeds, and a resource, a gate or a control is quietly absent | 13 |
-| **(c) Harmless default** | deploy succeeds with a documented, intended default | 5 |
+| **(c) Harmless default** | deploy succeeds with a documented, intended default | 6 |
 
 Mode (b) is the whole hazard. A deploy that omits `channelsVerifyKeysArn` comes up green with
 signature verification switched off. A redeploy that omits `makerTrustedPrincipals` comes up green
@@ -155,6 +155,27 @@ Both were documented nowhere in this repository before this file.
 exist, one task can never reach steady state and the deployment circuit breaker rolls the rollout
 back. Deploy at `0`, push the image, then scale — see `docs/broker-service-bringup.md`.
 
+## GitHub Actions OIDC — mode (c), where the default trusts nobody
+
+**`githubOidcSubjects`** names the OIDC subject patterns the two read-only watcher roles accept,
+as an array or a comma-separated string. Unset, both roles are still created and their ARNs still
+exported, but their trust policy carries a sentinel no GitHub token can present, so nothing can
+assume them. That is the intended default: a watcher role that trusts an unnamed repository would
+be worse than one nobody can use.
+
+Pass **both spellings of your repository**, because GitHub emits two for the same workflow:
+
+```
+cdk deploy -c environment=development \
+  -c githubOidcSubjects=repo:acme/widget:*,repo:acme@12345678/widget@87654321:*
+```
+
+The plain `owner/repo` form is what older organizations send. Newer ones append the immutable
+numeric org and repo IDs. Getting this wrong produces a trust policy that is correct in IAM and
+still refuses `sts:AssumeRoleWithWebIdentity`, because it is right about a subject GitHub is not
+sending; only CloudTrail's `userIdentity.principalId` shows the claim that actually arrived. The
+ID form is the rename-proof one, since the numbers outlive any repo or org rename.
+
 ## The complete list
 
 | Key | Mode | Default | Stack |
@@ -183,6 +204,7 @@ back. Deploy at `0`, push the image, then scale — see `docs/broker-service-bri
 | `auditorTrustedPrincipals` | (b) | `[]` | identity |
 | `promotionTrustedPrincipals` | (b) | `[]` | identity |
 | `demotionTrustedPrincipals` | (b) | `[]` | identity |
+| `githubOidcSubjects` | (c) | a sentinel nothing can match | identity |
 
 Source of truth is the code: `infra/bin/safe-agents.ts`, `infra/lib/environment.ts`, and the
 `tryGetContext` calls in `infra/lib/{compute,channels,identity}-stack.ts`. If this table and the

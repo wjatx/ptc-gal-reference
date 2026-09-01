@@ -149,7 +149,7 @@ fit, and [`ARCHITECTURE.md`](ARCHITECTURE.md) for the technical floor.
 
 `infra/` is AWS CDK and is not pinned to any account: it resolves the target from
 `CDK_DEFAULT_ACCOUNT`. Read **[`docs/cdk-context-contract.md`](docs/cdk-context-contract.md)**
-before a first deploy. The stacks take 24 context values, and thirteen of them **degrade silently**
+before a first deploy. The stacks take 25 context values, and thirteen of them **degrade silently**
 when omitted, which is the failure mode worth knowing about in advance. The operator runbooks in
 `docs/` cover bring-up, the ceremony identities, and the traps that bite on redeploy.
 

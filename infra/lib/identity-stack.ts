@@ -634,29 +634,23 @@ export class IdentityStack extends Stack {
       `arn:${Aws.PARTITION}:iam::${Aws.ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com`,
     );
 
-    // Both spellings of this repo's OIDC subject, because GitHub emits two.
+    // The OIDC subjects the two read-only watcher roles trust, named by the
+    // deployer. Unset trusts nobody; see githubOidcSubjectsFromContext below.
     //
-    // The plain `owner/repo` form is what Third-Ralph sent. Newer organizations
-    // — `controlled-agents` was created 2026-07-24 — append the immutable
-    // numeric org and repo IDs, so the SAME workflow presents
-    // `repo:controlled-agents@308818353/safe-agents@1283061949:ref:...`. That is
-    // not a custom sub-claim template (neither org has one); it is GitHub's
-    // default for recent orgs.
+    // PASS BOTH SPELLINGS OF YOUR REPO, because GitHub emits two. The plain
+    // `owner/repo` form is what older organizations send. Newer ones append the
+    // immutable numeric org and repo IDs, so the SAME workflow presents
+    // `repo:owner@<org-id>/repo@<repo-id>:ref:...`. That is not a custom
+    // sub-claim template; it is GitHub's default for recent orgs.
     //
-    // This was found the hard way: after the #290 transfer the name-form pattern
+    // This was found the hard way: after an org transfer the name-form pattern
     // was updated, deployed and verified as correct in IAM, and the grants audit
     // STILL failed `sts:AssumeRoleWithWebIdentity`. The trust policy was right
     // about a subject GitHub was not sending. Only CloudTrail's
-    // `userIdentity.principalId` showed the real claim.
-    //
-    // Both entries pin this org and this repo, so accepting either is no weaker
-    // than the single name-form was. Keeping both means the trust survives
-    // whichever form GitHub sends — and note the ID form is RENAME-proof, since
-    // the numbers outlive any future repo or org rename (#302).
-    const githubSubjects = [
-      'repo:controlled-agents/safe-agents:*',
-      'repo:controlled-agents@308818353/safe-agents@1283061949:*',
-    ];
+    // `userIdentity.principalId` showed the real claim. Accepting both forms is
+    // no weaker than accepting one, since each pins the same org and repo, and
+    // the ID form is RENAME-proof: the numbers outlive any repo or org rename.
+    const githubSubjects = githubOidcSubjectsFromContext(this);
 
     const watcherRole = new Role(this, 'WatcherRole', {
       assumedBy: new OpenIdConnectPrincipal(githubOidc, {
@@ -713,8 +707,8 @@ export class IdentityStack extends Stack {
 
     // ── 6. campaignWatcherRole — GitHub Actions OIDC campaign watchdog (read-only) ──────────────────
     // Assumed by the sa#161 scheduled campaign-watchdog GitHub Actions runner — the SAME OIDC trust
-    // idiom as watcherRole above (this repo's GitHub OIDC provider, scoped to
-    // repo:controlled-agents/safe-agents:*), unconditional like watcherRole (no operator-trust gate). A
+    // idiom as watcherRole above (this account's GitHub OIDC provider, scoped to the subjects the
+    // `githubOidcSubjects` context names), unconditional like watcherRole (no operator-trust gate). A
     // separate role rather than widening watcherRole: its read surface is different (it correlates
     // the channels airlock's audit objects and tails the broker/airlock CloudWatch Logs, never the
     // grants table or agent-runs), and each watcher stays independently rotatable/scopeable.
@@ -779,6 +773,26 @@ export class IdentityStack extends Stack {
     publish(this, env, 'watcher-role-arn',         watcherRole.roleArn);
     publish(this, env, 'campaign-watcher-role-arn', campaignWatcherRole.roleArn);
   }
+}
+
+/**
+ * The GitHub Actions OIDC subject patterns the read-only watcher roles trust, from the
+ * `githubOidcSubjects` context (string, comma-separated string, or string[]).
+ *
+ * Unset is deliberately NOT "trust any repository". It yields a sentinel that no GitHub token
+ * can present, so both roles still synthesize (their ARNs are exported, and the conformance
+ * suite asserts those exports) while being assumable by nobody until a deployer names their own
+ * repository. The sentinel names the fix, so an operator reading the trust policy in the console
+ * sees what to pass rather than a plausible-looking pattern that silently matches nothing.
+ */
+const GITHUB_OIDC_SUBJECT_UNSET = 'repo:UNSET-pass-the-githubOidcSubjects-context:*';
+
+function githubOidcSubjectsFromContext(scope: Construct): string[] {
+  const ctx = scope.node.tryGetContext('githubOidcSubjects') as string | string[] | undefined;
+  const subjects = (Array.isArray(ctx) ? ctx : (ctx ?? '').split(','))
+    .map((subject) => subject.trim())
+    .filter((subject) => subject.length > 0);
+  return subjects.length > 0 ? subjects : [GITHUB_OIDC_SUBJECT_UNSET];
 }
 
 /**

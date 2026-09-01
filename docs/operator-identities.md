@@ -16,7 +16,7 @@ this doc is the operator's how-to.
 | tighten (voluntary, any level → in-loop) | `grants.commands tighten` | **PromotionRole** (operator gate) | `promotionTrustedPrincipals` |
 | demotion runner (drills / out-of-band) | `grants.runner` | **DemotionRole** (operator gate) | `demotionTrustedPrincipals` |
 | keyed grants audit | `grants.audit_command --table…` or `test_grants_audit_live` (keyed) | **AuditorRole** | `auditorTrustedPrincipals` |
-| keyless CI audit | grants-audit workflow | WatcherRole (OIDC) | — (always on) |
+| keyless CI audit | grants-audit workflow | WatcherRole (OIDC) | `githubOidcSubjects` |
 
 Role ARNs come from CloudFormation exports: `safe-agents-{env}-{maker,checker,auditor,promotion,demotion}-role-arn`.
 

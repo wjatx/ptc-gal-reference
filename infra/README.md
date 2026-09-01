@@ -137,11 +137,11 @@ The app lives here as an npm project (`package.json`, `cdk.json`, `bin/`, `lib/`
 takes the target environment as **context**, validated against `development` / `staging` /
 `production` — a missing or misspelled value (`dev`) fails fast with an actionable error.
 
-> **`docs/cdk-context-contract.md` is the reference for all 24 context values.** `environment` is
+> **`docs/cdk-context-contract.md` is the reference for all 25 context values.** `environment` is
 > the only one that stops you; six hard-fail, five take harmless defaults, and **thirteen degrade
 > silently** — a deploy that omits `channelsVerifyKeysArn` comes up green with peer signature
 > verification off, and one that omits `brokerManifestPath` runs the checked-in *example* manifest.
-> Read it before a first deploy. This README documents two of the twenty-four.
+> Read it before a first deploy. This README documents two of the twenty-five.
 
 ```bash
 cd infra
