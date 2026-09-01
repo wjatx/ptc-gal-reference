@@ -14,7 +14,7 @@ name: smoke-ec2
 # agent_package points the smoke phase at the conformance fixture (agents/test-stub)
 # rather than agents/smoke-ec2 (which does not exist as a package directory).
 agent_package: test-stub
-repo: git@github.com:controlled-agents/safe-agents.git
+repo: git@github.com:wjatx/ptc-gal-reference.git
 deploy_key_secret: smoke-ec2/deploy-key
 arm: ec2                          # always-on EC2; broker co-placed as local sidecar
 policy: policies/smoke-ec2.yaml  # egress: broker endpoint + api.anthropic.com ONLY

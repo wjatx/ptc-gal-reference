@@ -12,7 +12,7 @@ name: smoke-woken
 # ── Manifest (pipeline-facing) ────────────────────────────────────────────────
 # agent_package points the smoke phase at the conformance fixture (agents/test-stub).
 agent_package: test-stub
-repo: git@github.com:controlled-agents/safe-agents.git
+repo: git@github.com:wjatx/ptc-gal-reference.git
 deploy_key_secret: smoke-woken/deploy-key
 arm: ec2-woken                        # inbound airlock wakes a sleeping EC2 box
 policy: policies/smoke-woken.yaml     # egress: broker endpoint ONLY (netns on the box)

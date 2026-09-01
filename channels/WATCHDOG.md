@@ -28,7 +28,7 @@ It is a **watchdog, never a screen**:
   it runs entirely after the fact, over records already written. `analyze()` is a pure function of
   its typed inputs (no boto3/botocore import, no clock read) — there is structurally nowhere for a
   gate to hide.
-  <!-- assumption-tested 2026-08-06 — assumption-tests/2026-08-06-channels.md — HOLDS by import graph both directions (no deciding import; nothing on a request path imports the watcher); unpinned by any test until #370 lands -->
+  <!-- assumption-tested 2026-08-06 — HOLDS by import graph both directions (no deciding import; nothing on a request path imports the watcher); unpinned by any test until #370 lands -->
 - **It produces suspicion and a suggested remediation, never a safety decision.** Its output
   (`CampaignReport.suggested_remediation`) is a report a human reads. Applying a remediation is a
   human ceremony outside this contract, exactly as `channels/SCREENING.md`'s classifier only

@@ -14,7 +14,7 @@ name: smoke-fargate
 # agent_package points the smoke phase at the conformance fixture (agents/test-stub)
 # rather than agents/smoke-fargate (which does not exist as a package directory).
 agent_package: test-stub
-repo: git@github.com:controlled-agents/safe-agents.git
+repo: git@github.com:wjatx/ptc-gal-reference.git
 deploy_key_secret: smoke-fargate/deploy-key
 arm: fargate                        # scheduled Fargate task; broker is its own ECS service
 policy: policies/smoke-fargate.yaml # egress: broker endpoint ONLY (isolated agent subnet + SG)

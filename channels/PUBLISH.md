@@ -162,7 +162,7 @@ an external write on a tainted turn, so the broker gates it to `require_approval
 | P8 | `TestOutboundCarriesIngestedSources` — `test_fresh_origination_carries_real_source_as_origin_hop` · `test_relay_does_not_duplicate_sources_already_in_chain` · `test_receiver_rederives_taint_from_real_source` |
 | P7 | the absence of any transport field is the contract text itself |
 
-<!-- assumption-tested 2026-08-06 — assumption-tests/2026-08-06-channels.md — P2 HOLDS (rule-11 disable → allow, absence of a publish rule confirmed); P4 HOLDS at the stamp layer (both tests mutation-verified); sender-side wiring is caller contract until #315 -->
+<!-- assumption-tested 2026-08-06 — P2 HOLDS (rule-11 disable → allow, absence of a publish rule confirmed); P4 HOLDS at the stamp layer (both tests mutation-verified); sender-side wiring is caller contract until #315 -->
 
 
 ## Relationships

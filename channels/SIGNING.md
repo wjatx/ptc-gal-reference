@@ -144,7 +144,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 | S6 (non-repudiation ≠ correctness) | the absence of any propagation-correctness claim is the contract text itself (the banked §8 problem) |
 | S7 (tiering) | tiering is doctrine (`docs/contract-vs-reference.md`), asserted by the suite existing as the contract's teeth, not a single test |
 
-<!-- assumption-tested 2026-08-06 — assumption-tests/2026-08-06-channels.md — S1b HOLDS: all four cited test names exist, and zeroing sender_channel_identity in the signed statement turned exactly the three mutation-detection tests red (verification succeeded where a refusal was demanded) -->
+<!-- assumption-tested 2026-08-06 — S1b HOLDS: all four cited test names exist, and zeroing sender_channel_identity in the signed statement turned exactly the three mutation-detection tests red (verification succeeded where a refusal was demanded) -->
 
 
 ## Relationships

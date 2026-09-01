@@ -15,7 +15,7 @@ name: smoke-rhel-openshell
 # agent_package points the smoke phase at the conformance fixture (agents/test-stub)
 # rather than agents/smoke-rhel-openshell (which does not exist as a package dir).
 agent_package: test-stub
-repo: git@github.com:controlled-agents/safe-agents.git
+repo: git@github.com:wjatx/ptc-gal-reference.git
 deploy_key_secret: smoke-rhel-openshell/deploy-key
 arm: rhel-openshell
 policy: policies/smoke-rhel-openshell.yaml
