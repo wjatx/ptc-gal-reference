@@ -1,14 +1,14 @@
 # Consuming safe-agents as a dependency
 
-This is the **install-and-use** guide for an external agent repo (a live trading agent was the first) that
-depends on the safe-agents platform as a package instead of living inside this monorepo. It is the
-concrete counterpart to `docs/adopting-safe-agents.md` (which is the *conceptual* refactor — hold no
-creds, route through the broker, declare an envelope). Read that for the *why*; read this for the
-*how do I install and invoke it*.
+This is the **install-and-use** guide for an agent repository that depends on this platform as a
+package rather than vendoring it. It is the concrete counterpart to
+`docs/adopting-safe-agents.md`, which is the conceptual refactor: hold no credentials, route
+through the broker, declare an envelope. Read that one for the *why*, and this one for *how do I
+install and invoke it*.
 
-The SDK is packaged (sa#106) as a single distribution named **`safe-agents`**, importable under the
-**`safe_agents.*`** namespace. Distribution is **private and git-installable** — no public PyPI yet
-(a private index is a later, separate call).
+The platform is packaged as a single distribution named **`safe-agents`**, importable under the
+**`safe_agents.*`** namespace. It is git-installable from this repository. There is no PyPI
+release, so every example below pins a git ref.
 
 ---
 
@@ -17,11 +17,13 @@ The SDK is packaged (sa#106) as a single distribution named **`safe-agents`**, i
 Pin by tag or commit SHA — never an unpinned branch (the risk envelope must be reproducible):
 
 ```bash
-# SSH (normal case — your repo/CI has read access to controlled-agents/safe-agents):
-pip install "safe-agents @ git+ssh://git@github.com/controlled-agents/safe-agents.git@v0.63.0"
+pip install "safe-agents @ git+https://github.com/wjatx/ptc-gal-reference.git@v0.72.0"
+```
 
-# HTTPS with a token, e.g. in CI:
-pip install "safe-agents @ git+https://${GH_TOKEN}@github.com/controlled-agents/safe-agents.git@v0.63.0"
+Or, from a clone, for reading and modifying alongside your own work:
+
+```bash
+pip install -e .
 ```
 
 To actually reach AWS (provision/deploy, DynamoDB/S3 stores, live broker), install the **`aws`**
@@ -29,7 +31,7 @@ extra — it adds `boto3`. The base install deliberately omits `boto3` so the SD
 unit-testable with no cloud SDK or credentials present; every AWS call site imports `boto3` lazily:
 
 ```bash
-pip install "safe-agents[aws] @ git+ssh://git@github.com/controlled-agents/safe-agents.git@v0.63.0"
+pip install "safe-agents[aws] @ git+https://github.com/wjatx/ptc-gal-reference.git@v0.72.0"
 ```
 
 In a `pyproject.toml` / `requirements.txt`, pin the same way:
@@ -37,17 +39,17 @@ In a `pyproject.toml` / `requirements.txt`, pin the same way:
 ```toml
 # pyproject.toml
 dependencies = [
-  "safe-agents[aws] @ git+ssh://git@github.com/controlled-agents/safe-agents.git@v0.63.0",
+  "safe-agents[aws] @ git+https://github.com/wjatx/ptc-gal-reference.git@v0.72.0",
 ]
 ```
 
 ```
 # requirements.txt
-safe-agents[aws] @ git+ssh://git@github.com/controlled-agents/safe-agents.git@v0.63.0
+safe-agents[aws] @ git+https://github.com/wjatx/ptc-gal-reference.git@v0.72.0
 ```
 
-Bump the pin (`@v0.2.1` → a newer tag) deliberately when you want a platform upgrade — that pin
-*is* the version of the trusted floor your agent stands on.
+Bump the pin to a newer tag deliberately, when you want a platform upgrade. That pin *is* the
+version of the trusted floor your agent stands on.
 
 ## 2. What the install exposes
 
@@ -57,10 +59,10 @@ Bump the pin (`@v0.2.1` → a newer tag) deliberately when you want a platform u
 | `safe_agents.broker.schemas` | what a consumer **fills**: the seven schemas, `AgentManifest`, `Envelope`, `ToolOp` |
 | `safe_agents.broker.api` | what a consumer **runs**: `build_runtime(manifest)`, `load_agent_manifest`, and the `BrokerRuntime` / `AgentRequest` / `BrokerResponse` call surface |
 | `safe_agents.connectors` | the shared connectors (github; telegram) + the `Connector` protocol re-export — see `safe_agents/connectors/README.md` for the shared-vs-agent-owned split |
-| `safe_agents.arms` | the four substrate arms (`ec2`, `ec2_woken`, `fargate`, `rhel_openshell`, `local`) behind one runner contract |
+| `safe_agents.arms` | the substrate arms behind one runner contract (`ec2`, `ec2_woken`, `fargate`, `local`, `openshift`, `rhel_openshell`) |
 | `safe_agents.contract` | the runner-contract conformance harness |
 
-**The broker's surface is exactly those two rows** [ruling: maintainer, 2026-07-26, #266]: *a consumer may
+**The broker's surface is exactly those two rows** [ruling: maintainer, 2026-07-26]: *a consumer may
 import what it fills and what it runs, never what decides.* Everything else under
 `safe_agents.broker` is internal — including `broker.runtime` (which re-exports the `Doer`,
 `SecretsProvider` and the credential strategies) and the PDP. A consumer able to import the
@@ -90,11 +92,10 @@ python -c "import safe_agents.pipeline, safe_agents.broker.schemas, safe_agents.
 
 ## 3. Your repo owns its manifest, policy, and agent-specific connectors
 
-The extraction broke the old monorepo-sibling assumption: the pipeline no longer jumps to
-`<repo>/agents/<name>` relative to itself. **Your agent package resolves beside its manifest** — the
-pipeline's default is `<manifest's own directory>/<agent_package>`, no CLI flag needed. So an
-external repo lays out its own agent exactly as this monorepo lays out its smoke fixtures — the
-package sits *next to* the manifest, both under `agents/`:
+The pipeline makes no assumption about sitting in the same tree as your agent. **Your agent
+package resolves beside its manifest**: the default is `<manifest's own directory>/<agent_package>`,
+with no CLI flag needed. So your repository lays out its agent exactly as this one lays out its
+smoke fixtures, the package sitting next to the manifest, both under `agents/`:
 
 ```
 example-agent/                      # your repo
@@ -115,9 +116,10 @@ example-agent/                      # your repo
   review. Put your branch protection / CODEOWNERS on it in *your* repo.
 - **The policy** (`policies/<name>.yaml`) is the egress confinement. `agent_egress` lists only
   domain hosts reached *through the broker proxy* (e.g. `api.anthropic.com`); it must contain no raw
-  connector IPs — connector traffic never leaves the agent directly. See this repo's
+  connector IPs, since connector traffic never leaves the agent directly. See this repository's
   `policies/smoke-*.yaml` for the canonical shape.
-- **Agent-specific connectors** (Alpaca for a trading agent) are agent-owned and live in your repo;
+- **Agent-specific connectors** (a brokerage connector for a trading agent, say) are agent-owned
+  and live in your repo;
   genuinely shared connectors (github) ship in the SDK. The `Connector` protocol comes from the SDK
   either way.
 
@@ -165,16 +167,16 @@ result = run_pipeline(
 assert result.success, result.aborted_at
 ```
 
-## 6. Verifying the whole thing (Phase 5 definition of done)
+## 6. Verifying the install
 
-The extraction is "proven" for your repo when, from a clean checkout of *your* repo with only
-`pip install` (no path hacks):
+The dependency is proven for your repo when, from a clean checkout of *your* repo with only
+`pip install` and no path hacks:
 
-- the pin resolves and installs (`pip install "safe-agents[aws] @ git+ssh://…@v0.2.1"`);
+- the pin resolves and installs;
 - `python -c "import safe_agents.pipeline"` works;
 - `safe-agents agents/<name>.yaml --env development --dry-run` validates your manifest; and
-- the confined brokered smoke runs end-to-end (agent → broker → run record → audit) — the
-  nine-gate acceptance bar the substrate arms already cleared live, now inherited as a dependency.
+- the confined brokered smoke runs end to end (agent, broker, run record, audit), which is the
+  acceptance bar the substrate arms clear, now inherited as a dependency.
 
 ## 7. Where to read next
 
