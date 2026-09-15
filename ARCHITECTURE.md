@@ -42,9 +42,10 @@ inspectability even when each component is individually transparent, and harm co
 permitted steps. The platform enforces at the boundary (the broker), not by inspecting components,
 through three mechanisms: (1) path-based taint recorded in audit state rather than a strippable
 label, so untrusted provenance cannot be laundered out of a flow; (2) cumulative blast-radius
-budgets across the session and the delegation tree, so the composed cost is bounded even when each
-step is individually permitted; and (3) a trajectory-capturing audit recording the lineage of each
-composed action. See auto-agents Chapter 31. How these mechanisms scale to many agents and to an
+budgets, so the composed cost is bounded even when each step is individually permitted (per-period
+atomic counters bound the session today; the delegation-tree half is computed and tested but sits on
+no execution path, and nothing yet charges a child against an ancestor's pool, #11); and (3) a
+trajectory-capturing audit recording the lineage of each composed action. See auto-agents Chapter 31. How these mechanisms scale to many agents and to an
 A2A mesh — what multiplies, and which mesh properties are free versus deliberately unbuilt — is
 `docs/scaling-and-mesh.md`.
 
@@ -75,7 +76,8 @@ deterministic demotion, no model in the loop) · capability-scoped tool registry
 see a tool it wasn't granted) · premise revalidation, idempotency, atomic counters · out-of-band
 approval with what-you-see-is-what-executes · **strictly-attenuating sub-grants** (a delegated
 sub-agent gets a computed, short-lived sub-grant that can only narrow authority, and its actions
-attribute up the chain to the human) · the shared vocabulary + pillar contract.
+attribute up the chain to the human; the computation is built and tested, the issuance path and
+ancestor budget accounting are not, #11) · the shared vocabulary + pillar contract.
 
 **Per-agent repo (configured — re-derived per domain):** the envelope (caps, allowlists,
 reversibility classes, abstention thresholds, fallback budgets, corroboration config) · the

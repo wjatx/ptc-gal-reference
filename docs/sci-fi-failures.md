@@ -56,7 +56,7 @@ arguments about which of those three quantities the story was actually about.
 | 3 | WOPR | op classification comes from the image-baked manifest, not the model | SHIPPED |
 | 3 | Ultron | no-write-up floor; tainted external write escalates at every rung | SHIPPED |
 | 4 | Wintermute | ceremony is the only mutation path; agent cannot write the grant store | SHIPPED |
-| 4 | Master Control Program | capability-scoped registry; sub-grants strictly attenuate | SHIPPED |
+| 4 | Master Control Program | capability-scoped registry; sub-grants strictly attenuate | SHIPPED (registry); ROADMAP (sub-grant wiring, #11) |
 | 4 | Swarms and self-copies | zone equals principal: one turn, one taint state, one budget pool | SHIPPED (in zone) |
 | 4 | The framed machine | forgery attributes to transport, never the claimed signer | SHIPPED, runs OFF |
 | 4 | Paperclip Maximizer | magnitude bands and value budgets | ROADMAP (#318, #228) |
@@ -269,7 +269,10 @@ Enumeration of the whole surface is not available either: no acting role holds `
 scan passes every test and is IAM-denied on the floor, and a namespace is enumerated from the
 image-baked manifest instead. Delegation strictly attenuates: a sub-agent gets a computed,
 short-lived sub-grant that can only narrow authority, and its actions attribute up the chain to the
-human (`broker/sub-grants.md`). There is no accumulate-upward operation. *SHIPPED*
+human (`broker/sub-grants.md`). There is no accumulate-upward operation. Read that sentence at its
+actual scope: the attenuation computation is built and tested, and no execution path issues a
+sub-grant or charges a child's actions against an ancestor's pool yet (#11). *SHIPPED (registry);
+ROADMAP (sub-grant wiring)*
 
 **The replication case is more interesting than the absorption case.** For an in-zone swarm, the
 broker authenticates the *zone*, and zone equals principal: a hundred sub-agents share one identity,
@@ -309,8 +312,9 @@ integral.
 typed budgets: error, attention, escalation, and **fallback**, the last existing precisely so that
 "you cannot be chopped to death by a thousand safe actions" (`broker/SCHEMAS.md`). `transform` can
 substitute a safer operation per call — it does not clamp an argument, which the spec requires and
-marks as unbuilt here (#358). `ARCHITECTURE.md` names cumulative blast-radius budgets across the
-session and the delegation tree as a base mechanism for exactly this compositional case.
+marks as unbuilt here (#358). `ARCHITECTURE.md` names cumulative blast-radius budgets as the base
+mechanism for exactly this compositional case; the session half runs today, and the delegation-tree
+half is on no execution path (#11).
 
 What is missing is the thing the story is about. **Magnitude bands, value budgets, and typed
 authority are #228, and #318 is the epic that names the gap**: the platform can decide a call, and

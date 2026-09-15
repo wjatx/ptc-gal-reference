@@ -1,6 +1,7 @@
 # audit — the append-only audit store and the closed learning loop
 
-> **Status: design pending.** This directory is a scaffold. The audit + closed learning loop spans
+> **Status: the store is built.** The implementation ships at `safe_agents/broker/audit/` (the
+> hash-chained tape with file and S3 sinks); this directory holds the design notes. The audit + closed learning loop spans
 > sa#4 (autonomy & action pipeline) + sa#7 (security & safety); the learning loop draws from
 > `auto-agents/book/ch48`.
 

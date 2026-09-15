@@ -8,6 +8,16 @@ the seam note in `auto-agents/book/ch48` §"The seams, restated for the whole."
 
 > **The seam:** *The sub-grant computation must strictly attenuate, or delegation leaks authority.*
 
+## Status
+
+The computation is built and tested: `safe_agents/broker/delegation/compute.py` derives a
+`SubGrant` from a parent, refuses any widening, and `test_delegation.py` covers each attenuating
+dimension. Two things are not built, and the rest of this document should be read with that in
+mind (#11). No execution path issues a sub-grant: nothing in the runtime receives a delegation
+request or presents a sub-grant to the broker on a call. And nothing charges a child's actions
+against an ancestor's remaining budget, so siblings that each fit their own cap can jointly exceed
+the parent's. Individually bounded children do not bound the set.
+
 This is directly relevant to agents on this platform: the trading agent's daily run and responsive
 Q&A flow both spawn sub-agents (groundedness checker, grader, Q&A responder). Each sub-agent must
 receive a sub-grant computed from, and strictly narrower than, the parent's grant.
@@ -63,10 +73,15 @@ the sub-agent boundary.
 
 ---
 
-## The STUB schema
+## The schema
+
+The implemented record is `SubGrant` in `safe_agents/broker/delegation/types.py`; the shape below
+is the illustrative sketch it was built from and differs in places (the implementation carries
+`id`, a list `actionClasses`, a single `spendCap`, and `allowFurtherDelegation`, and has no
+`toolSet` or `AttenuatedEnvelope`). Where the two disagree the Python type wins.
 
 ```ts
-// STUB — illustrative shape, not an implementation
+// Illustrative sketch; the implemented shape is types.py::SubGrant
 interface SubGrant {
   // Provenance
   parentGrantId:    string              // the grant this was derived from
@@ -104,7 +119,8 @@ widen authority.
 ## Enforcement
 
 Sub-grant attenuation is enforced at issuance, not on trust. The broker's sub-grant computation
-path:
+path, as designed (steps 1 and 5, and the audit write in step 4, are the unwired parts; see
+Status):
 
 1. Receives the parent agent's delegation request (desired tool set, desired level, desired caps).
 2. Intersects the requested scope against the parent grant's current authority (remaining caps,
