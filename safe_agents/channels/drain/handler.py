@@ -277,8 +277,10 @@ def _process_record(record: dict, state: _DrainState) -> None:
     #
     # This branch runs neither session_turn() nor ingest_chain(): there is no agent
     # turn to taint. approve_intent()/reject_intent() act on the STORED
-    # materializedRequest (WYSIWYE) under a synthesized allow, so the human message's
-    # own taint cannot change what executes — the Doer needs no turn state for it.
+    # materializedRequest (WYSIWYE), so the human message's own taint cannot change
+    # what executes — the Doer needs no turn state for it. approve_intent()
+    # re-validates current authority over those stored bytes before releasing them
+    # (#9); a refused release returns executed=False like any other refusal.
     if envelope.sender_class == "owner" and envelope.payload.get("kind") == "approval":
         # AUTHENTICATED owner identity (airlock-stamped), NEVER read from the payload.
         approved_by = f"owner:{envelope.sender.channel_identity}"

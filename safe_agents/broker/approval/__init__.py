@@ -18,6 +18,7 @@ Exports:
     InMemoryIntentStore — thread-safe in-process fake for tests; no AWS required
     DynamoIntentStore   — production DynamoDB implementation (lazy boto3)
     QuarantinedIntentError — raised by get_intent on stored-bytes HMAC failure (#349)
+    ReleaseRefusedError — raised by a release executor whose revalidation refused (#9)
     ApprovalResult      — return type of materialize()
     ExecutionResult     — return type of approve()
     NotifierEvent       — event contract for the notifier hook (channel delivery in channels/)
@@ -25,7 +26,13 @@ Exports:
 See SCHEMAS.md §4 for the Intent schema fields and the ARCHITECTURE.md for WYSIWYE.
 """
 
-from .engine import approve, materialize, reject
+from .engine import (
+    RELEASE_REFUSED_REASON_PREFIX,
+    ReleaseRefusedError,
+    approve,
+    materialize,
+    reject,
+)
 from .store import (
     DynamoIntentStore,
     InMemoryIntentStore,
@@ -42,6 +49,8 @@ __all__ = [
     "InMemoryIntentStore",
     "DynamoIntentStore",
     "QuarantinedIntentError",
+    "ReleaseRefusedError",
+    "RELEASE_REFUSED_REASON_PREFIX",
     "ApprovalResult",
     "ExecutionResult",
     "IntentView",

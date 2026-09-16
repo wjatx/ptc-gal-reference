@@ -45,6 +45,7 @@ from safe_agents.broker.approval import (
     IntentStore,
     IntentView,
     QuarantinedIntentError,
+    ReleaseRefusedError,
     approve,
     materialize,
     reject,
@@ -77,7 +78,7 @@ from safe_agents.broker.schemas import (
     ToolOp,
 )
 from safe_agents.broker.schemas.common import CounterPeriod, DemotionTrigger, Principal
-from safe_agents.broker.schemas.decision import Allow
+from safe_agents.broker.schemas.decision import Allow, Decision, Deny
 from safe_agents.broker.schemas.envelope import ApprovalQueue, Confidence
 from safe_agents.broker.schemas.evidence import (
     DemotionSignal,
@@ -514,12 +515,23 @@ class BrokerRuntime:
         a Doer or a store reference (pep.py header).
 
         WYSIWYE is preserved: approve() reads the STORED materializedRequest and the
-        executor below runs exactly those bytes under a synthesized plain allow. The
-        PDP is deliberately NOT re-run — re-deciding a call the PDP already routed to
-        require_approval would loop straight back to materialize(). One consequence:
-        the release executes the Doer directly and so does NOT draw the per-op daily
-        budget counter — deliberate (re-deciding would loop to materialize), and
-        approval-flood is the approval-queue guard's concern, not the op counter's.
+        release runs exactly those bytes, never anything the agent re-sends.
+
+        The release RE-VALIDATES current authority (#9). It routes through the same
+        enforce() pipeline an inline call uses, over the stored call, with the
+        approval requirement treated as already satisfied: fresh facts are read, the
+        PDP is re-run, and a fresh require_approval is folded back to allow so the
+        human's ratification cannot loop the call into a second hold. Everything the
+        PDP can say that is STRICTER than allow still binds, so a grant revoked or
+        demoted between hold and release refuses instead of executing. The release
+        also draws the per-op budget counter, and an exhausted cap refuses it. Both
+        refusals fail toward less authority: the Doer is never reached, an audit
+        record carries the reason, and the intent lands in the terminal "refused"
+        state.
+
+        A revalidation that returns transform also refuses. WYSIWYE forbids running
+        anything other than the bytes the human saw, and a transform is by
+        construction a different op.
 
         Parameters
         ----------
@@ -534,9 +546,10 @@ class BrokerRuntime:
         ExecutionResult
             executed=True on success; executed=False with a rejection_reason when
             the intent is missing, expired, already actioned, frozen for a
-            different principal, or quarantined (#349: the stored bytes failed
+            different principal, quarantined (#349: the stored bytes failed
             HMAC verification — a store rewrite between hold and release
-            refuses instead of executing; the Doer is never reached).
+            refuses instead of executing; the Doer is never reached), or when
+            release-time revalidation refused ("release refused: …", #9).
         """
         try:
             foreign = self._reject_foreign_intent(intent_id)
@@ -545,89 +558,180 @@ class BrokerRuntime:
         if foreign is not None:
             return foreign
 
-        def _exec(stored_call: BrokeredCall) -> Any:
-            """Approved-executor closure — the release path's connector call.
+        def _approved_decider(call: BrokeredCall, facts: Facts) -> Decision:
+            """The release-time PDP wrapper — approval satisfied, authority still checked (#9).
 
-            Mirrors the inline _executor's audit footprint (outcome "executed" on
-            success, "failed" before re-raising a ConnectorExecutionError) so an
-            owner-approved release leaves the same tamper-evident trace an inline
-            allow would — plus the #198 receipts: intentId + storedCallDigest bind
-            the release to the frozen intent, and approvedBy is now actually stamped
-            here (SCHEMAS.md §4 always claimed it was "copied into
-            AuditRecord.approvedBy at execution time"; before #198 this path never
-            passed it — a latent gap-A sub-bug). The synthesized allow is a plain
-            Allow — for an allow decision the Doer runs the stored call's op/args
-            verbatim, so what the human saw is what executes.
+            enforce()'s premise revalidation re-runs the PDP against fresh facts and
+            keeps whichever outcome is stricter. Handed the raw decide() that would
+            be wrong in one direction only: the call is held BECAUSE the PDP said
+            require_approval, so an unchanged world re-decides to require_approval
+            and the release would loop back into a second hold. This wrapper answers
+            exactly that one requirement and nothing else.
+
+              allow / require_approval → allow. The human ratified this call through
+                  an authenticated path; the approval requirement is met.
+              transform → deny. A transform substitutes a different op, and the human
+                  approved the bytes they were shown (WYSIWYE). The approved call is
+                  no longer executable as approved, so the release refuses and a
+                  fresh call can be held against the new decision.
+              deny / abstain → unchanged. The grant was revoked or demoted, a budget
+                  is breached, a bound fired: an approval was never authority.
             """
-            allow = Allow(kind="allow")
+            decided = decide(call, facts)
+            if decided.kind in ("allow", "require_approval"):
+                return Allow(kind="allow")
+            if decided.kind == "transform":
+                return Deny(
+                    kind="deny",
+                    reason=(
+                        "release-time revalidation returned transform "
+                        f"(op={getattr(decided, 'op', None)!r}); the approved call is "
+                        "no longer executable as approved and a release never runs "
+                        "anything other than the bytes the human saw"
+                    ),
+                )
+            return decided
+
+        def _exec(stored_call: BrokeredCall) -> Any:
+            """Approved-executor closure — the release path's revalidate-then-execute (#9).
+
+            Runs the STORED call through the same enforce() pipeline an inline call
+            uses, so the release gets premise revalidation, the atomic per-op budget
+            draw and a write-ahead ledger entry — the three things a direct Doer call
+            skipped. _approved_decider supplies the one release-specific adjustment.
+
+            On allow the connector runs and the audit footprint mirrors the inline
+            _executor's (outcome "executed" on success, "failed" before re-raising a
+            ConnectorExecutionError) plus the #198 receipts: intentId +
+            storedCallDigest bind the release to the frozen intent, and approvedBy is
+            stamped here (SCHEMAS.md §4 always claimed it was "copied into
+            AuditRecord.approvedBy at execution time"; before #198 this path never
+            passed it — a latent gap-A sub-bug).
+
+            On anything stricter the release is REFUSED: a deny/abstain audit record
+            names the reason beside the approver and the intent, and
+            ReleaseRefusedError tells approve() to land the intent in "refused".
+            """
             # #198 — recomputed INDEPENDENTLY from the stored bytes (never copied off
             # the hold record): hold-side == release-side proves executed==approved.
             stored_digest = hash_stored_call(stored_call)
-            try:
-                doer_result = self._doer.execute(stored_call, allow)
-            except ConnectorExecutionError as exc:
-                # #198 — a failed attempt still carries its approval binding (no
-                # result_digest: there is no result). An auditor must see WHICH
-                # approval led to a failed attempt.
+
+            def _release_executor(call: BrokeredCall, effective: Decision) -> Any:
+                """Connector execution callback — called by enforce() on allow."""
+                try:
+                    doer_result = self._doer.execute(call, effective)
+                except ConnectorExecutionError as exc:
+                    # #198 — a failed attempt still carries its approval binding (no
+                    # result_digest: there is no result). An auditor must see WHICH
+                    # approval led to a failed attempt.
+                    emit(
+                        self._audit_sink,
+                        principal=call.principal,
+                        tool=call.tool,
+                        op=call.op,
+                        args=call.args,
+                        decision=effective.kind,
+                        outcome="failed",
+                        envelope_hash=self._envelope_hash,
+                        approved_by=approved_by,
+                        error=str(exc),
+                        intent_id=intent_id,
+                        stored_call_digest=stored_digest,
+                    )
+                    raise
                 emit(
                     self._audit_sink,
-                    principal=stored_call.principal,
-                    tool=stored_call.tool,
-                    op=stored_call.op,
-                    args=stored_call.args,
-                    decision=allow.kind,
-                    outcome="failed",
+                    principal=call.principal,
+                    tool=call.tool,
+                    op=doer_result.op,
+                    args=call.args,
+                    decision=effective.kind,
+                    outcome="executed",
                     envelope_hash=self._envelope_hash,
                     approved_by=approved_by,
-                    error=str(exc),
                     intent_id=intent_id,
                     stored_call_digest=stored_digest,
+                    # #198 effect receipt — broker-written digest of what the world returned
+                    result_digest=hash_args(doer_result.result),
                 )
-                raise
+                # #193 — observations, approve-release path. An in-loop principal's acting
+                # ops route require_approval → this release, and the inline executor's
+                # observations meter never sees them; without this increment such a
+                # principal could never accumulate the evidence that promotes it. Uses the
+                # STORED call's coordinates. NOT counted on the ConnectorExecutionError
+                # path above. Guarded: the side effect already ran and the intent is being
+                # transitioned — a label fault must not escape (friction doctrine: log,
+                # never gate), else the approved intent is stranded after its side effect
+                # executed.
+                try:
+                    self._enforcement_store.try_increment_counter(
+                        scoped_counter_key(
+                            call.principal,
+                            call.tool,
+                            call.op,
+                            OBSERVATIONS_SUFFIX,
+                            period=self._counter_period,
+                        ),
+                        1.0,
+                        UNBOUNDED_COUNTER_CAP,
+                    )
+                except Exception:  # noqa: BLE001 — a label must never gate the op it labels
+                    logger.warning(
+                        "evidence counter increment failed (observations, approve release) "
+                        "for %s.%s — op already executed; continuing",
+                        call.tool,
+                        call.op,
+                        exc_info=True,
+                    )
+                return doer_result.result
+
+            # The SAME per-op budget key the inline /call path draws (#9): a release
+            # spends the op's period budget exactly as an autonomous call would, so an
+            # exhausted cap refuses the release instead of slipping past it.
+            counter_key = scoped_counter_key(
+                stored_call.principal,
+                stored_call.tool,
+                stored_call.op,
+                ACTION_CAP_SUFFIX,
+                period=self._counter_period,
+            )
+            # idempotency_key=None: approve()'s pending→approved CAS is already the
+            # release's exactly-once gate, so a second enforcement-level key would add
+            # a second, redundant dedup surface over the same event.
+            enforced = enforce(
+                stored_call,
+                Allow(kind="allow"),
+                idempotency_key=None,
+                counter_key=counter_key,
+                counter_delta=1.0,
+                counter_cap=self._counter_cap,
+                decider=_approved_decider,
+                fresh_facts=self._pip,
+                store=self._enforcement_store,
+                executor=_release_executor,
+            )
+            if enforced.decision.kind == "allow":
+                return enforced.result
+
+            # REFUSED. Nothing ran. Put it on the tape before raising: an auditor has
+            # to be able to see that a human approved this intent and the broker
+            # still refused it, and why.
+            reason = getattr(enforced.decision, "reason", None) or "release refused"
             emit(
                 self._audit_sink,
                 principal=stored_call.principal,
                 tool=stored_call.tool,
-                op=doer_result.op,
+                op=stored_call.op,
                 args=stored_call.args,
-                decision=allow.kind,
-                outcome="executed",
+                decision=enforced.decision.kind,
+                outcome="denied",
                 envelope_hash=self._envelope_hash,
+                reason=reason,
                 approved_by=approved_by,
                 intent_id=intent_id,
                 stored_call_digest=stored_digest,
-                # #198 effect receipt — broker-written digest of what the world returned
-                result_digest=hash_args(doer_result.result),
             )
-            # #193 — observations, approve-release path. An in-loop principal's acting
-            # ops route require_approval → this release, which bypasses enforce() (and its
-            # inline observations meter); without this increment such a principal could
-            # never accumulate the evidence that promotes it. Uses the STORED call's
-            # coordinates. NOT counted on the ConnectorExecutionError path above.
-            # Guarded: the side effect already ran and the intent is being transitioned —
-            # a label fault must not escape (friction doctrine: log, never gate), else the
-            # approved intent is stranded after its side effect executed.
-            try:
-                self._enforcement_store.try_increment_counter(
-                    scoped_counter_key(
-                        stored_call.principal,
-                        stored_call.tool,
-                        stored_call.op,
-                        OBSERVATIONS_SUFFIX,
-                        period=self._counter_period,
-                    ),
-                    1.0,
-                    UNBOUNDED_COUNTER_CAP,
-                )
-            except Exception:  # noqa: BLE001 — a label must never gate the op it labels
-                logger.warning(
-                    "evidence counter increment failed (observations, approve release) "
-                    "for %s.%s — op already executed; continuing",
-                    stored_call.tool,
-                    stored_call.op,
-                    exc_info=True,
-                )
-            return doer_result.result
+            raise ReleaseRefusedError(reason)
 
         try:
             return approve(intent_id, approved_by, self._intent_store, executor=_exec)

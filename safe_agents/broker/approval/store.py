@@ -293,7 +293,8 @@ class DynamoIntentStore:
         data = str                 (canonical frozen-half payload — the #349 HMAC basis:
                                     id + materializedRequest + renderedForHuman + expiry + ts)
         intentHash = str           (HMAC-SHA-256 over the exact stored data bytes)
-        status = str               ("pending" | "approved" | "rejected" | "expired" | "executed")
+        status = str               ("pending" | "approved" | "rejected" | "expired" |
+                                    "executed" | "refused")
         ttl = int                  (epoch seconds — DynamoDB TTL attribute for auto-expiry)
         approvedBy = str | absent
         executedAt = str | absent

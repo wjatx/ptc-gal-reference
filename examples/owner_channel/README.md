@@ -73,6 +73,9 @@ broker's `approve_intent` / `reject_intent` seam, actioning the STORED materiali
 so a non-owner envelope carrying an approval-shaped payload does NOT fork — it falls
 through to the normal turn where the broker decides every call. `approved_by` is the
 AUTHENTICATED owner identity (`owner:<channel_identity>`), never read from the payload.
+A `yes` is not a bypass: the release re-validates current authority over the stored call
+and draws the op's budget before anything runs, so a grant revoked since the hold refuses
+(`executed: false`, intent status `refused`).
 
 The consumer-owned `Receiver` in this example therefore handles only the COMMAND path.
 

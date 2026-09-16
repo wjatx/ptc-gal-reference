@@ -30,8 +30,12 @@ class Intent(BaseModel):
     materializedRequest: BrokeredCall
     # what-you-see: human-readable render pushed to the approval channel
     renderedForHuman: str
-    # terminal states: rejected, expired, executed
-    status: Literal["pending", "approved", "rejected", "expired", "executed"]
+    # terminal states: rejected, expired, executed, refused
+    # "refused" (#9) is the release-side terminal: a human ratified the hold, and
+    # revalidating current authority at release time then refused (grant revoked or
+    # demoted, per-op budget exhausted). Distinct from "rejected" (the human said no)
+    # and from "approved" (the release reached the connector and it failed).
+    status: Literal["pending", "approved", "rejected", "expired", "executed", "refused"]
     # hard TTL; unapproved intents auto-deny at this timestamp (ISO-8601 UTC)
     expiry: str
     # the authenticated human identity that approved; absent until approval

@@ -63,7 +63,9 @@ class IntentView:
     """
 
     intent_id: str
-    status: Literal["pending", "approved", "rejected", "expired", "executed"]
+    status: Literal[
+        "pending", "approved", "rejected", "expired", "executed", "refused"
+    ]
     tool: str
     op: str
     args_digest: str

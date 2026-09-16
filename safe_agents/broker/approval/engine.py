@@ -13,6 +13,11 @@ Two entry points:
       to the agent). Reads materializedRequest from the store and executes EXACTLY
       those bytes — never anything the agent re-sends after the turn ended.
       This is the WYSIWYE (what-you-see-is-what-you-execute) guarantee.
+
+      The executor may refuse by raising ReleaseRefusedError (#9): the human's
+      ratification satisfies the approval requirement and nothing else, so a
+      release still has to clear the authority the call needs at release time.
+      A refused release lands the intent in the terminal "refused" state.
 """
 
 from __future__ import annotations
@@ -30,6 +35,29 @@ from .types import ApprovalResult, ExecutionResult, NotifierEvent
 # an owner rejection actually transitioned the intent (every refusal path returns
 # a distinct reason). The PEP's human_override evidence writer keys on it (#193).
 REJECTED_BY_OWNER_REASON = "rejected by owner"
+
+# Prefix of the rejection_reason approve() returns when the executor refused the
+# release (#9). Callers key on it the way they key on REJECTED_BY_OWNER_REASON.
+RELEASE_REFUSED_REASON_PREFIX = "release refused"
+
+
+class ReleaseRefusedError(Exception):
+    """The release executor refused to run the approved call (#9).
+
+    Raised by the PEP's approved-executor when revalidating current authority at
+    release time yields deny or abstain: the grant was revoked or demoted, the
+    per-op budget is exhausted, or the world otherwise moved between the hold and
+    the human's ratification. A human approval answers the approval requirement;
+    it does not stand in for the authority the approved call still needs.
+
+    approve() catches this and moves the intent to the terminal "refused" state
+    rather than "executed", so the record says the release was refused and why.
+    The connector is never reached, which fails toward less authority.
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +213,10 @@ def approve(
     -------
     ExecutionResult
         executed=True on success; executed=False with rejection_reason on refusal.
+        A refusal raised by the executor itself (ReleaseRefusedError — current
+        authority no longer covers the approved call, #9) moves the intent to the
+        terminal "refused" state and reports
+        "release refused: <reason>"; the connector was never reached.
 
     Raises
     ------
@@ -234,7 +266,19 @@ def approve(
     stored_call = intent.materializedRequest
     result = None
     if executor is not None:
-        result = executor(stored_call)
+        try:
+            result = executor(stored_call)
+        except ReleaseRefusedError as exc:
+            # #9 — the executor revalidated current authority and refused. Nothing
+            # ran. Move the intent to its own terminal state so a reader can tell
+            # a refused release from an executed one and from a release whose
+            # connector crashed after the side effect (which stays "approved").
+            store.transition_status(intent_id, "approved", "refused")
+            return ExecutionResult(
+                intent_id=intent_id,
+                executed=False,
+                rejection_reason=f"{RELEASE_REFUSED_REASON_PREFIX}: {exc.reason}",
+            )
 
     # Stamp the execution timestamp on the executed transition: it extends the item
     # TTL (executed intents outlive their approval window for the /flag review, #193)

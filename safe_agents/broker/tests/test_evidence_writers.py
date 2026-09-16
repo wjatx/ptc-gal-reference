@@ -5,9 +5,10 @@ Three write sites, all proven here through the public runtime surface:
 
   1. inline allow/transform execution → one `observations` increment per successfully
      executed op (reads and writes both), written LAST in the executor.
-  2. approve_intent release (the out-of-band approve path that bypasses enforce()) →
-     one `observations` increment, so an in-loop principal whose acting ops all route
-     require_approval → approve-release can still accumulate promotion evidence.
+  2. approve_intent release (the out-of-band approve path, which since #9 runs its own
+     enforce() over the stored call) → one `observations` increment, so an in-loop
+     principal whose acting ops all route require_approval → approve-release can still
+     accumulate promotion evidence.
   3. reject_intent on a CAS win → one `human_override` AND one `observations` increment
      (each terminal labeled outcome is an observation, keeping overrides/observations <= 1).
 
@@ -183,8 +184,8 @@ def test_idempotent_replay_does_not_double_count_observations():
 
 
 def test_approve_intent_release_increments_observations():
-    """The out-of-band approve-release (bypasses enforce()) still records one observation
-    under the STORED call's coordinates — the seam that lets an in-loop principal promote."""
+    """The out-of-band approve-release records one observation under the STORED call's
+    coordinates — the seam that lets an in-loop principal promote."""
     store = InMemoryStore()
     runtime, _, intent_store = _payments_runtime_with_store(store)
     intent_id = _materialize_held_intent(runtime, intent_store)

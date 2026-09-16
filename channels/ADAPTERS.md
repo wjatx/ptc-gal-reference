@@ -102,8 +102,12 @@ human, routed to the broker's Intent resolver, never to the agent (`channels/REA
 approval-kind payload — `{"kind": "approval", "intent_id": …, "decision": "yes"|"no"}` — and the
 drain worker forks on `sender_class == "owner" AND payload.kind == "approval"` to the broker's
 sanctioned `approve_intent()` / `reject_intent()` seam. That path is **WYSIWYE**: it executes the
-**stored** `materializedRequest` under a synthesized allow — the PDP is *not* re-run, and the human
-message's own taint therefore cannot change what executes. The fork keys on the **unforgeable**
+**stored** `materializedRequest`, so the human message's own taint cannot change what executes. The
+release **re-validates current authority** (#9): the broker re-reads facts, re-runs the PDP over the
+stored call with the approval requirement treated as satisfied, and draws the op's period budget, so
+a grant revoked or demoted between the hold and the release refuses instead of executing. A refused
+release reaches no connector and lands the intent in the terminal `refused` state. The fork keys on
+the **unforgeable**
 gate-8 `sender_class` (set only at the airlock from the trust map), so a non-owner envelope carrying
 an approval-shaped payload does **not** fork — it falls through to the normal agent-turn path where
 the broker decides every call. Approvals are **addressed like any command** (`/approve` is the
@@ -247,7 +251,8 @@ clauses:
 
 The owner cases (sa#176) are proven across three suites — the owner adapter +
 dispatch (`test_owner_adapter.py`), the drain fork (`test_drain_owner.py`), and
-the out-of-band release seam (`safe_agents/broker/tests/test_out_of_band_approval.py`):
+the out-of-band release seam (`safe_agents/broker/tests/test_out_of_band_approval.py`,
+`safe_agents/broker/tests/test_release_revalidation.py`):
 
 | Clause | Test |
 |---|---|
@@ -258,6 +263,7 @@ the out-of-band release seam (`safe_agents/broker/tests/test_out_of_band_approva
 | admitted owner command still routes every call through the broker (no auto-allow) | `test_drain_owner.py::test_owner_command_takes_normal_turn_not_approval_fork` |
 | owner `/approve` forks to `approve_intent`/`reject_intent`; non-owner approval payload does NOT fork | `test_drain_owner.py::test_owner_approval_yes_forks_to_approve_intent` · `::test_non_owner_approval_shaped_payload_does_not_fork` |
 | an owner may not release another principal's held intent (confused-deputy guard) | `test_out_of_band_approval.py::TestForeignIntentGuard` |
+| an owner approval does not overcome authority withdrawn since the hold (grant revoked, cap exhausted) | `test_release_revalidation.py::test_grant_revoked_between_hold_and_release_refuses` · `::test_action_cap_exhausted_between_hold_and_release_refuses` |
 | unknown adapter kind rejected loudly at manifest validation (discriminated union) | `test_manifest.py::test_unknown_adapter_kind_fails_validation_loudly` |
 | `routing` set on a non-owner adapter fails loudly | `test_manifest.py::test_routing_on_non_owner_adapter_fails_loudly` |
 

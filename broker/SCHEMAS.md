@@ -298,7 +298,7 @@ interface Intent {
   id:                  string            // stable identifier; referenced by the approval flow and AuditRecord
   materializedRequest: BrokeredCall      // the FROZEN BrokeredCall the broker executes verbatim on approval — never re-derived
   renderedForHuman:    string            // what-you-see: human-readable render pushed to the approval channel
-  status:              "pending" | "approved" | "rejected" | "expired" | "executed"
+  status:              "pending" | "approved" | "rejected" | "expired" | "executed" | "refused"
   expiry:              string            // hard TTL; unapproved intents auto-deny at this timestamp (ISO-8601 UTC)
   approvedBy?:         string            // the human identity that approved; absent until approval
   ts:                  string            // when this intent was created
@@ -315,12 +315,15 @@ Per-field notes:
   with subject '…'"). Separate from `materializedRequest` so the render can be human-friendly
   prose while execution stays typed and frozen.
 - **status** — `pending` (awaiting human decision) · `approved` (broker may execute) · `rejected`
-  (human declined) · `expired` (TTL passed, auto-deny) · `executed` (broker ran it). Terminal
-  states: `rejected`, `expired`, `executed`.
+  (human declined) · `expired` (TTL passed, auto-deny) · `executed` (broker ran it) · `refused`
+  (a human approved, and release-time revalidation then refused: the grant was revoked or demoted,
+  or the op's period budget was exhausted, between the hold and the release; nothing ran, #9).
+  Terminal states: `rejected`, `expired`, `executed`, `refused`.
 - **expiry** — a hard TTL. An intent the human does not act on auto-denies; it never hangs open
   indefinitely. The agent cannot extend or re-issue.
 - **approvedBy** — the authenticated human identity, set by the approval path (not the agent).
-  Copied into `AuditRecord.approvedBy` at execution time.
+  Copied into `AuditRecord.approvedBy` at execution time, and onto the refusal record when
+  release-time revalidation refuses, so the tape shows who approved a release the broker declined.
 
 Intent is stored in **DynamoDB** (the same on-demand table as grants and counters). `AuditRecord.outcome = "held"` means an intent is pending; `"executed"` / `"denied"` are terminal.
 
