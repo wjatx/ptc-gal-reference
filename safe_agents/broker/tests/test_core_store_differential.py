@@ -193,11 +193,17 @@ def _raw_sqlite_item(db_path: Path, pk: str, sk: str) -> dict | None:
 
 
 class EnforcementBackend:
-    def __init__(self, name: str, store, raw_ledger_item) -> None:
+    def __init__(
+        self, name: str, store, raw_ledger_item, write_legacy_idem=None
+    ) -> None:
         self.name = name
         self.store = store
         # raw_ledger_item(entry_id) -> non-key attr dict | None, out-of-band.
         self.raw_ledger_item = raw_ledger_item
+        # write_legacy_idem(key) writes an idempotency row with NO status
+        # attribute, the shape every row had before the claim lifecycle. Written
+        # out-of-band because the store API can no longer produce one.
+        self.write_legacy_idem = write_legacy_idem
 
 
 @pytest.fixture(params=["memory", "sqlite", "dynamo"])
@@ -220,14 +226,35 @@ def enforcement_backend(request, tmp_path):
                     attrs[name] = getattr(entry, name)
             return attrs
 
-        yield EnforcementBackend("memory", store, raw)
+        def legacy_idem(key: str) -> None:
+            # The fake holds dataclasses, not attribute maps, so "no status
+            # attribute" is spelled as the dataclass default — which is the same
+            # claim the other two backends make about an absent attribute.
+            store._idempotency[key] = IdempotencyRecord(
+                key=key, decision_json='{"kind": "allow"}', ts=TS
+            )
+
+        yield EnforcementBackend("memory", store, raw, legacy_idem)
         return
     if request.param == "sqlite":
         db = tmp_path / "broker.db"
+        store = SqliteEnforcementStore(db)
+
+        def legacy_idem(key: str) -> None:
+            store._connection().execute(
+                "INSERT INTO items (pk, sk, item) VALUES (?, ?, ?)",
+                (
+                    f"IDEM#{key}",
+                    "v0",
+                    json.dumps({"decision_json": '{"kind": "allow"}', "ts": TS}),
+                ),
+            )
+
         yield EnforcementBackend(
             "sqlite",
-            SqliteEnforcementStore(db),
+            store,
             lambda entry_id: _raw_sqlite_item(db, f"LEDGER#{entry_id}", "v0"),
+            legacy_idem,
         )
         return
     table_name = "safe-agents-enforcement-differential"
@@ -242,7 +269,17 @@ def enforcement_backend(request, tmp_path):
                 return None
             return {k: v for k, v in item.items() if k not in ("pk", "sk")}
 
-        yield EnforcementBackend("dynamo", DynamoStore(table_name), raw)
+        def legacy_idem(key: str) -> None:
+            table.put_item(
+                Item={
+                    "pk": f"IDEM#{key}",
+                    "sk": "v0",
+                    "decision_json": '{"kind": "allow"}',
+                    "ts": TS,
+                }
+            )
+
+        yield EnforcementBackend("dynamo", DynamoStore(table_name), raw, legacy_idem)
 
 
 class IntentBackend:
@@ -412,6 +449,157 @@ class TestIdempotencyConformance:
 
     def test_delete_absent_is_noop(self, enforcement_backend):
         enforcement_backend.store.delete_idempotency("never-existed")  # must not raise
+
+
+# ===========================================================================
+# Claim lifecycle conformance — every backend
+#
+# enforce() claims a key BEFORE the side effect and settles it after, so the
+# compare-and-set that settles it has to behave identically on all three
+# backends: Dynamo's ConditionExpression on the status attribute, sqlite's
+# read-check-write inside BEGIN IMMEDIATE, and the fake's lock. A backend that
+# settled a row it should have refused would let a retry replay an outcome that
+# never happened.
+# ===========================================================================
+
+
+def make_claim(key: str = "claim-1") -> IdempotencyRecord:
+    return IdempotencyRecord(
+        key=key, decision_json="", ts=TS, status="in_flight"
+    )
+
+
+class TestIdempotencyClaimLifecycle:
+    def test_claim_round_trips_as_in_flight(self, enforcement_backend):
+        store = enforcement_backend.store
+        assert store.put_idempotency_if_absent(make_claim()) is True
+        got = store.get_idempotency("claim-1")
+        assert got is not None
+        assert got.status == "in_flight"
+        assert got.decision_json == ""
+        assert got.result_json is None
+        assert got.error is None
+        # The claim's Decision is a deny rather than a crash on empty JSON: the
+        # only question anyone asks an in-flight row is "may this proceed".
+        assert got.decision().kind == "deny"
+
+    def test_complete_settles_the_claim(self, enforcement_backend):
+        store = enforcement_backend.store
+        store.put_idempotency_if_absent(make_claim())
+        assert (
+            store.complete_idempotency(
+                "claim-1", decision_json='{"kind": "allow"}', result_json='{"ok": true}'
+            )
+            is True
+        )
+        got = store.get_idempotency("claim-1")
+        assert got.status == "executed"
+        assert got.decision_json == '{"kind": "allow"}'
+        assert got.result() == {"ok": True}
+        assert got.ts == TS, "the claim timestamp survives, so claim age stays readable"
+
+    def test_complete_with_no_result_leaves_result_json_absent(self, enforcement_backend):
+        store = enforcement_backend.store
+        store.put_idempotency_if_absent(make_claim())
+        store.complete_idempotency(
+            "claim-1", decision_json='{"kind": "allow"}', result_json=None
+        )
+        got = store.get_idempotency("claim-1")
+        assert got.status == "executed"
+        assert got.result_json is None
+
+    def test_fail_settles_the_claim_with_its_error(self, enforcement_backend):
+        store = enforcement_backend.store
+        store.put_idempotency_if_absent(make_claim())
+        assert store.fail_idempotency("claim-1", error="connector timed out") is True
+        got = store.get_idempotency("claim-1")
+        assert got.status == "failed"
+        assert got.error == "connector timed out"
+
+    def test_settling_an_absent_claim_is_refused(self, enforcement_backend):
+        store = enforcement_backend.store
+        assert (
+            store.complete_idempotency(
+                "never-claimed", decision_json='{"kind": "allow"}', result_json=None
+            )
+            is False
+        )
+        assert store.fail_idempotency("never-claimed", error="boom") is False
+        assert store.get_idempotency("never-claimed") is None, (
+            "a refused CAS must not create the row it refused to settle"
+        )
+
+    def test_a_settled_claim_cannot_be_settled_again(self, enforcement_backend):
+        """The CAS is conditional on in_flight, so nothing can overwrite a
+        recorded outcome — including the other terminal transition."""
+        store = enforcement_backend.store
+        store.put_idempotency_if_absent(make_claim())
+        store.complete_idempotency(
+            "claim-1", decision_json='{"kind": "allow"}', result_json='{"ok": true}'
+        )
+
+        assert store.fail_idempotency("claim-1", error="late failure") is False
+        assert (
+            store.complete_idempotency(
+                "claim-1", decision_json='{"kind": "transform"}', result_json=None
+            )
+            is False
+        )
+        got = store.get_idempotency("claim-1")
+        assert got.status == "executed"
+        assert got.decision_json == '{"kind": "allow"}'
+        assert got.result() == {"ok": True}
+        assert got.error is None
+
+    def test_a_failed_claim_cannot_be_completed(self, enforcement_backend):
+        store = enforcement_backend.store
+        store.put_idempotency_if_absent(make_claim())
+        store.fail_idempotency("claim-1", error="connector timed out")
+
+        assert (
+            store.complete_idempotency(
+                "claim-1", decision_json='{"kind": "allow"}', result_json=None
+            )
+            is False
+        )
+        got = store.get_idempotency("claim-1")
+        assert got.status == "failed" and got.error == "connector timed out"
+
+    def test_delete_clears_a_stranded_claim(self, enforcement_backend):
+        """The operator's path out of a claim stranded by a crashed broker, and
+        the same call enforce() uses to release a claim on a non-executed
+        outcome (#148). There is deliberately no timeout-based auto-release."""
+        store = enforcement_backend.store
+        store.put_idempotency_if_absent(make_claim())
+        store.delete_idempotency("claim-1")
+        assert store.get_idempotency("claim-1") is None
+        assert store.put_idempotency_if_absent(make_claim()) is True
+
+    def test_row_without_a_status_reads_back_as_executed(self, enforcement_backend):
+        """A row written before the claim lifecycle carries no status attribute.
+        The only writer that ever existed wrote it AFTER its executor returned,
+        so absence means executed — and the row keeps replaying exactly as it
+        did. Every backend must agree, or an upgrade re-executes side effects on
+        one substrate and not another."""
+        enforcement_backend.write_legacy_idem("pre-lifecycle")
+        got = enforcement_backend.store.get_idempotency("pre-lifecycle")
+        assert got is not None
+        assert got.status == "executed"
+        assert got.decision().kind == "allow"
+        assert got.error is None
+
+    def test_a_pre_lifecycle_row_cannot_be_settled(self, enforcement_backend):
+        """It is already terminal, so the CAS refuses it like any other settled
+        row — no status attribute is not an in_flight status."""
+        enforcement_backend.write_legacy_idem("pre-lifecycle")
+        store = enforcement_backend.store
+        assert (
+            store.complete_idempotency(
+                "pre-lifecycle", decision_json='{"kind": "deny"}', result_json=None
+            )
+            is False
+        )
+        assert store.fail_idempotency("pre-lifecycle", error="boom") is False
 
 
 # ===========================================================================

@@ -65,7 +65,8 @@ class FaultEnforcementStore:
     ----------
     fail_on:
         Set of method names that should raise. Valid entries:
-        "get_idempotency", "put_idempotency_if_absent", "delete_idempotency",
+        "get_idempotency", "put_idempotency_if_absent", "complete_idempotency",
+        "fail_idempotency", "delete_idempotency",
         "try_increment_counter", "read_counter", "write_ledger", "commit_ledger",
         "compensate_ledger", "escalate_ledger", "get_uncommitted_entries".
     inner:
@@ -95,6 +96,18 @@ class FaultEnforcementStore:
     def put_idempotency_if_absent(self, record: IdempotencyRecord) -> bool:
         self._check("put_idempotency_if_absent")
         return self._inner.put_idempotency_if_absent(record)
+
+    def complete_idempotency(
+        self, key: str, *, decision_json: str, result_json: str | None
+    ) -> bool:
+        self._check("complete_idempotency")
+        return self._inner.complete_idempotency(
+            key, decision_json=decision_json, result_json=result_json
+        )
+
+    def fail_idempotency(self, key: str, *, error: str) -> bool:
+        self._check("fail_idempotency")
+        return self._inner.fail_idempotency(key, error=error)
 
     def delete_idempotency(self, key: str) -> None:
         self._check("delete_idempotency")

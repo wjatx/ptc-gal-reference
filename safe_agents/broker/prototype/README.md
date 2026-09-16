@@ -27,7 +27,10 @@ python -m safe_agents.broker.prototype.fake_agent
 - **allow** — `calendar.create_event` executes a stub connector with a broker-injected
   credential and returns the result. The credential never appears in the response.
 - **idempotent replay** — the same `idempotency_key` returns the prior outcome without
-  re-running the connector.
+  re-running the connector. The key is claimed before the connector runs, not recorded after
+  it, so a duplicate arriving while the first call is still in flight is refused rather than
+  executed. This server is single-threaded, so you will not see that here; the multi-worker
+  deployments are where it matters.
 - **require_approval** — `payments.transfer` (external + irreversible) freezes an Intent and
   returns an `intent_id`; the connector is **not** executed.
 - **deny** — an ungranted op is refused.

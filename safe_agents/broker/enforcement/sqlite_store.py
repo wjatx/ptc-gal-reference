@@ -29,7 +29,11 @@ from __future__ import annotations
 import json
 
 from safe_agents.broker import sqlite_substrate as substrate
-from safe_agents.broker.enforcement.types import IdempotencyRecord, LedgerEntry
+from safe_agents.broker.enforcement.types import (
+    DEFAULT_IDEMPOTENCY_STATUS,
+    IdempotencyRecord,
+    LedgerEntry,
+)
 
 
 class SqliteEnforcementStore(substrate.SqliteStoreBase):
@@ -39,7 +43,7 @@ class SqliteEnforcementStore(substrate.SqliteStoreBase):
         counter  pk="COUNTER#<counter_key>"  sk="v0"
                  attrs {"spent": <number>}
         idem     pk="IDEM#<key>"             sk="v0"
-                 attrs {"decision_json", "ts"[, "result_json"]}
+                 attrs {"decision_json", "ts", "status"[, "result_json"][, "error"]}
         ledger   pk="LEDGER#<entry_id>"      sk="v0"
                  attrs {"call_json", "decision_kind", "status", "ts_created"
                         [, "idempotency_key"][, "ts_committed"][, "error"]}
@@ -67,14 +71,24 @@ class SqliteEnforcementStore(substrate.SqliteStoreBase):
             # Tolerate absence, matching DynamoStore: records for
             # deny/abstain/require_approval outcomes carry no result_json.
             result_json=attrs.get("result_json"),
+            # Tolerate absence, matching DynamoStore: a row written before the
+            # claim lifecycle is a completed outcome by construction.
+            status=attrs.get("status", DEFAULT_IDEMPOTENCY_STATUS),
+            error=attrs.get("error"),
         )
 
     def put_idempotency_if_absent(self, record: IdempotencyRecord) -> bool:
-        attrs: dict = {"decision_json": record.decision_json, "ts": record.ts}
+        attrs: dict = {
+            "decision_json": record.decision_json,
+            "ts": record.ts,
+            "status": record.status,
+        }
         # Only persist result_json when a result was actually produced, so
         # non-executing decisions don't write an empty attribute (same as Dynamo).
         if record.result_json is not None:
             attrs["result_json"] = record.result_json
+        if record.error is not None:
+            attrs["error"] = record.error
         pk, sk = self._idem_key(record.key)
         conn = self._connection()
         with substrate.transaction(conn):
@@ -85,6 +99,47 @@ class SqliteEnforcementStore(substrate.SqliteStoreBase):
                 return False
             substrate.put_new_item(conn, pk, sk, attrs)
             return True
+
+    def _transition_idempotency(self, key: str, mutate) -> bool:
+        """Compare-and-set a claim inside one BEGIN IMMEDIATE transaction.
+
+        The status check happens under the writer lock, which is the sqlite
+        spelling of Dynamo's ConditionExpression on ``#status = :in_flight``: an
+        absent row, or one another writer already settled, reports False rather
+        than overwriting a settled outcome. ``mutate`` edits the attribute map in
+        place and is only ever called once the condition has held.
+        """
+        pk, sk = self._idem_key(key)
+        conn = self._connection()
+        with substrate.transaction(conn):
+            attrs = substrate.get_item(conn, pk, sk)
+            if attrs is None or attrs.get("status") != "in_flight":
+                return False
+            mutate(attrs)
+            substrate.update_existing_item(conn, pk, sk, attrs)
+            return True
+
+    def complete_idempotency(
+        self, key: str, *, decision_json: str, result_json: str | None
+    ) -> bool:
+        def _mutate(attrs: dict) -> None:
+            attrs["decision_json"] = decision_json
+            attrs["status"] = "executed"
+            # Omit-when-None, matching the put path and Dynamo's REMOVE, so a
+            # completed row is attribute-for-attribute what a direct put wrote.
+            if result_json is None:
+                attrs.pop("result_json", None)
+            else:
+                attrs["result_json"] = result_json
+
+        return self._transition_idempotency(key, _mutate)
+
+    def fail_idempotency(self, key: str, *, error: str) -> bool:
+        def _mutate(attrs: dict) -> None:
+            attrs["status"] = "failed"
+            attrs["error"] = error
+
+        return self._transition_idempotency(key, _mutate)
 
     def delete_idempotency(self, key: str) -> None:
         # The substrate deliberately ships no delete helper (the MCP stores

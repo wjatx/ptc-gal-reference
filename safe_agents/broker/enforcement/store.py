@@ -10,11 +10,12 @@ The Protocol is the contract; callers depend only on it.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import threading
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from .types import IdempotencyRecord, LedgerEntry
+from .types import DEFAULT_IDEMPOTENCY_STATUS, IdempotencyRecord, LedgerEntry
 
 if TYPE_CHECKING:
     from safe_agents.broker.schemas.common import CounterPeriod, Principal
@@ -233,14 +234,40 @@ class EnforcementStore(Protocol):
 
         Returns True on first insertion; False if the key already exists.
         Must be atomic: two concurrent calls with the same key produce exactly one True.
+
+        This is how enforce() CLAIMS a key (an ``in_flight`` record) before the
+        executor runs, so the atomicity is what makes the claim a claim.
+        """
+        ...
+
+    def complete_idempotency(
+        self, key: str, *, decision_json: str, result_json: str | None
+    ) -> bool:
+        """Transition an ``in_flight`` claim to ``executed`` with its real outcome.
+
+        Compare-and-set on the row's status: returns True when the row existed
+        with status ``in_flight`` and was updated, False otherwise (absent row,
+        or a status something else already moved it to). Must be atomic against
+        a concurrent fail_idempotency on the same key.
+        """
+        ...
+
+    def fail_idempotency(self, key: str, *, error: str) -> bool:
+        """Transition an ``in_flight`` claim to ``failed``, recording the error.
+
+        Same compare-and-set contract as complete_idempotency. A failed claim
+        burns the key: enforce() refuses a retry under it because a local claim
+        cannot know whether the external side effect happened.
         """
         ...
 
     def delete_idempotency(self, key: str) -> None:
         """Remove the stored record for this key; a no-op if absent.
 
-        Used by enforce() to evict stale non-executed outcomes (#148) so the
-        key becomes recordable again once a retry actually executes.
+        Used by enforce() to evict stale non-executed outcomes (#148) and to
+        RELEASE its own claim when the effective decision turned out to be
+        deny/abstain/require_approval, so the key becomes claimable again. Also
+        the operator's clearing path for a claim stranded by a process crash.
         """
         ...
 
@@ -327,6 +354,36 @@ class InMemoryStore:
             self._idempotency[record.key] = record
             return True
 
+    def complete_idempotency(
+        self, key: str, *, decision_json: str, result_json: str | None
+    ) -> bool:
+        # The lock IS the compare-and-set: read the status and replace the row
+        # without releasing it, so a concurrent fail_idempotency cannot interleave.
+        # dataclasses.replace rather than in-place mutation, so a record a caller
+        # already holds does not change under it (the Dynamo/sqlite backends hand
+        # back copies; the fake must not be the odd one out).
+        with self._idempotency_lock:
+            record = self._idempotency.get(key)
+            if record is None or record.status != "in_flight":
+                return False
+            self._idempotency[key] = dataclasses.replace(
+                record,
+                decision_json=decision_json,
+                result_json=result_json,
+                status="executed",
+            )
+            return True
+
+    def fail_idempotency(self, key: str, *, error: str) -> bool:
+        with self._idempotency_lock:
+            record = self._idempotency.get(key)
+            if record is None or record.status != "in_flight":
+                return False
+            self._idempotency[key] = dataclasses.replace(
+                record, status="failed", error=error
+            )
+            return True
+
     def delete_idempotency(self, key: str) -> None:
         with self._idempotency_lock:
             self._idempotency.pop(key, None)
@@ -410,8 +467,11 @@ class DynamoStore:
 
       Idempotency items:
         pk = "IDEM#{key}"            sk = "v0"
-        decision_json = str, ts = str, result_json? = str (absent for
-        deny/abstain/require_approval and for records written before sa#108)
+        decision_json = str, ts = str (the CLAIM time), status = str
+        ("in_flight" | "executed" | "failed"; absent on rows written before the
+        claim lifecycle, which read back as "executed"), result_json? = str
+        (absent for records written before sa#108 and while in flight),
+        error? = str (present only on a "failed" row)
 
       Ledger items:
         pk = "LEDGER#{entry_id}"     sk = "v0"
@@ -449,6 +509,10 @@ class DynamoStore:
             # Tolerate absence: records written before sa#108 (and every
             # deny/abstain/require_approval record) carry no result_json → None.
             result_json=item.get("result_json"),
+            # Tolerate absence: rows written before the claim lifecycle carry no
+            # status and are completed outcomes by construction.
+            status=item.get("status", DEFAULT_IDEMPOTENCY_STATUS),
+            error=item.get("error"),
         )
 
     def put_idempotency_if_absent(self, record: IdempotencyRecord) -> bool:
@@ -459,11 +523,14 @@ class DynamoStore:
             "sk": "v0",
             "decision_json": record.decision_json,
             "ts": record.ts,
+            "status": record.status,
         }
         # Only persist result_json when a result was actually produced, so
         # non-executing decisions don't write an empty attribute.
         if record.result_json is not None:
             item["result_json"] = record.result_json
+        if record.error is not None:
+            item["error"] = record.error
 
         try:
             self._table.put_item(
@@ -475,6 +542,65 @@ class DynamoStore:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return False
             raise
+
+    def _transition_idempotency(
+        self, key: str, set_attrs: dict, remove_attrs: tuple[str, ...] = ()
+    ) -> bool:
+        """Compare-and-set a claim's attributes, conditional on status in_flight.
+
+        ``status`` and ``error`` are both DynamoDB reserved words, so every
+        attribute goes through ExpressionAttributeNames rather than being spelled
+        inline. The ConditionExpression is what makes this a CAS: a row that is
+        absent, already executed, or already failed fails the condition and the
+        method reports False instead of overwriting a settled outcome.
+        """
+        from botocore.exceptions import ClientError  # noqa: PLC0415
+
+        names = {"#status": "status"}
+        values = {":in_flight": "in_flight"}
+        set_clauses = []
+        for index, (attr, value) in enumerate(set_attrs.items()):
+            placeholder = f"#s{index}"
+            names[placeholder] = attr
+            values[f":s{index}"] = value
+            set_clauses.append(f"{placeholder} = :s{index}")
+        expression = "SET " + ", ".join(set_clauses)
+        if remove_attrs:
+            remove_clauses = []
+            for index, attr in enumerate(remove_attrs):
+                placeholder = f"#r{index}"
+                names[placeholder] = attr
+                remove_clauses.append(placeholder)
+            expression += " REMOVE " + ", ".join(remove_clauses)
+
+        try:
+            self._table.update_item(
+                Key={"pk": f"IDEM#{key}", "sk": "v0"},
+                UpdateExpression=expression,
+                ConditionExpression="#status = :in_flight",
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
+            )
+            return True
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
+
+    def complete_idempotency(
+        self, key: str, *, decision_json: str, result_json: str | None
+    ) -> bool:
+        set_attrs: dict = {"decision_json": decision_json, "status": "executed"}
+        # Same omit-when-None discipline as the put path: a None result REMOVEs
+        # the attribute rather than writing an empty one, so the completed row is
+        # attribute-for-attribute what put_idempotency_if_absent would have written.
+        if result_json is None:
+            return self._transition_idempotency(key, set_attrs, ("result_json",))
+        set_attrs["result_json"] = result_json
+        return self._transition_idempotency(key, set_attrs)
+
+    def fail_idempotency(self, key: str, *, error: str) -> bool:
+        return self._transition_idempotency(key, {"status": "failed", "error": error})
 
     def delete_idempotency(self, key: str) -> None:
         # DeleteItem is idempotent in DynamoDB — deleting an absent key succeeds.

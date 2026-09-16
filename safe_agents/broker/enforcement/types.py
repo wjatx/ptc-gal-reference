@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import TypeAdapter
 
-from safe_agents.broker.schemas import Decision
+from safe_agents.broker.schemas import Decision, Deny
 
 # Lazily initialized — avoids a module-level TypeAdapter instance being shared
 # across tests that may not have schemas available, and is cheap (once per use).
@@ -37,18 +37,53 @@ def json_to_decision(json_str: str) -> Decision:
 
 LedgerStatus = Literal["uncommitted", "committed", "compensated", "escalated"]
 
+IdempotencyStatus = Literal["in_flight", "executed", "failed"]
+
+# A record read back without a status attribute predates the claim lifecycle and
+# is by definition a completed outcome: the only writer that ever existed wrote
+# the row AFTER its executor returned. Every backend applies this default so a
+# pre-existing row keeps replaying exactly as it did (the same tolerate-absence
+# pattern result_json uses).
+DEFAULT_IDEMPOTENCY_STATUS: IdempotencyStatus = "executed"
+
+# The placeholder a claim carries until its real outcome is known. An in_flight
+# row is never consulted for a Decision, so there is nothing honest to put here.
+IN_FLIGHT_DECISION_JSON = ""
+
 
 @dataclass
 class IdempotencyRecord:
-    """Stored outcome for a previously seen idempotency key.
+    """Stored claim-and-outcome for an idempotency key.
 
-    Only EXECUTED outcomes (allow/transform) are recorded (#148): the record's
-    purpose is exactly-once side effects, and a deny/abstain/require_approval
-    executed nothing. Non-executed outcomes are time-dependent and must
+    The row is written in two steps, because a record written only after
+    execution cannot deduplicate anything: two concurrent callers both read an
+    absent key and both execute. So ``enforce()`` CLAIMS the key with a
+    conditional put BEFORE the executor runs (status ``in_flight``) and
+    transitions the same row afterwards with a compare-and-set:
+
+      ``in_flight`` — claimed, executor may be running right now. A second
+        caller arriving on this key is REFUSED (deny), never executed.
+      ``executed``  — the side effect completed; decision_json and result_json
+        carry the real outcome and a retry replays it.
+      ``failed``    — the executor raised. Whether the external effect happened
+        is unknowable locally, so the key is burned: a retry is refused and the
+        caller must reconcile and use a new key.
+
+    A crash between claim and transition leaves an ``in_flight`` row that
+    refuses the key until an operator clears it with ``delete_idempotency``.
+    That is deliberate: a timeout-based auto-release would re-open the
+    double-execution window it exists to close. ``ts`` is the CLAIM time, so the
+    age of a stuck claim is readable straight off the row.
+
+    Only EXECUTED outcomes (allow/transform) survive as records (#148): the
+    record's purpose is exactly-once side effects, and a
+    deny/abstain/require_approval executed nothing, so ``enforce()`` deletes the
+    claim on those outcomes. Non-executed outcomes are time-dependent and must
     re-evaluate on retry, never replay.
 
     decision_json is the serialized Decision that was returned for this key;
-    callers retrieve the Decision via decision().
+    callers retrieve the Decision via decision(). It is the empty placeholder
+    while the record is a claim.
 
     result_json is the JSON-serialized connector result that was returned on the
     original allow/transform call, so a replay hands the caller the SAME outcome
@@ -57,14 +92,30 @@ class IdempotencyRecord:
     data at rest in the broker-owned idempotency table (KMS-encrypted, brokerRole
     only) — consistent with the broker already owning decision and ledger state.
     DynamoDB's 400KB item limit bounds the result size; no truncation is applied.
+
+    error carries the executor's exception string on a ``failed`` record, for the
+    operator reconciling the uncertain outcome. It is None otherwise.
     """
 
     key: str
     decision_json: str
     ts: str
     result_json: str | None = None
+    status: IdempotencyStatus = DEFAULT_IDEMPOTENCY_STATUS
+    error: str | None = None
 
     def decision(self) -> Decision:
+        """The stored Decision.
+
+        A claim carries no decision yet, so the placeholder reads back as a deny
+        rather than raising on empty JSON: every caller that reaches a Decision
+        for an in_flight row is asking "may this proceed", and the answer is no.
+        """
+        if not self.decision_json:
+            return Deny(
+                kind="deny",
+                reason=f"idempotency key {self.key!r} is claimed but has no recorded outcome",
+            )
         return json_to_decision(self.decision_json)
 
     def result(self) -> Any:

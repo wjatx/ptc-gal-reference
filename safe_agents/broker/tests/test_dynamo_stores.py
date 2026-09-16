@@ -311,6 +311,86 @@ class TestDynamoStoreIdempotency:
         assert got.result() is None
 
 
+class TestDynamoStoreClaimLifecycle:
+    """The claim's compare-and-set, against the REAL ConditionExpression.
+
+    The status attribute is what ``#status = :in_flight`` conditions on, and both
+    ``status`` and ``error`` are DynamoDB reserved words — a regression to an
+    inline attribute name in either expression raises here rather than on the
+    cloud floor. Cross-backend agreement is asserted in
+    test_core_store_differential.py; this file pins the item shape.
+    """
+
+    @staticmethod
+    def _claim(key: str) -> IdempotencyRecord:
+        return IdempotencyRecord(key=key, decision_json="", ts=_TS, status="in_flight")
+
+    def test_claim_writes_the_status_attribute(self, table_name):
+        store = DynamoStore(table_name)
+        assert store.put_idempotency_if_absent(self._claim("c-new")) is True
+
+        raw = _raw_item("IDEM#c-new")
+        assert raw["status"] == "in_flight"
+        assert "result_json" not in raw
+        assert "error" not in raw
+
+    def test_complete_flips_status_and_removes_an_absent_result(self, table_name):
+        """result_json=None must REMOVE the attribute, not write an empty one:
+        a completed row has to be attribute-for-attribute what a direct put of
+        the same outcome would have written."""
+        store = DynamoStore(table_name)
+        store.put_idempotency_if_absent(self._claim("c-complete"))
+        store.complete_idempotency(
+            "c-complete",
+            decision_json=decision_to_json(Allow(kind="allow")),
+            result_json='{"event_id": "evt-1"}',
+        )
+        raw = _raw_item("IDEM#c-complete")
+        assert raw["status"] == "executed"
+        assert raw["result_json"] == '{"event_id": "evt-1"}'
+
+        store.put_idempotency_if_absent(self._claim("c-complete-bare"))
+        store.complete_idempotency(
+            "c-complete-bare",
+            decision_json=decision_to_json(Allow(kind="allow")),
+            result_json=None,
+        )
+        bare = _raw_item("IDEM#c-complete-bare")
+        assert bare["status"] == "executed"
+        assert "result_json" not in bare
+
+    def test_fail_writes_the_error_attribute(self, table_name):
+        store = DynamoStore(table_name)
+        store.put_idempotency_if_absent(self._claim("c-fail"))
+        assert store.fail_idempotency("c-fail", error="connector timed out") is True
+
+        raw = _raw_item("IDEM#c-fail")
+        assert raw["status"] == "failed"
+        assert raw["error"] == "connector timed out"
+
+    def test_condition_refuses_a_settled_row(self, table_name):
+        """A ConditionalCheckFailedException maps to False, never an exception —
+        and never overwrites the recorded outcome."""
+        store = DynamoStore(table_name)
+        store.put_idempotency_if_absent(self._claim("c-settled"))
+        store.complete_idempotency(
+            "c-settled",
+            decision_json=decision_to_json(Allow(kind="allow")),
+            result_json=None,
+        )
+
+        assert store.fail_idempotency("c-settled", error="late") is False
+        assert _raw_item("IDEM#c-settled")["status"] == "executed"
+        assert "error" not in _raw_item("IDEM#c-settled")
+
+    def test_condition_refuses_an_absent_row(self, table_name):
+        """UpdateItem would normally UPSERT an absent key; the ConditionExpression
+        is what stops a settle call from minting a record out of nothing."""
+        store = DynamoStore(table_name)
+        assert store.fail_idempotency("c-absent", error="boom") is False
+        assert _raw_item("IDEM#c-absent") is None
+
+
 class TestDynamoStoreLedger:
     def test_write_then_get_uncommitted_round_trip(self, table_name):
         store = DynamoStore(table_name)

@@ -137,11 +137,15 @@ export class IdentityStack extends Stack {
       }),
     );
 
-    // DynamoDB — counters ONLY: DeleteItem (idempotency eviction, #148). A stored NON-EXECUTED
-    // outcome (deny/abstain/require_approval) is evicted on read so the key becomes recordable
-    // again once a retry actually executes — leaving it would block put-if-absent and force every
-    // later retry to re-execute. Deliberately NOT granted on grants (read-only to the broker) or
-    // intents (terminal-state transitions are UpdateItem CAS, never delete).
+    // DynamoDB — counters ONLY: DeleteItem (idempotency eviction, #148). Two uses, both on
+    // IDEM# items. A stored NON-EXECUTED outcome (deny/abstain/require_approval) is evicted on
+    // read so the key becomes recordable again once a retry actually executes — leaving it would
+    // block put-if-absent and force every later retry to re-execute. And enforce() RELEASES its
+    // own in-flight claim on those same outcomes, plus when a fault lands before any side effect
+    // could have happened; it is also the operator's path to clear a claim stranded by a crashed
+    // broker. The claim's two terminal transitions (executed/failed) are conditional UpdateItem
+    // CAS, covered by the statement above. Deliberately NOT granted on grants (read-only to the
+    // broker) or intents (terminal-state transitions are UpdateItem CAS, never delete).
     brokerRole.addToPolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
