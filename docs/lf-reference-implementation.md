@@ -115,7 +115,7 @@ The conformance statement, the clause inventory, and the extraction self-checks 
 checkout with no cloud account:
 
 ```
-python3 -m safe_agents.contract.spec_clauses --summary   # 79 rows, marker state, self-checks
+python3 -m safe_agents.contract.spec_clauses --summary   # 81 rows, marker state, self-checks
 python3 -m pytest                                        # the full suite
 ```
 

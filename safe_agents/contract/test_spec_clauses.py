@@ -5,7 +5,7 @@ These pin the exit predicate against the real specs, so a spec edit that breaks
 extraction fails here rather than silently shrinking the inventory the
 implemented-vs-unbuilt pass works from:
 
-  1. 79 rows total — 43 PTC + 36 GAL, no numbering gaps, no duplicates.
+  1. 81 rows total — 43 PTC + 38 GAL, no numbering gaps, no duplicates.
   2. The rows carrying an implementation-status marker at conformance-clause
      scope are exactly EXPECTED_MARKED in spec_clauses.py, forms and tracking
      issues included.
