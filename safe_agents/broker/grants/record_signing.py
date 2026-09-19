@@ -15,18 +15,26 @@ Shape, name-agnostic:
     plus the record's audit-index fields in the clear (recordType, ts,
     actionClass, proposedBy, ratifiedBy, envelopeHash) so a verifier/auditor
     can index without parsing the payload.
-  * The signing key is the **ISSUER's** Ed25519 identity — a separate identity
-    from the broker's chain-signing key. The grant issuer signs promotions; the
-    broker cannot, symmetric with "the broker cannot write grants". The private
-    key is never in the agent image (agent-holds-no-credentials).
+  * The signing key belongs to one of TWO Ed25519 identities, both separate
+    from the broker's chain-signing key. The **issuer** signs the ceremony /
+    operator side (``promotion``, ``bootstrap``, ``tightening``); the
+    **evaluator** — the separate system identity of GAL §6.7.2, the automatic
+    no-model side — signs ``demotion`` and ``lapse``. Handing the evaluator the
+    issuer key would let it mint promotion records, collapsing the ceremony
+    boundary, so the split is a second KEY, not a field on one key. The broker
+    holds neither, symmetric with "the broker cannot write grants", and neither
+    private key is ever in the agent image (agent-holds-no-credentials).
   * The resulting DSSE envelope is stored as a storage-layer attribute BESIDE
     the ledger item's record blob — never a field on the PromotionRecord schema
     itself (SCHEMAS.md §7 is frozen; the signature wraps the record).
 
 This module is pure and key-injected: it never reads a secret, an env var, or
-the wall clock. Cold-start key resolution (``ISSUER_SIGNING_KEY_SECRET_ARN`` →
-private key; ``ISSUER_SIGNING_KEY_ID``) belongs to the ceremony command-side
-binding, mirroring channels.keys — never here.
+the wall clock. Cold-start key resolution (``ISSUER_SIGNING_KEY_SECRET_ARN`` /
+``EVALUATOR_SIGNING_KEY_SECRET_ARN`` → private key; ``*_SIGNING_KEY_ID``)
+belongs to the command-side binding in ``grants.issuer_keys``, mirroring
+channels.keys — never here. What IS here is the pure half of the role rule:
+the record-type → role MAPPING, and a verifier that selects the resolver by
+that mapping so a key of the wrong role fails closed.
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ import base64
 import binascii
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from cryptography.exceptions import InvalidSignature
@@ -66,6 +75,53 @@ RECORD_SIGNATURE_MISSING = "record_signature_missing"
 RECORD_SIGNATURE_MALFORMED = "record_signature_malformed"
 RECORD_SIGNATURE_INVALID = "record_signature_invalid"
 RECORD_SIGNER_UNKNOWN = "record_signer_unknown"
+
+# Role-binding failures (the second signing role). Distinct from
+# RECORD_SIGNER_UNKNOWN on purpose: "nobody knows this key" and "the wrong
+# identity signed this record type" are different incidents, and collapsing
+# them would hide the one that matters — an evaluator key on a promotion
+# record is an attempt to mint authority from the no-model side.
+RECORD_SIGNER_WRONG_ROLE = "record_signer_wrong_role"
+RECORD_SIGNER_ROLE_AMBIGUOUS = "record_signer_role_ambiguous"
+RECORD_ROLE_UNRESOLVED = "record_role_unresolved"
+
+
+# ---------------------------------------------------------------------------
+# Signing roles — which identity may sign which record type
+# ---------------------------------------------------------------------------
+
+#: The ceremony/operator side. Every record type whose write is a human-driven
+#: act, including the ones that mint or re-shape authority.
+ISSUER_ROLE = "issuer"
+
+#: The automatic, deterministic, no-model side (GAL §6.7.2's separate system
+#: identity). It only ever LOWERS authority, so it never needs the issuer key.
+EVALUATOR_ROLE = "evaluator"
+
+SIGNING_ROLES: tuple[str, ...] = (ISSUER_ROLE, EVALUATOR_ROLE)
+
+#: The record-type → role rule, in one place. GAL-SPEC §6.10 requires EVERY
+#: ledger record to be signed; §6.7.2 requires the demotion evaluator to be a
+#: separate identity. Both hold only if the split runs all the way through
+#: verification — an auditor that accepted any known key for any record type
+#: would make the second identity decorative.
+RECORD_TYPE_SIGNING_ROLE: Mapping[str, str] = {
+    "promotion": ISSUER_ROLE,
+    "bootstrap": ISSUER_ROLE,
+    "tightening": ISSUER_ROLE,
+    "demotion": EVALUATOR_ROLE,
+    "lapse": EVALUATOR_ROLE,
+}
+
+
+def signing_role_for_record_type(record_type: str) -> str | None:
+    """The role whose key may sign ``record_type``, or None if it has no rule.
+
+    None is reachable only for a record type outside the schema's closed
+    vocabulary (which cannot parse), and callers treat it as unverifiable —
+    fail closed, never "no role required, so anything passes".
+    """
+    return RECORD_TYPE_SIGNING_ROLE.get(record_type)
 
 
 @dataclass(frozen=True)
@@ -365,3 +421,101 @@ def verify_record(
         reasons=_RECORD_VERIFY_REASONS,
     )
     return RecordVerifyResult(ok=reason is None, reason=reason)
+
+
+# ---------------------------------------------------------------------------
+# Role-bound verification — the record type picks the key map
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RoleKeyResolvers:
+    """The verify-side key maps, one per signing role.
+
+    Injected, like every other key in this module: the cold-start resolution
+    of ``ISSUER_VERIFY_KEYS_PARAM`` / ``EVALUATOR_VERIFY_KEYS_PARAM`` lives in
+    ``grants.issuer_keys``. A role with no resolver is NOT a role that passes —
+    a record needing it verifies as ``RECORD_ROLE_UNRESOLVED``.
+    """
+
+    issuer: KeyResolver | None = None
+    evaluator: KeyResolver | None = None
+
+    def for_role(self, role: str) -> KeyResolver | None:
+        return {ISSUER_ROLE: self.issuer, EVALUATOR_ROLE: self.evaluator}.get(role)
+
+    def configured_roles(self) -> tuple[str, ...]:
+        return tuple(role for role in SIGNING_ROLES if self.for_role(role) is not None)
+
+    def roles_resolving(self, key_id: str) -> tuple[str, ...]:
+        """Every configured role whose map knows ``key_id``.
+
+        More than one is a CONFIGURATION error, not a key with two roles: the
+        whole point of the split is that the evaluator cannot produce a
+        promotion signature. Reported by the verifier as
+        ``RECORD_SIGNER_ROLE_AMBIGUOUS`` and refused; ``issuer_keys`` refuses
+        the same overlap at cold start, where it can name both parameters.
+        """
+        return tuple(
+            role
+            for role in SIGNING_ROLES
+            if (resolver := self.for_role(role)) is not None and resolver(key_id) is not None
+        )
+
+
+def envelope_signer_key_id(envelope: object) -> str | None:
+    """The ``keyid`` a DSSE envelope's first signature claims, or None.
+
+    Best-effort and untrusted — used only to say WHY verification failed (a
+    known key of the wrong role vs. a key nobody knows). It is never the basis
+    for accepting anything: ``verify_dsse_record`` re-binds the keyid to the
+    statement's own ``predicate.signer.key_id`` and verifies the signature.
+    """
+    if not isinstance(envelope, dict):
+        return None
+    signatures = envelope.get("signatures")
+    if not isinstance(signatures, list) or not signatures:
+        return None
+    first = signatures[0]
+    key_id = first.get("keyid") if isinstance(first, dict) else None
+    return key_id if isinstance(key_id, str) else None
+
+
+def verify_record_by_type(
+    stored: str | bytes,
+    envelope: dict,
+    *,
+    record_type: str,
+    resolvers: RoleKeyResolvers,
+) -> RecordVerifyResult:
+    """Verify a stored record against the key map its RECORD TYPE selects.
+
+    The role binding, end to end: ``RECORD_TYPE_SIGNING_ROLE`` picks the
+    resolver, and a signature from the other role's key fails — an
+    evaluator-signed ``promotion`` (an attempt to mint authority from the
+    automatic side) and an issuer-signed ``demotion`` alike. Failure modes
+    beyond :func:`verify_record`'s:
+
+      * the record type maps to no role, or that role has no verify keys
+        configured → ``RECORD_ROLE_UNRESOLVED`` (a role we cannot check is
+        never a role that passes);
+      * the signing key_id is known to the OTHER role → ``RECORD_SIGNER_WRONG_ROLE``;
+      * the signing key_id is known to BOTH roles → ``RECORD_SIGNER_ROLE_AMBIGUOUS``,
+        refused rather than resolved in either direction.
+    """
+    role = signing_role_for_record_type(record_type)
+    if role is None:
+        return RecordVerifyResult(ok=False, reason=RECORD_ROLE_UNRESOLVED)
+    resolver = resolvers.for_role(role)
+    if resolver is None:
+        return RecordVerifyResult(ok=False, reason=RECORD_ROLE_UNRESOLVED)
+
+    key_id = envelope_signer_key_id(envelope)
+    if key_id is not None:
+        holders = resolvers.roles_resolving(key_id)
+        if len(holders) > 1:
+            return RecordVerifyResult(ok=False, reason=RECORD_SIGNER_ROLE_AMBIGUOUS)
+        if holders and holders[0] != role:
+            return RecordVerifyResult(ok=False, reason=RECORD_SIGNER_WRONG_ROLE)
+
+    return verify_record(stored, envelope, resolver)

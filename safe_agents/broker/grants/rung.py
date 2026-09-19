@@ -543,7 +543,8 @@ class RungStateMachine:
 
         Returns:
             (updated_grant, tightening_record) — the record is already
-            appended to the ledger.
+            appended to the ledger, ISSUER-signed when the injected ceremony
+            carries a signer.
 
         Raises:
             TransitionError: if the grant is already at in-loop (nothing to
@@ -620,9 +621,17 @@ class RungStateMachine:
         )
         # Atomic record+grant (#244): the tightening and its ledger record
         # commit together or not at all — a failed unit leaves the grant at
-        # its prior level with no ledger hole; the caller retries.
+        # its prior level with no ledger hole; the caller retries. The record
+        # is ISSUER-signed when the ceremony has a signer (GAL-SPEC §6.10:
+        # every ledger record is signed, and tightening is an operator act on
+        # the ceremony side) — the same key, never a second one.
         self._grant_store.write_record_and_grant(
-            record, updated, self._record_store, session, expected=current
+            record,
+            updated,
+            self._record_store,
+            session,
+            signature=self._ceremony.sign_record(record),
+            expected=current,
         )
 
         return updated, record

@@ -44,7 +44,11 @@ from safe_agents.broker.grants.audit import (
 from safe_agents.broker.grants.ceremony import InMemoryPromotionRecordStore, PromotionCeremony
 from safe_agents.broker.grants.lapse import LapseNotDueError, apply_lapse, build_lapse, run_lapse
 from safe_agents.broker.grants.predicate import ActionClassMetrics
-from safe_agents.broker.grants.record_signing import canonical_record_payload, signer_from_pem
+from safe_agents.broker.grants.record_signing import (
+    RoleKeyResolvers,
+    canonical_record_payload,
+    signer_from_pem,
+)
 from safe_agents.broker.grants.rung import RungStateMachine
 from safe_agents.broker.grants.sqlite_store import SqliteGrantStore, SqlitePromotionRecordStore
 from safe_agents.broker.grants.store import (
@@ -399,15 +403,19 @@ def test_lapse_lands_on_last_safe_on_loop_from_out_of_loop():
 
 
 def test_writer_signs_the_record_when_given_a_signer():
-    signer, resolver = _signer_and_resolver()
-    grant_store, record_store = _stores_with(_grant(), signer)
+    issuer_signer, evaluator_signer, resolvers = _role_signers()
+    grant_store, record_store = _stores_with(_grant(), issuer_signer)
     updated, record = apply_lapse(
-        _grant(), store=grant_store, record_store=record_store, now=AFTER, record_signer=signer
+        _grant(),
+        store=grant_store,
+        record_store=record_store,
+        now=AFTER,
+        record_signer=evaluator_signer,
     )
     signature = record_store.signature_for(record)
     assert signature is not None
     dataset = _dataset_from_stores(grant_store, record_store)
-    report = run_audit(dataset, hmac_key=HMAC_KEY, record_key_resolver=resolver)
+    report = run_audit(dataset, hmac_key=HMAC_KEY, record_key_resolver=resolvers)
     assert report.violations == ()
 
 
@@ -744,7 +752,7 @@ def test_extends_term_table():
 # ---------------------------------------------------------------------------
 
 
-def _signer_and_resolver():
+def _signer_and_resolver(key_id: str = "issuer:lapse-test"):
     private_key = Ed25519PrivateKey.generate()
     private_pem = private_key.private_bytes(
         serialization.Encoding.PEM,
@@ -755,9 +763,24 @@ def _signer_and_resolver():
         serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
     ).decode()
     return (
-        signer_from_pem("issuer:lapse-test", "zone-test", private_pem),
-        key_resolver_from_map({"issuer:lapse-test": public_pem}),
+        signer_from_pem(key_id, "zone-test", private_pem),
+        key_resolver_from_map({key_id: public_pem}),
     )
+
+
+def _role_signers():
+    """An ISSUER key and a separate EVALUATOR key, as a real floor provisions them.
+
+    A lapse record is signed by the demotion evaluator (GAL §6.7.2), not by the
+    issuer, so a fixture that signed both with one key would verify only
+    because the auditor had stopped checking which identity signed what. These
+    two tests carry BOTH a promotion and a lapse, so they exercise both roles
+    in one dataset.
+    """
+    issuer_signer, issuer_resolver = _signer_and_resolver("issuer:lapse-test")
+    evaluator_signer, evaluator_resolver = _signer_and_resolver("evaluator:lapse-test")
+    resolvers = RoleKeyResolvers(issuer=issuer_resolver, evaluator=evaluator_resolver)
+    return issuer_signer, evaluator_signer, resolvers
 
 
 def _dataset_from_stores(grant_store, record_store) -> AuditDataset:
@@ -789,10 +812,14 @@ def test_a_lapsed_grant_audits_clean():
 
 
 def test_a_tampered_signed_lapse_record_fails_verification():
-    signer, resolver = _signer_and_resolver()
-    grant_store, record_store = _stores_with(_grant(), signer)
+    issuer_signer, evaluator_signer, resolvers = _role_signers()
+    grant_store, record_store = _stores_with(_grant(), issuer_signer)
     _, record = apply_lapse(
-        _grant(), store=grant_store, record_store=record_store, now=AFTER, record_signer=signer
+        _grant(),
+        store=grant_store,
+        record_store=record_store,
+        now=AFTER,
+        record_signer=evaluator_signer,
     )
     dataset = _dataset_from_stores(grant_store, record_store)
     tampered = tuple(
@@ -811,7 +838,7 @@ def test_a_tampered_signed_lapse_record_fails_verification():
             acknowledgments=(), parse_violations=(),
         ),
         hmac_key=HMAC_KEY,
-        record_key_resolver=resolver,
+        record_key_resolver=resolvers,
     )
     flagged = [v for v in report.violations if v.rule == RECORD_SIGNATURE_VERIFIES]
     assert len(flagged) == 1 and flagged[0].detail.startswith("lapse record")
@@ -883,6 +910,9 @@ def test_runner_main_runs_the_lapse_pass_before_demotion(monkeypatch, capsys):
         "ISSUER_SIGNING_KEY_SECRET_ARN",
         "ISSUER_SIGNING_KEY_FILE",
         "ISSUER_SIGNING_KEY_ID",
+        "EVALUATOR_SIGNING_KEY_SECRET_ARN",
+        "EVALUATOR_SIGNING_KEY_FILE",
+        "EVALUATOR_SIGNING_KEY_ID",
     ):
         monkeypatch.delenv(env, raising=False)
 

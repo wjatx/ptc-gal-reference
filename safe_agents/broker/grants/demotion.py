@@ -14,8 +14,10 @@ Public API:
         -> tuple[Grant, PromotionRecord]
 
 apply_demotion appends a demotion-typed PromotionRecord to the ceremony ledger
-(SCHEMAS.md §7) after the conditional grant update — grant lowered FIRST, record
-second, so a failed append leaves the system in the safe (lowered) state.
+(SCHEMAS.md §7) in the same atomic unit as the lowered grant (#244). The record
+is signed by the EVALUATOR identity when one is configured — a second signing
+role, never the issuer's key, because an evaluator that could sign promotions
+would collapse the ceremony boundary (GAL §6.7.2, §6.10).
 
 See broker/grant-lifecycle.md §"Demotion — automatic, deterministic, no model in the loop".
 """
@@ -205,6 +207,7 @@ def apply_demotion(
     record_store: PromotionRecordStore,
     session: object = None,
     ts: str | None = None,
+    record_signer: object = None,
 ) -> tuple[Grant, PromotionRecord]:
     """Lower grant.level to grant.lastSafeLevel and persist via the store.
 
@@ -250,6 +253,12 @@ def apply_demotion(
             to store.update_grant and record_store.put_record. The stores
             never assume roles themselves.
         ts: ISO-8601 timestamp string; defaults to current UTC time.
+        record_signer: the EVALUATOR's RecordSigner (GAL §6.7.2's separate
+            system identity), or None. When supplied, the demotion record is
+            signed and the signature rides the same atomic write — a configured
+            evaluator never writes an unsigned record. Deliberately NOT the
+            issuer signer: an evaluator holding that key could mint promotion
+            records, which is the boundary the separate identity exists to draw.
 
     Returns:
         (updated_grant, demotion_record) — the record is the demotion-typed
@@ -355,9 +364,10 @@ def apply_demotion(
     # a failed unit leaves BOTH untouched and the runner retries with a fresh
     # read. The conditional grant leg is the real atomicity guard, not the
     # re-read above.
+    signature = record_signer.sign_record(record) if record_signer is not None else None
     try:
         store.write_record_and_grant(
-            record, updated, record_store, session, expected=current
+            record, updated, record_store, session, signature=signature, expected=current
         )
     except GrantUpdateConflictError as exc:
         raise DemotionConflictError(

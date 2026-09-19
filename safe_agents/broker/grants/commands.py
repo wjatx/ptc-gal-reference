@@ -5,6 +5,7 @@
 seed      the sanctioned bootstrap: manifest-driven floor grants, each paired with
           a bootstrap-typed PromotionRecord from birth (maker != checker is
           deliberately NOT enforced — the single-operator seed is sanctioned).
+          Bootstrap records are ISSUER-signed when a signing key is configured.
 re-seed   the re-attestation ceremony after a far-jump envelope-hash change:
           re-stamps HMAC-clean grants under the NEW in-force hash at the SAME
           level, under human ratification. An HMAC-tamper quarantine is NEVER
@@ -25,8 +26,8 @@ acknowledge  disposition a TRUE audit finding (#196): appends a signed waiver
           flagged item; refuses un-waivable rules and refuses unsigned.
 tighten   voluntary tightening: any level -> in-loop, always permitted — no
           ceremony, no fired trigger (rung.tighten_to_in_loop). Appends a
-          tightening-typed PromotionRecord (unsigned by design, like
-          demotion); a quarantined grant is NEVER written over.
+          tightening-typed PromotionRecord, ISSUER-signed when a signing key is
+          configured (GAL-SPEC §6.10); a quarantined grant is NEVER written over.
 
 Identity is DERIVED, never asserted: proposedBy / ratifiedBy / seededBy come
 from STS GetCallerIdentity (the full Arn, which carries the role session name).
@@ -215,6 +216,7 @@ def seed_command(
     grant_store: GrantStore,
     record_store: PromotionRecordStore,
     grants: list[Grant],
+    signer: RecordSigner | None = None,
     session: object = None,
     now: datetime.datetime | None = None,
 ) -> int:
@@ -226,6 +228,13 @@ def seed_command(
     recordType='bootstrap', fromLevel=None (the Recommend rung; the seed creates
     the grant), proposedBy = ratifiedBy = the seeding STS identity (maker !=
     checker deliberately not enforced for the sanctioned bootstrap).
+
+    ``signer`` is the ISSUER's RecordSigner — bootstrap is an operator act on
+    the ceremony side. When one is configured, every bootstrap record written
+    here is signed (GAL-SPEC §6.10); when none is, they are written unsigned
+    exactly as before, so a local floor with no key material still seeds.
+    Half-configured signing never reaches this function: ``resolve_record_signer``
+    refuses first.
     """
     caller = _caller_identity(session)
     ts = _utc_now(now).isoformat()
@@ -251,7 +260,12 @@ def seed_command(
         # the record collided" reconcile branch cannot occur.
         try:
             grant_store.write_record_and_grant(
-                record, grant, record_store, session, expected=None
+                record,
+                grant,
+                record_store,
+                session,
+                signature=signer.sign_record(record) if signer is not None else None,
+                expected=None,
             )
         except GrantAlreadyExistsError:
             skipped += 1
@@ -279,7 +293,11 @@ def seed_command(
             failures += 1
             detail = readback.quarantine_reason or "absent after write"
             print(f"[seed] FAIL {grant.actionClass}: {detail}", file=sys.stderr)
-    print(f"[seed] seededBy={caller}: {created} created, {skipped} skipped, {failures} failed")
+    print(
+        f"[seed] seededBy={caller}: {created} created, {skipped} skipped, "
+        f"{failures} failed; bootstrap records "
+        f"{'signed (issuer DSSE)' if signer is not None else 'UNSIGNED (no issuer signing key configured)'}"
+    )
     return 1 if failures else 0
 
 
@@ -741,6 +759,7 @@ def tighten_command(
     *,
     grant_store: GrantStore,
     record_store: PromotionRecordStore,
+    signer: RecordSigner | None = None,
     session: object = None,
     now: datetime.datetime | None = None,
 ) -> int:
@@ -748,8 +767,11 @@ def tighten_command(
 
     Tightening is safety-monotone: no ceremony, no fired trigger, maker !=
     checker deliberately not enforced (narrowing autonomy needs no second
-    party). The tightening-typed PromotionRecord is UNSIGNED by design, like
-    demotion. Write discipline is the library's guarded re-read: not-found,
+    party). The tightening-typed PromotionRecord is ISSUER-signed when a
+    signing key is configured (GAL-SPEC §6.10 — tightening is an operator act
+    on the ceremony side, so it takes the ceremony key, not the evaluator's);
+    with no key configured it is written unsigned, as before. Write discipline
+    is the library's guarded re-read: not-found,
     quarantined, and concurrent-modify each refuse with a typed error before
     any write — a quarantined grant is NEVER written over.
     """
@@ -772,7 +794,9 @@ def tighten_command(
         return 1
 
     ceremony = PromotionCeremony(
-        grant_store=grant_store, promotion_record_store=record_store
+        grant_store=grant_store,
+        promotion_record_store=record_store,
+        record_signer=signer,
     )
     machine = RungStateMachine(
         ceremony=ceremony, grant_store=grant_store, record_store=record_store
@@ -807,7 +831,8 @@ def tighten_command(
     print(
         f"record: recordType={record.recordType} actionClass={record.actionClass} "
         f"{read.grant.level.value} -> {record.toLevel.value} ts={record.ts} "
-        f"requestedBy={caller} signed=NO (tightening records are unsigned by design)"
+        f"requestedBy={caller} "
+        f"signed={'yes (issuer DSSE)' if signer is not None else 'NO (no issuer signing key configured)'}"
     )
     return 0
 
@@ -880,7 +905,10 @@ def main(argv: list[str] | None = None) -> int:
             grant_store, record_store = _build_stores(args.table_name)
             _, _, _, templates = _manifest_context(args.table_name)
             return seed_command(
-                grant_store=grant_store, record_store=record_store, grants=templates
+                grant_store=grant_store,
+                record_store=record_store,
+                grants=templates,
+                signer=resolve_record_signer(zone=args.zone),
             )
         if args.command == "re-seed":
             grant_store, _ = _build_stores(args.table_name)
@@ -915,7 +943,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "tighten":
             grant_store, record_store = _build_stores(args.table_name)
             return tighten_command(
-                args, grant_store=grant_store, record_store=record_store
+                args,
+                grant_store=grant_store,
+                record_store=record_store,
+                signer=resolve_record_signer(zone=args.zone),
             )
         if args.command == "acknowledge":
             return acknowledge_command(

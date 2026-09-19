@@ -390,7 +390,14 @@ class PromotionCeremony:
         # which the atomic write path cannot route through.
         self._record_signer = record_signer
 
-    def _sign_record(self, record: PromotionRecord) -> dict | None:
+    def sign_record(self, record: PromotionRecord) -> dict | None:
+        """Sign a record with the configured ISSUER signer, or None if unset.
+
+        Public because the ceremony is not the only issuer-side writer: the
+        tightening path (``rung.tighten_to_in_loop``) writes a
+        ``tightening``-typed record under the same operator identity and must
+        reach the same key rather than growing a second signer of its own.
+        """
         return (
             self._record_signer.sign_record(record)
             if self._record_signer is not None
@@ -757,7 +764,7 @@ class PromotionCeremony:
                 raised_grant,
                 self._record_store,
                 session,
-                signature=self._sign_record(promotion_record),
+                signature=self.sign_record(promotion_record),
                 expected=None,
             )
         else:
@@ -822,7 +829,7 @@ class PromotionCeremony:
                 raised_grant,
                 self._record_store,
                 session,
-                signature=self._sign_record(promotion_record),
+                signature=self.sign_record(promotion_record),
                 expected=current,
             )
 

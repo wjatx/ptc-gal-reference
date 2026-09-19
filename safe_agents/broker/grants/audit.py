@@ -33,8 +33,14 @@ Rules (each documented at its check site in run_audit):
                             has its record (#255)
   GRANT_TERM_RATIFIED       grant.certifiedUntil equals the term on the
                             promotion record that last set it (#255)
-  RECORD_SIGNATURE_VERIFIES promotion records carry a verifying DSSE envelope;
-                            a lapse record that carries one must verify
+  RECORD_SIGNATURE_VERIFIES every record in scope carries a DSSE envelope that
+                            verifies under ITS RECORD TYPE'S signing role
+                            (issuer: promotion/bootstrap/tightening;
+                            evaluator: demotion/lapse). Scope is set by
+                            RECORD_SIGNING_EPOCH — see below
+  RECORD_SIGNING_EPOCH_VALID the configured epoch is in force at the supplied
+                            evaluation instant (a future epoch would exempt
+                            every record ever written)
   PROPOSAL_LIFECYCLE        proposal status stays in the closed vocabulary
   PROPOSAL_TAMPER           (keyed) proposalHash HMAC verifies
   GRANT_TAMPER              (keyed) grant hash HMAC verifies
@@ -56,10 +62,30 @@ waivers. Two rules police the waivers themselves:
   ACKNOWLEDGMENT_SIGNATURE_VERIFIES  a stored acknowledgment must verify
   ACKNOWLEDGMENT_NOT_WAIVABLE        an acknowledgment naming an un-waivable
                                      rule is itself a finding
+
+The record-signing EPOCH. GAL-SPEC §6.10 requires EVERY ledger record to be
+signed, but ledgers written before the second signing role existed hold
+unsigned demotion/tightening/bootstrap rows that cannot be re-minted. The
+history is handled by an explicit **epoch cut** (this repo's convention for a
+ledger that cannot be re-minted), never a silent exemption:
+
+  * ``signing_epoch`` set — every record with ``ts`` at or after it MUST carry
+    a verifying signature of its role, whatever the type. Records before it are
+    exempt and reported as an ANNOTATION naming the epoch and the count.
+  * ``signing_epoch`` unset — scope stays what it was (promotion required,
+    lapse-if-present), and the report carries a NAMED annotation saying the
+    all-types requirement is not being enforced. Never a silent skip.
+
+``now`` is the explicit evaluation instant for judging the EPOCH itself (is it
+in force yet?), required whenever an epoch is supplied and never derived from
+a record's ts — the same discipline as the grant term (``grants.term``). A
+record's own exemption is decided by its ts against the epoch; the auditor
+still takes no clock of its own.
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,7 +102,11 @@ from safe_agents.broker.grants.demotion import (
     _rank,  # the SAME rank ordering the lifecycle moves on — never duplicated
 )
 from safe_agents.broker.grants.proposals import ProposalStatus, compute_proposal_hash
-from safe_agents.broker.grants.record_signing import verify_record
+from safe_agents.broker.grants.record_signing import (
+    RoleKeyResolvers,
+    signing_role_for_record_type,
+    verify_record_by_type,
+)
 from safe_agents.broker.grants.store import _hmac_payload, _principal_key
 from safe_agents.broker.schemas import Envelope, Grant, PromotionRecord
 from safe_agents.broker.schemas.envelope import compute_envelope_hash
@@ -92,6 +122,7 @@ LEVEL_LEDGER_CONSISTENT = "LEVEL_LEDGER_CONSISTENT"
 LEVEL_DROP_RECORDED = "LEVEL_DROP_RECORDED"
 GRANT_TERM_RATIFIED = "GRANT_TERM_RATIFIED"
 RECORD_SIGNATURE_VERIFIES = "RECORD_SIGNATURE_VERIFIES"
+RECORD_SIGNING_EPOCH_VALID = "RECORD_SIGNING_EPOCH_VALID"
 PROPOSAL_LIFECYCLE = "PROPOSAL_LIFECYCLE"
 PROPOSAL_TAMPER = "PROPOSAL_TAMPER"
 GRANT_TAMPER = "GRANT_TAMPER"
@@ -109,6 +140,13 @@ HMAC_RULES: tuple[str, ...] = (GRANT_TAMPER, PROPOSAL_TAMPER, QUARANTINED_NO_RAI
 _VALID_PROPOSAL_STATUSES: frozenset[str] = frozenset(get_args(ProposalStatus))
 
 _EARNING_RECORD_TYPES = ("bootstrap", "promotion")
+
+# Annotation names — stable identifiers for the green-with-annotations half of
+# the report. An annotation is never a pass and never a violation: it names a
+# thing the reader must know to read the result correctly.
+ANNOTATION_SIGNING_EPOCH_UNSET = "record-signing-epoch-unset"
+ANNOTATION_SIGNING_EPOCH_APPLIED = "record-signing-epoch-applied"
+ANNOTATION_SIGNING_EPOCH_UNENFORCEABLE = "record-signing-epoch-unenforceable"
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +189,11 @@ class AuditReport:
     key, no key resolver) — a skipped rule is surfaced loudly, never reported
     green. The counts say what was examined, so an empty violations tuple over
     an empty table is distinguishable from a real pass.
+
+    annotations names every NARROWING the reader needs to interpret the result:
+    today, which records the signing epoch exempted and whether the all-types
+    signing requirement ran at all. Green-with-annotations, never silently
+    green — the same polarity as ``acknowledged``.
     """
 
     violations: tuple[AuditViolation, ...]
@@ -160,6 +203,7 @@ class AuditReport:
     proposals_examined: int
     envelopes_examined: int = 0
     acknowledged: tuple[AcknowledgedFinding, ...] = ()
+    annotations: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +483,49 @@ def dataset_from_items(items: Iterable[dict]) -> AuditDataset:
 # ---------------------------------------------------------------------------
 
 
+def _canonical_epoch(value: str) -> tuple[datetime.datetime, str]:
+    """The epoch as (instant, CANONICAL string) — both forms, agreeing.
+
+    The per-record comparison is a lexical string compare, which is sound ONLY
+    because both sides are in the ledger's canonical form: tz-aware UTC ending
+    exactly ``+00:00``, never ``Z`` and never a non-UTC offset. Record ts is
+    held to that by ``store.validate_record_ts`` (store.py), whose own refusal
+    message gives the reason — other forms "break the ledger's lexical sk
+    ordering". The epoch arrives from an operator's env and is under no such
+    guard, so it is normalized to the same form HERE, before any comparison.
+
+    Without this, the two forms disagree and the comparison is silently wrong
+    in the dangerous direction. ``+`` (0x2B) sorts before ``Z`` (0x5A), so
+    against an epoch written ``...T00:00:00Z`` a same-prefix canonical record
+    compares as EARLIER and is exempted — and a non-UTC offset is wrong by its
+    whole offset. Both failures shed enforcement quietly, which is the exact
+    failure mode the epoch exists to prevent.
+    """
+    parsed = _parse_instant(value)
+    return parsed, parsed.astimezone(datetime.UTC).isoformat()
+
+
+def _parse_instant(value: str) -> datetime.datetime:
+    """Parse an explicit UTC instant, refusing a naive one.
+
+    A naive epoch would compare against an aware ``now`` by raising, or worse,
+    be silently localized — so it is refused here with a message an operator
+    can act on.
+    """
+    try:
+        parsed = datetime.datetime.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"record-signing epoch {value!r} is not an ISO-8601 instant"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise ValueError(
+            f"record-signing epoch {value!r} has no UTC offset; an epoch cut must "
+            "name an unambiguous instant"
+        )
+    return parsed
+
+
 def _grant_coordinate(grant: Grant) -> str:
     return f"{_principal_key(grant.principal)}#{grant.actionClass}"
 
@@ -462,11 +549,31 @@ def _records_by_coordinate(
     return grouped
 
 
+def _as_role_resolvers(
+    record_key_resolver: KeyResolver | RoleKeyResolvers | None,
+) -> RoleKeyResolvers | None:
+    """Normalize the resolver argument to role-keyed form.
+
+    A bare callable is the pre-role calling convention and means the ISSUER's
+    map — the only role that existed then. It is NOT spread across both roles:
+    that would make every caller who passes one resolver accept an
+    issuer-signed demotion, which is exactly the binding this rule adds. A
+    caller with an evaluator map passes ``RoleKeyResolvers``.
+    """
+    if record_key_resolver is None:
+        return None
+    if isinstance(record_key_resolver, RoleKeyResolvers):
+        return record_key_resolver
+    return RoleKeyResolvers(issuer=record_key_resolver)
+
+
 def run_audit(
     dataset: AuditDataset,
     *,
     hmac_key: bytes | None = None,
-    record_key_resolver: KeyResolver | None = None,
+    record_key_resolver: KeyResolver | RoleKeyResolvers | None = None,
+    signing_epoch: str | None = None,
+    now: datetime.datetime | None = None,
 ) -> AuditReport:
     """Run every rule the supplied material allows; skip the rest LOUDLY.
 
@@ -476,9 +583,22 @@ def run_audit(
     reached — the write-side guards (conditional writes, quarantine refusals,
     single-shot proposal consumption) own that, and the #62 policy table
     proves THOSE stay live.
+
+    ``signing_epoch`` is the ISO-8601 UTC instant from which EVERY record type
+    must be signed (see the module docstring); ``now`` is the explicit
+    evaluation instant the epoch's own validity is judged at, and is REQUIRED
+    when an epoch is supplied. Neither is ever derived from the data.
     """
+    if signing_epoch is not None and now is None:
+        raise ValueError(
+            "signing_epoch requires an explicit evaluation instant (now=...); "
+            "deriving one from the records under audit would let the ledger "
+            "decide whether its own epoch is in force"
+        )
     violations: list[AuditViolation] = list(dataset.parse_violations)
     skipped: list[str] = []
+    annotations: list[str] = []
+    resolvers = _as_role_resolvers(record_key_resolver)
     ledger = _records_by_coordinate(dataset)
     in_force = {e.principal_key: e.envelope_hash for e in dataset.envelopes}
 
@@ -653,36 +773,99 @@ def run_audit(
                     )
                 )
 
-    # RECORD_SIGNATURE_VERIFIES — every promotion-typed record must carry a
-    # DSSE envelope that verify_record confirms (fails closed). Only ratify
-    # installs the signing store, so bootstrap/demotion/tightening records are
-    # exempt. A lapse record (#255) is signed when the lapse runner has an
-    # issuer signer configured; one that CARRIES a signature must verify like a
-    # promotion's, and an unsigned one is exempt on the same terms as a
-    # demotion record — a lapse only ever lowers authority. Read-side limit: predicate fields inside the record (covered,
-    # provenance maturity) are proposer ASSERTIONS at N=1 owner — #364 tracks
-    # deriving provenance maturity rather than asserting it (#193/#174 were
-    # named here and both closed without landing that measurement) — so this
-    # rule verifies AUTHENTICITY (who signed what), never the truth of the
-    # asserted evidence.
-    if record_key_resolver is None:
+    # RECORD_SIGNATURE_VERIFIES — a record in scope must carry a DSSE envelope
+    # that verifies under ITS RECORD TYPE'S signing role (fails closed):
+    # issuer for promotion/bootstrap/tightening, evaluator for demotion/lapse
+    # (record_signing.RECORD_TYPE_SIGNING_ROLE). Binding the type to the role
+    # is what makes the second identity mean anything — an evaluator-signed
+    # promotion is an attempt to mint authority from the no-model side, and an
+    # auditor that accepted any known key would wave it through.
+    #
+    # SCOPE is the epoch's job, never a per-type exemption list:
+    #   epoch set   — every type must be signed from that instant on; older
+    #                 rows are an explicit, annotated cut.
+    #   epoch unset — the pre-epoch scope (promotion required, lapse-if-signed)
+    #                 plus a LOUD annotation that the rest is unenforced.
+    # Read-side limit: predicate fields inside the record (covered, provenance
+    # maturity) are proposer ASSERTIONS at N=1 owner — #364 tracks deriving
+    # provenance maturity rather than asserting it (#193/#174 were named here
+    # and both closed without landing that measurement) — so this rule verifies
+    # AUTHENTICITY (who signed what), never the truth of the asserted evidence.
+    if resolvers is None:
         skipped.append(RECORD_SIGNATURE_VERIFIES)
+        annotations.append(
+            f"{ANNOTATION_SIGNING_EPOCH_UNENFORCEABLE}: no verify keys are configured "
+            f"for any signing role, so no record signature was checked"
+            + (f" (RECORD_SIGNING_EPOCH={signing_epoch})" if signing_epoch else "")
+        )
     else:
+        if signing_epoch is None:
+            annotations.append(
+                f"{ANNOTATION_SIGNING_EPOCH_UNSET}: no RECORD_SIGNING_EPOCH is "
+                "configured, so the all-types signing requirement (bootstrap, "
+                "demotion, tightening) is NOT enforced; only promotion records "
+                "are required to be signed, and lapse records only if they "
+                "carry a signature. Set RECORD_SIGNING_EPOCH to an ISO-8601 UTC "
+                "instant to enforce GAL-SPEC §6.10 from that instant on"
+            )
+        else:
+            # Normalize ONCE, here, to the ledger's canonical ts form: every
+            # comparison below is lexical, and that is sound only while both
+            # sides share the form validate_record_ts pins (see
+            # _canonical_epoch for what goes wrong otherwise, and in which
+            # direction).
+            epoch_instant, epoch = _canonical_epoch(signing_epoch)
+            # Show the operator what their value normalized to when it differs
+            # from what they typed — an epoch silently reinterpreted is how a
+            # cut ends up covering a different set of rows than intended.
+            epoch_label = epoch if epoch == signing_epoch else f"{signing_epoch} ({epoch})"
+            # RECORD_SIGNING_EPOCH_VALID — the epoch is judged at the SUPPLIED
+            # evaluation instant. An epoch in the future exempts every record
+            # ever written: a control that is configured and does nothing,
+            # which is worse than one that is off, because the config reads as
+            # coverage. Un-waivable, and loud.
+            if epoch_instant > now:
+                violations.append(
+                    AuditViolation(
+                        rule=RECORD_SIGNING_EPOCH_VALID,
+                        coordinate="RECORD_SIGNING_EPOCH",
+                        detail=(
+                            f"the configured record-signing epoch {epoch_label} is "
+                            f"after the evaluation instant {now.isoformat()}; it is "
+                            "not yet in force, so every record is exempt and the "
+                            "all-types signing requirement is silently disabled"
+                        ),
+                    )
+                )
+            exempt = sum(1 for entry in dataset.records if entry.record.ts < epoch)
+            if exempt:
+                annotations.append(
+                    f"{ANNOTATION_SIGNING_EPOCH_APPLIED}: {exempt} record(s) with ts "
+                    f"before RECORD_SIGNING_EPOCH={epoch_label} are exempt from the "
+                    "all-types signing requirement (an epoch cut over ledger history "
+                    "that cannot be re-minted); records at or after it are enforced"
+                )
         for entry in dataset.records:
             record_type = entry.record.recordType
-            if record_type == "lapse" and entry.signature is None:
-                continue
-            if record_type not in ("promotion", "lapse"):
-                continue
+            in_epoch = signing_epoch is not None and entry.record.ts >= epoch
+            if not in_epoch:
+                # Pre-epoch (or no-epoch) scope, unchanged: a promotion must be
+                # signed; a lapse that carries a signature must verify; the
+                # other types only ever lower authority and are exempt.
+                if record_type == "lapse" and entry.signature is None:
+                    continue
+                if record_type not in ("promotion", "lapse"):
+                    continue
             coordinate = _record_coordinate(entry.record)
             if entry.signature is None:
+                role = signing_role_for_record_type(record_type)
                 violations.append(
                     AuditViolation(
                         rule=RECORD_SIGNATURE_VERIFIES,
                         coordinate=coordinate,
                         detail=(
-                            f"promotion record ts={entry.record.ts} carries no DSSE "
-                            "signature; every ratified promotion is issuer-signed"
+                            f"{record_type} record ts={entry.record.ts} carries no DSSE "
+                            f"signature; it must be signed by the {role} identity"
                         ),
                     )
                 )
@@ -707,7 +890,12 @@ def run_audit(
                     )
                 )
                 continue
-            result = verify_record(entry.raw_data, entry.signature, record_key_resolver)
+            result = verify_record_by_type(
+                entry.raw_data,
+                entry.signature,
+                record_type=record_type,
+                resolvers=resolvers,
+            )
             if not result.ok:
                 violations.append(
                     AuditViolation(
@@ -715,7 +903,8 @@ def run_audit(
                         coordinate=coordinate,
                         detail=(
                             f"{record_type} record ts={entry.record.ts} failed signature "
-                            f"verification ({result.reason})"
+                            f"verification ({result.reason}); this type is signed by the "
+                            f"{signing_role_for_record_type(record_type)} identity"
                         ),
                     )
                 )
@@ -769,8 +958,12 @@ def run_audit(
     # and NO waiver applies — fail toward RED, never toward green); the match
     # is exact on (rule, coordinate, detail-digest), so a NEW finding at the
     # same coordinate is never auto-waived by an old acknowledgment.
+    # Acknowledgments stay ISSUER-signed: a waiver mints "green", which is
+    # authority, so it belongs to the ceremony side and never to the automatic
+    # evaluator (which only ever lowers). Hence resolvers.issuer, not a
+    # role selected by anything in the record.
     waivers: dict[tuple[str, str, str], str] = {}
-    if record_key_resolver is None:
+    if resolvers is None or resolvers.issuer is None:
         skipped.append(ACKNOWLEDGMENT_SIGNATURE_VERIFIES)
     else:
         for entry in dataset.acknowledgments:
@@ -803,7 +996,9 @@ def run_audit(
                     )
                 )
                 continue
-            result = verify_acknowledgment(entry.raw_data, entry.signature, record_key_resolver)
+            result = verify_acknowledgment(
+                entry.raw_data, entry.signature, resolvers.issuer
+            )
             if not result.ok:
                 violations.append(
                     AuditViolation(
@@ -844,4 +1039,5 @@ def run_audit(
         proposals_examined=len(dataset.proposals),
         envelopes_examined=len(dataset.envelopes),
         acknowledged=tuple(acknowledged),
+        annotations=tuple(annotations),
     )

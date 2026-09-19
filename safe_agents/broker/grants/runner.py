@@ -466,6 +466,7 @@ def run_demotion(
     signals: Iterable[DemotionSignal] = (),
     session: object = None,
     ts: str | None = None,
+    record_signer: object = None,
 ) -> RunnerOutcome:
     """Run one demotion evaluation pass for (principal, action_class).
 
@@ -476,6 +477,9 @@ def run_demotion(
     Retry policy is the CALLER's: a "conflict" outcome means the grant changed
     between read and write — re-invoke with a fresh read; this function never
     auto-retries internally.
+
+    ``record_signer`` is the EVALUATOR's RecordSigner (never the issuer's) —
+    when configured, the demotion record it writes is signed.
     """
     # Fail fast on a non-canonical caller ts: a parseable-but-non-canonical
     # value (e.g. a 'Z' suffix) would pass the dedupe gate's fromisoformat and
@@ -549,6 +553,7 @@ def run_demotion(
             record_store=record_store,
             session=session,
             ts=ts,
+            record_signer=record_signer,
         )
     except DemotionConflictError as exc:
         return RunnerOutcome(
@@ -845,7 +850,9 @@ def _run_lapse_pass(
     )
     if outcome.status == "lapsed" and record_signer is None:
         print(
-            "WARNING: issuer signing key not configured — the lapse record was "
+            "WARNING: evaluator signing key not configured "
+            "(EVALUATOR_SIGNING_KEY_SECRET_ARN/EVALUATOR_SIGNING_KEY_FILE plus "
+            "EVALUATOR_SIGNING_KEY_ID and a zone) — the lapse record was "
             "stored UNSIGNED (asserted, not non-repudiable).",
             file=sys.stderr,
         )
@@ -875,16 +882,20 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         grant_store, record_store = _build_stores(args.table_name)
-        # Optional issuer signer for the lapse record (#255): None when no
-        # signing env is configured; half-configured signing refuses (exit 2)
-        # rather than degrading to unsigned — resolve_record_signer's rule.
+        # The EVALUATOR's signer, for BOTH records this runner writes (lapse
+        # and demotion). It is a second signing identity, not the issuer's key:
+        # this process runs unattended with no human in the loop, so a key that
+        # could also sign promotions would let the automatic side mint
+        # authority (GAL §6.7.2). None when no EVALUATOR_SIGNING_* env is
+        # configured; half-configured signing refuses (exit 2) rather than
+        # degrading to unsigned — resolve_signer_for_role's rule.
         from safe_agents.broker.grants.issuer_keys import (  # noqa: PLC0415 — lazy
             IssuerSigningConfigError,
-            resolve_record_signer,
+            resolve_evaluator_signer,
         )
 
         try:
-            lapse_signer = resolve_record_signer()
+            evaluator_signer = resolve_evaluator_signer()
         except IssuerSigningConfigError as exc:
             raise RunnerConfigError(str(exc)) from exc
         signals: list[DemotionSignal] = []
@@ -951,7 +962,7 @@ def main(argv: list[str] | None = None) -> int:
         grant_store=grant_store,
         record_store=record_store,
         now=datetime.datetime.now(datetime.UTC),
-        record_signer=lapse_signer,
+        record_signer=evaluator_signer,
     )
 
     outcome = run_demotion(
@@ -960,6 +971,7 @@ def main(argv: list[str] | None = None) -> int:
         grant_store=grant_store,
         record_store=record_store,
         signals=signals,
+        record_signer=evaluator_signer,
     )
 
     # PII-safe one-line JSON: ids + status + trigger names + the audit-safe

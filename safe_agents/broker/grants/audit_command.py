@@ -49,15 +49,20 @@ ruling). Adding a second one here would be the same second-arm defect #252 is
 itself an instance of. Locating a deployment is a different job from auditing
 one: this command audits the target it is GIVEN.
 
-**No key material resolution of its own.** ``BROKER_HMAC_KEY`` and
-``ISSUER_VERIFY_KEYS_PARAM`` are read through the same seams the live test and
-the demotion runner use, so keyed/keyless mode is decided by what the invoking
-identity holds — never by a flag, which would let a caller ask for a quieter
-audit.
+**No key material resolution of its own.** ``BROKER_HMAC_KEY``,
+``ISSUER_VERIFY_KEYS_PARAM`` and ``EVALUATOR_VERIFY_KEYS_PARAM`` are read
+through the same seams the live test and the demotion runner use, so
+keyed/keyless mode is decided by what the invoking identity holds — never by a
+flag, which would let a caller ask for a quieter audit. The one config value
+this module does own is ``RECORD_SIGNING_EPOCH``, and it can only ever make
+the audit STRICTER (it adds record types to the signing requirement); its
+absence is reported as an annotation, so it cannot be used to ask for quiet
+either.
 
-**Known gap, reported rather than papered over:** the issuer VERIFY side has no
-local arm. Signing gained one in #226 (``ISSUER_SIGNING_KEY_FILE``); verifying
-did not, so ``resolve_issuer_verify_keys`` can only read an SSM parameter. A
+**Known gap, reported rather than papered over:** the VERIFY side has no local
+arm, for either role. Signing gained one in #226
+(``ISSUER_SIGNING_KEY_FILE``, and now ``EVALUATOR_SIGNING_KEY_FILE``);
+verifying did not, so the verify keys can only come from an SSM parameter. A
 local (sqlite) floor therefore ALWAYS lands RECORD_SIGNATURE_VERIFIES in
 ``skipped_rules``. That is loud by construction — the report says so, and
 ``example-wrapper posture`` repeats it — but it means a local ledger's signatures are
@@ -67,6 +72,7 @@ never checked by this audit today.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -79,7 +85,13 @@ from safe_agents.broker.grants.audit import (
     load_dataset_sqlite,
     run_audit,
 )
-from safe_agents.broker.grants.issuer_keys import resolve_issuer_verify_keys
+from safe_agents.broker.grants.issuer_keys import resolve_record_key_resolvers
+
+#: The ISO-8601 UTC instant from which EVERY ledger record type must carry a
+#: verifying signature of its role (GAL-SPEC §6.10). Unset = the pre-epoch
+#: scope, reported as a named annotation — never a silent narrowing. Read here
+#: rather than in ``audit.py`` so the rules stay pure over their inputs.
+RECORD_SIGNING_EPOCH_ENV = "RECORD_SIGNING_EPOCH"
 
 #: The closed backend catalog. A string, resolved in ONE place (``load_target``)
 #: — never an import path, and nothing store-loaded can extend it
@@ -133,15 +145,22 @@ def run_grants_audit(target: AuditTarget) -> AuditReport:
     Mode is decided by the environment, exactly as the live test and the
     demotion runner decide it: ``BROKER_HMAC_KEY`` present ⇒ keyed, absent ⇒
     keyless with the HMAC rules named in ``skipped_rules``;
-    ``ISSUER_VERIFY_KEYS_PARAM`` present ⇒ signature rules run. A
+    ``ISSUER_VERIFY_KEYS_PARAM`` / ``EVALUATOR_VERIFY_KEYS_PARAM`` present ⇒
+    the signature rules run for that role's record types. A
     set-but-unresolvable verify parameter raises rather than skipping a rule
-    the operator configured to run.
+    the operator configured to run, and so does a key_id claimed by both roles.
+
+    This is the ONE wall-clock read on the audit path: the evaluation instant
+    the record-signing epoch is judged at is taken here, at the outermost
+    caller, and passed down — nothing below derives it from a record's ts.
     """
     hmac_key = os.environ.get("BROKER_HMAC_KEY", "").encode() or None
     return run_audit(
         load_target(target),
         hmac_key=hmac_key,
-        record_key_resolver=resolve_issuer_verify_keys(),
+        record_key_resolver=resolve_record_key_resolvers(),
+        signing_epoch=os.environ.get(RECORD_SIGNING_EPOCH_ENV) or None,
+        now=datetime.datetime.now(datetime.UTC),
     )
 
 
@@ -171,6 +190,7 @@ def report_to_dict(report: AuditReport, target: AuditTarget) -> dict:
             for entry in report.acknowledged
         ],
         "skipped_rules": sorted(report.skipped_rules),
+        "annotations": list(report.annotations),
         "examined": {
             "grants": report.grants_examined,
             "records": report.records_examined,
@@ -198,11 +218,14 @@ def render_text(payload: dict) -> str:
         lines.append(
             f"  acknowledged [{entry['rule']}] {entry['coordinate']}: {entry['waiver_ref']}"
         )
+    for annotation in payload.get("annotations", ()):
+        lines.append(f"  NOTE: {annotation}")
     if payload["skipped_rules"]:
         lines.append(f"  SKIPPED (not run, not passed): {', '.join(payload['skipped_rules'])}")
     lines.append(
         f"  {len(payload['violations'])} violations, "
         f"{len(payload['acknowledged'])} acknowledged, "
+        f"{len(payload.get('annotations', ()))} annotations, "
         f"{len(payload['skipped_rules'])} rules skipped"
     )
     return "\n".join(lines)

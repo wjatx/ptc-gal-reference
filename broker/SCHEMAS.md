@@ -494,6 +494,13 @@ Per-field notes:
   distribution, then ratchet up — with hysteresis (different thresholds + dwell time; fresh
   recalibration evidence, never just "the alarm stopped").
 
+**Signing.** Every record type is signed (GAL-SPEC §6.10), by the identity that wrote it: the
+**issuer** key signs `promotion`, `bootstrap` and `tightening` (the ceremony/operator side); the
+**evaluator** key — GAL §6.7.2's separate system identity — signs `demotion` and `lapse`. The two
+are distinct keys with distinct env contracts, because an evaluator holding the issuer key could
+mint promotion records. Verification selects the key map by `recordType`, so a signature from the
+wrong role fails closed (`grant-lifecycle.md` §"Two signing roles").
+
 **Storage.** Records live in the grants table as append-only `RECORD#…` items
 (`pk = RECORD#<principal>#<actionClass>`, `sk = <ts>#<recordType>`), written via a
 conditioned UpdateItem so an existing record is never overwritten (`grants/store.py`). The stored

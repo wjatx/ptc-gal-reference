@@ -169,6 +169,17 @@ The read-only grants audit (`grants/audit.py`, #62) is the instrument that tells
 authority state is wrong. Two hardenings came out of the #199 incident (a ceremony minted a grant
 under a silently-substituted envelope — quarantine-dead from ratification, green on the audit):
 
+Since the second signing role landed, the audit's signature scope is set by an explicit **epoch
+cut** rather than a per-type exemption list. `RECORD_SIGNING_EPOCH` names an ISO-8601 UTC instant:
+every record with `ts` at or after it must carry a verifying signature of its role, whatever the
+type. Older rows — real ledgers hold unsigned `demotion`/`tightening`/`bootstrap` records that
+cannot be re-minted — are exempt and reported as a **named annotation** carrying the epoch and the
+count, green-with-annotations rather than silently green. With the epoch unset the scope stays what
+it was (promotion required, lapse-if-present) and the report says so in an annotation: the
+all-types requirement is not being enforced. The instant the epoch's own validity is judged at is
+an explicit input, never derived from the records — an epoch dated in the future would exempt every
+row ever written, so it is a violation (`RECORD_SIGNING_EPOCH_VALID`), not a quiet pass.
+
 - **`GRANT_ENVELOPE_IN_FORCE` (#201).** Every grant's `envelopeHash` is compared to the stored
   in-force envelope for its principal (recomputed via the same load path the broker uses at boot —
   a plain content hash, so the keyless posture holds). A mismatch is a grant the broker quarantines
@@ -190,13 +201,39 @@ under a silently-substituted envelope — quarantine-dead from ratification, gre
   skips acknowledgment verification loudly and applies none (fail toward RED). Two rules police the
   waivers themselves: `ACKNOWLEDGMENT_SIGNATURE_VERIFIES` and `ACKNOWLEDGMENT_NOT_WAIVABLE`.
 
-Relatedly, half-configured issuer signing (`ISSUER_SIGNING_KEY_ID` without the secret ARN) now
-**refuses** the ratify/acknowledge ceremony instead of degrading to an unsigned record — the #190
-fail-toward-less-authority polarity applied to config. Fully-unconfigured signing gets the same
-polarity (#205): `ratify` **refuses** to store an unsigned PromotionRecord — writing nothing (no
-record, no grant mutation; the proposal stays pending) — unless the operator passes an explicit
-`--allow-unsigned`, which stores the record UNSIGNED with a loud warning. `acknowledge` refuses
-unsigned outright, with no override.
+Relatedly, half-configured signing (`ISSUER_SIGNING_KEY_ID` or `EVALUATOR_SIGNING_KEY_ID` without
+its role's key source) now **refuses** — the ceremony commands on the issuer side, and the demotion
+runner on the evaluator side (exit 2) — instead of degrading to an unsigned record. That is the
+#190 fail-toward-less-authority polarity applied to config, and it holds for both roles because
+both resolve through one parameterized code path (`grants/issuer_keys.py`), so neither can drift
+into a weaker rule than the other. Fully-unconfigured signing gets the same polarity (#205):
+`ratify` **refuses** to store an unsigned PromotionRecord — writing nothing (no record, no grant
+mutation; the proposal stays pending) — unless the operator passes an explicit `--allow-unsigned`,
+which stores the record UNSIGNED with a loud warning. `acknowledge` refuses unsigned outright, with
+no override. The other writers (`seed`, `tighten`, and the runner's demotion/lapse passes) sign
+whenever their role's key is configured and write unsigned when none is, so a local floor with no
+key material still works.
+
+### Two signing roles — the ledger is signed by the identity that wrote it
+
+GAL-SPEC §6.10 requires **every** ledger record to be signed, and §6.7.2 requires the demotion
+evaluator to be a **separate identity** from the issuer. Satisfying the first by handing the
+evaluator the issuer key would break the second: it could then mint `promotion` records, and the
+ceremony boundary would exist only on paper. So there are two signing roles, split by the SOURCE of
+the key material rather than by a field inside one map — a field is something a store-loaded config
+could set, and the authority split would then be a value rather than a boundary
+(`docs/config-provenance.md`).
+
+| role | signs | env |
+|---|---|---|
+| `issuer` | `promotion`, `bootstrap`, `tightening` (plus acknowledgment waivers and the MCP admission ledger) | `ISSUER_SIGNING_KEY_SECRET_ARN` / `ISSUER_SIGNING_KEY_FILE`, `ISSUER_SIGNING_KEY_ID`, `ISSUER_SIGNING_ZONE`, `ISSUER_VERIFY_KEYS_PARAM` |
+| `evaluator` | `demotion`, `lapse` — the automatic, no-model side, which only ever lowers authority | `EVALUATOR_SIGNING_KEY_SECRET_ARN` / `EVALUATOR_SIGNING_KEY_FILE`, `EVALUATOR_SIGNING_KEY_ID`, `EVALUATOR_SIGNING_ZONE`, `EVALUATOR_VERIFY_KEYS_PARAM` |
+
+**Verification binds record type to role**, or the second identity is decorative: an
+evaluator-signed `promotion` fails (`record_signer_wrong_role`), and so does an issuer-signed
+`demotion`. A key_id appearing in BOTH verify maps is a configuration error that refuses at cold
+start — one key with two roles is no split at all. A role whose verify keys are not configured
+never passes: a record needing it is `record_role_unresolved`, not an exemption.
 
 ## Demotion — automatic, deterministic, no model in the loop
 
@@ -307,18 +344,22 @@ that authority to be re-justified.
 - **A pending lapse blocks promotion.** While a grant's term has passed but its lapse is unwritten,
   `propose` and `ratify` refuse to anchor on its stored level. Run the runner, then re-propose from
   the lapsed level.
-- **Audit.** Lapse records are legitimate ledger transitions. A lapse record that carries a
-  signature must verify (`RECORD_SIGNATURE_VERIFIES`); one naming a trigger cannot parse and is an
+- **Audit.** Lapse records are legitimate ledger transitions. A lapse record must verify under the
+  EVALUATOR role (`RECORD_SIGNATURE_VERIFIES`) — required from the record-signing epoch on, and
+  checked-if-present before it; one naming a trigger cannot parse and is an
   `UNPARSEABLE_ITEM` finding; a grant that sits below its ledger-derived level with no record for
   the drop is `LEVEL_DROP_RECORDED` (waivable, for pre-#244 history where demotion wrote the grant
   first). `GRANT_TERM_RATIFIED` (un-waivable) holds the grant's term to the one on its latest
   promotion record: the term enforced must be the term the checker ratified.
 
-Honest limits. The runner signs the lapse record only when an issuer signing key is configured in
-its environment; otherwise it stores it unsigned with a warning, exactly as demotion and tightening
-records are unsigned today. Handing the issuer key to the demotion identity is a deployment choice
-with a cost: that identity could then sign promotion records too. And the auditor takes no clock,
-so it cannot report "term passed, lapse not yet written"; enforcement already acts on it.
+Honest limits. The runner signs the lapse record — and the demotion record beside it — with the
+**evaluator** key when one is configured in its environment; otherwise it stores them unsigned with
+a warning. The older note here said that handing the issuer key to the demotion identity was a
+deployment choice with a cost, because that identity could then sign promotion records: that is no
+longer the choice on offer. The evaluator has its own key and its own env names, and the audit
+refuses an issuer signature on a demotion or lapse record. What remains a real limit: the auditor
+takes no clock, so it cannot report "term passed, lapse not yet written"; enforcement already acts
+on it.
 
 ### Hysteresis — so it can't flap
 

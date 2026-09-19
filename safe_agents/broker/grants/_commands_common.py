@@ -174,6 +174,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "(never overwrites)",
     )
     _add_table_arg(seed)
+    seed.add_argument(
+        "--zone", help="signer zone for the issuer DSSE signature (default: ISSUER_SIGNING_ZONE)"
+    )
 
     reseed = sub.add_parser(
         "re-seed",
@@ -320,10 +323,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     tighten = sub.add_parser(
         "tighten",
         help="voluntary tightening: any level -> in-loop, always permitted; "
-        "appends a tightening-typed PromotionRecord (unsigned by design)",
+        "appends a tightening-typed PromotionRecord (issuer-signed when a "
+        "signing key is configured)",
     )
     _add_principal_args(tighten)
     _add_table_arg(tighten)
+    tighten.add_argument(
+        "--zone", help="signer zone for the issuer DSSE signature (default: ISSUER_SIGNING_ZONE)"
+    )
     tighten.add_argument(
         "--evidence",
         default="voluntary tightening",
