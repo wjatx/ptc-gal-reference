@@ -744,25 +744,82 @@ function secretStatementsForRole(name: (typeof ROLE_NAMES)[number]): Statement[]
 }
 
 function secretReadsAreNamespaceSplit(): boolean {
-  // Refined from the earlier only-broker-reads-secrets row (Phase 4, #123): the grant issuer
-  // signs PromotionRecords with its own key, so the promotion role now reads secrets too — but
-  // the NAMESPACE split is the invariant: broker reads ONLY */connectors/* (connector
-  // credentials), promotion reads ONLY */issuer/* (its DSSE record-signing key, deliberately a
-  // separate identity from the broker's chain-signing key — the broker cannot sign promotions,
-  // symmetric with "the broker cannot write grants"), and the agent + demotion roles read no
-  // secrets at all. Neither reader can reach the other's namespace.
+  // Refined from the earlier only-broker-reads-secrets row (Phase 4, #123), and again when the
+  // demotion evaluator gained a signing key of its own: THREE disjoint namespaces, one per
+  // signing/credential function. Broker reads ONLY */connectors/* (connector credentials),
+  // promotion reads ONLY */issuer/* (the DSSE key for records that RAISE authority), demotion
+  // reads ONLY */evaluator/* (the DSSE key for records that LOWER it — demotion and lapse), and
+  // the agent role reads no secrets at all. No reader can reach another's namespace, so no
+  // signing identity can forge another's record type.
   const brokerSecrets = secretStatementsForRole('BrokerRole');
   const promotionSecrets = secretStatementsForRole('PromotionRole');
+  const demotionSecrets = secretStatementsForRole('DemotionRole');
+  const confinedTo = (stmts: Statement[], ns: string) =>
+    stmts.length > 0 &&
+    stmts.every((s) => resourceString(s).includes(ns)) &&
+    ['/connectors/', '/issuer/', '/evaluator/']
+      .filter((other) => other !== ns)
+      .every((other) => !stmts.some((s) => resourceString(s).includes(other)));
   return (
-    brokerSecrets.length > 0 &&
-    brokerSecrets.every((s) => resourceString(s).includes('/connectors/')) &&
-    promotionSecrets.length > 0 &&
-    promotionSecrets.every((s) => resourceString(s).includes('/issuer/')) &&
-    !brokerSecrets.some((s) => resourceString(s).includes('/issuer/')) &&
-    !promotionSecrets.some((s) => resourceString(s).includes('/connectors/')) &&
-    !roleReadsSecrets('AgentRole') &&
-    !roleReadsSecrets('DemotionRole')
+    confinedTo(brokerSecrets, '/connectors/') &&
+    confinedTo(promotionSecrets, '/issuer/') &&
+    confinedTo(demotionSecrets, '/evaluator/') &&
+    !roleReadsSecrets('AgentRole')
   );
+}
+
+function evaluatorSigningIsSplitFromIssuer(): boolean {
+  // The property the second signing identity exists for, stated in both directions and across
+  // every role that holds a signing key: the deterministic demotion evaluator cannot mint a
+  // record that raises authority, and the human-ratified promotion path cannot mint one that
+  // claims a demotion trigger fired. Verification binds record type to signing role, so the two
+  // PRIVATE key namespaces staying disjoint in IAM is what makes that structural rather than
+  // conventional.
+  //
+  // CheckerRole is checked in the gated template because it is the ratifier that actually signs
+  // when the operator plane is on; PromotionRole covers the seed/re-seed/tighten path.
+  const demotionSecrets = secretStatementsForRole('DemotionRole');
+  const promotionSecrets = secretStatementsForRole('PromotionRole');
+  const checkerSecrets = statementsForRoleIn(identityCheckerTemplate, 'CheckerRole').filter((s) =>
+    actionsOf(s).some((a) => a.startsWith('secretsmanager:')),
+  );
+  const evaluatorCannotSignPromotions =
+    demotionSecrets.length > 0 &&
+    demotionSecrets.every((s) => resourceString(s).includes('/evaluator/')) &&
+    !demotionSecrets.some((s) => resourceString(s).includes('/issuer/'));
+  const ratifiersCannotSignDemotions =
+    promotionSecrets.length > 0 &&
+    checkerSecrets.length > 0 &&
+    ![...promotionSecrets, ...checkerSecrets].some((s) =>
+      resourceString(s).includes('/evaluator/'),
+    );
+
+  // PUBLIC verify keys are the deliberate exception: an auditor must verify every record type it
+  // walks, so both read-only identities read BOTH verify-key parameters — and sign nothing. The
+  // watcher additionally reads no Secrets Manager at all, which is what keeps "verifying is not
+  // signing" true by construction rather than by policy wording.
+  //
+  // BOTH is asserted, not "at least one", because one-sided is worse than none: the audit
+  // resolves the other role's records to RECORD_ROLE_UNRESOLVED and reports findings, rather
+  // than narrowing its scope. Dropping either ARN here is a red floor, not a smaller audit.
+  const readsBothVerifyParams = (stmts: Statement[]) => {
+    const ssm = stmts.filter((s) => actionsOf(s).includes('ssm:GetParameter'));
+    const resources = ssm.map(resourceString).join('');
+    return (
+      ssm.length > 0 &&
+      resources.includes('/issuer/verify-keys') &&
+      resources.includes('/evaluator/verify-keys')
+    );
+  };
+  const auditorsVerifyBoth =
+    readsBothVerifyParams(statementsForRole(WATCHER_ROLE_NAME)) &&
+    readsBothVerifyParams(statementsForRoleIn(identityOperatorTemplate, 'AuditorRole')) &&
+    !roleReadsSecrets('AgentRole') &&
+    !statementsForRole(WATCHER_ROLE_NAME).some((s) =>
+      actionsOf(s).some((a) => a.startsWith('secretsmanager:')),
+    );
+
+  return evaluatorCannotSignPromotions && ratifiersCannotSignDemotions && auditorsVerifyBoth;
 }
 
 function brokerRoleMcpRegistryIsReadOnly(): boolean {
@@ -827,7 +884,8 @@ function checkerRoleTrustsOnlyNamedPrincipals(): boolean {
 
 function checkerRoleIsRatifyShaped(): boolean {
   // Grants-table read/write + tables CMK + */issuer/* secrets + secrets CMK — and NOTHING
-  // else: no */connectors/* (namespace split holds), no counters access (evidence assembly
+  // else: no */connectors/* and no */evaluator/* (the namespace split holds three ways — the
+  // ratifier cannot sign a demotion or a lapse), no counters access (evidence assembly
   // belongs to the maker's propose), no S3, no ssm.
   const stmts = statementsForRoleIn(identityCheckerTemplate, 'CheckerRole');
   const writesGrants = stmts.some(
@@ -841,7 +899,10 @@ function checkerRoleIsRatifyShaped(): boolean {
   const issuerOnly =
     secretStmts.length > 0 &&
     secretStmts.every((s) => resourceString(s).includes('/issuer/')) &&
-    !secretStmts.some((s) => resourceString(s).includes('/connectors/'));
+    !secretStmts.some(
+      (s) =>
+        resourceString(s).includes('/connectors/') || resourceString(s).includes('/evaluator/'),
+    );
   const noCounters = !stmts.some((s) => resourceString(s).includes('counters-table-arn'));
   const noOtherServices = stmts.every((s) =>
     actionsOf(s).every(
@@ -1076,7 +1137,9 @@ function auditorRoleTrustsOnlyNamedPrincipals(): boolean {
 
 function auditorRoleIsReadOnlyPlusHmacKey(): boolean {
   // Read-only everywhere (no ddb writes, no kms:GenerateDataKey), and its ONLY secret is the
-  // env-scoped broker HMAC key — no */connectors/*, no */issuer/* (verify keys come from SSM).
+  // env-scoped broker HMAC key — no */connectors/*, and neither PRIVATE signing namespace
+  // (*/issuer/*, */evaluator/*): the auditor verifies both record families from the PUBLIC
+  // verify-key parameters in SSM and can sign neither.
   const stmts = statementsForRoleIn(identityOperatorTemplate, 'AuditorRole');
   const actions = stmts.flatMap(actionsOf);
   const secretStmts = stmts.filter((s) => actionsOf(s).some((a) => a.startsWith('secretsmanager:')));
@@ -1086,7 +1149,8 @@ function auditorRoleIsReadOnlyPlusHmacKey(): boolean {
       (s) =>
         resourceString(s).includes('broker-hmac-key') &&
         !resourceString(s).includes('/connectors/') &&
-        !resourceString(s).includes('/issuer/'),
+        !resourceString(s).includes('/issuer/') &&
+        !resourceString(s).includes('/evaluator/'),
     );
   return (
     hmacOnly &&
@@ -1947,8 +2011,14 @@ const ROWS: Row[] = [
   {
     id: 'identity/secret-reader',
     group: 'Identity',
-    desc: 'secret reads namespace-split: broker only */connectors/*, promotion only */issuer/*, agent+demotion none',
+    desc: 'secret reads namespace-split: broker only */connectors/*, promotion only */issuer/*, demotion only */evaluator/*, agent none',
     check: secretReadsAreNamespaceSplit,
+  },
+  {
+    id: 'identity/evaluator-signing-split',
+    group: 'Identity',
+    desc: 'the two signing identities are disjoint: demotion holds */evaluator/* and not */issuer/*, promotion+checker hold */issuer/* and not */evaluator/* (neither can mint the other\'s record type); watcher+auditor read BOTH PUBLIC verify-key params and sign nothing',
+    check: evaluatorSigningIsSplitFromIssuer,
   },
   {
     id: 'identity/audit-immutable',

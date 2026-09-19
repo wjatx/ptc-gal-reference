@@ -112,8 +112,9 @@ the `file` arm the rule is upheld by whoever **writes** the map — the wrapper 
 leaf-shaped name is what keeps the same map portable to the two arms that do enforce it.
 
 **The IAM wildcards survive this ruling, and that is not a coincidence.** The broker's connector
-grant is `secret:*/connectors/*` [read: `infra/lib/identity-stack.ts:88`], and the issuer grants
-are `secret:*/issuer/*` [read: `infra/lib/identity-stack.ts:281`, `:399`]; the channels drain adds
+grant is `secret:*/connectors/*` [read: `infra/lib/identity-stack.ts:88`], the issuer grants
+are `secret:*/issuer/*` [read: `infra/lib/identity-stack.ts:291`, `:446`] and the demotion
+evaluator's is `secret:*/evaluator/*` [read: `infra/lib/identity-stack.ts:380`]; the channels drain adds
 `secret:safe-agents/${env}/connectors/*` [read: `infra/lib/channels-stack.ts:693`]. Every one of
 them keys on a **path segment the deploying topology supplies**, never on anything the manifest
 spells — which is exactly what the leaf rule guarantees stays true. A convention that let a

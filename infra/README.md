@@ -53,8 +53,11 @@ roles so a compromised agent inherits nothing:
   egress only to the broker. The dumbest role in the chain.
 - **broker role** — reads the secret store, reads `grants`, reads/writes `counters` + `intents`,
   `PutObject`-only to the audit bucket. Holds the keys; cannot promote itself.
-- **promotion role** — the **sole writer** to the `grants` table (the maker-checker path).
-- **demotion role** — deterministic grant writes on triggers, no model in the loop.
+- **promotion role** — writes the `grants` table via the maker-checker path, and reads the
+  `*/issuer/*` signing key to sign the records that RAISE authority.
+- **demotion role** — deterministic grant writes on triggers, no model in the loop, and reads the
+  `*/evaluator/*` signing key to sign the records that LOWER it (`demotion`, `lapse`). The two
+  key namespaces are disjoint, so neither signing identity can mint the other's record type.
 - (woken-EC2 arm) **waking-Lambda role** — `StartInstances` + scoped; carries no connector creds.
 
 **KMS** — customer-managed keys encrypting the tables, the audit bucket, and the secret store.

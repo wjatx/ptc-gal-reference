@@ -277,6 +277,12 @@ export class IdentityStack extends Stack {
     // promotions, symmetric with "the broker cannot write grants". The namespace split is the
     // enforcement: promotion reads */issuer/*, broker reads */connectors/*, and neither can read
     // the other's (the onlyBrokerReadsConnectorSecrets conformance row pins this).
+    //
+    // Deliberately NO */evaluator/* either. The issuer key signs the records that RAISE authority
+    // (promotion, bootstrap, tightening); the evaluator key signs the records that LOWER it
+    // (demotion, lapse). Verification binds record type to signing role, so an identity holding
+    // only this key cannot mint a record asserting that a demotion trigger fired — the mirror of
+    // the demotion role being unable to mint a promotion. See DemotionRole below.
     promotionRole.addToPolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
@@ -318,7 +324,7 @@ export class IdentityStack extends Stack {
               ...demotionPrincipals.map((arn) => new ArnPrincipal(arn)),
             )
           : computePrincipals(),
-      description: `safe-agents ${env} - deterministic demotion role (grants writer; no model in loop)`,
+      description: `safe-agents ${env} - deterministic demotion role (grants writer; no model in loop; evaluator-signing reader)`,
     });
 
     demotionRole.addToPolicy(
@@ -349,6 +355,42 @@ export class IdentityStack extends Stack {
       }),
     );
 
+    // Secrets Manager: the EVALUATOR signing key only, under the */evaluator/* namespace. The
+    // demotion evaluator (grants.runner: the lapse pass, then the demotion pass) DSSE-signs the
+    // `demotion` and `lapse` records it appends to the ceremony ledger, so it needs a signing
+    // identity of its own — and deliberately NOT the issuer's.
+    //
+    // The split is STRUCTURAL, and it is the point of this statement. Verification binds record
+    // type to signing role: a `promotion` / `bootstrap` / `tightening` record verifies only
+    // against an ISSUER key, a `demotion` / `lapse` record only against an EVALUATOR key. Because
+    // the namespaces are disjoint in IAM, the deterministic evaluator — which runs with no human
+    // and no model in its loop — cannot mint a record that raises authority, and the
+    // human-ratified promotion path cannot mint a record that claims a trigger fired. Neither
+    // signing identity can forge the other's records, and that is an IAM fact rather than a
+    // convention the signing code is trusted to honor.
+    //
+    // Mirrors the promotion role's */issuer/* grant exactly (same actions, same namespace idiom,
+    // same secrets-CMK decrypt below). Pinned by identity/secret-reader and
+    // identity/evaluator-signing-split in infra/tests/conformance.ts.
+    demotionRole.addToPolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['secretsmanager:GetSecretValue', 'secretsmanager:DescribeSecret'],
+        resources: [
+          `arn:${Aws.PARTITION}:secretsmanager:${Aws.REGION}:${Aws.ACCOUNT_ID}:secret:*/evaluator/*`,
+        ],
+      }),
+    );
+
+    // KMS: decrypt only on the secrets CMK (to unwrap the evaluator key), mirroring promotion.
+    demotionRole.addToPolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['kms:Decrypt'],
+        resources: [secretsKeyArn],
+      }),
+    );
+
     // ── 4b. checkerRole — the standing ratifier identity (#202; OPTIONAL, context-gated OFF) ──────
     // Synthesized ONLY when the `checkerTrustedPrincipals` context names at least one IAM
     // principal ARN — the default synth stays byte-for-byte five roles. Retires the per-ceremony
@@ -365,8 +407,9 @@ export class IdentityStack extends Stack {
     // Permissions are ratify/acknowledge-shaped: grants-table read/write + tables CMK, and the
     // */issuer/* signing key + secrets CMK (the checker signs PromotionRecords and
     // acknowledgment waivers). Deliberately NO counters read (evidence assembly is the maker's
-    // propose) and NO */connectors/* (the namespace split holds: the checker cannot read
-    // connector credentials, the broker cannot sign promotions).
+    // propose), NO */connectors/* and NO */evaluator/* (the namespace split holds three ways: the
+    // checker cannot read connector credentials, the broker cannot sign promotions, and the
+    // ratifier cannot sign a demotion or a lapse — that key is the demotion evaluator's alone).
     const checkerPrincipals = trustedPrincipalsFromContext(this, 'checkerTrustedPrincipals');
 
     if (checkerPrincipals.length > 0) {
@@ -559,7 +602,7 @@ export class IdentityStack extends Stack {
         assumedBy: new CompositePrincipal(
           ...auditorPrincipals.map((arn) => new ArnPrincipal(arn)),
         ),
-        description: `safe-agents ${env} - standing keyed-audit role (read-only grants + broker HMAC key + issuer verify-keys param)`,
+        description: `safe-agents ${env} - standing keyed-audit role (read-only grants + broker HMAC key + issuer/evaluator verify-keys params)`,
       });
 
       auditorRole.addToPolicy(
@@ -612,13 +655,23 @@ export class IdentityStack extends Stack {
         }),
       );
 
-      // The issuer PUBLIC verify keys (#194) — same parameter the CI watcher reads.
+      // The issuer AND evaluator PUBLIC verify keys (#194) — the same two parameters the CI
+      // watcher reads. An audit must verify EVERY record type it walks, so it needs both key
+      // sets: issuer keys for promotion/bootstrap/tightening, evaluator keys for demotion/lapse.
+      // Reading both is not a hole in the signing split — these are PUBLIC keys, and verifying is
+      // not signing. The split lives on the PRIVATE halves in Secrets Manager, which this role
+      // reads neither of (its only secret is the broker HMAC key above).
+      //
+      // Grant both together or neither. A role resolving only one param does not audit a narrower
+      // scope — it reports RECORD_ROLE_UNRESOLVED against the other role's records ("a role we
+      // cannot check is never a role that passes"), so a one-sided grant reads as a dirty floor.
       auditorRole.addToPolicy(
         new PolicyStatement({
           effect: Effect.ALLOW,
           actions: ['ssm:GetParameter'],
           resources: [
             `arn:${Aws.PARTITION}:ssm:${Aws.REGION}:${Aws.ACCOUNT_ID}:parameter/safe-agents/${env}/issuer/verify-keys`,
+            `arn:${Aws.PARTITION}:ssm:${Aws.REGION}:${Aws.ACCOUNT_ID}:parameter/safe-agents/${env}/evaluator/verify-keys`,
           ],
         }),
       );
@@ -661,7 +714,7 @@ export class IdentityStack extends Stack {
         StringEquals: { 'token.actions.githubusercontent.com:aud': 'sts.amazonaws.com' },
         StringLike: { 'token.actions.githubusercontent.com:sub': githubSubjects },
       }),
-      description: `safe-agents ${env} - GitHub Actions OIDC watcher (read-only agent-runs + grants audit + CMK decrypt)`,
+      description: `safe-agents ${env} - GitHub Actions OIDC watcher (read-only agent-runs + grants audit + issuer/evaluator verify-keys + CMK decrypt)`,
     });
 
     watcherRole.addToPolicy(
@@ -694,17 +747,23 @@ export class IdentityStack extends Stack {
       }),
     );
 
-    // SSM — the issuer verify-keys parameter (#194): the issuer's PUBLIC Ed25519 keys by key_id,
-    // so the grants audit can run RECORD_SIGNATURE_VERIFIES read-only. Deliberately Parameter
-    // Store, not Secrets Manager: verify keys are public material, and the watcher keeps reading
-    // NO Secrets Manager at all (the namespace-split doctrine — the */issuer/* PRIVATE signing
-    // key stays promotion-side only).
+    // SSM — the issuer AND evaluator verify-keys parameters (#194): each signer's PUBLIC Ed25519
+    // keys by key_id, so the grants audit can run RECORD_SIGNATURE_VERIFIES read-only over every
+    // record type in the ledger (issuer keys verify promotion/bootstrap/tightening, evaluator
+    // keys verify demotion/lapse). Deliberately Parameter Store, not Secrets Manager: verify keys
+    // are public material, and the watcher keeps reading NO Secrets Manager at all (the
+    // namespace-split doctrine — the */issuer/* PRIVATE signing key stays promotion-side and the
+    // */evaluator/* one demotion-side). An auditor that can verify both and sign neither is
+    // exactly the posture we want — and both params are granted together deliberately, since a
+    // role holding one resolves the other's records to RECORD_ROLE_UNRESOLVED rather than
+    // skipping them.
     watcherRole.addToPolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: ['ssm:GetParameter'],
         resources: [
           `arn:${Aws.PARTITION}:ssm:${Aws.REGION}:${Aws.ACCOUNT_ID}:parameter/safe-agents/${env}/issuer/verify-keys`,
+          `arn:${Aws.PARTITION}:ssm:${Aws.REGION}:${Aws.ACCOUNT_ID}:parameter/safe-agents/${env}/evaluator/verify-keys`,
         ],
       }),
     );

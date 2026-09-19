@@ -14,7 +14,7 @@ this doc is the operator's how-to.
 | ratify / reject / acknowledge | `grants.commands ratify…` | **CheckerRole** (#202) | `checkerTrustedPrincipals` |
 | seed / re-seed (bootstrap) | `grants.commands seed/re-seed` | **PromotionRole** (operator gate) | `promotionTrustedPrincipals` |
 | tighten (voluntary, any level → in-loop) | `grants.commands tighten` | **PromotionRole** (operator gate) | `promotionTrustedPrincipals` |
-| demotion runner (drills / out-of-band) | `grants.runner` | **DemotionRole** (operator gate) | `demotionTrustedPrincipals` |
+| demotion runner + term lapse (drills / out-of-band) | `grants.runner` | **DemotionRole** (operator gate) | `demotionTrustedPrincipals` |
 | keyed grants audit | `grants.audit_command --table…` or `test_grants_audit_live` (keyed) | **AuditorRole** | `auditorTrustedPrincipals` |
 | keyless CI audit | grants-audit workflow | WatcherRole (OIDC) | `githubOidcSubjects` |
 
@@ -22,9 +22,22 @@ Role ARNs come from CloudFormation exports: `safe-agents-{env}-{maker,checker,au
 
 Notes:
 - **MakerRole** has NO Secrets Manager access at all; **CheckerRole/PromotionRole** read only
-  `*/issuer/*`; **AuditorRole**'s only secret is the env-scoped broker HMAC key (it fetches its
-  own — a fully admin-free audit). For maker/checker/promotion flows the operator fetches
-  `BROKER_HMAC_KEY` under ambient credentials BEFORE assuming (the one residual admin touch).
+  `*/issuer/*`; **DemotionRole** reads only `*/evaluator/*`; **AuditorRole**'s only secret is the
+  env-scoped broker HMAC key (it fetches its own — a fully admin-free audit). For
+  maker/checker/promotion flows the operator fetches `BROKER_HMAC_KEY` under ambient credentials
+  BEFORE assuming (the one residual admin touch).
+- **There are TWO ledger-signing identities, and the split is the control.** The issuer key signs
+  the records that RAISE authority (`promotion`, `bootstrap`, `tightening`); the evaluator key
+  signs the records that LOWER it (`demotion`, `lapse`). Verification binds record type to signing
+  role, so disjoint IAM namespaces mean the deterministic demotion runner — which has no human and
+  no model in its loop — cannot mint a record that promotes, and the human-ratified path cannot
+  mint one that claims a demotion trigger fired. Pinned by `identity/secret-reader` and
+  `identity/evaluator-signing-split`; do not merge the two namespaces to simplify a deploy.
+  The PUBLIC halves are the deliberate exception: WatcherRole and AuditorRole read BOTH
+  verify-key SSM parameters, because an audit must verify every record type it walks, and
+  verifying is not signing. **Configure the two parameters together** — an auditing identity
+  holding only one reports `RECORD_ROLE_UNRESOLVED` against the other role's records rather than
+  passing them. See `RECORD_SIGNING_EPOCH` below.
 - MakerRole writes via **conditional UpdateItem only** (the proposal store's append idiom — a
   PutItem-shaped first cut was IAM-denied live), and since #203 that UpdateItem is
   **`LeadingKeys`-confined to `PROPOSAL#*` / `TOOLPROP#*`** on the grants and mcp-registry
@@ -69,6 +82,127 @@ aws sts get-caller-identity --query Arn --output text | grep -q "$ROLE_NAME" \
 
 Related zsh gotcha: brace ARN variables (`${VAR}`) — bare `$VAR:...` triggers history
 modifiers and mangles ARNs.
+
+## Signing key material — what CDK does NOT create
+
+`IdentityStack` creates no Secret and no Parameter (`identity-stack.ts:22-24`). It grants access to
+ARN *patterns*; the material behind them is operator-provisioned, out of band, once per
+environment. Two signing identities means two key pairs, four objects:
+
+| Object | Kind | Read by | Env var |
+|---|---|---|---|
+| `safe-agents/{env}/issuer/signing-key` | Secrets Manager, PEM private key | Promotion, Checker | `ISSUER_SIGNING_KEY_SECRET_ARN` |
+| `/safe-agents/{env}/issuer/verify-keys` | SSM `String`, JSON `{key_id: public_pem}` | Watcher, Auditor | `ISSUER_VERIFY_KEYS_PARAM` |
+| `safe-agents/{env}/evaluator/signing-key` | Secrets Manager, PEM private key | Demotion | `EVALUATOR_SIGNING_KEY_SECRET_ARN` |
+| `/safe-agents/{env}/evaluator/verify-keys` | SSM `String`, JSON `{key_id: public_pem}` | Watcher, Auditor | `EVALUATOR_VERIFY_KEYS_PARAM` |
+
+The verify-key parameters must be plain `String`, not `SecureString`: neither read-only identity
+holds `kms:Decrypt` on an SSM key, so a `SecureString` is unreadable by the audit that needs it.
+Public key material in a `SecureString` buys nothing and breaks the audit.
+
+**The signing env contract is FIVE names per role, not four.** For each of `ISSUER_` /
+`EVALUATOR_`:
+
+| Suffix | Required? |
+|---|---|
+| `_SIGNING_KEY_SECRET_ARN` | one key source, **exactly one** of ARN or FILE; both set REFUSES |
+| `_SIGNING_KEY_FILE` | the local no-AWS arm only; refused outright on the dynamo arm |
+| `_SIGNING_KEY_ID` | **required whenever a key source is set** — a signer no verifier can resolve |
+| `_SIGNING_ZONE` | **required whenever a key source is set** (or `--zone` per invocation) |
+| `_VERIFY_KEYS_PARAM` | on the auditing identity, not the signing one |
+
+The zone is not decoration: it is baked into the DSSE statement as attribution
+(`record_signing.py`, `predicate.signer.zone`), so `resolve_signer_for_role` **refuses** a key
+source with no zone rather than defaulting one — *"a signer a verifier cannot resolve or attribute
+is a misconfiguration, never a silent default"*. A key_id with no key source refuses too (#196):
+half-configured signing never degrades to an unsigned record.
+
+**Give each role its own key_id.** `resolve_record_key_resolvers` refuses at cold start if any
+`key_id` appears in BOTH verify-key maps — *"one key cannot hold two signing roles, or the
+evaluator could mint promotion records"*. Reusing a key_id across the two roles quietly undoes the
+split this whole section exists for, so it fails loudly and early instead.
+
+The secret NAME only needs to fall inside the namespace the IAM grant matches (`*/issuer/*`,
+`*/evaluator/*`); the names above are the convention. Provisioning an evaluator key pair:
+
+```bash
+ENVNAME=development
+openssl genpkey -algorithm ed25519 -out /tmp/evaluator.pem
+chmod 600 /tmp/evaluator.pem
+openssl pkey -in /tmp/evaluator.pem -pubout -out /tmp/evaluator.pub
+
+aws secretsmanager create-secret \
+  --name "safe-agents/${ENVNAME}/evaluator/signing-key" \
+  --secret-string "file:///tmp/evaluator.pem" \
+  --kms-key-id "$(aws cloudformation list-exports \
+      --query "Exports[?Name=='safe-agents-${ENVNAME}-secrets-key-arn'].Value" --output text)"
+
+# key_id is the operator's choice; it is what a ledger verifier resolves the
+# signature by, and it must match EVALUATOR_SIGNING_KEY_ID on the runner.
+aws ssm put-parameter --type String --overwrite \
+  --name "/safe-agents/${ENVNAME}/evaluator/verify-keys" \
+  --value "$(jq -Rn --arg k "${ENVNAME}-evaluator-1" \
+      --rawfile pem /tmp/evaluator.pub '{($k): $pem}')"
+
+shred -u /tmp/evaluator.pem 2>/dev/null || rm -P /tmp/evaluator.pem
+```
+
+Then set on whatever runs `grants.runner`: `EVALUATOR_SIGNING_KEY_SECRET_ARN` (the ARN from
+`create-secret`), `EVALUATOR_SIGNING_KEY_ID` (`${ENVNAME}-evaluator-1` above) and
+`EVALUATOR_SIGNING_ZONE`. All three, or the runner refuses. The local no-AWS arm uses
+`EVALUATOR_SIGNING_KEY_FILE` in place of the ARN — mutually exclusive with it, and refused on the
+dynamo arm, exactly as `ISSUER_SIGNING_KEY_FILE` is.
+
+**Ordering, and the trap.** Deploy the Identity stack FIRST, then provision — `create-secret`
+needs the secrets CMK the stack's exports name, and the IAM grants are namespace patterns that do
+not care whether the secret exists yet. The trap is on the OTHER side: an **empty or missing
+verify-keys parameter does not fail the write path, only the read path**. The runner signs happily
+with a key nobody can resolve, and only the audit notices (see the next section). Publish the
+public key BEFORE the first signed demotion or lapse, and close the loop by running the keyed
+audit under AuditorRole once a record has landed — the standing rule that a promotion is not done
+until the promoted grant acts once applies to a signing key too.
+
+## Auditing the two roles — `RECORD_SIGNING_EPOCH`
+
+On whatever identity runs the audit, set **both** verify-key parameters and the epoch:
+
+```bash
+export ISSUER_VERIFY_KEYS_PARAM=/safe-agents/{env}/issuer/verify-keys
+export EVALUATOR_VERIFY_KEYS_PARAM=/safe-agents/{env}/evaluator/verify-keys
+export RECORD_SIGNING_EPOCH=2026-09-19T00:00:00+00:00   # ISO-8601, WITH offset
+```
+
+`RECORD_SIGNING_EPOCH` is the instant from which EVERY record type must carry a verifying
+signature of its role (GAL-SPEC §6.10). Records with `ts` before it are exempt and reported as a
+named annotation — an epoch cut over ledger history that cannot be re-minted, which is this
+repo's standing answer to un-re-mintable evidence. Four behaviours to know, all of them chosen so
+that a misconfiguration cannot read as coverage:
+
+- **Unset** — safe and self-announcing. The scope stays what it was (promotion required, lapse
+  only if it carries a signature) plus a loud `SIGNING_EPOCH_UNSET` annotation saying the
+  all-types requirement is NOT enforced. Never a silent narrowing.
+- **Naive or unparseable** — the audit exits **2** (`could not run`), never 1. A missing UTC
+  offset is refused by name: *"an epoch cut must name an unambiguous instant."* Callers key on
+  2-vs-1, so do not collapse them.
+- **In the future** — a `RECORD_SIGNING_EPOCH_VALID` **violation**, un-waivable. An epoch after
+  the evaluation instant exempts every record ever written, and *"a control that is configured and
+  does nothing is worse than one that is off, because the config reads as coverage."*
+- **Only one verify param set** — the other role's records fail `RECORD_SIGNATURE_VERIFIES` with
+  reason `RECORD_ROLE_UNRESOLVED`: *"a role we cannot check is never a role that passes."* So the
+  two parameters are **required together**, not independently useful.
+
+That last point is sharper than "once an epoch is set": a **signed lapse record produces a finding
+even with no epoch configured**, because a lapse that carries a signature is verified in the
+pre-epoch scope too. An auditing identity given only `ISSUER_VERIFY_KEYS_PARAM` starts reporting
+against evaluator-signed records as soon as one exists — not when the epoch is turned on.
+
+A key_id known to the wrong role fails as `RECORD_SIGNER_WRONG_ROLE`, and one known to both as
+`RECORD_SIGNER_ROLE_AMBIGUOUS`. Both are the split doing its job; neither is a reason to merge the
+maps.
+
+With NEITHER verify param set, `RECORD_SIGNATURE_VERIFIES` is skipped entirely and annotated
+`SIGNING_EPOCH_UNENFORCEABLE`. Read `skipped_rules`, not just `clean`: a report with no violations
+and a skipped signature rule is a different claim from one with nothing skipped.
 
 ## Deploying the Identity stack
 

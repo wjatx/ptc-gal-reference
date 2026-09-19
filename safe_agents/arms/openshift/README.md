@@ -371,6 +371,15 @@ gone green. Case A caught it immediately.
 
 ## Two things this arm does NOT claim
 
+**The second signing identity is a cloud-floor fact this drill does not exercise.** On AWS the
+demotion evaluator signs its `demotion` and `lapse` records with an `*/evaluator/*` key that is
+disjoint from the issuer's, so neither signing identity can mint the other's record type
+(`infra/lib/identity-stack.ts`, `docs/operator-identities.md`). This arm has **no demotion or
+lapse leg at all** — five ServiceAccounts, none of them a demotion runner — so nothing here
+carries an evaluator key and nothing here proves that split. Do not read the issuer/checker
+mount below as covering it. Adding the leg means a sixth SA, its own `Secret`, and a Job; it is
+worth doing, and it has not been done.
+
 **The issuer key's `0600` mode is not what protects it here.** A projected Secret volume under
 an fsGroup gets `0440` OR-ed into whatever `defaultMode` was requested — verified 8/8 across
 requested modes on OpenShift 4.20.29 (#282). The mode is not the operator's to choose, so
