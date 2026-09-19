@@ -69,15 +69,32 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _expiry_iso(expiry_seconds: int) -> str:
-    """Compute an ISO-8601 UTC expiry timestamp from now + expiry_seconds."""
-    return (datetime.now(timezone.utc) + timedelta(seconds=expiry_seconds)).isoformat()
+def _resolve_now(now: datetime | None) -> datetime:
+    """The evaluation instant: the caller's explicit ``now``, else the wall clock.
+
+    Called ONCE, at the top of each public entry point, so every verdict inside
+    that call is judged against the same instant and that instant is always an
+    input — never derived from anything stored on the intent (its ``ts``, its
+    ``expiry``, or any other record). A record's own timestamps are claims about
+    the past; letting one stand in for "now" would let whoever wrote the record
+    choose when it expires.
+    """
+    return now if now is not None else datetime.now(timezone.utc)
 
 
-def _is_expired(expiry: str) -> bool:
-    """True when the expiry timestamp is in the past (inclusive of exact equality)."""
+def _expiry_iso(expiry_seconds: int, now: datetime) -> str:
+    """Compute an ISO-8601 UTC expiry timestamp from ``now`` + expiry_seconds."""
+    return (now + timedelta(seconds=expiry_seconds)).isoformat()
+
+
+def _is_expired(expiry: str, now: datetime) -> bool:
+    """True when ``expiry`` is at or before ``now`` (inclusive of exact equality).
+
+    Pure: the evaluation instant is an explicit argument, supplied by the public
+    entry point via _resolve_now(). Nothing here reads a clock.
+    """
     expiry_dt = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-    return datetime.now(timezone.utc) >= expiry_dt
+    return now >= expiry_dt
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +110,7 @@ def materialize(
     *,
     expiry_seconds: int = 3600,
     dedup_id: str | None = None,
+    now: datetime | None = None,
 ) -> ApprovalResult:
     """Materialize the BrokeredCall as a pending Intent and hold it for human approval.
 
@@ -126,6 +144,10 @@ def materialize(
         id, and — if an equal-id Intent is already pending — this call coalesces
         onto it: no second hold, no second notification, status "coalesced". Pure
         de-amplification of identical re-submissions; None = today's behavior.
+    now:
+        The hold instant: the Intent's ``ts`` and the base its ``expiry`` is
+        computed from. Defaults to the wall clock. Both derive from this one
+        instant, so ``expiry - ts`` is exactly ``expiry_seconds``.
 
     Returns
     -------
@@ -148,8 +170,9 @@ def materialize(
     # The broker renders renderedForHuman from the typed BrokeredCall via the PDP —
     # never from anything the agent supplies.
     rendered_for_human = decision.renderedIntent.renderedForHuman
-    expiry = _expiry_iso(expiry_seconds)
-    ts = _now_iso()
+    hold_at = _resolve_now(now)
+    expiry = _expiry_iso(expiry_seconds, hold_at)
+    ts = hold_at.isoformat()
 
     intent = Intent(
         id=intent_id,
@@ -181,6 +204,8 @@ def approve(
     approved_by: str,
     store: IntentStore,
     executor: Callable[[BrokeredCall], Any] | None = None,
+    *,
+    now: datetime | None = None,
 ) -> ExecutionResult:
     """Execute an intent after a human approves it through an authenticated path.
 
@@ -208,6 +233,11 @@ def approve(
         Optional callback that performs the actual connector call. Receives the
         STORED materializedRequest — not any agent-supplied call. Omit in tests
         that check only approval mechanics without executing side effects.
+    now:
+        The instant the expiry verdict is judged at. Defaults to the wall clock,
+        resolved once here. Never derived from the intent's own ``ts`` or any
+        other stored record. (``executed_at`` stays a wall-clock observation of
+        when the release actually ran; it is not an input to any verdict here.)
 
     Returns
     -------
@@ -226,6 +256,7 @@ def approve(
         it: an uncaught quarantine fails loudly toward less authority, and the
         runtime seam (pep.approve_intent) owns the recorded surfacing.
     """
+    evaluated_at = _resolve_now(now)
     intent = store.get_intent(intent_id)
     if intent is None:
         return ExecutionResult(
@@ -236,7 +267,7 @@ def approve(
 
     # Check expiry before claiming the intent. Unactioned intents auto-deny at expiry;
     # this mirrors the DynamoDB TTL that removes expired items in production.
-    if _is_expired(intent.expiry):
+    if _is_expired(intent.expiry, evaluated_at):
         # Best-effort status update; may race with another caller but that is fine —
         # both will refuse to execute, which is the correct outcome.
         store.transition_status(intent_id, "pending", "expired")
@@ -298,6 +329,8 @@ def reject(
     intent_id: str,
     rejected_by: str,
     store: IntentStore,
+    *,
+    now: datetime | None = None,
 ) -> ExecutionResult:
     """Reject a pending intent through an authenticated out-of-band path — NO execution.
 
@@ -321,6 +354,9 @@ def reject(
         from anything the agent provided.
     store:
         The IntentStore holding the pending intent.
+    now:
+        The instant the expiry verdict is judged at; defaults to the wall clock,
+        resolved once here, exactly as in approve().
 
     Returns
     -------
@@ -328,6 +364,7 @@ def reject(
         Always executed=False. rejection_reason is "rejected by owner" on a clean
         rejection, or the matching not-found / expired / not-pending reason.
     """
+    evaluated_at = _resolve_now(now)
     intent = store.get_intent(intent_id)
     if intent is None:
         return ExecutionResult(
@@ -338,7 +375,7 @@ def reject(
 
     # Symmetric with approve(): an already-expired intent has auto-denied; report
     # that rather than flipping it to "rejected".
-    if _is_expired(intent.expiry):
+    if _is_expired(intent.expiry, evaluated_at):
         store.transition_status(intent_id, "pending", "expired")
         return ExecutionResult(
             intent_id=intent_id,
