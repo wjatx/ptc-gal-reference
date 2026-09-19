@@ -5,10 +5,10 @@ These pin the exit predicate against the real specs, so a spec edit that breaks
 extraction fails here rather than silently shrinking the inventory the
 implemented-vs-unbuilt pass works from:
 
-  1. 78 rows total — 43 PTC + 35 GAL, no numbering gaps, no duplicates.
-  2. Exactly three rows carry an implementation-status marker at
-     conformance-clause scope: PTC-25 (inline, #358), GAL-34 (blockquote, #255),
-     GAL-35 (blockquote, #256).
+  1. 79 rows total — 43 PTC + 36 GAL, no numbering gaps, no duplicates.
+  2. The rows carrying an implementation-status marker at conformance-clause
+     scope are exactly EXPECTED_MARKED in spec_clauses.py, forms and tracking
+     issues included.
   3. The marker traps hold: the convention-defining prose and the field/verb
      table rows elsewhere in both documents are NOT conformance-row markers, and
      an inline-only marker is still a marker.
@@ -103,7 +103,7 @@ def test_ptc25_marker_is_inline_not_blockquote(rows: list[ClauseRow]) -> None:
     assert "not yet implemented" in row.clause_text
 
 
-@pytest.mark.parametrize(("clause_id", "issue"), [("GAL-34", "#255"), ("GAL-35", "#256")])
+@pytest.mark.parametrize(("clause_id", "issue"), [("GAL-35", "#256")])
 def test_gal_appended_clauses_are_blockquote_marked(
     rows: list[ClauseRow], clause_id: str, issue: str
 ) -> None:
@@ -166,8 +166,9 @@ def test_out_of_section_markers_are_not_picked_up(rows: list[ClauseRow]) -> None
 # ---------------------------------------------------------------------------
 
 def test_roles_come_from_the_section_the_clause_falls_under(rows: list[ClauseRow]) -> None:
-    """GAL-34 and GAL-35 are appended out of numeric order; role follows position."""
+    """GAL-34, GAL-35 and GAL-36 are appended out of numeric order; role follows position."""
     assert _by_id(rows, "GAL-34").role == "Enforcer"
+    assert _by_id(rows, "GAL-36").role == "Enforcer"
     assert _by_id(rows, "GAL-35").role == "Audit"
     assert {r.role for r in rows if r.spec == SPEC_GAL} == {"Issuer", "Enforcer", "Audit"}
     assert {r.role for r in rows if r.spec == SPEC_PTC} == {

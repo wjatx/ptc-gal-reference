@@ -84,8 +84,8 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 
 # --- Exit predicate (#359), asserted by verify_extraction on every run -----
 
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 43, SPEC_GAL: 35}
-EXPECTED_TOTAL_ROWS = 78
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 43, SPEC_GAL: 36}
+EXPECTED_TOTAL_ROWS = 79
 
 # clause_id -> (marker_form, tracking issue)
 #
@@ -125,8 +125,8 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # requirement the code does not yet meet, which is the marker's whole point.
     "GAL-5":  (MARKER_FORM_INLINE, "#380"),
     "GAL-33": (MARKER_FORM_INLINE, "#378"),
-    # Predate the audit
-    "GAL-34": (MARKER_FORM_BLOCKQUOTE, "#255"),
+    # Predates the audit. GAL-34 (#255) left this set on 2026-09-19 when the
+    # lapse arc shipped.
     "GAL-35": (MARKER_FORM_BLOCKQUOTE, "#256"),
 }
 
@@ -326,8 +326,8 @@ def extract_gal(path: Path) -> list[ClauseRow]:
     GAL §7.2–§7.4 — a bullet list per role section.
 
     The role is derived from the section heading the clause actually falls
-    under, not from its number: GAL-34 and GAL-35 are appended to the end of
-    §7.3 and §7.4 respectively rather than sitting in numeric order.
+    under, not from its number: GAL-34 and GAL-36 are appended to the end of
+    §7.3 and GAL-35 to §7.4 rather than sitting in numeric order.
     """
     lines = path.read_text(encoding="utf-8").splitlines()
     origins = _gal_origins(lines, path)
