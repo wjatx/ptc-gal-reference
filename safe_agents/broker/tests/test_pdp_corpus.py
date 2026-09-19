@@ -90,7 +90,17 @@ from safe_agents.broker.schemas.common import AutonomyLevel
 #     require_approval 800 / transform 192). The rule table was not touched.
 #     NB this pin covers the decision's SERIALIZATION, so a field addition moves it
 #     without any behaviour changing — a golden pin protects what it pins.
-GOLDEN_CORPUS_DIGEST = "b6b788df1a770a3d412e25bedf5c8a5e25fbc08ce968ac1c40db794db779d8df"
+#
+#   b6b788df… -> edec2f9e…  (2026-09-19)  INTENT-ID PAYLOAD ONLY, no decision moved.
+#     _intent_id now binds the principal (agentId#skill#user#tier) instead of leaving
+#     it recoverable only through the broker-owned turnId. The corpus freezes every
+#     id input, so all 800 require_approval lines carry one id, which moved from
+#     intent-18883c559acadaa3 to intent-faa0dbc9295d1a65. Verified by recomputing
+#     the corpus before and after with renderedIntent.id stripped from every
+#     decision: both reproduce 4da302d5… exactly, and the verb distribution is
+#     unchanged (deny 62816 / abstain 6912 / allow 3008 / require_approval 800 /
+#     transform 192). The rule table was not touched.
+GOLDEN_CORPUS_DIGEST = "edec2f9e6f350a6bdb4020530e9cbba6aa818433f0d567fa7097219143ddb8bc"
 
 # The historical figure from the #177 spike, published in docs/PTC.md §5,
 # docs/lf-standards-brief.md and spec/PTC-SPEC.md. Asserted here so the cited number
@@ -149,7 +159,8 @@ _FACT_AXES: dict[str, tuple[Any, ...]] = {
 #   BrokeredCall.args ......... model-authored and opaque to every predicate. Its
 #                               invariance is pinned separately and adversarially by
 #                               test_decide_is_invariant_to_model_supplied_args.
-#   BrokeredCall.principal .... reaches only the rendered-intent string, never a predicate.
+#   BrokeredCall.principal .... reaches only _intent_id and the rendered-intent string,
+#                               never a predicate.
 #   BrokeredCall.session ...... turnId feeds _intent_id (the intent ID), never a predicate.
 #   BrokeredCall.ts ........... same — _intent_id only.
 #   BrokeredCall.tool / .op ... same — _intent_id and the rendered string only.
@@ -257,6 +268,9 @@ _HELD_CONSTANT_CALL_FIELDS = {
     "args",
     "op",
     "principal.agentId",
+    "principal.skill",
+    "principal.tier",
+    "principal.user",
     "session.turnId",
     "tool",
     "ts",

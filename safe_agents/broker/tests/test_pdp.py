@@ -337,6 +337,26 @@ def test_require_approval_intent_id_is_deterministic() -> None:
     assert d1.renderedIntent.id == d2.renderedIntent.id
 
 
+@pytest.mark.parametrize("field", ["agentId", "skill", "user", "tier"])
+def test_require_approval_intent_id_binds_the_principal(field: str) -> None:
+    """Two calls identical except for the principal get different intent ids.
+
+    Same turnId, tool, op and ts: before the principal was bound, these collided,
+    and only the issuing broker's turn log could say whose action an id named.
+    Every component of the principal key moves the id, not just agentId.
+    """
+    base = _call(effect="write", external=True, reversible=False, op="transfer")
+    other_value = {"agentId": "agent-other", "skill": "other", "user": "mallory", "tier": "D"}
+    other = base.model_copy(
+        update={"principal": base.principal.model_copy(update={field: other_value[field]})}
+    )
+    assert other.session.turnId == base.session.turnId and other.ts == base.ts
+    facts = _facts(human_reachable=True)
+    d_base, d_other = decide(base, facts), decide(other, facts)
+    assert d_base.kind == d_other.kind == "require_approval"
+    assert d_base.renderedIntent.id != d_other.renderedIntent.id
+
+
 def test_decide_is_deterministic() -> None:
     """Calling decide() twice with identical inputs must produce identical outputs."""
     call = _call(effect="write", external=True, reversible=True, tainted=True, sources=["web:1"])

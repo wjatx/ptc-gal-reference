@@ -62,8 +62,29 @@ from .facts import Facts
 
 
 def _intent_id(call: BrokeredCall) -> str:
-    """Derive a stable intent ID from the call. Same call → same ID. Pure, no I/O."""
-    raw = f"{call.session.turnId}:{call.tool}:{call.op}:{call.ts}"
+    """Derive a stable intent ID from the call. Same call → same ID. Pure, no I/O.
+
+    The principal is bound into the id explicitly, not left recoverable through
+    ``turnId``. Turn identity is broker-owned, so inside the issuing broker the turn
+    log does map a turnId back to one principal. A verifier that does not share that
+    broker's turn log (a second broker on a shared intent table, an auditor reading
+    the tape, a channel relaying ``/approve <id>``) cannot make that mapping, and
+    to it an id that omits the principal names an action without naming who it
+    acts for. The key mirrors ``approval.queue_guard.dedup_intent_id`` and
+    ``enforcement.store.scoped_counter_key`` (agentId#skill#user#tier), so the
+    three principal-scoped ids agree on what "the same principal" means.
+
+    Release does not rely on this id for integrity: ``storedCallDigest`` binds the
+    whole frozen call and the PEP's foreign-principal guard runs before any
+    transition. This makes the id itself say the same thing they do.
+    """
+    # Spelled field-by-field (not via a local alias) so test_pdp_corpus's AST
+    # read-surface guard sees exactly which principal fields the engine reads.
+    principal_key = (
+        f"{call.principal.agentId}#{call.principal.skill}"
+        f"#{call.principal.user}#{call.principal.tier}"
+    )
+    raw = f"{principal_key}:{call.session.turnId}:{call.tool}:{call.op}:{call.ts}"
     return "intent-" + hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
