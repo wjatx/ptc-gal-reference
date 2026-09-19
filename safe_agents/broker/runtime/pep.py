@@ -441,6 +441,21 @@ class BrokerRuntime:
             self._intent_store.get_intent(intent_id), intent_id
         )
 
+    def _owns_intent(self, intent) -> bool:
+        """True iff ``intent`` was frozen for THIS runtime's principal. The one ownership test.
+
+        Compares the WHOLE principal (agentId, skill, user, tier): the identity
+        tuple of GAL §5.1's Grant.principal, authority being per (principal,
+        action-class) and never per-agent (§6.1), and the key scoped_counter_key
+        and dedup_intent_id already use. Comparing agentId alone left the
+        confused-deputy case open: the same agent acting on behalf of a different
+        user (or skill, or tier) passed the check, released another user's frozen
+        call through its OWN Doer, connector and credentials, and burned that
+        user's single-use approval (test_approval_burn.py). Every out-of-band seam
+        (approve, reject, describe, flag) must route through here.
+        """
+        return intent.materializedRequest.principal == self._principal
+
     def _foreign_intent_result(self, intent, intent_id: str) -> ExecutionResult | None:
         """Pure foreign-principal check over an already-fetched intent (sa#176).
 
@@ -448,10 +463,7 @@ class BrokerRuntime:
         (it also needs the stored coordinates to label its evidence counters) and reuse
         that read here, rather than fetching a second time.
         """
-        if (
-            intent is not None
-            and intent.materializedRequest.principal.agentId != self._principal.agentId
-        ):
+        if intent is not None and not self._owns_intent(intent):
             return ExecutionResult(
                 intent_id=intent_id,
                 executed=False,
@@ -489,7 +501,7 @@ class BrokerRuntime:
             return None
         if intent is None:
             return None
-        if intent.materializedRequest.principal.agentId != self._principal.agentId:
+        if not self._owns_intent(intent):
             return None
         stored = intent.materializedRequest
         return IntentView(
