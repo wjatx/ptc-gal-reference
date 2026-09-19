@@ -65,6 +65,7 @@ Protocol (prototype):
 """
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
@@ -72,7 +73,7 @@ import signal
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -84,6 +85,7 @@ from safe_agents.broker.approval import InMemoryIntentStore
 from safe_agents.broker.audit import FileAuditSink, InMemorySink, S3ObjectLockSink
 from safe_agents.broker.enforcement import InMemoryStore, scoped_counter_key
 from safe_agents.broker.grants.store import DynamoDBGrantStore, InMemoryGrantStore
+from safe_agents.broker.grants.term import effective_level
 from safe_agents.broker.pdp import Facts
 from safe_agents.broker.prototype.boot_config import (
     DEFAULT_COUNTER_CAP,
@@ -285,6 +287,7 @@ def _make_pip(
     query_egress_budget: float | None = None,
     confidence_knob: Confidence | None = None,
     counter_period: CounterPeriod = "utc-day",
+    clock: Callable[[], datetime.datetime] | None = None,
 ):
     """Build the real PIP: per call, read grant (presence + level) from the grant
     store and the cap-budget fact from the real counter. The counter_key MUST match
@@ -321,7 +324,20 @@ def _make_pip(
     quarantined grant is not surfaced here but reported UP via the returned Facts
     (quarantined / quarantine_reason). The PEP owns surfacing it exactly once
     (sa#124) — the pip is invoked twice per request (initial decision + enforce()
-    premise revalidation), so any emit here would double-log every tamper event."""
+    premise revalidation), so any emit here would double-log every tamper event.
+
+    #255 — certification term (GAL §6.7.6). ``grant_level`` is the grant's
+    EFFECTIVE level at the evaluation instant (``grants.term.effective_level``):
+    once a grant's ``certifiedUntil`` has passed it acts at ``lastSafeLevel``
+    whether or not the lapse writer has run — an idle grant nobody sweeps is the
+    case the arc exists for. Pure: no write, and the broker gains no grant-store
+    write. The instant comes from ``clock`` — injectable for tests, the wall
+    clock by default — read once per pip call. It is NEVER derived from the
+    grant's ``ts`` or any ledger record: those say when something was written,
+    and a quiet log writes nothing."""
+
+    def _now() -> datetime.datetime:
+        return clock() if clock is not None else datetime.datetime.now(datetime.UTC)
 
     def pip(call: BrokeredCall) -> Facts:
         result = grant_store.get_grant(call.principal, f"{call.tool}.{call.op}")
@@ -348,7 +364,11 @@ def _make_pip(
 
         grant_present = grant is not None
         # When no grant, level is unused (rule 1 denies on grant_present); default safe.
-        grant_level = grant.level if grant is not None else AutonomyLevel.in_loop
+        # With a grant: the EFFECTIVE level at this instant (#255) — a passed
+        # certification term acts at lastSafeLevel before any lapse is written.
+        grant_level = (
+            effective_level(grant, _now()) if grant is not None else AutonomyLevel.in_loop
+        )
 
         # Same principal+period derivation the PEP increments with — the two MUST
         # agree or the cap rule evaluates a different counter than enforce() draws.

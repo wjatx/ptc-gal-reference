@@ -211,9 +211,15 @@ def canonical_record_payload(record: PromotionRecord) -> str:
     class looks like *today* and read every intact pre-growth record as a
     signature failure.
     """
-    return json.dumps(
-        record.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    )
+    payload = record.model_dump(mode="json")
+    # certifiedUntil (#255) is OMITTED when None: every record written before the
+    # field existed, and every record that carries no term, serializes to exactly
+    # the pre-#255 bytes, so its stored bytes and its DSSE subject digest are
+    # unchanged (pinned in test_grant_term_lapse.py). A set term is inside the
+    # payload and so inside the signature.
+    if payload.get("certifiedUntil") is None:
+        payload.pop("certifiedUntil", None)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
 def canonical_record_bytes(record: PromotionRecord) -> bytes:

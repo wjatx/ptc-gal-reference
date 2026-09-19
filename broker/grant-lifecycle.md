@@ -184,7 +184,7 @@ under a silently-substituted envelope — quarantine-dead from ratification, gre
   **refuses to run unsigned** — a waiver mints "green", which is authority. The audit reports the
   matched finding as `acknowledged` (with the waiver ref): green-with-annotations, never silently
   green. Only a **closed waivable vocabulary** (`WAIVABLE_RULES`: LEDGER_COUNTERPART,
-  RECORD_SIGNATURE_VERIFIES, GRANT_ENVELOPE_IN_FORCE) can be acknowledged — HMAC-tamper
+  RECORD_SIGNATURE_VERIFIES, GRANT_ENVELOPE_IN_FORCE, LEVEL_DROP_RECORDED) can be acknowledged — HMAC-tamper
   quarantines, unaccounted raises, and parse failures stay un-waivable, or the waiver becomes a
   laundering seam. Waivers apply only when their signature VERIFIES; a keyless/no-verify-keys run
   skips acknowledgment verification loudly and applies none (fail toward RED). Two rules police the
@@ -268,6 +268,57 @@ same ceremony ledger as promotions (ratified by `system:demotion-evaluator`; `SC
 alongside the `AuditRecord`. This supersedes the earlier no-record exemption (Phase 3,
 `docs/GAL.md` §3) — the asymmetry that matters stays: widening requires recorded *human approval*;
 narrowing requires no human at all.
+
+## Lapse — a certification has a term (#255, GAL §6.7.6)
+
+Every demotion trigger asserts that something was *observed*. None fires when nothing happens, so a
+grant promoted long ago whose agent has since sat idle has no path down. A **term** is what forces
+that authority to be re-justified.
+
+- **The field.** `Grant.certifiedUntil` is an explicit UTC instant, or null for no term. It
+  **ships unset**: there is no default term anywhere, and a grant with none never lapses at any
+  instant. It is omitted from the canonical payload when null, so every grant written before the
+  field existed keeps byte-identical canonical bytes; a set term is inside the payload and so inside
+  the item HMAC, and altering it at rest quarantines the grant.
+- **Only the ceremony sets it.** `propose --certified-until` carries it on the proposal (inside the
+  proposal's integrity basis); `ratify` shows it to the checker, rejects a term that is not after
+  the ratification instant, and writes the same value onto the raised grant and onto the signed
+  promotion record (`PromotionRecord.certifiedUntil`, promotion-typed only). Every other write
+  path (re-seed, re-ratify, tightening, demotion,
+  lapse) carries the stored term forward unchanged: the stores' `refuse_term_extension` refuses any
+  non-promotion write that would lengthen or drop a term, on all three backends, before anything is
+  written. Nothing auto-renews. Re-promotion sets a new term, or none.
+- **Read side: enforcement does not wait for a writer.** The broker PIP hands the PDP
+  `grants.term.effective_level(grant, now)`: once `now >= certifiedUntil` the grant acts at the
+  lower of its stored level and `lastSafeLevel`. This is pure (no write, and the broker gains no
+  grant-store write), so an idle grant nobody sweeps still falls exactly at its boundary.
+- **The instant is an input.** Whether a term has passed is judged against an explicit `now`, never
+  against the grant's `ts`, a ledger record's `ts`, or the audit tape. Those say when something was
+  *written*, and a quiet log writes nothing, which is precisely the case the arc exists for. Only
+  the outermost callers read the wall clock: the PIP (its injectable `clock`) and the runner CLI.
+- **Write side.** `grants.lapse.run_lapse`, run by `python -m safe_agents.broker.grants.runner`
+  before the demotion pass under the same demotion identity, lowers the grant to `lastSafeLevel`,
+  sets `demotionReason = "pending-evidence"`, and appends a **`lapse`-typed** record in the same
+  atomic unit (`toLevel = lastSafeLevel`, `ratifiedBy = system:demotion-evaluator`, `predicate`
+  null, **`triggeredBy` empty**). It is *not* a demotion record: a lapse asserts that nothing renewed
+  the term, and naming a trigger would record a condition that never fired. It is idempotent (a
+  grant already at or below `lastSafeLevel` has nothing to lapse), and it never revokes: revoking on
+  a timer is a self-inflicted forced abstention.
+- **A pending lapse blocks promotion.** While a grant's term has passed but its lapse is unwritten,
+  `propose` and `ratify` refuse to anchor on its stored level. Run the runner, then re-propose from
+  the lapsed level.
+- **Audit.** Lapse records are legitimate ledger transitions. A lapse record that carries a
+  signature must verify (`RECORD_SIGNATURE_VERIFIES`); one naming a trigger cannot parse and is an
+  `UNPARSEABLE_ITEM` finding; a grant that sits below its ledger-derived level with no record for
+  the drop is `LEVEL_DROP_RECORDED` (waivable, for pre-#244 history where demotion wrote the grant
+  first). `GRANT_TERM_RATIFIED` (un-waivable) holds the grant's term to the one on its latest
+  promotion record: the term enforced must be the term the checker ratified.
+
+Honest limits. The runner signs the lapse record only when an issuer signing key is configured in
+its environment; otherwise it stores it unsigned with a warning, exactly as demotion and tightening
+records are unsigned today. Handing the issuer key to the demotion identity is a deployment choice
+with a cost: that identity could then sign promotion records too. And the auditor takes no clock,
+so it cannot report "term passed, lapse not yet written"; enforcement already acts on it.
 
 ### Hysteresis — so it can't flap
 

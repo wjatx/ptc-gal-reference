@@ -1,6 +1,6 @@
 """PromotionRecord schema — the append-only ceremony-ledger record for grant level changes.
 
-Four record types share one ledger (see SCHEMAS.md §7):
+Five record types share one ledger (see SCHEMAS.md §7):
 
 - ``promotion``  — the maker-checker ceremony that raises a Grant's level.
 - ``demotion``   — automatic deterministic demotion, ratified by the system
@@ -10,6 +10,11 @@ Four record types share one ledger (see SCHEMAS.md §7):
                    the ceremony (seed_grants retires to bootstrap-only).
 - ``tightening`` — voluntary any-level → in-loop move; always permitted, no
                    ceremony, no trigger.
+- ``lapse``      — a certification term expired (GAL §6.7.6, #255): the grant
+                   fell to its lastSafeLevel because nothing renewed it. Written
+                   by the same system evaluator identity as demotion, but it is
+                   NOT a demotion: triggeredBy stays empty, because a lapse is
+                   the absence of renewal, never a fired condition.
 
 This schema enforces field-SHAPE rules per record type only. Transition
 validity (one-rung-up, level ordering) is the state machine's job
@@ -18,9 +23,10 @@ validity (one-rung-up, level ordering) is the state machine's job
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .common import AutonomyLevel, Principal
+from .grant import parse_certified_until
 
 # System identity that ratifies all automatic demotions (no human, no model).
 DEMOTION_RATIFIER = "system:demotion-evaluator"
@@ -30,6 +36,9 @@ class PromotionRecord(BaseModel):
     """One append-only ledger record of a grant level change.
 
     Invariants enforced here (field shape only, per recordType):
+    - certifiedUntil (#255) is non-null ONLY on a promotion record: the
+                  ratified certification term is set by the ceremony and by
+                  nothing else, so no other record type may carry one.
     - promotion:  proposedBy must differ from ratifiedBy (maker ≠ checker);
                   predicate required non-empty; no demotion fields;
                   fromLevel=None only with toLevel=in-loop (the grant-creating
@@ -44,12 +53,19 @@ class PromotionRecord(BaseModel):
                   fromLevel non-None (no grant exists at Recommend to tighten);
                   maker ≠ checker NOT enforced; predicate absent; no demotion
                   fields.
+    - lapse:      ratifiedBy is the system evaluator; triggeredBy EMPTY (a lapse
+                  names no condition, it records that none renewed the term);
+                  demotionReason is "pending-evidence" (nothing is proven
+                  broken); predicate absent; fromLevel non-None; toLevel is never
+                  out-of-loop (it is the grant's lastSafeLevel, which never is).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     # which lifecycle act this record captures
-    recordType: Literal["promotion", "demotion", "bootstrap", "tightening"] = "promotion"
+    recordType: Literal["promotion", "demotion", "bootstrap", "tightening", "lapse"] = (
+        "promotion"
+    )
     # the action class whose level changed
     actionClass: str
     # for whom
@@ -84,10 +100,30 @@ class PromotionRecord(BaseModel):
     # demotion-typed only
     demotionReason: Literal["failing", "pending-evidence"] | None = None
     ts: str
+    # promotion-typed only (#255, GAL §6.7.6): the certification term the checker
+    # RATIFIED, the same value written onto the raised Grant.certifiedUntil. An
+    # explicit UTC instant (the Grant's parser), stored verbatim. None = the
+    # promotion set no term. OMITTED from the canonical (stored and signed) bytes
+    # when None (record_signing.canonical_record_payload), so every record written
+    # before the field existed keeps its bytes and its signature.
+    certifiedUntil: str | None = None
+
+    @field_validator("certifiedUntil")
+    @classmethod
+    def certified_until_is_utc_instant(cls, v: str | None) -> str | None:
+        if v is not None:
+            parse_certified_until(v)
+        return v
 
     @model_validator(mode="after")
     def shape_rules_per_record_type(self) -> "PromotionRecord":
         """Enforce the per-recordType field-shape rules (see class docstring)."""
+        if self.certifiedUntil is not None and self.recordType != "promotion":
+            raise ValueError(
+                f"certifiedUntil must be absent for a {self.recordType!r} record: a "
+                "certification term is set only by a ratified promotion (GAL §6.7.6); "
+                "no other record type may carry one."
+            )
         if self.recordType == "promotion":
             if self.proposedBy == self.ratifiedBy:
                 raise ValueError(
@@ -140,6 +176,37 @@ class PromotionRecord(BaseModel):
                 )
             self._forbid_predicate()
             self._forbid_demotion_fields()
+
+        elif self.recordType == "lapse":
+            if self.ratifiedBy != DEMOTION_RATIFIER:
+                raise ValueError(
+                    f"a lapse record must be ratified by '{DEMOTION_RATIFIER}': "
+                    f"got '{self.ratifiedBy}'. A lapse is applied by the system "
+                    "evaluator — no human, no model."
+                )
+            if self.triggeredBy:
+                raise ValueError(
+                    "triggeredBy must be empty for a lapse record: a lapse is the "
+                    "absence of renewal, not a fired condition (GAL §6.7.6). Naming "
+                    "a trigger would record a condition that never fired."
+                )
+            if self.demotionReason != "pending-evidence":
+                raise ValueError(
+                    "demotionReason must be 'pending-evidence' for a lapse record: "
+                    "the certification lapsed, nothing is proven broken (GAL §4.4), "
+                    f"got {self.demotionReason!r}."
+                )
+            if self.fromLevel is None:
+                raise ValueError(
+                    "fromLevel is required (non-None) for a lapse record: no grant "
+                    "exists at the Recommend rung to lapse."
+                )
+            if self.toLevel is AutonomyLevel.out_of_loop:
+                raise ValueError(
+                    "toLevel must not be 'out-of-loop' for a lapse record: a lapse "
+                    "lands on the grant's lastSafeLevel, which is never out-of-loop."
+                )
+            self._forbid_predicate()
 
         else:  # tightening
             if self.toLevel is not AutonomyLevel.in_loop:

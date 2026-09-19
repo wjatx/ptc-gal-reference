@@ -79,6 +79,12 @@ WAIVABLE_RULES: frozenset[str] = frozenset(
         # A grant stamped under a no-longer-in-force envelope: the EXPECTED
         # window after a far-jump redeploy, pending re-seed (#201).
         "GRANT_ENVELOPE_IN_FORCE",
+        # A grant BELOW its ledger-derived level with no record for the drop
+        # (#255): pre-#244, demotion wrote the grant FIRST and the record
+        # second, so an interrupted pair left exactly this — honest history
+        # that failed toward less authority. Never a raise; that stays
+        # un-waivable under LEVEL_LEDGER_CONSISTENT.
+        "LEVEL_DROP_RECORDED",
     }
 )
 

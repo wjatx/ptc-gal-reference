@@ -50,6 +50,7 @@ from safe_agents.broker.grants.store import (
     _read_result_from_item,
     _require_prev_raw_data,
     canonical_grant_payload,
+    refuse_term_extension,
     validate_record_ts,
 )
 from safe_agents.broker.schemas import Grant, PromotionRecord
@@ -158,6 +159,7 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
         conn = self._connection()
         with substrate.transaction(conn):
             pk, sk = self._check_update_conditions(conn, updated, expected_hash, prev_raw_data)
+            refuse_term_extension(prev_raw_data, updated, record_type=None)
             substrate.update_existing_item(conn, pk, sk, self._build_attrs(updated))
 
     def _check_update_conditions(
@@ -249,6 +251,7 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
                     )
             else:
                 self._check_update_conditions(conn, grant, expected.stored_hash, expected.raw_data)
+                refuse_term_extension(expected.raw_data, grant, record_type=record.recordType)
             # Record leg — append-only.
             if substrate.get_item(conn, record_pk, record_sk) is not None:
                 raise RecordAlreadyExistsError(

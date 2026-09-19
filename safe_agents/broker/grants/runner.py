@@ -23,6 +23,11 @@ Signal flow:
   deduped per UTC day (#191): already recorded today → "deduped", ZERO writes
   (no grant ts/hash churn, no ledger noise). A demotion that WOULD change the
   level is never deduped.
+- Certification-term lapse (#255, GAL §6.7.6) runs FIRST in ``main``, under this
+  same identity, via ``grants.lapse.run_lapse``: an expired term lowers the grant
+  to lastSafeLevel with a ``lapse``-typed record — never a demotion record, and
+  never with a trigger named. The evaluation instant is the wall clock read
+  once in ``main``, passed down explicitly; nothing derives it from a record.
 
 No model is consulted anywhere in this module — demotion is automatic and
 deterministic (broker/grant-lifecycle.md §Demotion). Same inputs, same outcome.
@@ -77,6 +82,7 @@ from safe_agents.broker.grants.demotion import (
     demotion_target_level,
     evaluate_demotion_triggers,
 )
+from safe_agents.broker.grants.lapse import LapseOutcome, LapseStatus, run_lapse
 from safe_agents.broker.grants.store import (
     GrantStore,
     RecordAlreadyExistsError,
@@ -806,6 +812,57 @@ _EXIT_CODES: dict[RunnerStatus, int] = {
     "quarantined": 1,
 }
 
+# The lapse pass (#255): a lapse, or nothing owed, is a clean completion;
+# conflict and quarantine need operator attention, as for demotion.
+_LAPSE_EXIT_CODES: dict[LapseStatus, int] = {
+    "no-grant": 0,
+    "no-term": 0,
+    "not-due": 0,
+    "nothing-to-lapse": 0,
+    "lapsed": 0,
+    "conflict": 1,
+    "quarantined": 1,
+}
+
+
+def _run_lapse_pass(
+    principal: Principal,
+    action_class: str,
+    *,
+    grant_store: GrantStore,
+    record_store: DemotionLedgerStore,
+    now: datetime.datetime,
+    record_signer: object,
+) -> LapseOutcome:
+    """The CLI's lapse pass: evaluate at ``now``, print one PII-safe JSON line."""
+    outcome = run_lapse(
+        principal,
+        action_class,
+        grant_store=grant_store,
+        record_store=record_store,
+        now=now,
+        record_signer=record_signer,
+    )
+    if outcome.status == "lapsed" and record_signer is None:
+        print(
+            "WARNING: issuer signing key not configured — the lapse record was "
+            "stored UNSIGNED (asserted, not non-repudiable).",
+            file=sys.stderr,
+        )
+    print(
+        json.dumps(
+            {
+                "event": "lapse_runner",
+                "status": outcome.status,
+                "agentId": principal.agentId,
+                "actionClass": action_class,
+                "evaluatedAt": now.isoformat(),
+                "reason": outcome.reason,
+            }
+        )
+    )
+    return outcome
+
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
@@ -818,6 +875,18 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         grant_store, record_store = _build_stores(args.table_name)
+        # Optional issuer signer for the lapse record (#255): None when no
+        # signing env is configured; half-configured signing refuses (exit 2)
+        # rather than degrading to unsigned — resolve_record_signer's rule.
+        from safe_agents.broker.grants.issuer_keys import (  # noqa: PLC0415 — lazy
+            IssuerSigningConfigError,
+            resolve_record_signer,
+        )
+
+        try:
+            lapse_signer = resolve_record_signer()
+        except IssuerSigningConfigError as exc:
+            raise RunnerConfigError(str(exc)) from exc
         signals: list[DemotionSignal] = []
         if args.tolerance is not None or args.check_false_action:
             enforcement_store = _build_enforcement_store(args.counters_table)
@@ -874,6 +943,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
+    # The ONE wall-clock read for the lapse pass: the outermost caller supplies
+    # the evaluation instant, and nothing below derives it from a record's ts.
+    lapse = _run_lapse_pass(
+        principal,
+        args.action_class,
+        grant_store=grant_store,
+        record_store=record_store,
+        now=datetime.datetime.now(datetime.UTC),
+        record_signer=lapse_signer,
+    )
+
     outcome = run_demotion(
         principal,
         args.action_class,
@@ -896,7 +976,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
     )
-    return _EXIT_CODES[outcome.status]
+    return max(_EXIT_CODES[outcome.status], _LAPSE_EXIT_CODES[lapse.status])
 
 
 if __name__ == "__main__":

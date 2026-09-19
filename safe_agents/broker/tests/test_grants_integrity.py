@@ -793,8 +793,9 @@ def _row_ledger_counterpart() -> IntegrityRow:
 
 def _row_level_ledger_consistent() -> IntegrityRow:
     """grant.level never exceeds the ledger-derived level (the chronologically-
-    last record's toLevel). Grant BELOW ledger is allowed: a crash between the
-    grant write and the record append fails toward less authority by design."""
+    last record's toLevel). A grant BELOW its ledger is not an unaccounted
+    RAISE, so this rule stays silent on it; since #255 it is the separate,
+    waivable LEVEL_DROP_RECORDED finding (see _row_level_drop_recorded)."""
 
     _LEDGER = [
         _ledger_record(),  # bootstrap → in-loop
@@ -807,13 +808,22 @@ def _row_level_ledger_consistent() -> IntegrityRow:
     ]
 
     def positive():
-        # Grant AT the ledger-derived level, and grant BELOW it — both clean
-        for level in (AutonomyLevel.on_loop, AutonomyLevel.in_loop):
-            dataset = _audit_dataset(grants=[_hashed_grant(level=level)], records=_LEDGER)
-            report = run_audit(dataset, hmac_key=HMAC_KEY)
-            assert report.violations == (), (
-                f"grant at {level.value!r} with ledger topping at on-loop is valid"
-            )
+        # Grant AT the ledger-derived level is clean; grant BELOW it is never
+        # this rule's finding (it is LEVEL_DROP_RECORDED's, #255)
+        dataset = _audit_dataset(
+            grants=[_hashed_grant(level=AutonomyLevel.on_loop)], records=_LEDGER
+        )
+        report = run_audit(dataset, hmac_key=HMAC_KEY)
+        assert report.violations == (), (
+            "grant at 'on-loop' with ledger topping at on-loop is valid"
+        )
+        dataset = _audit_dataset(
+            grants=[_hashed_grant(level=AutonomyLevel.in_loop)], records=_LEDGER
+        )
+        report = run_audit(dataset, hmac_key=HMAC_KEY)
+        assert LEVEL_LEDGER_CONSISTENT not in _rules_fired(report), (
+            "a grant below its ledger is not an unaccounted raise"
+        )
 
     def negative():
         # Grant ABOVE what the ledger accounts for — an unaccounted raise

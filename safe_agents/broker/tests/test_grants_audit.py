@@ -547,7 +547,10 @@ def _seed_clean_state(table_name, signer) -> None:
     """One grant + its earning ledger + a valid pending proposal, via the REAL
     store write paths, so load_dataset parses production item shapes."""
     grant_store = DynamoDBGrantStore(hmac_key=HMAC_KEY, table_name=table_name)
-    grant_store.put_grant(_make_grant(), session=boto3.Session())
+    # At on-loop, where its ledger (bootstrap in-loop, then the on-loop
+    # promotion below) leaves it: a grant BELOW its ledger is itself a finding
+    # since #255 (LEVEL_DROP_RECORDED), so a coherent clean state needs it.
+    grant_store.put_grant(_make_grant(level="on-loop"), session=boto3.Session())
 
     record_store = DynamoDBPromotionRecordStore(table_name=table_name)
     record_store.put_record(_make_record(), session=boto3.Session())

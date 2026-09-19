@@ -109,6 +109,7 @@ from safe_agents.broker.grants.runner import (
 )
 from safe_agents.broker.grants.demotion import GrantNotFoundError
 from safe_agents.broker.grants.rung import RungStateMachine, TransitionError
+from safe_agents.broker.grants.term import lapse_pending
 from safe_agents.broker.grants.store import (
     GrantAlreadyExistsError,
     GrantStore,
@@ -400,6 +401,19 @@ def propose_command(
             "quarantine first"
         )
         return 1
+    # #255: a grant whose term has passed but whose lapse is not yet recorded
+    # cannot anchor a promotion — its stored level is no longer certified, and
+    # enforcement already acts at lastSafeLevel. The ceremony re-checks this at
+    # ratify time; refusing here keeps the maker from staging a doomed proposal.
+    if read.grant is not None and lapse_pending(read.grant, _utc_now(now)):
+        print(
+            f"REFUSED: the grant's certification term {read.grant.certifiedUntil} has "
+            f"passed, so it acts at {read.grant.lastSafeLevel.value!r}, but the lapse "
+            "is not yet recorded. Run the lapse evaluator "
+            "(python -m safe_agents.broker.grants.runner) and re-propose from the "
+            "lapsed level."
+        )
+        return 1
     # No grant = the Recommend rung (from_level=None); propose_promotion
     # enforces that its only valid target is in-loop (the grant-creating first
     # promotion). With a grant, the one-rung rule anchors on the STORED level.
@@ -511,6 +525,7 @@ def propose_command(
             error_budget=error_budget,
             window_periods=args.window_periods,
             period=args.period,
+            certified_until=getattr(args, "certified_until", None),
         )
         # Early feedback for the maker — the ceremony re-runs this at ratify
         # time; the two can only diverge if the counters move in between.
@@ -544,6 +559,7 @@ def propose_command(
         f"proposal stored: proposal_id={proposal_id} "
         f"target={proposal.target_level.value} expires_at={expires_at}"
     )
+    print(f"certifiedUntil={proposal.certified_until or 'none (no term)'}")
     print(f"proposedBy={caller}")
     return 0
 
@@ -619,6 +635,16 @@ def ratify_command(
         f"evidence window: {proposal.metrics.observation_count} observations "
         f"summed over {proposal.window_periods} {proposal.period} period(s); "
         f"window_n={proposal.window_n}"
+    )
+    # The term is part of what the checker ratifies (#255): show it.
+    print(
+        "certification term: "
+        + (
+            f"certifiedUntil={proposal.certified_until} (the grant lapses to "
+            f"{proposal.last_safe_level.value!r} then)"
+            if proposal.certified_until is not None
+            else "none (the grant will carry no term)"
+        )
     )
 
     if signer is None:

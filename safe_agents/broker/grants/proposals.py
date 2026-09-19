@@ -187,6 +187,11 @@ def proposal_to_json(proposal: "PromotionProposal") -> str:
             else None
         ),
     }
+    # #255: the term is part of the ratified content, so it is inside the
+    # HMAC'd payload when set — and OMITTED when None, so a no-term proposal
+    # serializes to exactly the pre-#255 bytes.
+    if proposal.certified_until is not None:
+        payload["certified_until"] = proposal.certified_until
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
@@ -233,6 +238,8 @@ def proposal_from_json(data: str) -> "PromotionProposal":
             if payload["error_budget"] is not None
             else None
         ),
+        # Absent on every proposal stored before #255 (and on no-term ones).
+        certified_until=payload.get("certified_until"),
     )
 
 

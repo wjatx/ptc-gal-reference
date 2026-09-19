@@ -44,17 +44,20 @@ Every ingredient has prior art; the assembled lifecycle does not:
 
 - **`Grant`** (`broker/SCHEMAS.md` §1) — the unit of authority: `(principal, action-class)` →
   `level` (`in-loop` / `on-loop` / `out-of-loop`), plus `lastSafeLevel`, `demotionTriggers`,
-  `demotionReason`, the in-force `envelopeHash`, and integrity protection (HMAC + loud quarantine,
+  `demotionReason`, the in-force `envelopeHash`, an optional certification term
+  (`certifiedUntil`, #255, shipping unset), and integrity protection (HMAC + loud quarantine,
   live since sa#122/124).
 - **`PromotionRecord`** (`broker/SCHEMAS.md` §7) — the append-only ceremony record: from/to
   level, evidence window, the predicate that licensed it, `proposedBy ≠ ratifiedBy`, timestamp;
   the proposal references the in-force envelope hash, which is stamped onto the record
   (`envelopeHash`) and onto the Grant. Demotions append a demotion-typed record on the same
   ledger — landed in Phase 3's batched schema pass, superseding §7's earlier demotion exemption
-  (previously demotion emitted only an `AuditRecord`). The record ships four types
-  (`promotion` / `demotion` / `bootstrap` / `tightening`); `stale_confidence` demotions carry
-  `demotionReason="pending-evidence"` (label-free drift voids the certification), the other two
-  triggers `"failing"`.
+  (previously demotion emitted only an `AuditRecord`). The record ships five types
+  (`promotion` / `demotion` / `bootstrap` / `tightening` / `lapse`); `stale_confidence` demotions
+  carry `demotionReason="pending-evidence"` (label-free drift voids the certification), the other
+  triggers `"failing"`. A `lapse` (#255) records an expired certification term: also
+  `"pending-evidence"`, but with an empty `triggeredBy`, because it records that nothing renewed
+  the term rather than that something fired.
 - **The evidence artifact** (#184) — the typed constructed-confidence + counters input the
   promotion predicate and demotion triggers consume (§7).
 - **`actionClass` derives from the manifest ToolOp model** — a grant's action class is computed
@@ -132,6 +135,14 @@ owner `/flag`, corroboration_failure from a failed 1-of-3 quorum record, stale_c
 from the agent — the grant-store write-protection seam (agent role holds no write permissions on
 the grant table) is the structural backstop; a grant-store write the agent can reach is a
 promotion bypass.
+
+**Lapse (#255, GAL §6.7.6).** None of the four triggers fires when nothing happens, so an idle
+grant had no path down. A grant may now carry a term, `certifiedUntil`, set only by the promotion
+ceremony and never extended in place. Once the term passes, the broker PIP enforces the grant at
+`lastSafeLevel` immediately, as a pure function of an explicit evaluation instant (never a record's
+timestamp), and the demotion runner records a `lapse`-typed ledger entry under the same identity.
+A lapse lands on `lastSafeLevel` and never revokes. `broker/grant-lifecycle.md` §Lapse is the
+detail.
 
 ## 7. Evidence contracts (the #184 half)
 

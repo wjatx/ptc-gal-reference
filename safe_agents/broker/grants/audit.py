@@ -28,7 +28,13 @@ Rules (each documented at its check site in run_audit):
 
   LEDGER_COUNTERPART        every grant has a bootstrap/promotion record
   LEVEL_LEDGER_CONSISTENT   grant.level never exceeds the ledger-derived level
-  RECORD_SIGNATURE_VERIFIES promotion records carry a verifying DSSE envelope
+  LEVEL_DROP_RECORDED       grant.level never sits BELOW the ledger-derived
+                            level: every drop (demotion, tightening, lapse)
+                            has its record (#255)
+  GRANT_TERM_RATIFIED       grant.certifiedUntil equals the term on the
+                            promotion record that last set it (#255)
+  RECORD_SIGNATURE_VERIFIES promotion records carry a verifying DSSE envelope;
+                            a lapse record that carries one must verify
   PROPOSAL_LIFECYCLE        proposal status stays in the closed vocabulary
   PROPOSAL_TAMPER           (keyed) proposalHash HMAC verifies
   GRANT_TAMPER              (keyed) grant hash HMAC verifies
@@ -83,6 +89,8 @@ from safe_agents.channels.signing import KeyResolver
 
 LEDGER_COUNTERPART = "LEDGER_COUNTERPART"
 LEVEL_LEDGER_CONSISTENT = "LEVEL_LEDGER_CONSISTENT"
+LEVEL_DROP_RECORDED = "LEVEL_DROP_RECORDED"
+GRANT_TERM_RATIFIED = "GRANT_TERM_RATIFIED"
 RECORD_SIGNATURE_VERIFIES = "RECORD_SIGNATURE_VERIFIES"
 PROPOSAL_LIFECYCLE = "PROPOSAL_LIFECYCLE"
 PROPOSAL_TAMPER = "PROPOSAL_TAMPER"
@@ -505,8 +513,9 @@ def run_audit(
 
         # LEVEL_LEDGER_CONSISTENT — grant.level must not EXCEED the level the
         # ledger accounts for (the chronologically-last record's toLevel). A
-        # grant BELOW its ledger is allowed by design: a crash between the
-        # grant write and the record append fails toward less authority.
+        # grant BELOW its ledger is the separate, waivable LEVEL_DROP_RECORDED
+        # below: it fails toward less authority, but it is still a drop the
+        # ledger cannot explain.
         derived = coordinate_records[-1].record.toLevel if coordinate_records else None
         if derived is not None and _rank(grant.level) > _rank(derived):
             violations.append(
@@ -516,6 +525,62 @@ def run_audit(
                     detail=(
                         f"grant level {grant.level.value!r} exceeds the ledger-derived "
                         f"level {derived.value!r}; the ledger accounts for every raise"
+                    ),
+                )
+            )
+
+        # LEVEL_DROP_RECORDED (#255, GAL §6.11) — every level drop is recorded:
+        # demotion, tightening and lapse each append their record in the SAME
+        # atomic unit as the lowered grant (#244), so a grant below its
+        # ledger-derived level is a drop no record explains — an out-of-band
+        # write, or pre-#244 history where demotion wrote the grant first.
+        # Waivable (acknowledgments.WAIVABLE_RULES) because that history
+        # failed toward less authority. Read-side limit: it judges the stored
+        # level only. A grant whose certification term has passed but whose
+        # lapse is not yet written sits AT its ledger level and is not a
+        # finding here — enforcement already acts at lastSafeLevel
+        # (grants.term.effective_level), and this auditor takes no clock.
+        if derived is not None and _rank(grant.level) < _rank(derived):
+            violations.append(
+                AuditViolation(
+                    rule=LEVEL_DROP_RECORDED,
+                    coordinate=coordinate,
+                    detail=(
+                        f"grant level {grant.level.value!r} is below the ledger-derived "
+                        f"level {derived.value!r}; every level drop (demotion, "
+                        "tightening, lapse) appends its own record"
+                    ),
+                )
+            )
+
+        # GRANT_TERM_RATIFIED (#255, GAL §6.7.6) — the term enforced is the
+        # term the checker ratified. Only a promotion sets a term: the ceremony
+        # writes the same value onto the grant and onto the signed promotion
+        # record, and every later write (demotion, tightening, lapse, re-seed,
+        # re-ratify) carries it forward unchanged — the stores refuse any
+        # non-promotion lengthening (store.refuse_term_extension). So the
+        # grant's term must equal the one on the chronologically-latest
+        # promotion record, however the level moved since: a later lapse or
+        # demotion explains the LEVEL, never a different term. With no
+        # promotion on the ledger (bootstrap only) there is no ratified term,
+        # so the grant must carry none. Un-waivable: a mismatch is a term the
+        # checker never ratified — authority, in either direction.
+        promotions = [e.record for e in coordinate_records if e.record.recordType == "promotion"]
+        ratified_term = promotions[-1].certifiedUntil if promotions else None
+        if coordinate_records and grant.certifiedUntil != ratified_term:
+            source = (
+                f"the latest promotion record (ts={promotions[-1].ts})"
+                if promotions
+                else "the ledger, which holds no promotion record"
+            )
+            violations.append(
+                AuditViolation(
+                    rule=GRANT_TERM_RATIFIED,
+                    coordinate=coordinate,
+                    detail=(
+                        f"grant certifiedUntil {grant.certifiedUntil!r} differs from the "
+                        f"term {ratified_term!r} ratified on {source}; the term enforced "
+                        "must be the term the checker ratified"
                     ),
                 )
             )
@@ -591,7 +656,10 @@ def run_audit(
     # RECORD_SIGNATURE_VERIFIES — every promotion-typed record must carry a
     # DSSE envelope that verify_record confirms (fails closed). Only ratify
     # installs the signing store, so bootstrap/demotion/tightening records are
-    # exempt. Read-side limit: predicate fields inside the record (covered,
+    # exempt. A lapse record (#255) is signed when the lapse runner has an
+    # issuer signer configured; one that CARRIES a signature must verify like a
+    # promotion's, and an unsigned one is exempt on the same terms as a
+    # demotion record — a lapse only ever lowers authority. Read-side limit: predicate fields inside the record (covered,
     # provenance maturity) are proposer ASSERTIONS at N=1 owner — #364 tracks
     # deriving provenance maturity rather than asserting it (#193/#174 were
     # named here and both closed without landing that measurement) — so this
@@ -601,7 +669,10 @@ def run_audit(
         skipped.append(RECORD_SIGNATURE_VERIFIES)
     else:
         for entry in dataset.records:
-            if entry.record.recordType != "promotion":
+            record_type = entry.record.recordType
+            if record_type == "lapse" and entry.signature is None:
+                continue
+            if record_type not in ("promotion", "lapse"):
                 continue
             coordinate = _record_coordinate(entry.record)
             if entry.signature is None:
@@ -629,7 +700,7 @@ def run_audit(
                         rule=RECORD_SIGNATURE_VERIFIES,
                         coordinate=coordinate,
                         detail=(
-                            f"promotion record ts={entry.record.ts} has no stored "
+                            f"{record_type} record ts={entry.record.ts} has no stored "
                             "bytes on the dataset entry; a signature cannot be "
                             "verified without the exact stored serialization"
                         ),
@@ -643,7 +714,7 @@ def run_audit(
                         rule=RECORD_SIGNATURE_VERIFIES,
                         coordinate=coordinate,
                         detail=(
-                            f"promotion record ts={entry.record.ts} failed signature "
+                            f"{record_type} record ts={entry.record.ts} failed signature "
                             f"verification ({result.reason})"
                         ),
                     )

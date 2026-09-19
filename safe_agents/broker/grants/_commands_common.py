@@ -254,6 +254,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     propose.add_argument(
         "--ttl-hours", required=True, type=float, help="proposal expiry from now"
     )
+    propose.add_argument(
+        "--certified-until",
+        default=None,
+        metavar="ISO8601_UTC",
+        help="optional certification term for the raised grant (GAL §6.7.6), an "
+        "explicit UTC instant such as 2026-12-31T00:00:00+00:00. Once it passes the "
+        "grant lapses to its last-safe level. Ratified by the checker as part of the "
+        "proposal; nothing can extend it later except a new promotion. Default: no "
+        "term.",
+    )
     propose.add_argument("--effect", required=True, choices=["read", "write"])
     propose.add_argument("--external", action="store_true", default=False)
     propose.add_argument("--reversible", choices=["true", "false"], default=None)

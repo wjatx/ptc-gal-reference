@@ -49,6 +49,7 @@ from safe_agents.broker.grants.predicate import (
 from safe_agents.broker.ceremony_identity import attestation_for, is_same_operator
 from safe_agents.broker.grants.proposals import ProposalStore, proposal_expired
 from safe_agents.broker.grants.record_signing import canonical_record_payload
+from safe_agents.broker.grants.term import lapse_pending
 from safe_agents.broker.grants.store import (
     GrantStore,
     GrantUpdateConflictError,
@@ -60,6 +61,7 @@ from safe_agents.broker.schemas import Grant, PromotionRecord
 from safe_agents.broker.schemas.budgets import ErrorBudget
 from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger, Principal
 from safe_agents.broker.schemas.durations import validate_label_latency
+from safe_agents.broker.schemas.grant import parse_certified_until
 from safe_agents.broker.schemas.evidence import BlastClass, ConfidenceArtifact
 
 
@@ -314,6 +316,12 @@ class PromotionProposal:
     # pre-#193/#212 stored proposal still load and ratify.
     window_periods: int = 1
     period: str = "utc-day"
+    # GAL §6.7.6 (#255): the certification term the raised grant will carry,
+    # an ISO-8601 UTC instant, or None for no term (the default — terms ship
+    # unset). It is part of the proposal content, so it rides the proposal's
+    # integrity basis and is what the checker ratifies; the ceremony is the
+    # ONLY path that sets a term.
+    certified_until: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +428,7 @@ class PromotionCeremony:
         error_budget: ErrorBudget | None,
         window_periods: int = 1,
         period: str = "utc-day",
+        certified_until: str | None = None,
     ) -> PromotionProposal:
         """Validate inputs and return a PromotionProposal.
 
@@ -434,10 +443,15 @@ class PromotionCeremony:
           - label_latency is not a valid nonnegative, calendar-unambiguous
             ISO-8601 duration (sa#214): the maker is refused here, before any
             checker is summoned; the Grant validator backstops the mint path.
+          - certified_until is given but is not an explicit UTC ISO-8601
+            instant (#255). Whether it is still in the future is judged at
+            ratify time against the ratification instant, not here.
 
         On success the caller should pass the returned proposal to execute().
         """
         validate_label_latency(label_latency)
+        if certified_until is not None:
+            parse_certified_until(certified_until)
         if not owner_id:
             raise ValueError(
                 "owner_id is required; a promotion without a named owner is rejected "
@@ -480,6 +494,7 @@ class PromotionCeremony:
             error_budget=error_budget,
             window_periods=window_periods,
             period=period,
+            certified_until=certified_until,
         )
 
     # ------------------------------------------------------------------
@@ -581,6 +596,32 @@ class PromotionCeremony:
                 ),
             )
 
+        # Naive instants read as UTC, the same rule proposal_expired applies.
+        term_now = (
+            effective_now
+            if effective_now.tzinfo is not None
+            else effective_now.replace(tzinfo=datetime.timezone.utc)
+        )
+
+        # --- certification term (#255): must be a UTC instant still ahead of
+        # the ratification instant. A term already passed would mint a grant
+        # that is lapsed on arrival — refuse rather than write a no-op raise.
+        if proposal.certified_until is not None:
+            try:
+                term_end = parse_certified_until(proposal.certified_until)
+            except ValueError as exc:
+                return CeremonyResult(status="rejected", reason=str(exc))
+            if term_now >= term_end:
+                return CeremonyResult(
+                    status="rejected",
+                    reason=(
+                        f"certifiedUntil {proposal.certified_until} is not after the "
+                        f"ratification instant {term_now.isoformat()}; the "
+                        "grant would be lapsed on arrival. Propose afresh with a "
+                        "term in the future, or none."
+                    ),
+                )
+
         # --- maker != checker (application layer; schema is the backstop) ---
         # is_same_operator, not ==: on the local (solo) arm two identities that
         # share a ROLE are the same half of the ceremony run twice, even when
@@ -679,6 +720,10 @@ class PromotionCeremony:
             envelopeHash=proposal.envelope_hash,
             ts=ts,
             attestation=attestation_for(ratifier_id),
+            # The ratified term (#255), on the SIGNED record: what the checker
+            # ratified is non-repudiable, and the audit holds the grant to it
+            # (GRANT_TERM_RATIFIED).
+            certifiedUntil=proposal.certified_until,
         )
 
         # Grant: level is raised to target_level; promotedBy and evidence link
@@ -696,6 +741,9 @@ class PromotionCeremony:
             demotionReason=None,
             labelLatency=proposal.label_latency,
             ownerId=proposal.owner_id,
+            # The ONE place a term is set (#255): re-promotion carries the
+            # newly ratified term, or none — never the old one.
+            certifiedUntil=proposal.certified_until,
         )
 
         if proposal.from_level is None:
@@ -733,6 +781,24 @@ class PromotionCeremony:
                     f"grant {proposal.principal.agentId}/{proposal.action_class} not "
                     "found; the proposal was evaluated against a grant that no longer "
                     "exists — re-propose from the current state"
+                )
+            if lapse_pending(current.grant, term_now):
+                # #255: the stored grant's term has passed but its lapse has
+                # not been written. Enforcement already treats it as being at
+                # lastSafeLevel, so promoting from the STORED level would raise
+                # it past its lapsed certification, and promoting from
+                # lastSafeLevel would leave the ledger with an unrecorded drop.
+                # The lapse is recorded first, by the system evaluator.
+                return CeremonyResult(
+                    status="rejected",
+                    reason=(
+                        f"premise changed: the grant's certification term "
+                        f"{current.grant.certifiedUntil} has passed, so it acts at "
+                        f"{current.grant.lastSafeLevel.value!r}, but its lapse is not "
+                        "yet recorded. Run the lapse evaluator "
+                        "(python -m safe_agents.broker.grants.runner), then "
+                        "re-propose from the lapsed level."
+                    ),
                 )
             if current.grant.level is not proposal.from_level:
                 # Premise changed: a level change (e.g. an automatic demotion)

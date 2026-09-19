@@ -105,7 +105,10 @@ def _seed_sqlite_clean_state(db_path, signer) -> None:
     """The sqlite twin of ``_seed_clean_state`` — the SAME logical state through
     the real local write paths, so the comparison is store-shape to store-shape
     rather than fixture to fixture."""
-    SqliteGrantStore(hmac_key=HMAC_KEY, db_path=db_path).put_grant(_make_grant())
+    # on-loop, matching its ledger — see _seed_clean_state (#255).
+    SqliteGrantStore(hmac_key=HMAC_KEY, db_path=db_path).put_grant(
+        _make_grant(level="on-loop")
+    )
 
     record_store = SqlitePromotionRecordStore(db_path)
     record_store.put_record(_make_record())

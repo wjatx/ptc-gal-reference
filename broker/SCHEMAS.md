@@ -113,6 +113,7 @@ interface Grant {
   demotionReason: null | "failing" | "pending-evidence"  // why currently demoted; null if at full level
   labelLatency: string             // how long until an action of this class yields ground truth (caps re-promotion speed)
   ownerId:     string              // the NAMED human owner accountable for this grant
+  certifiedUntil?: string | null   // the certification TERM (#255): an explicit UTC instant; null/absent = no term
 }
 // Integrity lives at the STORE's item level, not on the schema (#246): the grant
 // is serialized once in the CANONICAL form (below), the stored bytes are the HMAC
@@ -168,6 +169,15 @@ Per-field notes:
 - **labelLatency** — re-promotion closes a control loop whose deadtime equals this. Long latency
   caps how fast you can re-promote, and therefore how much autonomy you can responsibly hold.
 - **ownerId** — every grant has a named owner (pre-deployment checklist).
+- **certifiedUntil** — the term of the current certification (GAL §6.7.6, #255). Once
+  `now >= certifiedUntil`, per-call enforcement treats the grant as being at `lastSafeLevel` (never
+  higher than its stored level), and the demotion runner records a `lapse` (§7). `null` means no
+  term and never lapses; terms **ship unset**. It must be an explicit UTC instant (`Z` or `+00:00`;
+  naive and non-UTC values are refused) and is stored verbatim. **Omitted from the canonical payload
+  when null**, so every pre-#255 grant keeps byte-identical canonical bytes; when set it is inside
+  the HMAC'd payload. Set only by a ratified promotion; no other write may lengthen or drop it
+  (`grants/store.py::refuse_term_extension`). Whether a term has passed is judged against an
+  explicit evaluation instant, never a record's `ts` (`grants/term.py`).
 
 ---
 
@@ -413,7 +423,7 @@ Per-field notes:
 ## 7. PromotionRecord
 
 The append-only ceremony-ledger record of every grant level change. The accountable record (Part 11
-of the philosophy doc). Four record types share one ledger; the maker-checker act that raises a
+of the philosophy doc). Five record types share one ledger; the maker-checker act that raises a
 Grant's level is the `promotion` type. **Demotions append a `demotion`-typed record on the same
 ledger** — this supersedes the earlier "demotion needs no such record" exemption (Phase 3,
 `docs/GAL.md` §3); demotion itself stays automatic and deterministic (`grant-lifecycle.md`).
@@ -422,7 +432,7 @@ ledger** — this supersedes the earlier "demotion needs no such record" exempti
 ```ts
 // STUB — illustrative, not an implementation
 interface PromotionRecord {
-  recordType:  "promotion" | "demotion" | "bootstrap" | "tightening"   // default "promotion"
+  recordType:  "promotion" | "demotion" | "bootstrap" | "tightening" | "lapse"   // default "promotion"
   actionClass: string              // the class whose level changed
   principal:   Principal           // for whom
   fromLevel:   "in-loop" | "on-loop" | "out-of-loop" | null   // null = the Recommend rung (no-grant baseline; the record creates the grant)
@@ -433,8 +443,9 @@ interface PromotionRecord {
   ratifiedBy:  string              // checker (promotion: must differ from maker)
   envelopeHash: string             // the envelope hash in force when the record was written
   triggeredBy: string[]            // demotion-typed only: the DemotionTrigger values that fired
-  demotionReason: "failing" | "pending-evidence" | null      // demotion-typed only
+  demotionReason: "failing" | "pending-evidence" | null      // demotion-typed; "pending-evidence" on lapse
   ts:          string
+  certifiedUntil?: string | null   // promotion-typed only (#255): the certification term the checker RATIFIED
 }
 ```
 
@@ -447,6 +458,7 @@ one-rung-up, level ordering — is the state machine's job, `grant-lifecycle.md`
 | `demotion` | automatic deterministic demotion | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` non-empty; `demotionReason` set; `predicate` null |
 | `bootstrap` | the sanctioned seed record — first creation of a grant outside the ceremony (`seed_grants` retires to bootstrap-only, Phase 4) | `fromLevel` null; maker ≠ checker NOT enforced (single-operator seed is sanctioned); `predicate` null; `triggeredBy` empty; `demotionReason` null |
 | `tightening` | voluntary any-level → in-loop move (always permitted, no ceremony, no trigger — `docs/GAL.md` §4) | `toLevel` = `"in-loop"`; maker ≠ checker NOT enforced; `predicate` null; `triggeredBy` empty; `demotionReason` null |
+| `lapse` | a certification term expired (GAL §6.7.6, #255; `grant-lifecycle.md` §Lapse) | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` EMPTY (a lapse is an absence, not a fired condition); `demotionReason` = `"pending-evidence"`; `predicate` null; `fromLevel` non-null; `toLevel` = the grant's `lastSafeLevel` (never `"out-of-loop"`); `evidence` names the expired term |
 
 Per-field notes:
 
@@ -463,6 +475,16 @@ Per-field notes:
 - **proposedBy / ratifiedBy** — maker ≠ checker on the promotion path. Widening autonomy requires
   recorded human approval; narrowing (demotion) requires none — it is ratified by
   `system:demotion-evaluator` and recorded, not approved.
+- **certifiedUntil** — promotion-typed only (#255, GAL §6.7.6): the term the checker ratified,
+  written by the ceremony onto both this record and the raised `Grant.certifiedUntil`. Same format
+  and parser as the Grant field (explicit UTC instant, stored verbatim). Every other record type
+  refuses a non-null value. **Omitted from the canonical, stored and signed bytes when null**, so
+  every record written before the field existed keeps byte-identical bytes and a still-valid DSSE
+  signature (pinned in `test_grant_term_lapse.py`); when set it is inside the signed subject digest.
+  The audit rule `GRANT_TERM_RATIFIED` holds each grant to it: a grant's `certifiedUntil` must
+  equal the term on the chronologically-latest promotion record at its coordinate (a later
+  demotion, tightening or lapse moves the level, never the term), and a grant whose ledger holds
+  no promotion must carry no term. Un-waivable.
 - **triggeredBy / demotionReason** — demotion-typed only. `stale_confidence` maps to
   `"pending-evidence"` (label-free drift voids the certification — gather labels/recalibrate);
   `corroboration_failure` and `budget_breach` map to `"failing"` (fix the model/policy). Never

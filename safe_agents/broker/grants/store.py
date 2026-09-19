@@ -35,6 +35,7 @@ import os
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from safe_agents.broker.grants.term import extends_term
 from safe_agents.broker.schemas import Grant, PromotionRecord
 from safe_agents.broker.schemas.common import Principal
 
@@ -79,6 +80,17 @@ class RecordTimestampFormatError(Exception):
     ts_prefix filter. Records may also be DSSE-signed over their stored bytes,
     so a non-canonical ts is REJECTED, never normalized: normalizing after
     signing would break the digest binding.
+    """
+
+
+class TermExtensionRefusedError(Exception):
+    """A non-ceremony write would lengthen (or drop) a grant's certification term.
+
+    GAL §6.7.6 / GAL-34: a term is set only by the promotion ceremony, and no
+    other path may extend it in place — re-seed, re-ratify, tightening,
+    demotion and lapse all carry the stored term forward unchanged or shorter.
+    A term the holder could stretch would be self-certifying, and therefore
+    vacuous. Raised before anything is written.
     """
 
 
@@ -155,9 +167,59 @@ def canonical_grant_payload(grant: Grant) -> str:
     byte. It is the same rule ``canonical_record_payload`` and
     ``channels.signing`` already used; all three now agree.
     """
-    return json.dumps(
-        grant.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    )
+    payload = grant.model_dump(mode="json")
+    # certifiedUntil (#255) is OMITTED when None, so a grant with no term
+    # serializes to exactly the bytes it did before the field existed: every
+    # canonical payload a pre-#255 writer produced is reproduced byte for byte
+    # by this one (pinned in test_grant_term_lapse.py). The stored-bytes basis
+    # already verifies old rows verbatim; this keeps a RE-serialization of an
+    # unchanged no-term grant identical too, so nothing that compares
+    # canonical bytes (differential tests, a second implementation) sees the
+    # field's arrival as a change. A SET term is inside the payload and so
+    # inside the HMAC — it cannot be altered at rest.
+    if payload.get("certifiedUntil") is None:
+        payload.pop("certifiedUntil", None)
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def refuse_term_extension(
+    prev_raw_data: str | None,
+    updated: Grant,
+    *,
+    record_type: str | None,
+) -> None:
+    """Refuse any non-promotion write that would lengthen a grant's term.
+
+    Called by every backend's update paths (update_grant and the update leg of
+    write_record_and_grant), so the rule holds for every caller — re-seed,
+    re-ratify, tightening, demotion, lapse and anything added later — rather
+    than for whichever command remembered to check. Only a ``promotion``
+    record, i.e. the ratified ceremony, may set a new term (GAL §6.7.6).
+
+    ``prev_raw_data`` is the guarded re-read's stored bytes. Every update is
+    conditioned on the stored item still being exactly those bytes, so judging
+    the extension against them judges it against what the write replaces; a
+    caller passing fabricated bytes only makes the conditional write fail.
+    """
+    if record_type == "promotion" or prev_raw_data is None:
+        return
+    try:
+        previous = Grant.model_validate_json(prev_raw_data)
+    except ValueError:
+        # Not a grant's bytes, so not what is stored: every stored grant is a
+        # verified, parseable payload, and the write's own condition (stored
+        # bytes == prev_raw_data) refuses it. Leave the refusal to that
+        # condition rather than masking it with a different error.
+        return
+    if extends_term(previous.certifiedUntil, updated.certifiedUntil):
+        raise TermExtensionRefusedError(
+            f"grant {updated.principal.agentId}/{updated.actionClass}: this write "
+            f"would change the certification term from {previous.certifiedUntil!r} "
+            f"to {updated.certifiedUntil!r}, lengthening it outside the promotion "
+            "ceremony. A term is set only by a ratified promotion and is never "
+            "extended in place (GAL §6.7.6); re-promote with fresh evidence to "
+            "carry a new term. Nothing was written."
+        )
 
 
 def compute_grant_hash(grant: Grant, hmac_key: bytes) -> str:
@@ -390,6 +452,7 @@ class InMemoryGrantStore:
         """Conditionally replace an existing grant; never creates one."""
         _require_prev_raw_data(prev_raw_data)
         key = self._check_update_conditions(updated, expected_hash, prev_raw_data)
+        refuse_term_extension(prev_raw_data, updated, record_type=None)
         self._store[key] = self._build_item(updated)
 
     def _build_item(self, grant: Grant) -> dict:
@@ -456,6 +519,7 @@ class InMemoryGrantStore:
                 )
         else:
             self._check_update_conditions(grant, expected.stored_hash, expected.raw_data)
+            refuse_term_extension(expected.raw_data, grant, record_type=record.recordType)
         # Record leg — put_record validates ts + append-only and raises before
         # the grant leg commits; a record failure therefore writes nothing.
         record_store.put_record(record, session, signature=signature)
@@ -583,6 +647,7 @@ class DynamoDBGrantStore:
         from botocore.exceptions import ClientError  # lazy, like boto3
 
         _require_prev_raw_data(prev_raw_data)
+        refuse_term_extension(prev_raw_data, updated, record_type=None)
         table = self._get_table(session)
         condition, _, values = self._prepare_grant_write(
             updated, expected_hash=expected_hash, prev_raw_data=prev_raw_data
@@ -673,6 +738,8 @@ class DynamoDBGrantStore:
         validate_record_ts(record.ts)
 
         creating = expected is None or expected.grant is None
+        if not creating:
+            refuse_term_extension(expected.raw_data, grant, record_type=record.recordType)
         grant_condition, grant_names, grant_values = self._prepare_grant_write(
             grant,
             expected_hash=None if creating else expected.stored_hash,

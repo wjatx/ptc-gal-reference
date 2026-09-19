@@ -5,6 +5,7 @@ and what the grant lifecycle moves on a ratchet. See SCHEMAS.md §1 and
 broker/grant-lifecycle.md.
 """
 
+import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -49,12 +50,35 @@ class Grant(BaseModel):
     labelLatency: str
     # the named human accountable for this grant
     ownerId: str
+    # GAL §5.1/§6.7.6 (#255): the term of the current certification — the instant
+    # at which this level stops being certified and the grant lapses to
+    # lastSafeLevel. None = no term (the default; terms ship unset, so a
+    # deployment setting none behaves exactly as before the lapse arc). Stored
+    # as the exact string given, never normalized (grant hashes cover these
+    # bytes), and OMITTED from the canonical payload when None so every grant
+    # written before the field existed keeps byte-identical canonical bytes
+    # (store.canonical_grant_payload). Set only by the promotion ceremony;
+    # nothing extends it in place (store.refuse_term_extension).
+    certifiedUntil: str | None = None
 
     @field_validator("labelLatency")
     @classmethod
     def label_latency_is_a_duration(cls, v: str) -> str:
         """A malformed duration refuses at load, not at first use (sa#214)."""
         return validate_label_latency(v)
+
+    @field_validator("certifiedUntil")
+    @classmethod
+    def certified_until_is_utc_instant(cls, v: str | None) -> str | None:
+        """A term must be an unambiguous UTC instant, refused at load otherwise.
+
+        A naive or non-UTC value is refused rather than interpreted: whether a
+        term has passed must not depend on the reader's timezone assumption.
+        """
+        if v is None:
+            return v
+        parse_certified_until(v)
+        return v
 
     @field_validator("lastSafeLevel")
     @classmethod
@@ -71,3 +95,25 @@ class Grant(BaseModel):
                 "on a supervised rung (in-loop or on-loop)."
             )
         return v
+
+
+def parse_certified_until(value: str) -> datetime.datetime:
+    """Parse a certifiedUntil string into an aware UTC datetime, or raise ValueError.
+
+    Accepts ISO-8601 with a zero UTC offset ('Z' or '+00:00'). Naive values and
+    non-UTC offsets are refused, never assumed: the lapse boundary must mean the
+    same instant to every reader.
+    """
+    try:
+        parsed = datetime.datetime.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"certifiedUntil {value!r} is not a parseable ISO-8601 instant; "
+            "give a UTC instant such as '2026-10-01T00:00:00+00:00'"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != datetime.timedelta(0):
+        raise ValueError(
+            f"certifiedUntil {value!r} must be an explicit UTC instant "
+            "(offset 'Z' or '+00:00'); naive and non-UTC values are refused"
+        )
+    return parsed

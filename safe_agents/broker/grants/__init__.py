@@ -1,7 +1,7 @@
 """broker.grants — grant store client, promotion predicate, ceremony,
 demotion evaluator, and rung state machine.
 
-Seven public surfaces:
+Public surfaces:
 
   audit     — the read-only grant-integrity auditor (#62). Pure rules over a
               loaded AuditDataset → typed AuditReport; the only AWS call in
@@ -33,6 +33,11 @@ Seven public surfaces:
               validation functions + RungStateMachine coordinator. No DynamoDB
               dependency.
 
+  term / lapse — the certification term (#255, GAL §6.7.6). ``term`` is pure:
+              whether a term has passed at an EXPLICIT instant, and the
+              effective level enforcement acts on. ``lapse`` writes the
+              lapse-typed record under the system evaluator identity.
+
   record_signing — DSSE signing of the PromotionRecord ledger (the #181
               machinery's second statement type). The ISSUER's key, never the
               broker's; the envelope is stored beside the ledger blob, never
@@ -46,8 +51,10 @@ from .audit import (
     ACKNOWLEDGMENT_SIGNATURE_VERIFIES,
     GRANT_ENVELOPE_IN_FORCE,
     GRANT_TAMPER,
+    GRANT_TERM_RATIFIED,
     HMAC_RULES,
     LEDGER_COUNTERPART,
+    LEVEL_DROP_RECORDED,
     LEVEL_LEDGER_CONSISTENT,
     PROPOSAL_LIFECYCLE,
     PROPOSAL_TAMPER,
@@ -81,6 +88,14 @@ from .ceremony import (
     PromotionCeremony,
     PromotionProposal,
     PromotionRecordStore,
+)
+from .lapse import (
+    LapseConflictError,
+    LapseNotDueError,
+    LapseOutcome,
+    apply_lapse,
+    build_lapse,
+    run_lapse,
 )
 from .predicate import ActionClassMetrics, PredicateResult, evaluate_promotion_predicate
 from .record_signing import (
@@ -134,10 +149,13 @@ from .store import (
     InMemoryGrantStore,
     RecordAlreadyExistsError,
     RecordTimestampFormatError,
+    TermExtensionRefusedError,
     canonical_grant_payload,
     compute_grant_hash,
+    refuse_term_extension,
     validate_record_ts,
 )
+from .term import effective_level, extends_term, lapse_pending, term_passed
 
 __all__ = [
     # audit
@@ -145,8 +163,10 @@ __all__ = [
     "ACKNOWLEDGMENT_SIGNATURE_VERIFIES",
     "GRANT_ENVELOPE_IN_FORCE",
     "GRANT_TAMPER",
+    "GRANT_TERM_RATIFIED",
     "HMAC_RULES",
     "LEDGER_COUNTERPART",
+    "LEVEL_DROP_RECORDED",
     "LEVEL_LEDGER_CONSISTENT",
     "PROPOSAL_LIFECYCLE",
     "PROPOSAL_TAMPER",
@@ -190,9 +210,22 @@ __all__ = [
     "DynamoDBPromotionRecordStore",
     "RecordAlreadyExistsError",
     "RecordTimestampFormatError",
+    "TermExtensionRefusedError",
     "canonical_grant_payload",
     "compute_grant_hash",
+    "refuse_term_extension",
     "validate_record_ts",
+    # certification term + lapse (#255)
+    "effective_level",
+    "extends_term",
+    "lapse_pending",
+    "term_passed",
+    "LapseConflictError",
+    "LapseNotDueError",
+    "LapseOutcome",
+    "apply_lapse",
+    "build_lapse",
+    "run_lapse",
     # proposals
     "ProposalStore",
     "InMemoryProposalStore",

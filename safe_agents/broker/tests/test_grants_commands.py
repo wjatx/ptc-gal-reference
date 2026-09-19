@@ -1306,3 +1306,83 @@ def test_resolve_envelope_hash_store_mode_unchanged(monkeypatch):
     result = _resolve_envelope_hash(_TARGET_PRINCIPAL, "test-grants-table")
     assert result == compute_envelope_hash(seeded)
     assert seen["principal"] == _TARGET_PRINCIPAL
+
+
+# ---------------------------------------------------------------------------
+# #255 — the certification term rides the ceremony CLI, and only the ceremony
+# ---------------------------------------------------------------------------
+
+_TERM = "2026-10-01T00:00:00+00:00"
+
+
+def test_propose_then_ratify_carries_the_term(
+    monkeypatch, artifact_path, grant_store, record_store, proposal_store, enforcement_store,
+    capsys,
+):
+    grant_store.put_grant(make_grant(level=AutonomyLevel.in_loop))
+    seed_counters(enforcement_store)
+    assert run_propose(
+        monkeypatch, artifact_path, grant_store, proposal_store, enforcement_store,
+        **{"--certified-until": _TERM},
+    ) == 0
+    proposal_id = stored_proposal_id(proposal_store)
+
+    set_caller(monkeypatch, CHECKER_ARN)
+    assert ratify_command(
+        ratify_args(proposal_id),
+        grant_store=grant_store,
+        record_store=record_store,
+        proposal_store=proposal_store,
+        signer=None,
+        now=NOW,
+    ) == 0
+
+    out = capsys.readouterr().out
+    # the checker is SHOWN the term it ratifies
+    assert f"certifiedUntil={_TERM} (the grant lapses to 'in-loop' then)" in out
+    raised = grant_store.get_grant(PRINCIPAL, ACTION_CLASS).grant
+    assert raised.certifiedUntil == _TERM
+    assert record_store.records[-1].certifiedUntil == _TERM
+
+
+def test_propose_refuses_a_malformed_term(
+    monkeypatch, artifact_path, grant_store, proposal_store, enforcement_store, capsys
+):
+    grant_store.put_grant(make_grant(level=AutonomyLevel.in_loop))
+    seed_counters(enforcement_store)
+    assert run_propose(
+        monkeypatch, artifact_path, grant_store, proposal_store, enforcement_store,
+        **{"--certified-until": "2026-10-01T00:00:00"},  # naive: refused, not assumed
+    ) == 1
+    assert "REFUSED" in capsys.readouterr().out
+    assert proposal_store.list_pending(PRINCIPAL, ACTION_CLASS) == []
+
+
+def test_propose_refuses_to_anchor_on_an_unrecorded_lapse(
+    monkeypatch, artifact_path, grant_store, proposal_store, enforcement_store, capsys
+):
+    lapsed = make_grant(level=AutonomyLevel.on_loop).model_copy(
+        update={"certifiedUntil": "2026-07-01T00:00:00+00:00"}  # before NOW
+    )
+    grant_store.put_grant(lapsed)
+    seed_counters(enforcement_store)
+    assert run_propose(
+        monkeypatch, artifact_path, grant_store, proposal_store, enforcement_store,
+        **{"--target-level": "out-of-loop"},
+    ) == 1
+    assert "lapse is not yet recorded" in capsys.readouterr().out
+    assert proposal_store.list_pending(PRINCIPAL, ACTION_CLASS) == []
+
+
+def test_reseed_carries_the_term_forward_unchanged(monkeypatch, grant_store):
+    termed = make_grant(envelope_hash="sha256:old").model_copy(update={"certifiedUntil": _TERM})
+    grant_store.put_grant(termed)
+    set_caller(monkeypatch, CHECKER_ARN)
+    assert reseed_command(
+        grant_store=grant_store,
+        principal=PRINCIPAL,
+        granted_classes=[ACTION_CLASS],
+        envelope_hash=ENVELOPE_HASH,
+        now=NOW,
+    ) == 0
+    assert grant_store.get_grant(PRINCIPAL, ACTION_CLASS).grant.certifiedUntil == _TERM
