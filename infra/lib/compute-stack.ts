@@ -352,11 +352,33 @@ export class ComputeStack extends Stack {
     // 1. circuitBreaker(rollback) makes a bad rollout fail fast instead of CloudFormation waiting
     // ~hours for a service that can never reach steady state.
     const desiredCount = Number(this.node.tryGetContext('brokerDesiredCount') ?? 1);
+    // The broker is a SINGLETON, and the deployment percentages are what enforce that. They are
+    // set explicitly because the CDK defaults (min 50 / max 200) permit exactly the thing that
+    // must never happen: at desiredCount 1, max 200% lets ECS run a second broker task alongside
+    // the first during a replacement.
+    //
+    // Two brokers cannot safely overlap. Audit-chain writes are serialised by a `threading.Lock`
+    // (`safe_agents/broker/audit/_chain.py`), which is in-process and therefore does nothing
+    // across tasks. Two writers would each read their own view of the chain head and each compute
+    // `prevHash` from it, forking an unkeyed SHA-256 chain — an integrity event, not a blip.
+    //
+    // So: max 100% (never more than desiredCount tasks, so no overlap is possible) and min 0%
+    // (the running task may stop before its replacement starts). The cost is that a rollout, and
+    // a Fargate platform-revision retirement, take the broker briefly DOWN rather than replacing
+    // it seamlessly. That downtime is accepted deliberately:
+    // this service's availability floor is set by its integrity model.
+    //
+    // Do not "fix" these to the AWS-recommended 100/200 to get a zero-downtime rollout. That is
+    // the right advice for a stateless replica set and the wrong advice here. The prerequisite
+    // for raising them is making chain writes safe across processes (a conditional write or a
+    // lease on the chain head), not a percentage change.
     new ecs.FargateService(this, 'BrokerService', {
       cluster,
       taskDefinition: taskDef,
       serviceName: resourceName(env, 'broker'),
       desiredCount,
+      minHealthyPercent: 0,
+      maxHealthyPercent: 100,
       assignPublicIp: !secure,
       vpcSubnets: { subnets: brokerSubnets },
       securityGroups: [brokerSg, endpointSg],

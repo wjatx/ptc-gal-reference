@@ -1848,6 +1848,26 @@ function clientTaskHasNoSecrets(): boolean {
   return true;
 }
 
+function brokerServiceCannotRunTwoTasks(): boolean {
+  // The broker is a singleton. Audit-chain writes are serialised by an in-process
+  // threading.Lock (safe_agents/broker/audit/_chain.py), so two concurrent broker tasks would
+  // each compute prevHash from their own view of the head and FORK an unkeyed SHA-256 chain.
+  // MaximumPercent must therefore never exceed 100: at desiredCount 1 anything higher lets ECS
+  // run a replacement alongside the original during a rollout or a Fargate platform-revision
+  // retirement. MinimumHealthyPercent must be under 100 or the service can never replace its
+  // one task at all. The accepted cost is brief downtime.
+  const services = resourcesOfType(computeDefaultTemplate, 'AWS::ECS::Service');
+  if (services.length === 0) return false;
+  for (const [, svc] of services) {
+    const dc = svc.Properties?.DeploymentConfiguration as
+      { MaximumPercent?: number; MinimumHealthyPercent?: number } | undefined;
+    if (dc?.MaximumPercent === undefined || dc?.MinimumHealthyPercent === undefined) return false;
+    if (dc.MaximumPercent > 100) return false;
+    if (dc.MinimumHealthyPercent >= 100) return false;
+  }
+  return true;
+}
+
 function clientTaskRoleIsAgentRole(): boolean {
   const [, taskDef] = clientTaskDef();
   const roleArn = JSON.stringify(taskDef.Properties?.TaskRoleArn);
@@ -2457,6 +2477,12 @@ const ROWS: Row[] = [
     group: 'Compute',
     desc: "the client's execution role is its own and grants only ECR pull and log writes",
     check: clientExecutionRoleOnlyPullsAndLogs,
+  },
+  {
+    id: 'compute/broker-service-is-a-singleton',
+    group: 'Compute',
+    desc: 'the broker ECS service can never run two tasks at once (MaximumPercent <= 100), because concurrent brokers fork the audit chain',
+    check: brokerServiceCannotRunTwoTasks,
   },
 ];
 
