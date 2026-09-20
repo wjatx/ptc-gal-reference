@@ -3,7 +3,8 @@
 **Status: doctrine.** This records why an agent spawning sub-agents requires no new mechanism from
 the base platform — no per-sub-agent broker, no per-sub-agent airlock — and the one rule that makes
 that safe: **everything inside the agent zone is the same principal.** Companion doctrine to
-`turn-identity.md` (which owns *when* a turn is; this owns *who* is calling).
+`turn-identity.md` (which owns *when* a turn is; this owns *who* is calling), and the precondition
+for `broker/sub-grants.md` (which owns *what a second zone may hold*).
 
 ## The boxes are trust zones, not processes
 
@@ -56,7 +57,9 @@ directions are not symmetric:
   the child needs a network identity the parent cannot forge: its own sandbox, its own principal,
   its own grants. Its own *zone* — but the **same broker service**. The broker is already
   multi-principal (grants are keyed per principal × action-class); a new principal is a row, never
-  a second broker instance.
+  a second broker instance. What that second zone's grants may then contain is
+  `broker/sub-grants.md`: its strict attenuation applies once the boundary exists, and never to an
+  in-zone child, where there is nothing for it to bind.
 - **More privilege** than the parent: never grantable from inside the zone at all. That is a
   promotion — the human / `PromotionRecord` path — not a spawn-time argument.
 

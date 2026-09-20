@@ -8,6 +8,29 @@ the seam note in `auto-agents/book/ch48` §"The seams, restated for the whole."
 
 > **The seam:** *The sub-grant computation must strictly attenuate, or delegation leaks authority.*
 
+## Precondition: a sub-grant needs a second zone
+
+Attenuation is enforceable only across a trust-zone boundary, and most spawning does not cross one.
+The broker authenticates the *zone* (workload identity, mTLS, network position), so a
+harness-spawned child inside the parent's zone is the same principal as its parent: one turn, one
+taint state, one budget pool. Any finer identity claim it makes is self-reported by the compute the
+broker exists not to trust, so a sub-grant presented from inside the zone would be a promise rather
+than a control.
+
+An *enforced* narrower child is therefore a second zone, with an identity the parent cannot forge
+and grants of its own, served by the same multi-principal broker. A second broker instance is never
+the answer. Handing a harness child a narrower tool registry is still worth doing, but name it
+honestly: advisory defense in depth, real friction against an honest mistake, no barrier to a
+subverted child.
+
+The asymmetry is not symmetric. Less privilege can be enforced only across a zone boundary; more
+privilege can never be granted from inside one, because that is promotion rather than a spawn-time
+argument.
+
+See `docs/subagent-identity.md` for the doctrine, `auto-agents/ontology.md` §"One principal per
+zone" for the compressed form, and `auto-agents/book/ch41` §"The zone question comes first" for the
+full treatment.
+
 ## Status
 
 The computation is built and tested: `safe_agents/broker/delegation/compute.py` derives a
@@ -18,9 +41,11 @@ request or presents a sub-grant to the broker on a call. And nothing charges a c
 against an ancestor's remaining budget, so siblings that each fit their own cap can jointly exceed
 the parent's. Individually bounded children do not bound the set.
 
-This is directly relevant to agents on this platform: the trading agent's daily run and responsive
-Q&A flow both spawn sub-agents (groundedness checker, grader, Q&A responder). Each sub-agent must
-receive a sub-grant computed from, and strictly narrower than, the parent's grant.
+A third thing is unsettled, and it bears on who the mechanism is for. The trading agent's daily run
+and responsive Q&A flow both spawn helpers (groundedness checker, grader, Q&A responder), but they
+spawn them *inside* the agent's zone, where the precondition above says a sub-grant cannot be
+enforced. Giving those helpers enforced sub-grants means giving each its own zone and identity
+first, which is a deployment change rather than a delegation-wiring one.
 
 ---
 
@@ -55,21 +80,29 @@ TTL. The sub-grant cannot carry a higher blast-radius limit than the parent.
 
 ## The delegation chain and attribution
 
-Every `BrokeredCall` emitted by a sub-agent carries a **delegation chain** — the ordered list of
-principal identities from the human at the top down through each spawning agent to the current
-sub-agent. The broker records this chain in the `AuditRecord` so that every sub-agent action
-**attributes up the chain to the human principal**:
+Every `BrokeredCall` emitted by a sub-agent carries a **delegation chain**, recorded by the broker
+in the `AuditRecord` so that a sub-agent action attributes up to the human who authorized the root
+rather than stopping at the leaf that acted:
 
 ```
 human principal
-  └── parent agent (grant G)
+  └── parent agent (root grant G)
         └── sub-agent (sub-grant SG, derived from G)
-              └── BrokeredCall → AuditRecord { delegationChain: [human, parent, sub-agent] }
+              └── BrokeredCall → AuditRecord { delegationChain: [G, ..., SG] }
 ```
 
-This means the audit answers "who authorized this?" with the full principal chain, not just the
-immediate caller. A sub-agent action is attributed to its human principal, not laundered through
-the sub-agent boundary.
+**The chain holds grant identifiers, not principals.** `delegation/types.py` is explicit: the
+lineage runs "from the root human-owned grant ID outward through each delegation to the sub-grant
+that directly authorized the call", `[root_grant_id, ..., parent_grant_id, sub_grant_id]`. An
+earlier version of this document described it as a list of principal identities, which the sketch
+below still shows; the Python type wins.
+
+The distinction is load-bearing at a boundary. Grant IDs resolve to principals only for a holder of
+the grant store, so a receiver outside it sees opaque strings and cannot recover on whose behalf
+the action was taken. That is the single-log assumption that RFC 8693 separates with its `sub` and
+`act` claims, and it is the same shape PTC answers for a single envelope by binding `principal`
+into the signed statement. The chain has not had equivalent treatment; tracked in safe-agents #165
+(the attribution model: subject, requester, decider, performer, recorder).
 
 ---
 
@@ -138,18 +171,23 @@ from the sub-grant record, not from anything the sub-agent asserts.
 
 ## Why this matters on this platform
 
-Agents on this platform routinely spawn sub-agents: the daily advisory run delegates to a
-groundedness-check sub-agent; the responsive Q&A flow delegates to a read-only Q&A worker. Without
-sub-grant attenuation:
+The motivating case is a helper that runs in a zone of its own: an ephemeral worker provisioned for
+one task, with an identity the spawning agent cannot forge. ch41's worked example is a build-fixer
+orchestrator that provisions a worker to reproduce and fix a failing test, scoped to one repository
+and a scratch branch, with no authority to merge. Without sub-grant attenuation:
 
-- A groundedness-check sub-agent running with the parent's full tool set could, if compromised or
-  injected, attempt writes the parent is authorized for — bypassing the intent that the sub-agent
-  is read-only.
-- The delegation chain would be lost, so the audit couldn't trace a sub-agent action back to the
+- A worker running with the parent's full tool set could, if compromised or injected, attempt
+  anything the parent is authorized for, and depth would buy it trust it has not earned.
+- The delegation chain would be lost, so the audit could not trace the worker's action back to the
   human owner.
 
-With strict attenuation, the sub-agent receives only what it needs for its task, and every action
-it takes is audited against the full principal chain.
+With strict attenuation the worker receives only what its task needs, and every action is audited
+against the full lineage.
+
+The in-zone helpers this platform runs today are deliberately **not** this case. They share the
+agent's principal, so what bounds them is the parent's own grant plus the advisory narrowing of
+their tool registry. Treating them as sub-grant holders would claim an enforcement boundary that is
+not there.
 
 ---
 
