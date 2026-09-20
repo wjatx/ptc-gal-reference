@@ -372,6 +372,13 @@ export class ComputeStack extends Stack {
     // the right advice for a stateless replica set and the wrong advice here. The prerequisite
     // for raising them is making chain writes safe across processes (a conditional write or a
     // lease on the chain head), not a percentage change.
+    //
+    // availabilityZoneRebalancing MUST be DISABLED, and it is not optional given the above: the
+    // CDK default is ENABLED, and ECS REFUSES maximumPercent <= 100 while it is on
+    // ("Availability Zone Rebalancing does not support maximumPercent <= 100 %", observed against
+    // the live service 2026-09-20). Rebalancing works by launching a replacement in another AZ and
+    // then stopping the original, which is the overlap this service cannot have. It is also
+    // meaningless at desiredCount 1 — one task cannot be balanced across zones.
     new ecs.FargateService(this, 'BrokerService', {
       cluster,
       taskDefinition: taskDef,
@@ -379,6 +386,7 @@ export class ComputeStack extends Stack {
       desiredCount,
       minHealthyPercent: 0,
       maxHealthyPercent: 100,
+      availabilityZoneRebalancing: ecs.AvailabilityZoneRebalancing.DISABLED,
       assignPublicIp: !secure,
       vpcSubnets: { subnets: brokerSubnets },
       securityGroups: [brokerSg, endpointSg],

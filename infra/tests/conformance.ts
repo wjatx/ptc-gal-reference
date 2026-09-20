@@ -1864,6 +1864,10 @@ function brokerServiceCannotRunTwoTasks(): boolean {
     if (dc?.MaximumPercent === undefined || dc?.MinimumHealthyPercent === undefined) return false;
     if (dc.MaximumPercent > 100) return false;
     if (dc.MinimumHealthyPercent >= 100) return false;
+    // Coupled, and not merely advisable: ECS refuses maximumPercent <= 100 while AZ rebalancing
+    // is on, and the CDK default is ENABLED. A template that sets the percentages without this
+    // synthesises cleanly and is rejected by the API at deploy time.
+    if (svc.Properties?.AvailabilityZoneRebalancing !== 'DISABLED') return false;
   }
   return true;
 }
@@ -2481,7 +2485,7 @@ const ROWS: Row[] = [
   {
     id: 'compute/broker-service-is-a-singleton',
     group: 'Compute',
-    desc: 'the broker ECS service can never run two tasks at once (MaximumPercent <= 100), because concurrent brokers fork the audit chain',
+    desc: 'the broker ECS service can never run two tasks at once (MaximumPercent <= 100, AZ rebalancing DISABLED), because concurrent brokers fork the audit chain',
     check: brokerServiceCannotRunTwoTasks,
   },
 ];
