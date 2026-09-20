@@ -2,8 +2,8 @@
 
 > One/two-pager for the LF agent-standards conversation: what we're building, which existing
 > standards we adopt, why two seams remain unstandardized, and how these proposals fill them.
-> Names are final (2026-07-24); the normative spec drafts are `ptc-gal-standards/PTC-SPEC.md` (`0.2.3-draft`)
-> and `ptc-gal-standards/GAL-SPEC.md` (`0.2.2-draft`) — they revise independently and their versions differ.
+> Names are final (2026-07-24); the normative spec drafts are [`PTC-SPEC.md`](https://github.com/wjatx/ptc-gal-standards/blob/main/PTC-SPEC.md) (`0.2.5-draft`)
+> and [`GAL-SPEC.md`](https://github.com/wjatx/ptc-gal-standards/blob/main/GAL-SPEC.md) (`0.2.6-draft`) — they revise independently and their versions differ.
 > Internal spines: `docs/PTC.md`, `docs/GAL.md`.
 
 ## What we're building
@@ -29,26 +29,32 @@ Note that the third is enforced by a platform boundary (an IAM deny, a read-only
 by broker code, because code cannot meaningfully deny itself. That makes it a property of a
 **deployment**, so every claim about it must name a posture: a single-machine run has no boundary
 for it to sit on, and correspondingly little for it to buy. We state the postures and what each holds in
-`docs/posture-ladder.md` rather than asserting the property flatly.
+[`docs/posture-ladder.md`](https://github.com/wjatx/ptc-gal-reference/blob/main/docs/posture-ladder.md) rather than asserting the property flatly.
 
-**safe-agents is the reference implementation that demonstrates these controls.** It has been
-deployed on live cloud infrastructure since early July 2026, with a real consumer agent exercising
-it; the two proposals below are the control layers extracted from that build. Neither is a paper
-design: both are implemented and adversarially drilled on live infrastructure, and conformance-tested
-at the contract tier.
+**[ptc-gal-reference](https://github.com/wjatx/ptc-gal-reference) is the reference implementation that
+demonstrates these controls.** The two proposals below are the control layers extracted from that
+build, and neither is a paper design.
 
-Two limits on that sentence, stated here because they are the first things worth probing and because
-`docs/lf-reference-implementation.md` states them at length:
+**The claim is about the code, not about infrastructure we operate.** Clone the implementation,
+clone these specifications into a `spec/` directory at its root, and run its test suite with no
+cloud account and no credential: the tests that compare specification text against the shipped
+schemas then execute rather than skip, and its continuous integration does exactly that on every
+commit. That is the whole of what is offered for checking, and it is deliberately the part made
+easiest to check.
+
+Two limits on that claim, stated here because they are the first things worth probing and because
+[`docs/lf-reference-implementation.md`](https://github.com/wjatx/ptc-gal-reference/blob/main/docs/lf-reference-implementation.md) states them at length:
 
 - **The conformance suites do not trace to the specifications.** The grant-lifecycle suite certifies
   an internal vocabulary and contains no `GAL-` clause reference at all; across the whole test tree a
   single clause id appears in a single test. So a green suite is evidence about our vocabulary, not
   about the numbered clauses an independent implementer reads. Bidirectional traceability is
   specified and unbuilt.
-- **23 of 78 conformance clauses are not supported** — 29%, not a handful. Each is individually
+- **22 of 81 conformance clauses are not supported** — 27%, not a handful. Each is individually
   marked in the draft with the requirement that is missing and an issue tracking it, because a spec
   clause is not a shipped control. The count is generated from the markers, never hand-written
-  (`python3 -m safe_agents.contract.spec_clauses --pics-ri`).
+  (`python3 -m safe_agents.contract.spec_clauses --summary`), so a reader can regenerate it rather
+  than take it on trust. No clause has been outgrown by the implementation.
 
 ## What we adopt
 
