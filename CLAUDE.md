@@ -4,6 +4,12 @@ Orientation for a coding agent working inside this repository. Read `README.md` 
 `ARCHITECTURE.md` for the technical floor, and `docs/lf-notional-architecture.md` for how the
 pieces fit.
 
+**This file deliberately diverges from its sibling in the private safe-agents tree, and that is not
+drift to fix.** The two repos need different instructions: this one is public and written for an
+outside reader, that one is a private working tree that never sanitizes for an audience. The same
+is true of several documents present in both. This repository is upstream for the implementation,
+so a correction made here is the authoritative one.
+
 ## These controls are not a development methodology
 
 The broker, the grant ceremonies, taint, quarantine and the audit tape govern what a **running**
