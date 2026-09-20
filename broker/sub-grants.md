@@ -101,8 +101,11 @@ The distinction is load-bearing at a boundary. Grant IDs resolve to principals o
 the grant store, so a receiver outside it sees opaque strings and cannot recover on whose behalf
 the action was taken. That is the single-log assumption that RFC 8693 separates with its `sub` and
 `act` claims, and it is the same shape PTC answers for a single envelope by binding `principal`
-into the signed statement. The chain has not had equivalent treatment; tracked in safe-agents #165
-(the attribution model: subject, requester, decider, performer, recorder).
+into the signed statement. The chain has not had equivalent treatment. The open design question is
+an attribution model that distinguishes the five roles a brokered call actually has — subject,
+requester, decider, performer, recorder — rather than collapsing them into one `principal`, and
+serializes the chain so a receiver can read on whose behalf an action was taken without holding the
+grant store.
 
 ---
 
