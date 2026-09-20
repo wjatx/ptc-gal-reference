@@ -46,9 +46,9 @@ jobs:
     name: "suite — full pytest, specifications present"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -90,9 +90,9 @@ jobs:
     name: "lint — ruff + standing-doc pointers"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -113,9 +113,9 @@ jobs:
     name: "manifests — offline validation"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -135,9 +135,9 @@ jobs:
     name: "infra — CDK synth + conformance + egress snapshots"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
@@ -151,7 +151,7 @@ jobs:
         run: npm test
         working-directory: infra
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -175,7 +175,7 @@ jobs:
     # tells contributors the suite needs no container runtime, and that stays
     # true. This drill does need one.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # A missing binary must fail here with an obvious message rather than
       # midway through the drill.
