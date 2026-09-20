@@ -1,0 +1,201 @@
+# CI for the reference implementation.
+#
+# What this asserts, for a reader deciding how much the green check is worth:
+#
+#   suite       the full test suite, run from the repository root, WITH the
+#               specifications cloned so the conformance tests execute instead
+#               of skipping. Without that clone they skip and the run is green
+#               having checked nothing, which is the one outcome a conformance
+#               test must not have.
+#   lint        ruff, and every backticked repo-relative path in the standing
+#               docs resolving to a file that exists.
+#   manifests   every committed agent manifest validating offline.
+#   infra       CDK synth plus the conformance assertions, and the committed
+#               egress snapshots matching a fresh regeneration.
+#   container   the ceremony arc running in a plain Linux container as a UID the
+#               image was not built for, with no AWS anything.
+#
+# What it does NOT assert. No job here touches a cloud account, assumes a role,
+# or holds a credential, so nothing below is evidence about deployed
+# infrastructure. Claims of that kind are made in docs/lf-reference-implementation.md,
+# which separates what is demonstrated on live infrastructure from what is only
+# asserted from tests. Read it before treating a green check as more than it is.
+#
+# Locally, CONTRIBUTING.md is the short version:
+#   python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
+#   python3 -m pytest
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+
+  suite:
+    name: "suite — full pytest, specifications present"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The specifications are governed separately and deliberately not vendored
+      # (CONTRIBUTING.md, "The specifications live elsewhere"). The suite runs
+      # without them, but the clauses that compare spec text against the shipped
+      # schemas skip, naming this repository in the skip reason. Cloning them here
+      # turns those skips into assertions: a spec change that the code has not
+      # followed fails this job rather than passing it quietly.
+      - name: Clone the specifications
+        run: git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
+
+      - name: Install (dev extra)
+        # [dev] carries pytest plus moto, which backs the DynamoDB store tests that
+        # exercise the real Condition and Update expressions rather than a fake.
+        run: pip install -e ".[dev]"
+
+      # From the root, not narrowed to safe_agents/: the reliability library the
+      # watcher depends on carries tests a narrower path silently skips
+      # (CONTRIBUTING.md). Narrowing here would reintroduce exactly that.
+      - name: Run the suite
+        run: python3 -m pytest -q
+
+      # A skip is invisible in a green summary, and the tests that compare spec
+      # text against the shipped schemas are exactly the skippable ones. This
+      # module is the whole spec-gated surface: with the specifications present it
+      # reports 39 passed, without them 7 skipped. Any skip here means the clone
+      # above did not take and the run proved nothing about conformance.
+      - name: The spec-gated tests actually ran
+        run: |
+          python3 -m pytest safe_agents/broker/tests/test_spec_contract_drift.py \
+            -q --no-header 2>&1 | tee /tmp/spec-gated.txt
+          if grep -qE '[0-9]+ skipped' /tmp/spec-gated.txt; then
+            echo "::error::Spec-gated tests skipped — the specification clone did not take, so this run checked no conformance."
+            exit 1
+          fi
+
+  lint:
+    name: "lint — ruff + standing-doc pointers"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff==0.15.20
+
+      - name: ruff check
+        run: ruff check .
+
+      # A backticked path in a document that resolves nowhere sends every future
+      # reader to a wrong turn, and nothing else here looks at it. It gates rather
+      # than logs because the class is deterministic and the fix is mechanical:
+      # the script prints where each path actually lives.
+      - name: Standing-doc pointers resolve
+        run: python3 scripts/check-doc-pointers.py
+
+  manifests:
+    name: "manifests — offline validation"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install (dev extra)
+        run: pip install -e ".[dev]"
+
+      - name: Validate every committed manifest
+        # Offline: schema and cross-reference only, no cloud lookups. Fails on the
+        # first manifest that violates the schema, naming it.
+        run: |
+          for manifest in agents/*.yaml; do
+            echo "Validating $manifest ..."
+            python3 core/bin/validate-manifest "$manifest" --offline --repo-root .
+          done
+
+  infra:
+    name: "infra — CDK synth + conformance + egress snapshots"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: infra/package-lock.json
+
+      - name: Install infra dependencies
+        run: npm ci
+        working-directory: infra
+
+      - name: CDK synth + conformance assertions
+        run: npm test
+        working-directory: infra
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The committed snapshots must match a fresh regeneration from the synth
+      # template plus the bootstrap scripts. A stale snapshot would let a drift
+      # auditor diff a live host against an outdated policy and miss real drift,
+      # so any difference fails. Regenerate and commit to fix:
+      #   cd infra && npx cdk synth -c environment=development && \
+      #     python3 scripts/gen-egress-snapshot.py
+      - name: Egress snapshots are fresh
+        run: |
+          npx cdk synth -c environment=development --quiet
+          python3 scripts/gen-egress-snapshot.py
+          git -C "$GITHUB_WORKSPACE" diff --exit-code infra/snapshots/
+        working-directory: infra
+
+  container-floor:
+    name: "container — ceremony arc as an arbitrary UID"
+    runs-on: ubuntu-latest
+    # Deliberately its own job rather than part of the suite: CONTRIBUTING.md
+    # tells contributors the suite needs no container runtime, and that stays
+    # true. This drill does need one.
+    steps:
+      - uses: actions/checkout@v4
+
+      # A missing binary must fail here with an obvious message rather than
+      # midway through the drill.
+      - name: Ensure podman is available
+        run: |
+          if ! command -v podman >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y podman
+          fi
+          podman --version
+
+      # The UID is lowered from the value a Mac run uses, and not to make it pass.
+      # Under rootless podman a container UID must fall within the cumulative count
+      # of IDs mapped in /etc/subuid — the runner gets the default 65536 — and that
+      # ceiling is a property of the namespace's size, not of where the host IDs sit.
+      # What the drill tests is "the image works as a UID it was not built for": not
+      # its own USER, no /etc/passwd entry, GID 0. 60000 exercises all of that. The
+      # incidental very-large-UID case is covered by a Mac run instead, and the two
+      # runs are deliberately not identical.
+      - name: Container ceremony arc (arbitrary UID, no AWS credentials)
+        env:
+          PLATFORM: linux/amd64
+          ARBITRARY_UID: "60000"
+        run: ./safe_agents/arms/local/container-arc-run.sh

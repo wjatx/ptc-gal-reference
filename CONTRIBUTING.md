@@ -73,8 +73,20 @@ carries tests the narrower path silently skips.
 
 Some tests skip when the specifications are not present. They live in
 [wjatx/ptc-gal-standards](https://github.com/wjatx/ptc-gal-standards) and are not
-vendored here; clone them alongside and pass `--spec-dir` to run the conformance
-extractor. The skips name the repository in their reason.
+vendored here. The skips name that repository in their reason.
+
+To turn those skips into assertions, clone the specifications to `spec/` in this
+repository's root, which is where the tests look:
+
+```bash
+git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
+```
+
+That is what CI does, and it is worth doing locally before you change a schema:
+without it the run is green having checked nothing about conformance. A sibling
+checkout elsewhere on disk does not work for the tests. The standalone conformance
+extractor is separate and does take a path:
+`python3 -m safe_agents.contract.spec_clauses --spec-dir DIR`.
 
 To exercise the broker rather than test it, see "Watch it refuse something" in
 the [README](README.md).

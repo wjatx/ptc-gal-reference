@@ -47,3 +47,8 @@ research/LangChain/
 
 # Local Tests
 local-tests/
+
+# The specifications are governed separately and deliberately not vendored here
+# (CONTRIBUTING.md). Both CI and the local instructions clone them to spec/ so the
+# conformance tests run instead of skipping; the clone is never committed.
+spec/
