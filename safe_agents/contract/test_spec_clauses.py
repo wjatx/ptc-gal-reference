@@ -35,6 +35,7 @@ from safe_agents.contract.spec_clauses import (
     ClauseRow,
     SpecFormatError,
     TrackingCheckUnavailable,
+    extract_issue_citations,
     resolve_tracking_issues,
     extract_all,
     extract_gal,
@@ -243,8 +244,12 @@ def test_every_marker_cites_a_reachable_public_issue(rows: list[ClauseRow]) -> N
     if os.environ.get("SPEC_CHECK_TRACKING_ISSUES") != "1":
         pytest.skip("network check; set SPEC_CHECK_TRACKING_ISSUES=1 to run it")
 
+    # Prose citations are included deliberately. Both instances that prompted
+    # this check lived in §1.3 body text rather than in a marker, so a
+    # marker-only check would have missed exactly the cases it exists for.
+    citations = extract_issue_citations(SPEC_DIR)
     try:
-        results = resolve_tracking_issues(rows)
+        results = resolve_tracking_issues(rows, extra_issues=citations)
     except TrackingCheckUnavailable as exc:
         pytest.skip(f"could not reach the tracking repository: {exc}")
 
@@ -253,4 +258,5 @@ def test_every_marker_cites_a_reachable_public_issue(rows: list[ClauseRow]) -> N
         "a published marker cites an issue a reader cannot open:\n  "
         + "\n  ".join(r.reason for r in unresolvable)
     )
-    assert results, "no marked clauses found, so nothing was actually checked"
+    assert results, "no citations found at all, so nothing was actually checked"
+    assert citations, "no prose citations found; the scanner has stopped seeing them"

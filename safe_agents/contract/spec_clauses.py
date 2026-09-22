@@ -546,11 +546,47 @@ class TrackingCheckUnavailable(RuntimeError):
     """
 
 
+# Prose citations that send a reader to a tracking issue. The marker's own
+# `#NNN` is already pinned by EXPECTED_MARKED; these are the BODY-TEXT pointers,
+# and they are the ones that bit. Both #180 and #187 lived in §1.3 prose, so a
+# check scoped to markers alone would have missed the two instances that
+# prompted the check. A qualified form names the repository and is checked
+# wherever it appears; the bare form is skipped inside version-history rows,
+# which quote superseded citations deliberately.
+_QUALIFIED_CITATION = re.compile(
+    r"ptc-gal-reference#(\d+)|github\.com/wjatx/ptc-gal-reference/issues/(\d+)"
+)
+_BARE_CITATION = re.compile(r"reference[- ]implementation[^.|]{0,45}issue #(\d+)")
+_VERSION_ROW = re.compile(r"^\|\s*`?\d+\.\d+\.\d+")
+
+
+def extract_issue_citations(spec_dir: Path) -> dict:
+    """Every prose citation directing a reader to a tracking issue.
+
+    Returns {"#N": ["GAL-SPEC.md:78", ...]}. Complements the marker inventory:
+    a specification can send a reader to an issue from body text as well as from
+    a marker, and body text is not covered by EXPECTED_MARKED.
+    """
+    found: dict = {}
+    for filename in (PTC_SPEC_FILENAME, GAL_SPEC_FILENAME):
+        path = spec_dir / filename
+        if not path.is_file():
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+            hits = [g for m in _QUALIFIED_CITATION.finditer(line) for g in m.groups() if g]
+            if not _VERSION_ROW.match(line.strip()):
+                hits += [m.group(1) for m in _BARE_CITATION.finditer(line)]
+            for number in hits:
+                found.setdefault("#" + number, []).append(filename + ":" + str(lineno))
+    return found
+
+
 def resolve_tracking_issues(
     rows: "list[ClauseRow]",
     *,
     repo: str = TRACKING_REPO,
     timeout: float = 10.0,
+    extra_issues: dict | None = None,
 ) -> "list[CheckResult]":
     """Check that every marked clause's tracking issue exists in `repo`.
 
@@ -568,10 +604,9 @@ def resolve_tracking_issues(
     import urllib.error
     import urllib.request
 
-    issues = sorted(
-        {r.marker_tracking_issue for r in rows if r.marker_state == MARKER_STATE_MARKED},
-        key=lambda s: int(s.lstrip("#")),
-    )
+    cited = {r.marker_tracking_issue for r in rows if r.marker_state == MARKER_STATE_MARKED}
+    cited |= set(extra_issues or {})
+    issues = sorted(cited, key=lambda s: int(s.lstrip("#")))
     token = os.environ.get("GITHUB_TOKEN")
     headers = {"Accept": "application/vnd.github+json",
                "User-Agent": "ptc-gal-spec-clauses"}
@@ -662,7 +697,9 @@ def main() -> None:
         # reported separately when unreachable: an unanswerable question must
         # not read as a clean bill of health OR as a break.
         try:
-            issue_results = resolve_tracking_issues(rows)
+            issue_results = resolve_tracking_issues(
+                rows, extra_issues=extract_issue_citations(args.spec_dir)
+            )
         except TrackingCheckUnavailable as exc:
             print(f"INCONCLUSIVE: tracking issues not checked: {exc}", file=sys.stderr)
             sys.exit(3)
