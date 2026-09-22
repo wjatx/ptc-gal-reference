@@ -84,8 +84,8 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 
 # --- Exit predicate (#359), asserted by verify_extraction on every run -----
 
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 43, SPEC_GAL: 38}
-EXPECTED_TOTAL_ROWS = 81
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 43, SPEC_GAL: 39}
+EXPECTED_TOTAL_ROWS = 82
 
 # clause_id -> (marker_form, tracking issue)
 #
@@ -128,6 +128,12 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # Predates the audit. GAL-34 (#255) left this set on 2026-09-19 when the
     # lapse arc shipped.
     "GAL-35": (MARKER_FORM_BLOCKQUOTE, "#256"),
+    # Added by GAL 0.2.7-draft. The derivation lifecycle rule was stated in
+    # 0.2.5 prose and deliberately NOT made a clause, on the grounds that no
+    # conforming implementation had a derived grant to apply it to -- which set
+    # the specification's requirement to the RI's coverage. This marker is the
+    # correct form of that honesty: fully normative, and openly not yet built.
+    "GAL-39": (MARKER_FORM_BLOCKQUOTE, "#11"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from
