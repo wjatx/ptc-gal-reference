@@ -118,9 +118,14 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 ## Where the seam binds
 
 - **Sender.** `stamp_outbound(..., signer=...)` (`safe_agents/channels/publish.py`) — when a
-  `ChainSigner` is supplied the outbound chain is signed (this zone's signature covers the full chain
-  as it leaves; any inbound signatures are preserved ahead of it); `signer=None` emits an unsigned
-  chain. `keys.resolve_signer(zone)` builds the `ChainSigner` at cold start.
+  `ChainSigner` is supplied the outbound chain is signed (this zone's signature covers the full
+  chain as it leaves, preserved upstream hops included); `signer=None` emits an unsigned chain.
+  `keys.resolve_signer(zone)` builds the `ChainSigner` at cold start. **Inbound signatures are NOT
+  carried onward** (PTC-13, S2): a relay re-packages the envelope under its own `event_id`, `expiry`
+  and sender claim, and an upstream signature binds the anti-replay set of the envelope it was made
+  for, so it could not verify against the new one. The upstream *hops* still ride as lineage,
+  covered by this zone's signature. An earlier revision of this line said inbound signatures were
+  preserved, which contradicted PTC-13 and `publish.py`; it never described the code.
 - **Receiver.** Gate 3.5 in `safe_agents/channels/dispatch.py` — the injected `verify_chain` seam,
   placed **after `normalize` (Gate 3) and before `expiry` (Gate 4)** so a forged chain is rejected
   before any trust-map, dedupe, or screen budget is spent (the same reasoning that puts expiry ahead
