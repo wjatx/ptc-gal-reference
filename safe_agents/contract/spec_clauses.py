@@ -101,34 +101,39 @@ EXPECTED_TOTAL_ROWS = 82
 # #372 (GAL-4/GAL-14, the runtime bootstrap path).
 EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # #359 PTC findings
-    "PTC-2":  (MARKER_FORM_INLINE, "#360"),
-    "PTC-3":  (MARKER_FORM_INLINE, "#361"),
-    "PTC-6":  (MARKER_FORM_INLINE, "#362"),
-    "PTC-7":  (MARKER_FORM_INLINE, "#315"),
-    "PTC-8":  (MARKER_FORM_INLINE, "#315"),
-    "PTC-9":  (MARKER_FORM_INLINE, "#315"),
-    "PTC-14": (MARKER_FORM_INLINE, "#363"),
-    "PTC-22": (MARKER_FORM_INLINE, "#364"),
-    "PTC-24": (MARKER_FORM_INLINE, "#365"),
-    "PTC-25": (MARKER_FORM_INLINE, "#358"),
-    "PTC-28": (MARKER_FORM_INLINE, "#366"),
-    "PTC-33": (MARKER_FORM_INLINE, "#367"),
-    "PTC-35": (MARKER_FORM_INLINE, "#368"),
-    "PTC-42": (MARKER_FORM_INLINE, "#369"),
+    "PTC-2":  (MARKER_FORM_INLINE, "#17"),
+    "PTC-3":  (MARKER_FORM_INLINE, "#18"),
+    "PTC-6":  (MARKER_FORM_INLINE, "#19"),
+    "PTC-7":  (MARKER_FORM_INLINE, "#15"),
+    "PTC-8":  (MARKER_FORM_INLINE, "#15"),
+    "PTC-9":  (MARKER_FORM_INLINE, "#15"),
+    "PTC-14": (MARKER_FORM_INLINE, "#20"),
+    "PTC-22": (MARKER_FORM_INLINE, "#21"),
+    "PTC-24": (MARKER_FORM_INLINE, "#22"),
+    "PTC-25": (MARKER_FORM_INLINE, "#16"),
+    "PTC-28": (MARKER_FORM_INLINE, "#23"),
+    "PTC-33": (MARKER_FORM_INLINE, "#24"),
+    "PTC-35": (MARKER_FORM_INLINE, "#25"),
+    "PTC-42": (MARKER_FORM_INLINE, "#26"),
     # #359 GAL findings
-    "GAL-4":  (MARKER_FORM_INLINE, "#372"),
-    "GAL-14": (MARKER_FORM_INLINE, "#372"),
-    "GAL-26": (MARKER_FORM_INLINE, "#375"),
-    "GAL-28": (MARKER_FORM_INLINE, "#376"),
-    "GAL-29": (MARKER_FORM_INLINE, "#377"),
+    "GAL-4":  (MARKER_FORM_INLINE, "#27"),
+    "GAL-14": (MARKER_FORM_INLINE, "#27"),
+    "GAL-26": (MARKER_FORM_INLINE, "#28"),
+    "GAL-28": (MARKER_FORM_INLINE, "#29"),
+    "GAL-29": (MARKER_FORM_INLINE, "#30"),
     # Obligations the 2026-08-08 amendments CREATED: the clause now states a
     # requirement the code does not yet meet, which is the marker's whole point.
-    "GAL-5":  (MARKER_FORM_INLINE, "#380"),
-    "GAL-33": (MARKER_FORM_INLINE, "#378"),
+    "GAL-5":  (MARKER_FORM_INLINE, "#32"),
+    "GAL-33": (MARKER_FORM_INLINE, "#31"),
     # Predates the audit. GAL-34 (#255) left this set on 2026-09-19 when the
     # lapse arc shipped.
-    "GAL-35": (MARKER_FORM_BLOCKQUOTE, "#256"),
-    # Added by GAL 0.2.7-draft. The derivation lifecycle rule was stated in
+    "GAL-35": (MARKER_FORM_BLOCKQUOTE, "#14"),
+    # Renumbered 2026-09-21: every marker now cites an issue in the PUBLIC
+# reference implementation. They previously cited the private tracker, so a
+# reader of the published specification could not reach any of them, while
+# GAL §3 promised "#NNN is the reference implementation's public tracking
+# issue for the work". The marker's credibility is the reachable pointer.
+# Added by GAL 0.2.7-draft. The derivation lifecycle rule was stated in
     # 0.2.5 prose and deliberately NOT made a clause, on the grounds that no
     # conforming implementation had a derived grant to apply it to -- which set
     # the specification's requirement to the RI's coverage. This marker is the
