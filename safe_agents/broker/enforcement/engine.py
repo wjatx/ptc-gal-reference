@@ -47,7 +47,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from safe_agents.broker.marshal import marshal_connector_result
 from safe_agents.broker.pdp import Facts
@@ -57,6 +57,7 @@ from .store import EnforcementStore
 from .types import (
     IN_FLIGHT_DECISION_JSON,
     EnforcementResult,
+    CounterDraw,
     IdempotencyRecord,
     LedgerEntry,
     decision_to_json,
@@ -77,6 +78,7 @@ def enforce(
     counter_key: str,
     counter_delta: float,
     counter_cap: float,
+    ancestor_draws: "Sequence[CounterDraw]" = (),
     decider: Callable[[BrokeredCall, Facts], Decision],
     fresh_facts: Callable[[BrokeredCall], Facts],
     store: EnforcementStore,
@@ -107,6 +109,29 @@ def enforce(
     counter_cap:
         The hard cap. The decrement is refused (→ deny) if the result would
         exceed this value.
+    ancestor_draws:
+        Additional budget draws this call must ALSO satisfy, drawn after the
+        primary one. For a delegated call these are the delegation-tree pools
+        keyed by ``enforcement.store.tree_counter_key``, which is the only bound
+        that spans siblings: each child's own cap bounds that child, and nothing
+        bounds the set (#11). Empty for a root principal, which is why an
+        undelegated deployment behaves exactly as before.
+
+        Refusing ANY draw refuses the call, so authority is the intersection of
+        every bound rather than the acting principal's alone.
+
+        ORDER AND PARTIAL DRAWS. ``try_increment_counter`` is atomic per key and
+        there is no multi-key transaction on the EnforcementStore protocol, so a
+        sequence of draws is not atomic as a group: the primary can succeed and
+        an ancestor then refuse. Nothing is compensated, deliberately. A refused
+        call may leave the primary counter charged for an action that never ran,
+        which spends the CHILD's own headroom -- the fail-toward-less-authority
+        direction -- and ages out at the next period rollover. The primary is
+        drawn first precisely so the over-charge lands on the single child rather
+        than on the pool every sibling shares; the reverse order would let one
+        child's refusal eat the whole tree's budget. A decrement primitive would
+        be the alternative and is worse: it is a write that can itself fail, and
+        it hands the enforcement path an operation that RELEASES authority.
     decider:
         The PDP's decide() function. Used for premise revalidation.
     fresh_facts:
@@ -215,6 +240,25 @@ def enforce(
             )
             if not incremented:
                 effective = Deny(kind="deny", reason="capacity budget exceeded")
+            else:
+                # Every ancestor pool must also have headroom. The reason names
+                # the tree pool rather than reusing "capacity budget exceeded",
+                # because the two denials call for opposite responses: the
+                # child's own cap is a knob on the child, while a pool refusal
+                # means a SIBLING spent the shared budget and raising this
+                # child's cap would change nothing.
+                for draw in ancestor_draws:
+                    if not store.try_increment_counter(
+                        draw.key, draw.delta, draw.cap
+                    ):
+                        effective = Deny(
+                            kind="deny",
+                            reason=(
+                                "delegation-tree budget exceeded "
+                                f"(pool {draw.key})"
+                            ),
+                        )
+                        break
 
         # --------------------------------------------------------------
         # Step 4 — write-ahead ledger (intent journaled BEFORE execution)

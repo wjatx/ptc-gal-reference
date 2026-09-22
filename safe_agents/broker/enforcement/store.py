@@ -163,6 +163,69 @@ def scoped_counter_key(
     return f"{principal_key}:{tool}.{op}:{bucket}:{suffix}"
 
 
+# ---------------------------------------------------------------------------
+# Delegation-tree pool keys (#11)
+#
+# A principal-scoped counter isolates budgets, which is exactly right for peers
+# and exactly wrong for a delegation tree: a parent and each of its children are
+# distinct principals, so their draws land on distinct keys and no bound spans
+# them. Individually bounded children do not bound the set -- siblings that each
+# fit their own cap can jointly exceed the ancestor's. The tree pool is the
+# coordinate that spans them.
+#
+# It is keyed on the ROOT GRANT ID, not on a principal, because that is what a
+# sub-grant's delegationChain actually holds (delegation/types.py: "from the root
+# human-owned grant ID outward"). Resolving the chain back to principals would
+# need the grant store on the enforcement path; the root id needs nothing.
+# ---------------------------------------------------------------------------
+
+# The namespace segment that separates a tree key from a principal-scoped one.
+# Collision-free by construction and not by convention: a principal_key always
+# renders exactly three '#' separators, and this literal contains none, so no
+# principal can ever occupy the first segment of a tree key. Pinned by
+# test_tree_key_can_never_collide_with_a_principal_key.
+TREE_KEY_NAMESPACE = "tree"
+
+
+def tree_counter_key(
+    root_grant_id: str,
+    tool: str,
+    op: str,
+    suffix: str,
+    *,
+    period: "CounterPeriod" = "utc-day",
+    bucket: str | None = None,
+) -> str:
+    """The ONE derivation of a delegation-tree pool key -- the ancestor-spanning
+    counterpart to ``scoped_counter_key``, and it carries the same obligation:
+    the PEP (which draws it) and the PIP (which reads it for the cap fact) MUST
+    key through here, or the bound is enforced against a coordinate nobody reads.
+
+    Scoped by ROOT GRANT ID, (tool, op) and UTC PERIOD. The op scoping mirrors
+    the per-principal key deliberately: a cap is a per-op per-period budget
+    (never lifetime, never cross-op), so the tree bound has to be per-op too or
+    the two disagree about what "the budget" is.
+
+    ``root_grant_id`` comes from ``delegation.keys.root_grant_id`` for a root
+    Grant, or from ``SubGrant.delegationChain[0]`` for anything derived. A ':' in
+    it would shift the key's segments, so it is refused rather than silently
+    keying a different coordinate.
+    """
+    _require_known_period(period)
+    if ":" in root_grant_id:
+        raise ValueError(
+            f"root_grant_id must not contain ':' (it would shift the key's "
+            f"segments); got {root_grant_id!r}"
+        )
+    if not root_grant_id:
+        raise ValueError("root_grant_id must be non-empty")
+    if bucket is None:
+        bucket = current_period_bucket(period)
+    else:
+        _validate_bucket(bucket, period)
+    return f"{TREE_KEY_NAMESPACE}:{root_grant_id}:{tool}.{op}:{bucket}:{suffix}"
+
+
 def read_counter_window(
     store: "EnforcementStore",
     principal: "Principal",

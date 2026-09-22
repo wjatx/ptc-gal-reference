@@ -83,6 +83,8 @@ if TYPE_CHECKING:
 
 from safe_agents.broker.approval import InMemoryIntentStore
 from safe_agents.broker.audit import FileAuditSink, InMemorySink, S3ObjectLockSink
+from safe_agents.broker.delegation.pool import resolve_tree_pool
+from safe_agents.broker.delegation.store import SubGrantStore
 from safe_agents.broker.enforcement import InMemoryStore, scoped_counter_key
 from safe_agents.broker.grants.store import DynamoDBGrantStore, InMemoryGrantStore
 from safe_agents.broker.grants.term import effective_level
@@ -288,6 +290,7 @@ def _make_pip(
     confidence_knob: Confidence | None = None,
     counter_period: CounterPeriod = "utc-day",
     clock: Callable[[], datetime.datetime] | None = None,
+    sub_grant_store=None,
 ):
     """Build the real PIP: per call, read grant (presence + level) from the grant
     store and the cap-budget fact from the real counter. The counter_key MUST match
@@ -377,6 +380,30 @@ def _make_pip(
         )
         spent = enforcement_store.read_counter(counter_key)
 
+        # #11 -- the delegation-tree pool. Resolved through the ONE helper the
+        # PEP also draws with, so the fact and the draw can never key different
+        # coordinates. None when delegation is not configured, which is why an
+        # undelegated deployment reads exactly one counter as before.
+        #
+        # Folded into the EXISTING cap_budget_breached fact rather than added as
+        # a new Facts field, deliberately. A new field the PDP reads would have to
+        # join test_pdp_corpus's swept axes and re-mint the golden digest -- a
+        # policy change surfacing as a reviewed diff -- and no rule here is
+        # changing: "a capacity bound for this call is spent" already denies. The
+        # PEP names WHICH bound refused, since only it can tell them apart.
+        tree_draw = resolve_tree_pool(
+            call.principal,
+            call.tool,
+            call.op,
+            sub_grant_store=sub_grant_store,
+            own_cap=counter_cap,
+            period=counter_period,
+        )
+        tree_breached = (
+            tree_draw is not None
+            and enforcement_store.read_counter(tree_draw.key) >= tree_draw.cap
+        )
+
         # sa#137 — read-gating facts. Computing them unconditionally is fine; the
         # read-path rules key on manifest.effect=="read", so they are inert for writes.
         trusted = trusted_read_sources or []
@@ -431,7 +458,7 @@ def _make_pip(
             grant_present=grant_present,
             grant_level=grant_level,
             error_budget_breached=error_budget_breached,
-            cap_budget_breached=spent >= counter_cap,
+            cap_budget_breached=(spent >= counter_cap) or tree_breached,
             escalation_budget_available=True,
             human_reachable=True,
             transform_op=None,
@@ -557,6 +584,7 @@ def build_runtime(
     *,
     envelope_store: "EnvelopeStore | None" = None,
     on_demotion_signal: "Callable[[DemotionSignal], None] | None" = None,
+    sub_grant_store: "SubGrantStore | None" = None,
 ) -> tuple[BrokerRuntime, InMemorySink | FileAuditSink | S3ObjectLockSink]:
     """Compose a BrokerRuntime from a manifest + three INDEPENDENT, env-selected backends.
 
@@ -586,6 +614,15 @@ def build_runtime(
     (co-located in the grants table, seeded out-of-band first) and fails fast if none
     is seeded. ``envelope_store`` is an optional injected store for tests; production
     leaves it None and builds a DynamoDBEnvelopeStore from the resolved grants table.
+
+    ``sub_grant_store`` is the broker-owned store of derived authority (#11).
+    Passing one turns on the delegation-tree budget pool: every call then also
+    draws a counter shared by the whole tree rooted at its grant, which is the
+    only bound that constrains SIBLINGS. Left None (the default) no pool is
+    drawn and behaviour is unchanged, so this is opt-in per deployment. Under the
+    per-zone runtime model each zone builds its own runtime from its own
+    image-baked manifest and they SHARE this store, which is how a parent and its
+    children reach the same pool while remaining separate principals.
 
     See safe_agents/arms/fargate/BROKER_ENV.md for the full AWS-mode env contract.
     """
@@ -923,6 +960,7 @@ def build_runtime(
             query_egress_budget=query_egress_budget,
             confidence_knob=confidence_knob,
             counter_period=manifest.counter_period,
+            sub_grant_store=sub_grant_store,
         ),
         enforcement_store=enforcement_store,  # type: ignore[arg-type]
         intent_store=intent_store,  # type: ignore[arg-type]
@@ -938,6 +976,12 @@ def build_runtime(
         # threaded to BOTH the PEP (writer) and the PIP (reader) from this ONE field
         # so the two can never bucket at different periods.
         counter_period=manifest.counter_period,
+        # #11 -- the delegation-tree pool store, threaded to BOTH the PEP (which
+        # draws) and the PIP (which reads) from this ONE argument, for the same
+        # reason counter_period is: two sources would let the fact and the draw
+        # disagree about which pool bounds the call. None disables the pool, so a
+        # deployment that does not delegate is unchanged.
+        sub_grant_store=sub_grant_store,
     )
     return runtime, sink
 

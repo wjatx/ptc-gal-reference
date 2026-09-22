@@ -55,6 +55,11 @@ _PARENT_PRINCIPAL = Principal(agentId="parent-agent", skill="email", user="alice
 _SUB_PRINCIPAL = Principal(agentId="sub-agent-1", skill="email-draft", user="alice", tier="C")
 
 
+# The tree pool is required at issuance (no safe default in production); the
+# suite pins one value so attenuation tests stay about the dimension they name.
+_DEFAULT_TREE_POOL_CAP = 100.0
+
+
 def _parent(
     grant_id: str = "grant-root-1",
     action_classes: list[str] | None = None,
@@ -62,6 +67,7 @@ def _parent(
     remaining_spend: float = 100.0,
     expiry: datetime | None = None,
     allow_further_delegation: bool = True,
+    tree_pool_cap: float = _DEFAULT_TREE_POOL_CAP,
 ) -> object:
     """Build a ParentAuthority with sensible defaults."""
     return parent_from_grant(
@@ -70,6 +76,7 @@ def _parent(
         level=level,
         remaining_spend=remaining_spend,
         expiry=expiry or _PARENT_EXPIRY,
+        tree_pool_cap=tree_pool_cap,
         allow_further_delegation=allow_further_delegation,
     )
 
@@ -403,6 +410,7 @@ class TestWideningAttempt:
             level=AutonomyLevel.in_loop,
             remaining_spend=100.0,
             expiry=_PARENT_EXPIRY,
+            tree_pool_cap=_DEFAULT_TREE_POOL_CAP,
         )
         # Manually build a sub-grant with a wider level (bypassing compute_sub_grant)
         # to test assert_attenuates independently.
@@ -423,6 +431,7 @@ class TestWideningAttempt:
             level=AutonomyLevel.out_of_loop,
             remaining_spend=10.0,
             expiry=_PARENT_EXPIRY,
+            tree_pool_cap=_DEFAULT_TREE_POOL_CAP,
         )
         valid_sg = compute_sub_grant(parent, _scope(spend_cap=10.0), now=_NOW)
         bad_sg = SubGrant(**{**valid_sg.model_dump(), "spendCap": 11.0})
@@ -437,6 +446,7 @@ class TestWideningAttempt:
             level=AutonomyLevel.out_of_loop,
             remaining_spend=100.0,
             expiry=_PARENT_EXPIRY,
+            tree_pool_cap=_DEFAULT_TREE_POOL_CAP,
         )
         valid_sg = compute_sub_grant(parent, _scope(action_classes=["email.draft"]), now=_NOW)
         bad_sg = SubGrant(**{**valid_sg.model_dump(), "actionClasses": ["email.send"]})

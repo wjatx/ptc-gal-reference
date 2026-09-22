@@ -154,6 +154,8 @@ def compute_sub_grant(
         "spendCap": scope.requestedSpendCap,
         "expiry": expiry_str,
         "allowFurtherDelegation": scope.allowFurtherDelegation,
+        # Inherited, never requested -- see ParentAuthority.tree_pool_cap.
+        "treePoolCap": parent.tree_pool_cap,
         "issuedAt": issued_at_str,
         "issuedBy": issued_by,
     }
@@ -169,6 +171,7 @@ def compute_sub_grant(
         spendCap=scope.requestedSpendCap,
         expiry=expiry_str,
         allowFurtherDelegation=scope.allowFurtherDelegation,
+        treePoolCap=parent.tree_pool_cap,
         issuedAt=issued_at_str,
         issuedBy=issued_by,
         hash=record_hash,
@@ -318,6 +321,7 @@ def parent_from_grant(
     remaining_spend: float,
     expiry: datetime,
     *,
+    tree_pool_cap: float,
     allow_further_delegation: bool = True,
 ) -> ParentAuthority:
     """Produce a ParentAuthority from a root Grant's parameters.
@@ -337,16 +341,28 @@ def parent_from_grant(
         How much of the cap is still available (cap - spent), at delegation time.
     expiry:
         The Grant's absolute expiry, UTC-aware. Root grants may have a far-future expiry.
+    tree_pool_cap:
+        The budget the WHOLE delegation tree rooted here may spend on one op in
+        one period -- normally this grant's own per-op cap, since a tree may not
+        outspend its root. Keyword-only and required: defaulting it would produce
+        an unbounded sibling set silently, which is the defect #11 records.
     allow_further_delegation:
         Whether the Grant permits sub-agents to further delegate. Defaults True
         (root grants are issued by humans who may choose to permit recursive delegation).
     """
+    if tree_pool_cap <= 0:
+        raise ValueError(
+            f"tree_pool_cap must be positive; got {tree_pool_cap!r}. A tree whose "
+            "shared pool is zero or negative can never act, and a pool of None is "
+            "not a bound at all."
+        )
     return ParentAuthority(
         id=grant_id,
         action_classes=action_classes,
         level=level,
         remaining_spend=remaining_spend,
         expiry=expiry,
+        tree_pool_cap=tree_pool_cap,
         allow_further_delegation=allow_further_delegation,
         delegation_chain=[],  # root: no prior chain
     )
@@ -386,6 +402,10 @@ def parent_from_sub_grant(
         level=sub_grant.level,
         remaining_spend=remaining_spend,
         expiry=_parse_iso(sub_grant.expiry),
+        # PROPAGATED, never re-declared: a grandchild inherits the root's pool, so
+        # depth cannot raise the tree's shared bound. This is what makes the pool
+        # un-widenable by construction rather than by a validation rule.
+        tree_pool_cap=sub_grant.treePoolCap,
         allow_further_delegation=sub_grant.allowFurtherDelegation,
         delegation_chain=sub_grant.delegationChain,
     )

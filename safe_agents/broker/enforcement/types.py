@@ -51,6 +51,21 @@ DEFAULT_IDEMPOTENCY_STATUS: IdempotencyStatus = "executed"
 IN_FLIGHT_DECISION_JSON = ""
 
 
+@dataclass(frozen=True)
+class CounterDraw:
+    """One (key, delta, cap) budget draw.
+
+    Exists so ``enforce`` can take a SEQUENCE of draws without growing three
+    parallel argument lists. The primary per-principal draw stays a positional
+    triple on ``enforce``; this type carries the additional ancestor-pool draws a
+    delegated call must also satisfy (#11).
+    """
+
+    key: str
+    delta: float
+    cap: float
+
+
 @dataclass
 class IdempotencyRecord:
     """Stored claim-and-outcome for an idempotency key.

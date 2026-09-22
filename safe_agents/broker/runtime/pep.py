@@ -66,7 +66,10 @@ from safe_agents.broker.enforcement import (
     enforce,
     scoped_counter_key,
 )
+from safe_agents.broker.delegation.pool import resolve_tree_pool
+from safe_agents.broker.delegation.store import SubGrantStore
 from safe_agents.broker.enforcement.store import period_bucket_of
+from safe_agents.broker.enforcement.types import CounterDraw
 from safe_agents.broker.manifest import ToolOpTable
 from safe_agents.broker.pdp import Facts, decide
 from safe_agents.broker.schemas import (
@@ -276,6 +279,7 @@ class BrokerRuntime:
         confidence_knob: Confidence | None = None,
         on_demotion_signal: Callable[[DemotionSignal], None] | None = None,
         counter_period: CounterPeriod = "utc-day",
+        sub_grant_store: "SubGrantStore | None" = None,
     ) -> None:
         self._principal = principal
         self._grants = grants
@@ -291,6 +295,11 @@ class BrokerRuntime:
         self._trust_map = trust_map
         self._envelope_hash = envelope_hash
         self._counter_cap = counter_cap
+        # #11 -- delegation-tree pool. None disables every pool draw, so an
+        # undelegated deployment is byte-identical in behaviour and pays no extra
+        # write per call. The store is broker-owned: nothing about the tree is
+        # ever read from a call.
+        self._sub_grant_store = sub_grant_store
         self._trusted_read_sources = trusted_read_sources or []
         # sa#160 approval-queue de-amplification knob. None = OFF (byte-identical
         # to the pre-knob hold path — no dedup, no flood cap).
@@ -355,6 +364,26 @@ class BrokerRuntime:
         ingest and action share one broker-owned turn (sa#136).
         """
         return self._session_turn()
+
+    def _tree_draws(
+        self, principal: Principal, tool: str, op: str
+    ) -> "tuple[CounterDraw, ...]":
+        """The delegation-tree pool draws this call must also satisfy (#11).
+
+        Empty when delegation is not configured, which is what keeps an
+        undelegated deployment unchanged. Resolved through the SAME helper the
+        PIP reads its cap fact from, so the bound the PDP reports and the bound
+        enforce() draws are the same coordinate by construction.
+        """
+        draw = resolve_tree_pool(
+            principal,
+            tool,
+            op,
+            sub_grant_store=self._sub_grant_store,
+            own_cap=self._counter_cap,
+            period=self._counter_period,
+        )
+        return () if draw is None else (draw,)
 
     def _session_turn(self) -> TurnContext:
         """Return the broker-held TurnContext for this principal, lazily creating
@@ -710,6 +739,10 @@ class BrokerRuntime:
             # idempotency_key=None: approve()'s pending→approved CAS is already the
             # release's exactly-once gate, so a second enforcement-level key would add
             # a second, redundant dedup surface over the same event.
+            # The release spends the tree's pool exactly as an inline call does
+            # (#11). A held call whose SIBLINGS drained the shared pool between
+            # hold and release must refuse: an approval was never authority, and
+            # the pool is another bound the world can change while a call waits.
             enforced = enforce(
                 stored_call,
                 Allow(kind="allow"),
@@ -717,6 +750,9 @@ class BrokerRuntime:
                 counter_key=counter_key,
                 counter_delta=1.0,
                 counter_cap=self._counter_cap,
+                ancestor_draws=self._tree_draws(
+                    stored_call.principal, stored_call.tool, stored_call.op
+                ),
                 decider=_approved_decider,
                 fresh_facts=self._pip,
                 store=self._enforcement_store,
@@ -1360,6 +1396,7 @@ class BrokerRuntime:
                 counter_key=counter_key,
                 counter_delta=1.0,
                 counter_cap=self._counter_cap,
+                ancestor_draws=self._tree_draws(call.principal, call.tool, call.op),
                 decider=decide,
                 fresh_facts=self._pip,
                 store=self._enforcement_store,

@@ -35,11 +35,29 @@ full treatment.
 
 The computation is built and tested: `safe_agents/broker/delegation/compute.py` derives a
 `SubGrant` from a parent, refuses any widening, and `test_delegation.py` covers each attenuating
-dimension. Two things are not built, and the rest of this document should be read with that in
-mind (#11). No execution path issues a sub-grant: nothing in the runtime receives a delegation
-request or presents a sub-grant to the broker on a call. And nothing charges a child's actions
-against an ancestor's remaining budget, so siblings that each fit their own cap can jointly exceed
-the parent's. Individually bounded children do not bound the set.
+dimension.
+
+**The aggregate bound is built** (#11, first half). A delegation tree shares one budget pool per
+(root grant, op, period), keyed by `enforcement.store.tree_counter_key` on the root grant ID that
+`delegation.keys.root_grant_id` derives. Both draw sites take it -- the inline `/call` path and the
+out-of-band approval release -- and the PIP reads the same coordinate through the one helper
+(`delegation/pool.py`) the PEP draws with, so the cap fact and the draw cannot key different
+counters. A root charges the pool too, or "what the tree spent" would omit the root's own calls.
+Depth cannot move the bound: `treePoolCap` is stamped at issuance and propagated unchanged, never
+re-declared by a descendant. `test_delegation_pool.py` carries the case the review asked for --
+siblings each inside their own cap, collectively over the ancestor's -- and removing the draw turns
+it red while all 42 attenuation tests stay green, which is the shape the defect had.
+
+It **ships off**: with no sub-grant store configured no pool is drawn and behaviour is unchanged,
+so this is opt-in per deployment.
+
+**Issuance is still not built** (#11, second half), and the rest of this document should be read
+with that in mind. No execution path issues a sub-grant: nothing in the runtime receives a
+delegation request. A sub-grant reaches the store out of band today. Note that under the per-zone
+runtime model there is nothing for a sub-agent to *present* -- the broker resolves the child's
+sub-grant from its own store by the principal it already authenticated, exactly as it resolves a
+Grant -- so the "presents its sub-grant ID" language elsewhere in this document describes a
+multi-principal runtime we do not have.
 
 A third thing is unsettled, and it bears on who the mechanism is for. The trading agent's daily run
 and responsive Q&A flow both spawn helpers (groundedness checker, grader, Q&A responder), but they

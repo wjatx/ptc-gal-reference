@@ -45,7 +45,9 @@ from .compute import (
     verify_not_expired,
 )
 from .store import InMemorySubGrantStore, SubGrantStore
+from .keys import principal_key, root_grant_id
 from .types import (
+    AmbiguousSubGrantError,
     AttenuationError,
     AttributedAuditRecord,
     DelegationScope,
@@ -56,7 +58,11 @@ from .types import (
 )
 
 __all__ = [
+    # keys
+    "principal_key",
+    "root_grant_id",
     # types
+    "AmbiguousSubGrantError",
     "DelegationScope",
     "SubGrant",
     "ParentAuthority",

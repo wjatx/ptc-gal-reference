@@ -54,6 +54,17 @@ class FurtherDelegationForbiddenError(ValueError):
     """Raised when a sub-agent attempts to delegate but allowFurtherDelegation=False."""
 
 
+class AmbiguousSubGrantError(ValueError):
+    """Raised when one principal holds more than one sub-grant.
+
+    A zone is one principal holding one derived authority, and a sub-grant
+    already carries a list of actionClasses, so a second row for the same
+    principal does not widen anything -- it makes "which ancestor pool does this
+    call charge" undefined. Refusing is the fail-toward-less-authority answer;
+    picking one would silently enforce against a pool the issuer never meant.
+    """
+
+
 # ---------------------------------------------------------------------------
 # DelegationScope — what the parent agent requests
 # ---------------------------------------------------------------------------
@@ -121,6 +132,15 @@ class SubGrant(BaseModel):
     expiry: str
     # Whether this sub-agent may further delegate; False unless parent also permits it
     allowFurtherDelegation: bool
+    # The delegation TREE's shared per-op budget, set at the root and propagated
+    # down unchanged (#11). This is NOT this child's own cap -- that is spendCap.
+    # It is the bound on everything the tree spends together, which is the only
+    # bound that constrains SIBLINGS: each child's own cap bounds that child, and
+    # without this the set is unbounded. Never requested by an agent and never
+    # re-declared by a descendant; compute_sub_grant copies it from the parent, so
+    # a deeper sub-grant cannot raise it. Enforced via
+    # enforcement.store.tree_counter_key keyed on delegationChain[0].
+    treePoolCap: float
 
     # Broker bookkeeping
     issuedAt: str
@@ -153,6 +173,12 @@ class ParentAuthority:
     expiry: datetime
     # Whether this parent permits the sub-agent to further delegate
     allow_further_delegation: bool
+    # The tree's shared per-op pool cap, carried so attenuation can propagate it
+    # rather than letting any descendant restate it. Required: there is no safe
+    # default, and defaulting it would silently produce an unbounded sibling set
+    # (the exact defect #11 records). Mirrors boot_config's refusal to default a
+    # write-effect counter cap.
+    tree_pool_cap: float
     # Chain of grant IDs from root to this parent (empty for a root Grant)
     delegation_chain: list[str] = field(default_factory=list)
 
