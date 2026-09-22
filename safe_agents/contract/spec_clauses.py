@@ -16,10 +16,15 @@ literal appears in the convention-defining prose and on field/verb table rows
 elsewhere in both documents, and neither is a conformance-row marker.
 
 Self-checks run on every invocation, so a spec edit that breaks extraction fails
-loudly instead of silently returning a short inventory.
+loudly instead of silently returning a short inventory. Those checks are pure and
+offline. One further check, ``--check-issues``, leaves the machine to confirm
+every marker's cited tracking issue actually resolves in the public reference
+implementation, and is opt-in for that reason; a spec can be perfectly
+well-formed while every citation in it points somewhere no reader can go.
 
 Usage:
     python3 -m safe_agents.contract.spec_clauses [--summary|--pics|--pics-ri] [--spec-dir DIR]
+    python3 -m safe_agents.contract.spec_clauses --check-issues   # NETWORK, see below
 
 Or import and call extract_all(spec_dir) / verify_extraction(rows) from pytest.
 Stdlib only: CheckResult mirrors the shape used by harness.py rather than
@@ -59,6 +64,7 @@ DUPLICATE_CLAUSE_ID    = "DUPLICATE_CLAUSE_ID"
 MARKED_SET_MISMATCH    = "MARKED_SET_MISMATCH"
 EXCEEDED_SET_MISMATCH  = "EXCEEDED_SET_MISMATCH"
 ORIGIN_MISSING         = "ORIGIN_MISSING"
+TRACKING_ISSUE_UNRESOLVABLE = "TRACKING_ISSUE_UNRESOLVABLE"
 
 # --- Where the clauses live ------------------------------------------------
 # Headings are matched verbatim so a section rename is a loud
@@ -516,6 +522,95 @@ def print_summary(rows: list[ClauseRow], results: list[CheckResult]) -> None:
         print(f"  [{'PASS' if result.passed else 'FAIL'}] {result.name}: {result.reason}")
 
 
+# --- Are the cited tracking issues reachable? (network, opt-in) ------------
+#
+# GAL §3 promises the reader that `#NNN` is "the reference implementation's
+# PUBLIC tracking issue for the work", and a marker's whole value rests on that
+# promise: it lets a clause be normative ahead of the code without overclaiming,
+# because a reader can go and see what is unbuilt. An unreachable number turns
+# the marker into an assertion with no receipt.
+#
+# On 2026-09-21 nineteen of the twenty cited issues resolved only in a PRIVATE
+# tracker. Nothing here caught it, because every other check reads the spec text
+# and all twenty citations were perfectly well-formed. Reading confirms that a
+# citation LOOKS right; only resolving it against the world shows whether it is.
+TRACKING_REPO = "wjatx/ptc-gal-reference"
+
+
+class TrackingCheckUnavailable(RuntimeError):
+    """Raised when the issues could not be reached at all (offline, rate limit).
+
+    Deliberately distinct from a failed check. "This issue does not exist" and
+    "I could not ask" are different claims, and collapsing them would either
+    fail honest offline runs or let a real break pass as a network blip.
+    """
+
+
+def resolve_tracking_issues(
+    rows: "list[ClauseRow]",
+    *,
+    repo: str = TRACKING_REPO,
+    timeout: float = 10.0,
+) -> "list[CheckResult]":
+    """Check that every marked clause's tracking issue exists in `repo`.
+
+    NETWORK, and deliberately not called by verify_extraction, which is pure and
+    must keep running offline on every invocation. Opt in with --check-issues,
+    or SPEC_CHECK_TRACKING_ISSUES=1 in the test suite.
+
+    Uses the unauthenticated REST API (60 requests an hour per address, ample
+    for ~20 issues); GITHUB_TOKEN is used when present to raise that ceiling.
+    Raises TrackingCheckUnavailable rather than reporting a failure it did not
+    observe.
+    """
+    import json as _json
+    import os
+    import urllib.error
+    import urllib.request
+
+    issues = sorted(
+        {r.marker_tracking_issue for r in rows if r.marker_state == MARKER_STATE_MARKED},
+        key=lambda s: int(s.lstrip("#")),
+    )
+    token = os.environ.get("GITHUB_TOKEN")
+    headers = {"Accept": "application/vnd.github+json",
+               "User-Agent": "ptc-gal-spec-clauses"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+
+    results = []
+    for issue in issues:
+        number = issue.lstrip("#")
+        url = "https://api.github.com/repos/" + repo + "/issues/" + number
+        req = urllib.request.Request(url, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = _json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                results.append(CheckResult(
+                    TRACKING_ISSUE_UNRESOLVABLE, False,
+                    issue + " does not resolve in " + repo + "; a reader of the "
+                    "published clause cannot reach the work it cites",
+                ))
+                continue
+            hint = "rate limited, set GITHUB_TOKEN" if exc.code in (403, 429) else str(exc.reason)
+            raise TrackingCheckUnavailable(
+                "could not resolve " + issue + " in " + repo
+                + ": HTTP " + str(exc.code) + " (" + hint + ")"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise TrackingCheckUnavailable(
+                "could not reach " + repo + " to resolve " + issue + ": " + str(exc)
+            ) from exc
+        kind = "pull request" if "pull_request" in payload else "issue"
+        results.append(CheckResult(
+            TRACKING_ISSUE_UNRESOLVABLE, True,
+            issue + " resolves in " + repo + " (" + kind + ", " + str(payload.get("state", "?")) + ")",
+        ))
+    return results
+
+
 def main() -> None:
     default_spec_dir = Path(__file__).resolve().parents[2] / "spec"
     parser = argparse.ArgumentParser(
@@ -533,6 +628,9 @@ def main() -> None:
                         help="emit the blank ISO/IEC 9646-7 proforma an implementer completes")
     parser.add_argument("--pics-ri", action="store_true",
                         help="emit the reference implementation's completed statement")
+    parser.add_argument("--check-issues", action="store_true",
+                        help="NETWORK: verify every cited tracking issue resolves "
+                             "in the public reference implementation")
     args = parser.parse_args()
 
     if not args.spec_dir.is_dir():
@@ -558,6 +656,18 @@ def main() -> None:
         sys.exit(2)
 
     results = verify_extraction(rows)
+
+    if args.check_issues:
+        # Appended to the offline results so one exit code covers both, and
+        # reported separately when unreachable: an unanswerable question must
+        # not read as a clean bill of health OR as a break.
+        try:
+            issue_results = resolve_tracking_issues(rows)
+        except TrackingCheckUnavailable as exc:
+            print(f"INCONCLUSIVE: tracking issues not checked: {exc}", file=sys.stderr)
+            sys.exit(3)
+        results = results + issue_results
+
     if args.pics or args.pics_ri:
         print(pics_proforma(rows, filled=args.pics_ri))
     elif args.summary:

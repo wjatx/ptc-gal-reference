@@ -15,6 +15,7 @@ implemented-vs-unbuilt pass works from:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,8 @@ from safe_agents.contract.spec_clauses import (
     SPEC_PTC,
     ClauseRow,
     SpecFormatError,
+    TrackingCheckUnavailable,
+    resolve_tracking_issues,
     extract_all,
     extract_gal,
     extract_ptc,
@@ -99,17 +102,21 @@ def test_ptc25_marker_is_inline_not_blockquote(rows: list[ClauseRow]) -> None:
     row = _by_id(rows, "PTC-25")
     assert row.marker_state == MARKER_STATE_MARKED
     assert row.marker_form == MARKER_FORM_INLINE
-    assert row.marker_tracking_issue == "#358"
+    # Read from EXPECTED_MARKED rather than restated here. A second copy of a
+    # tracking number is a second thing to renumber, and on 2026-09-21 the
+    # copies were missed while the pin was updated -- invisibly, because these
+    # tests skip without spec/ present.
+    assert row.marker_tracking_issue == EXPECTED_MARKED["PTC-25"][1]
     assert "not yet implemented" in row.clause_text
 
 
-@pytest.mark.parametrize(("clause_id", "issue"), [("GAL-35", "#256")])
+@pytest.mark.parametrize("clause_id", ["GAL-35", "GAL-39"])
 def test_gal_appended_clauses_are_blockquote_marked(
-    rows: list[ClauseRow], clause_id: str, issue: str
+    rows: list[ClauseRow], clause_id: str
 ) -> None:
     row = _by_id(rows, clause_id)
     assert row.marker_form == MARKER_FORM_BLOCKQUOTE
-    assert row.marker_tracking_issue == issue
+    assert row.marker_tracking_issue == EXPECTED_MARKED[clause_id][1]
     # The marker line itself is not folded into the normative clause text.
     assert "Implementation status" not in row.clause_text
 
@@ -209,3 +216,41 @@ def test_gal_missing_origin_table_is_a_loud_error(tmp_path: Path) -> None:
     stub.write_text("# GAL\n\n### 7.2 Issuer clauses\n\n- **GAL-1** Something.\n", encoding="utf-8")
     with pytest.raises(SpecFormatError, match="section heading not found"):
         extract_gal(stub)
+
+
+# --- The cited tracking issues actually resolve (network, opt-in) ----------
+
+
+def test_every_marker_cites_a_reachable_public_issue(rows: list[ClauseRow]) -> None:
+    """Every marked clause's tracking issue exists in the public implementation.
+
+    OFF by default: this is the one check here that leaves the machine, and the
+    rest of the suite must keep running offline. Enable with
+    SPEC_CHECK_TRACKING_ISSUES=1, and set GITHUB_TOKEN to avoid the
+    unauthenticated rate limit in CI.
+
+    It exists because on 2026-09-21 nineteen of the twenty cited issues resolved
+    only in a private tracker, while GAL §3 promised readers that each number is
+    "the reference implementation's public tracking issue for the work". Nothing
+    caught it: every other check in this file reads the spec text, and all
+    twenty citations were perfectly well-formed. A citation that LOOKS right and
+    a citation that RESOLVES are different properties, and only one of them can
+    be established by reading.
+
+    An unreachable network is reported as a skip, never a pass. "This issue does
+    not exist" and "I could not ask" are different claims.
+    """
+    if os.environ.get("SPEC_CHECK_TRACKING_ISSUES") != "1":
+        pytest.skip("network check; set SPEC_CHECK_TRACKING_ISSUES=1 to run it")
+
+    try:
+        results = resolve_tracking_issues(rows)
+    except TrackingCheckUnavailable as exc:
+        pytest.skip(f"could not reach the tracking repository: {exc}")
+
+    unresolvable = [r for r in results if not r.passed]
+    assert not unresolvable, (
+        "a published marker cites an issue a reader cannot open:\n  "
+        + "\n  ".join(r.reason for r in unresolvable)
+    )
+    assert results, "no marked clauses found, so nothing was actually checked"
