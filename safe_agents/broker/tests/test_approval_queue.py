@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sys
 
 import pytest
 from pydantic import ValidationError
@@ -271,13 +270,6 @@ def test_pep_flood_alarms_but_never_sheds(caplog) -> None:
     assert events.count("approval_queue_flood") == 1
 
 
-# Windows Python 3.12's wall clock advances about every 15.6 ms, which makes this
-# real defect (#38) likely there; the mark keeps it visible until the fix lands.
-@pytest.mark.xfail(
-    sys.platform == "win32",
-    reason="#38: intent ids collide for two held calls from one turn within one clock tick",
-    strict=False,
-)
 def test_pep_off_default_holds_without_alarm(caplog) -> None:
     runtime, _ = _runtime(None)  # knob unset = OFF
     with caplog.at_level(logging.ERROR):

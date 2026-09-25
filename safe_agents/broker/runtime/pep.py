@@ -34,6 +34,7 @@ import datetime
 import hashlib
 import json
 import logging
+import threading
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -325,6 +326,33 @@ class BrokerRuntime:
         # threaded across every /call, lazily created by _session_turn(). The agent
         # supplies neither its id nor its rollover signal (see new_turn()).
         self._current_turn: TurnContext | None = None
+        # #38: the last BrokeredCall.ts this runtime stamped, so _stamp_call_ts can
+        # keep it strictly increasing. Locked because stamping is a read-then-write.
+        self._last_call_ts: datetime.datetime | None = None
+        self._call_ts_lock = threading.Lock()
+
+    def _stamp_call_ts(self) -> str:
+        """Stamp a BrokeredCall ``ts`` that no earlier call from this runtime shares (#38).
+
+        ``ts`` is the input that keeps two otherwise identical calls from one turn
+        apart in ``pdp.engine._intent_id``. The wall clock alone does not: Windows
+        advances it about every 15.6 ms, so two holds inside one tick got one intent
+        id, and the second hold's blind put replaced the first pending intent. When
+        the clock has not moved past the last stamp this returns that stamp plus one
+        microsecond, the finest step an ISO-8601 datetime carries. The drift is one
+        microsecond per call inside a tick and is gone at the next tick.
+
+        Scoped to one runtime, and that is enough: the turn id also enters the
+        intent id and is minted per runtime (``_session_turn``), so two runtimes
+        never share a turn.
+        """
+        now = datetime.datetime.now(datetime.UTC)
+        with self._call_ts_lock:
+            last = self._last_call_ts
+            if last is not None and now <= last:
+                now = last + datetime.timedelta(microseconds=1)
+            self._last_call_ts = now
+        return now.isoformat()
 
     def served_registry(self) -> list[ToolOp]:
         """Return the capability-scoped tool registry for this principal.
@@ -1158,7 +1186,7 @@ class BrokerRuntime:
                     reason="invalid confidence artifact",
                 )
 
-        ts = datetime.datetime.now(datetime.UTC).isoformat()
+        ts = self._stamp_call_ts()
         session = Session(turnId=turn_id, ingestedSources=taint.sources)
 
         # Step 3 — materialize the BrokeredCall.

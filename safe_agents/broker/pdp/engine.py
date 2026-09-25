@@ -64,6 +64,23 @@ from .facts import Facts
 def _intent_id(call: BrokeredCall) -> str:
     """Derive a stable intent ID from the call. Same call → same ID. Pure, no I/O.
 
+    "Same call" means the same BrokeredCall, ``ts`` included, and nothing relies on
+    more than that. A retried call is never the same call: enforce() releases the
+    idempotency claim on a hold (#148), so the retry is re-materialized with a fresh
+    ``ts`` and held under a fresh id. Collapsing identical holds onto one id is the
+    approval-queue dedup knob's job (``dedup_intent_id``), not this function's.
+
+    Two distinct holds must never share an id (#38). Every hold is written under its
+    id with a blind put, so a shared id silently replaces the first pending intent
+    with the second: both callers are told the same id, and approving it releases
+    whichever call was written last. ``storedCallDigest`` records which call ran; it
+    does not stop the wrong one running. Distinctness rests on ``ts`` and
+    ``turnId`` together: the PEP stamps ``ts`` strictly increasing per runtime
+    (``BrokerRuntime._stamp_call_ts``) and mints ``turnId`` per runtime, because the
+    wall clock alone repeats inside one tick (about 15.6 ms on Windows). Args are
+    deliberately not an input, so model-authored content cannot move the rendered
+    intent (docs/deterministic-gate.md).
+
     The principal is bound into the id explicitly, not left recoverable through
     ``turnId``. Turn identity is broker-owned, so inside the issuing broker the turn
     log does map a turnId back to one principal. A verifier that does not share that
@@ -74,9 +91,10 @@ def _intent_id(call: BrokeredCall) -> str:
     ``enforcement.store.scoped_counter_key`` (agentId#skill#user#tier), so the
     three principal-scoped ids agree on what "the same principal" means.
 
-    Release does not rely on this id for integrity: ``storedCallDigest`` binds the
-    whole frozen call and the PEP's foreign-principal guard runs before any
-    transition. This makes the id itself say the same thing they do.
+    Release executes the stored frozen call, never anything the id encodes:
+    ``storedCallDigest`` records exactly which call ran, and the PEP's
+    foreign-principal guard runs before any transition. Binding the principal makes
+    the id itself say the same thing they do.
     """
     # Spelled field-by-field (not via a local alias) so test_pdp_corpus's AST
     # read-surface guard sees exactly which principal fields the engine reads.
