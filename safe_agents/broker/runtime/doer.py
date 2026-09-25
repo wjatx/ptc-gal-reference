@@ -21,6 +21,9 @@ Confinement guards:
     redacted from its message — the Doer is the only layer that holds the credential,
     so it is the only place that can guarantee the secret never rides out on an
     exception into the audit 'error' field, the WAL, or a log line.
+  - A credential that fails to resolve is re-raised as CredentialResolutionError, a
+    ConnectorExecutionError subclass, so an allowed call whose credential could not
+    be obtained is audited like any other execution failure (#35).
 
 Exports:
     Doer                    — the capability-confined executor.
@@ -28,6 +31,8 @@ Exports:
     ConfinementError        — raised when execute() gets a non-permitted decision.
     ConnectorExecutionError — raised when the underlying connector call fails (credential
                               redacted); carries a clean, secret-free message.
+    CredentialResolutionError — the ConnectorExecutionError raised when the credential
+                              itself cannot be resolved; names leaf and exception type.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ from safe_agents.broker.schemas import BrokeredCall, Decision
 from safe_agents.broker.schemas.decision import Transform
 
 from .connector import Connector, Credential
-from .credentials import CredentialProvider, StaticSecret
+from .credentials import CredentialProvider, CredentialStrategyError, StaticSecret
 from .secrets import SecretsProvider
 
 logger = logging.getLogger(__name__)
@@ -120,6 +125,46 @@ class ConnectorExecutionError(Exception):
     def __init__(self, message: str, *, refused: bool = False) -> None:
         super().__init__(message)
         self.refused = refused
+
+
+class CredentialResolutionError(ConnectorExecutionError):
+    """The gate allowed the call, but the connector's credential could not be resolved.
+
+    A :class:`ConnectorExecutionError` so the PEP records it exactly as it records a
+    connector failure: ``decision=allow, outcome=failed``, the WAL entry compensated
+    or escalated, the idempotency key burned (#35). Before this existed a resolution
+    failure escaped the PEP uncaught and the allowed call left no audit record.
+
+    It is a failure, never a refusal (``refused`` is always False): no control said
+    no, the execution step broke before the connector was reached.
+
+    The message names the connector, the op, the secret leaf the Doer asked for, the
+    strategy and the exception TYPE. It carries the underlying message only for a
+    :class:`CredentialStrategyError`, whose messages the base authors and which never
+    interpolate a token. Any other exception comes from a secrets backend or an
+    injected fetcher, whose message is not ours to vouch for (a file provider's names
+    its path, a cloud SDK's can name account and resource identifiers), so only its
+    type is kept. The same text reaches the WAL and, on a retry under the same
+    idempotency key, the refusal reason the AGENT sees, which is why the tape's
+    broker-private status is not enough to justify passing it through.
+    """
+
+    def __init__(self, message: str, *, secret_leaf: str) -> None:
+        super().__init__(message, refused=False)
+        self.secret_leaf = secret_leaf
+
+
+def _credential_failure_message(
+    tool: str, op: str, secret_leaf: str, strategy: object, exc: Exception
+) -> str:
+    """The audit-safe description of a credential that failed to resolve."""
+    detail = type(exc).__name__
+    if isinstance(exc, CredentialStrategyError):
+        detail = f"{detail}: {exc}"
+    return (
+        f"connector {tool!r} op {op!r} failed: credential could not be resolved "
+        f"(strategy {type(strategy).__name__}, secret leaf {secret_leaf!r}): {detail}"
+    )
 
 
 @dataclass
@@ -207,6 +252,11 @@ class Doer:
             If decision.kind is not allow or transform.
         ValueError
             If no connector is registered for call.tool.
+        CredentialResolutionError
+            If the connector's credential cannot be resolved (a ConnectorExecutionError,
+            so the PEP audits it as ``outcome="failed"``).
+        ConnectorExecutionError
+            If the connector call itself fails or is refused.
         """
         if decision.kind not in ("allow", "transform"):
             raise ConfinementError(
@@ -242,11 +292,36 @@ class Doer:
         # needs, so a single brokered call burns two grants and fails on the
         # second. Found live against a real brokerage in #238; a static secret hides it
         # completely, which is why every prior proof passed.
+        #
+        # A resolution failure is an EXECUTION failure of an allowed call, so it is
+        # raised as a ConnectorExecutionError and lands on the tape as outcome
+        # "failed" (#35). It used to escape uncaught, leaving an allowed call with
+        # no audit record and only the WAL intent behind it.
         strategy = self._credential_strategies.get(call.tool, self._default_strategy)
         if getattr(connector, "uses_credential", True):
-            credential = strategy.resolve(
-                secrets=self._secrets, secret_name=self._secret_name_for(call.tool)
-            )
+            secret_leaf = self._secret_name_for(call.tool)
+            try:
+                credential = strategy.resolve(
+                    secrets=self._secrets, secret_name=secret_leaf
+                )
+            except Exception as exc:
+                # Type only on the log line, as close() does; the message rides on
+                # the exception below under the redaction rule its class documents.
+                logger.error(
+                    "credential for connector %r (secret leaf %r) could not be "
+                    "resolved: %s",
+                    call.tool,
+                    secret_leaf,
+                    type(exc).__name__,
+                )
+                # from None: the original may carry a backend message or, for a
+                # misbehaving strategy, credential material in its args.
+                raise CredentialResolutionError(
+                    _credential_failure_message(
+                        call.tool, op, secret_leaf, strategy, exc
+                    ),
+                    secret_leaf=secret_leaf,
+                ) from None
         else:
             credential = ""
 

@@ -15,6 +15,7 @@ Public API:
   DoerResult       — outcome of one execute() call.
   ConfinementError — raised by Doer when called with a non-permitted decision.
   ConnectorExecutionError — raised by Doer when the connector call fails (credential redacted).
+  CredentialResolutionError — the ConnectorExecutionError raised when the credential cannot be resolved.
   SecretsProvider  — Protocol for credential fetch (injected into Doer).
   FakeSecretsProvider          — in-memory fake for tests.
   LocalFileSecretsProvider     — reads creds from a 0600 JSON file (local arm).
@@ -36,7 +37,13 @@ from .credentials import (
     StaticSecret,
     build_credential_strategies,
 )
-from .doer import ConfinementError, ConnectorExecutionError, Doer, DoerResult
+from .doer import (
+    ConfinementError,
+    ConnectorExecutionError,
+    CredentialResolutionError,
+    Doer,
+    DoerResult,
+)
 from .pep import AgentRequest, BrokerResponse, BrokerRuntime
 from .secrets import (
     DirSecretsProvider,
@@ -56,6 +63,7 @@ __all__ = [
     "DoerResult",
     "ConfinementError",
     "ConnectorExecutionError",
+    "CredentialResolutionError",
     # secrets
     "SecretsProvider",
     "FakeSecretsProvider",

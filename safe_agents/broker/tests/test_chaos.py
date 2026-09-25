@@ -1,9 +1,11 @@
 """Chaos tests: injected dependency faults must produce loud failures.
 
 The invariant: when any broker dependency (enforcement store, audit sink,
-secrets provider, connector) fails, the broker round-trip must surface an
-exception — never return a BrokerResponse with decision_kind="allow" that
-would make the fault look like a success.
+secrets provider, connector) fails, the broker round-trip must never return a
+BrokerResponse with decision_kind="allow" that would make the fault look like a
+success. A store or audit fault surfaces as an exception; a connector or
+credential failure of an allowed call becomes a deny-shaped reply with an
+outcome="failed" audit record (sa#102, #35).
 
 Each test wires one fault-injecting fake from broker.chaos into an otherwise
 valid BrokerRuntime and calls handle_request() against an operation whose
@@ -232,24 +234,37 @@ def test_audit_sink_failure_is_loud_not_silent_success():
 #
 # The Doer fetches the connector credential at execute time.  If the Secrets
 # Manager call fails, the connector never receives a credential and must not
-# be called.  The exception must propagate loudly.
+# be called.  It must never look like a success either.
+#
+# It is NOT a store/audit fault, though: the broker's own machinery is intact and
+# the PDP allowed the call, so it is an execution failure of an allowed call and
+# is recorded as one (#35). Before #35 this test asserted the exception escaped,
+# which is exactly how an allowed call ended up with no audit record.
 # ---------------------------------------------------------------------------
 
 
-def test_secrets_failure_is_loud():
-    """fetch_secret raises → handle_request propagates SecretsError; connector not called."""
+def test_secrets_failure_is_audited_never_silent():
+    """fetch_secret raises → failed audit + deny-shaped reply; connector not called."""
     stub_connector = StubConnector(result={"event_id": "evt-4"})
+    audit_sink = InMemorySink()
     runtime = _make_runtime(
         connector=stub_connector,
         secrets=FaultSecretsProvider(),
+        audit_sink=audit_sink,
     )
 
-    with pytest.raises(SecretsError):
-        runtime.handle_request(_calendar_request())
+    response = runtime.handle_request(_calendar_request())
 
+    assert response.decision_kind == "deny"
+    assert response.execution_outcome == "failed"
     assert len(stub_connector.calls) == 0, (
         "connector must not execute when the secrets fetch fails"
     )
+    records = audit_sink.records()
+    assert [(r.decision, r.outcome) for r in records] == [("allow", "failed")]
+    assert SecretsError.__name__ in (records[0].error or "")
+    # The backend's own message stays off the tape; only its type is recorded.
+    assert "simulated Secrets Manager failure" not in (records[0].error or "")
 
 
 # ---------------------------------------------------------------------------

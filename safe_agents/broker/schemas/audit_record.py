@@ -43,7 +43,8 @@ class AuditRecord(BaseModel):
     # `refused` is the #281 member: a control REFUSED the call after the PDP
     # decided — two-key MCP admission is the first — so nothing was attempted.
     # It is distinct from `denied` (the PDP itself said no, before execution was
-    # ever reached) and from `failed` (the effect was attempted and broke).
+    # ever reached) and from `failed` (the execution step broke: the effect was
+    # attempted, or its credential could not be resolved, #35 -- `error` says which).
     # Without it a two-key refusal is shape-identical to a network blip, and
     # anything counting refusals counts none of them.
     outcome: Literal["executed", "denied", "held", "refused", "failed"]

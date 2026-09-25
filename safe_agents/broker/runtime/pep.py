@@ -1231,8 +1231,12 @@ class BrokerRuntime:
             so enforce() can run its saga (compensate/escalate the WAL entry) and the
             PEP can turn it into a clean deny.
 
-            Only the connector call itself is wrapped: a secrets/store/audit fault must
-            still surface loudly (chaos invariant) rather than masquerade as a deny.
+            Only the Doer's execution step is wrapped: a store/audit fault must still
+            surface loudly (chaos invariant) rather than masquerade as a deny. A
+            credential that fails to resolve is NOT such a fault: the broker's own
+            machinery is intact and the call was allowed, so the Doer raises it as a
+            CredentialResolutionError and it is recorded here like any other execution
+            failure (#35). Before that it escaped with no audit record at all.
             """
             try:
                 doer_result = self._doer.execute(brokered_call, effective)
@@ -1392,8 +1396,9 @@ class BrokerRuntime:
         # A connector failure propagates out of enforce() as ConnectorExecutionError
         # (after enforce() has marked the WAL entry compensated/escalated). We catch
         # ONLY that here and return a clean deny-shaped response instead of a 500 — the
-        # audit record with outcome="failed" was already written inside _executor. Every
-        # other fault (store/secrets/audit) still propagates loudly.
+        # audit record with outcome="failed" was already written inside _executor. That
+        # includes a credential that could not be resolved (CredentialResolutionError,
+        # #35). Every other fault (store/audit) still propagates loudly.
         try:
             result = enforce(
                 call,

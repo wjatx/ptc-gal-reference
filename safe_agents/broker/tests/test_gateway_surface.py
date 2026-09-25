@@ -287,6 +287,12 @@ def _drop_secrets(runtime) -> None:
     runtime._doer._secrets = FakeSecretsProvider({})
 
 
+def _break_audit(runtime) -> None:
+    from safe_agents.broker.chaos import FaultAuditSink
+
+    runtime._audit_sink = FaultAuditSink()
+
+
 def _leave_alone(runtime) -> None:  # noqa: ARG001
     pass
 
@@ -334,11 +340,22 @@ class TestOutcomesReadDifferently:
             pytest.param(
                 "search__query",
                 _drop_secrets,
+                "deny",
+                "failed",
+                "search.query was allowed by the broker but failed at the connector",
+                "unknown secret",
+                # #35: a missing credential is an execution failure of an allowed
+                # call, audited as one. It used to escape as an internal error.
+                id="missing-secret-is-an-execution-failure",
+            ),
+            pytest.param(
+                "search__query",
+                _break_audit,
                 "error",
                 None,
-                "search.query did not complete: the broker hit an internal error (KeyError)",
-                "unknown secret",
-                id="missing-secret-is-framed-not-raw",
+                "search.query did not complete: the broker hit an internal error (AuditError)",
+                "simulated",
+                id="broker-internal-fault-is-framed-not-raw",
             ),
         ],
     )
@@ -355,3 +372,16 @@ class TestOutcomesReadDifferently:
         assert result.execution_outcome == execution_outcome
         assert result.text.startswith(prefix), result.text
         assert absent not in result.text
+
+    def test_missing_secret_leaves_one_failed_allow_record(self, surface) -> None:
+        """#35: the reply above is only half of it; the tape must hold the call too."""
+        gateway, sink = surface
+        _drop_secrets(gateway._runtime)
+        before = len(sink.records())
+
+        gateway.call("search__query", {"query": "broker"})
+
+        new = sink.records()[before:]
+        assert [(r.decision, r.outcome) for r in new] == [("allow", "failed")]
+        assert "credential could not be resolved" in (new[0].error or "")
+        assert "KeyError" in (new[0].error or "")

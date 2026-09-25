@@ -239,7 +239,7 @@ class GatewaySurface:
                 AgentRequest(tool=tool, op=op, args=arguments)
             )
         except Exception as exc:  # noqa: BLE001 — frame it; never leak internals
-            # The broker raised instead of replying (a secrets, store or audit fault;
+            # The broker raised instead of replying (a store or audit fault;
             # `pep.py` lets those surface loudly rather than dress them as a deny).
             # There is no decision to report, so the text claims none: it does not
             # say the gate allowed or refused. The detail goes to stderr for the
