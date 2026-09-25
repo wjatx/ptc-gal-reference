@@ -1,11 +1,17 @@
 # Broker-service bringup runbook
 
-Bringing the persistent broker Fargate service (the #98 two-box topology) up from a torn-down
-floor. The floor is `cdk destroy`'d between sessions for cost, and teardown **force-deletes the
-per-agent secrets** — so a fresh bringup is a specific ordered sequence, not just `cdk deploy`.
-This runbook captures it (learned the hard way; see the "why it bites" notes).
+Bringing the persistent broker Fargate service (the broker in its own box, apart from the agent)
+up from a torn-down floor, for the model-driven smoke agents. The floor is `cdk destroy`'d between
+sessions for cost. Secrets live outside every stack and the grants table goes with the State
+stack, so a fresh bringup is a specific ordered sequence, not just `cdk deploy`. This runbook
+captures it (learned the hard way; see the "why it bites" notes).
 
-All commands from the repo root unless noted. `us-east-1`, `development`.
+To see the broker decide calls on AWS without a model or any third-party credential, follow the
+AWS tour in `docs/evaluating.md` instead; it is the shorter path and is proven end to end.
+
+All commands from the repo root unless noted, with the repository's virtual environment active
+(root `README.md`), against `development` in your AWS CLI's default region. Only the
+`secureNetwork: true` topology is region-bound (it is built for `us-east-1`).
 
 > **Environment ownership.** This runbook targets `development`, an ephemeral floor, and the
 > routine teardown it describes is sanctioned only there. The same sequence works for a durable
@@ -24,6 +30,7 @@ All commands from the repo root unless noted. `us-east-1`, `development`.
 - The infra floor stacks (`SafeAgents-{Network,State,Identity}-development`) deployed:
   `cd infra && npx cdk deploy SafeAgents-Network-development SafeAgents-State-development SafeAgents-Identity-development -c environment=development --require-approval never`
 - A broker image buildable locally (podman). arm64 (the Fargate task is arm64).
+- The virtual environment from the root `README.md`; its `[dev]` extra carries boto3 for seeding.
 
 ## 1. Deploy Compute at desiredCount=0 FIRST
 
@@ -38,31 +45,35 @@ aws cloudformation delete-stack --stack-name SafeAgents-Compute-development
 aws cloudformation wait stack-delete-complete --stack-name SafeAgents-Compute-development
 
 cd infra && npx cdk deploy SafeAgents-Compute-development \
-  -c environment=development -c brokerDesiredCount=0 --require-approval never
+  -c environment=development -c brokerDesiredCount=0 --require-approval never \
+  -c brokerManifestPath=/app/safe_agents/broker/prototype/example_manifest.yaml
 ```
+
+`brokerManifestPath` is the manifest's path inside the image. The broker runs on the DynamoDB
+store, where an unset `BROKER_MANIFEST` refuses to boot rather than fall back to an example, so
+the service never becomes healthy without it (`docs/cdk-context-contract.md`). A consumer names
+its own manifest from its own image layer here.
 
 At 0 tasks the service stabilizes immediately and creates the cluster, the ECR repos, and the
 Cloud Map namespace (`broker.safe-agents.local`).
 
 ## 2. Build + push the broker image
 
-> **Rebuilding onto a live floor picks up merged-but-undeployed PDP changes — check what
-> behavior shifts.** e.g. sa#137 (merged 2026-07-07): once a rebuilt broker deploys, reads draw
-> the cap budget, an **in-loop**-granted external read escalates instead of allowing (production
-> grants are all on-loop today, so nothing gates until a grant is demoted), and the query-egress
-> knobs are available (off unless the envelope sets them). Audit the seeded grant levels +
-> envelope knobs against the new rule table before redeploying over `production`.
+> **Rebuilding onto a live floor picks up merged-but-undeployed decision-rule changes.** Before
+> redeploying over an environment with grants in force, read the git log for changes to the rule
+> table and envelope knobs since the running image was built, and audit the seeded grant levels
+> against them. A change to how a grant level escalates can turn an allow into a hold.
 
 The broker image is identical local/Fargate; build it from `safe_agents/arms/local/Containerfile.broker`
-(builds from repo root — it COPYs `broker/` + the model-proxy stub). arm64:
+(builds from repo root; it copies `pyproject.toml`, `README.md` and `safe_agents/`). arm64:
 
 ```
 podman build --platform linux/arm64 -t safe-agents-broker:dev -f safe_agents/arms/local/Containerfile.broker .
 
 REPO="$(aws ssm get-parameter --name /safe-agents/development/ecr-broker-repo-uri --query Parameter.Value --output text)"
 aws ecr get-login-password | podman login --username AWS --password-stdin "${REPO%%/*}"
-# NOTE: push via the docker:// transport form. `podman push $REPO:latest` has mangled the tag
-# ("latest" -> "atest" in the registry path) — use the explicit destination:
+# Keep the braces: in zsh, `$REPO:latest` reads `:l` as a history modifier and pushes to a
+# repository path ending in "atest".
 podman push safe-agents-broker:dev "docker://${REPO}:latest"
 ```
 
@@ -72,40 +83,40 @@ The broker needs the HMAC secret to START; the grants + connector token + agent 
 before a capstone round-trip. The HMAC used to **seed** grants must equal the one the broker
 **reads** (else every grant quarantines on read), so capture it:
 
-The broker task runs with `BROKER_ENVELOPE_LOAD=store` (sa#136 Slice B) — it LOADS its in-force
+The broker task runs with `BROKER_ENVELOPE_LOAD=store`, so it LOADS its in-force
 risk envelope from the envelope store (co-located in the grants table), not the manifest. So the
-seed order is **`seed_envelope` → `seed_grants` → deploy**: the envelope must exist first, because
-`seed_grants` stamps each grant with the loaded envelope's hash, and the broker fails its boot
+seed order is **`seed_envelope` → `grants.commands seed` → deploy**: the envelope must exist first,
+because the seed stamps each grant with the loaded envelope's hash, and the broker fails its boot
 fast (fail-closed) if no envelope is seeded.
 
 ```
 HMAC="$(python3 -c 'import secrets;print(secrets.token_hex(32))')"
 aws secretsmanager create-secret --name safe-agents/development/broker-hmac-key --secret-string "$HMAC"
 
-# envelope — MUST run before seed_grants (grants stamp the loaded envelope's hash). Seeds the
+# envelope — MUST run before the grant seed (grants stamp the loaded envelope's hash). Seeds the
 # agents/<name>.yaml `envelope:` block into the store keyed by the broker's principal:
 BROKER_GRANTS_TABLE=safe-agents-development-grants \
   BROKER_ENVELOPE_MANIFEST=safe_agents/broker/prototype/example_manifest.yaml \
-  broker/.venv/bin/python -m safe_agents.broker.prototype.seed_envelope
+  python -m safe_agents.broker.prototype.seed_envelope
 # expect "[seed] OK polarity=... written and read back."
 
-# grants — run with the SAME HMAC + the grants table (module moved in the sa#106 SDK
-# extraction; run from the REPO ROOT). If the environment's broker task was deployed with a
-# -c brokerGrantClasses=... override (development bringups do this so the arm capstones'
-# github.whoami is served), set the SAME BROKER_GRANT_CLASSES here or the extra classes
-# never seed:
+# grants — run with the SAME HMAC, the grants table, and the local path of the manifest the
+# image bakes. If the broker task was deployed with a -c brokerGrantClasses=... override
+# (development bringups do this so the arm capstones' github.whoami is served), set the SAME
+# BROKER_GRANT_CLASSES here or the extra classes never seed:
 BROKER_GRANTS_TABLE=safe-agents-development-grants BROKER_HMAC_KEY="$HMAC" \
-  BROKER_ENVELOPE_LOAD=store \
-  broker/.venv/bin/python -m safe_agents.broker.prototype.seed_grants
-# expect "all N grants seeded and verified."
-# BROKER_ENVELOPE_LOAD=store makes seed_grants stamp grants with the STORE envelope's hash —
+  BROKER_MANIFEST=safe_agents/broker/prototype/example_manifest.yaml BROKER_ENVELOPE_LOAD=store \
+  python -m safe_agents.broker.grants.commands seed
+# expect "N created, 0 skipped, 0 failed". Bootstrap records are UNSIGNED unless an issuer
+# signing key is configured, and the command says so.
+# BROKER_ENVELOPE_LOAD=store makes the seed stamp grants with the STORE envelope's hash —
 # the same one the deployed broker loads — so they verify (not the manifest's, which could diverge).
 
 # github connector credential — the RAW token (used as `Bearer <value>`), NOT json:
 aws secretsmanager create-secret --name safe-agents/development/connectors/github \
   --secret-string "$(gh auth token)"
 
-# search connector credential (sa#133) — JSON with provider + key; the endpoint is
+# search connector credential — JSON with provider + key; the endpoint is
 # code-resident per provider, so the credential carries no URL to misconfigure. The
 # broker task's egress must permit api.tavily.com (the AGENT allowlists don't apply;
 # this is the broker's own subnet/proxy posture — verify before seeding the grant).
@@ -147,14 +158,19 @@ The Cloud Map A record is `broker.safe-agents.local`; confirm it resolves to the
 ## Gotchas that bite (each cost a debug cycle)
 
 - **brokerRole needs `s3:ListBucket` AND `s3:GetObject` (+`kms:Decrypt`)** on the audit surface,
-  not just `PutObject`. The #104 audit resume (`S3ObjectLockSink.resuming`) lists keys to find the
+  not just `PutObject`. The audit resume (`S3ObjectLockSink.resuming`) lists keys to find the
   max sequence number, then READS that record's body to compute the previous hash for the chain
-  link (sa#132) — without either grant the broker crash-loops on boot with `AccessDenied`. The
+  link. Without either grant the broker crash-loops on boot with `AccessDenied`. The
   GetObject case is nastier: it passes on an empty bucket (fresh bringup) and only bites on the
   first restart AFTER real audit records exist. Both fixed in `infra/lib/identity-stack.ts`;
   tamper-evidence rests on Object Lock + the hash chain, not read-denial.
 - **desiredCount=0 on the first Compute deploy** (§1) — the #1 cause of a rolled-back stack.
-- **Push via `docker://` transport** (§2) — the bare `$REPO:latest` form mangled the tag.
+- **Brace `${REPO}` when pushing** (§2): in zsh the bare `$REPO:latest` form mangles the tag.
 - **Same HMAC to seed and read** (§3) — a mismatch quarantines every grant silently.
-- **Teardown force-deletes the 5 per-agent secrets** so their names free up for immediate
-  redeploy — always re-seed on a fresh bringup.
+- **Secrets outlive the stacks.** `cdk destroy` leaves every secret above in place. Delete them
+  with `--force-delete-without-recovery` if you want the names free for the next bringup: a
+  secret in its recovery window blocks re-creating the same name. The grants go with the State
+  stack, so always re-seed on a fresh bringup.
+- **Clear the CDK context after a teardown** (`npx cdk context --clear` in `infra/`). Compute
+  looks up the network ids at synth and caches them in `infra/cdk.context.json`, so a stale cache
+  fails the next Compute deploy with a Route 53 `InvalidVPCId` on the Cloud Map namespace.
