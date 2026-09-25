@@ -54,34 +54,38 @@ the defect this cost us, and a block to paste into your project's agent instruct
 
 ## Quickstart
 
-No cloud account is needed for the parts you can check yourself.
+No cloud account is needed for the parts you can check yourself. You need Python 3.12 or newer
+and git. On Windows, run the same steps in PowerShell, creating the environment with
+`py -3.12 -m venv .venv` and activating it with `.venv\Scripts\Activate.ps1`. CI does not yet
+run on Windows, so a failure there is worth an issue.
 
 ```bash
-pip install -e .
+git clone https://github.com/wjatx/ptc-gal-reference
+cd ptc-gal-reference
+python3 -m venv .venv && source .venv/bin/activate
 
-# The full suite.
-python3 -m pytest
-```
+# The [dev] extra carries pytest, the MCP SDK and the AWS test doubles.
+# A bare `pip install -e .` cannot run the suite or the gateway demo below.
+pip install -e ".[dev]"
 
-The **conformance statement** reads the specifications, which are not vendored here. Clone them
-alongside and point the extractor at the checkout:
+# The specifications are not vendored. The tests look for them in spec/.
+git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
 
-```bash
-git clone https://github.com/wjatx/ptc-gal-standards
+# The full suite, from the repository root.
+python -m pytest
 
 # 82 clauses, marker state, and the extraction self-checks.
-python3 -m safe_agents.contract.spec_clauses --summary --spec-dir ptc-gal-standards
+python -m safe_agents.contract.spec_clauses --summary --spec-dir spec
 
 # Our completed statement, and the blank proforma an independent implementer would fill.
-python3 -m safe_agents.contract.spec_clauses --pics-ri --spec-dir ptc-gal-standards
-python3 -m safe_agents.contract.spec_clauses --pics   --spec-dir ptc-gal-standards
+python -m safe_agents.contract.spec_clauses --pics-ri --spec-dir spec
+python -m safe_agents.contract.spec_clauses --pics    --spec-dir spec
 ```
 
-Without that checkout the suite still runs green: the handful of tests that compare spec text
-against shipped schemas skip rather than fail, and say why.
-
-Run `pytest` from the repository root rather than narrowing it to `safe_agents/`: the reliability
-library the watcher depends on carries tests the narrower path silently skips.
+Without the `spec/` checkout the suite still runs green: the handful of tests that compare spec
+text against shipped schemas skip rather than fail, and say why. Run `pytest` from the repository
+root rather than narrowing it to `safe_agents/`: the reliability library the watcher depends on
+carries tests the narrower path silently skips.
 
 ### Watch it refuse something
 
@@ -118,9 +122,10 @@ command is the line above. Every call the harness then makes is decided and reco
 executes.
 
 Two honest notes so the first five minutes are not confusing. Calling a **declared** tool in this
-default configuration reaches the gate, passes it, and then fails at the connector for want of a
-seeded credential — that is execution failing, not the gate refusing, and the two read differently
-on purpose. And note `grant load mode: seed` in the banner: that is the default local path, and it
+default configuration reaches the gate and passes it. `search__query` then makes a real request to
+Tavily with a placeholder key, which Tavily rejects, and the reply says the broker allowed the call
+and it failed at the connector. That is execution failing, not the gate refusing, and the two read
+differently on purpose. No real key ships in this repository. And note `grant load mode: seed` in the banner: that is the default local path, and it
 is the one described under "What we would most like challenged" in
 [`docs/lf-reference-implementation.md`](docs/lf-reference-implementation.md). You are looking at the
 configuration whose weakest leg we name there.
