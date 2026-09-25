@@ -685,13 +685,23 @@ def test_run_demotion_duplicate_ledger_key_is_typed_conflict():
     exception. Shape: two level-CHANGING passes stamped with the same ts (the
     grant reset in between) — the second record's key collides. A record-only
     repeat breach no longer reaches the collision: the same-day dedupe (#191)
-    returns "deduped" first."""
+    returns "deduped" first.
+
+    Since the ledger clock (#37) a sequential writer never collides with its
+    own records, so the collision here is the one that remains: a concurrent
+    writer whose ledger read did not see the other's append. The record store
+    models that by hiding its records from the clock's read."""
+
+    class _RacingReadRecordStore(InMemoryPromotionRecordStore):
+        def list_records(self, *args, **kwargs):
+            return []
+
     grant = make_grant(
         level=AutonomyLevel.out_of_loop,
         lastSafeLevel=AutonomyLevel.on_loop,
     )
     store = store_with_grant(grant)
-    record_store = InMemoryPromotionRecordStore()
+    record_store = _RacingReadRecordStore()
     ts = "2026-07-12T12:00:00+00:00"
 
     first = run_demotion(

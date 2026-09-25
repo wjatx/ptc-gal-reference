@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from safe_agents.broker.grants.ceremony import InMemoryPromotionRecordStore
+from safe_agents.broker.grants.ledger_clock import next_ledger_ts
 from safe_agents.broker.grants.sqlite_store import (
     SqliteGrantStore,
     SqlitePromotionRecordStore,
@@ -443,6 +444,18 @@ class TestRecordConformance:
             PRINCIPAL, ACTION_CLASS, None, ts_prefix="2026-07-25"
         )
         assert [r.ts for r in day_one] == [TS]
+
+    def test_ledger_clock_advances_past_a_same_tick_record(self, backend):
+        """The ledger clock (#37) reads through list_records on every backend:
+        a second record in the first one's tick lands 1 us later and lists
+        after it, including against a whole-second ts isoformat renders with
+        no fraction."""
+        backend.records.put_record(make_record(ts=TS), None)
+        nudged = next_ledger_ts(backend.records, PRINCIPAL, ACTION_CLASS, now=TS)
+        assert nudged == "2026-07-25T12:00:00.000001+00:00"
+        backend.records.put_record(make_promotion_record(ts=nudged), None)
+        records = backend.records.list_records(PRINCIPAL, ACTION_CLASS, None)
+        assert [r.ts for r in records] == [TS, nudged]
 
     def test_duplicate_record_refused(self, backend):
         backend.records.put_record(make_record(), None)

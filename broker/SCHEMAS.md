@@ -503,7 +503,11 @@ wrong role fails closed (`grant-lifecycle.md` §"Two signing roles").
 
 **Storage.** Records live in the grants table as append-only `RECORD#…` items
 (`pk = RECORD#<principal>#<actionClass>`, `sk = <ts>#<recordType>`), written via a
-conditioned UpdateItem so an existing record is never overwritten (`grants/store.py`). The stored
+conditioned UpdateItem so an existing record is never overwritten (`grants/store.py`). A record's
+`ts` comes from a hybrid logical clock per coordinate (`grants/ledger_clock.py`, #37): the wall
+clock, or one microsecond past the coordinate's last recorded `ts` when that is later, so `ts`
+stays near wall time and the sk order is the write order even for two records in one clock tick.
+The stored
 `data` string is the canonical serialization from §1 (sorted keys, no whitespace, ASCII) — the exact
 bytes the DSSE signature's subject digest binds, verified verbatim on read.
 

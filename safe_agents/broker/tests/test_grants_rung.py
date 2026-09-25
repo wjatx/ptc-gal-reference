@@ -34,7 +34,6 @@ Additional coverage:
 """
 
 import datetime
-import sys
 
 import pytest
 
@@ -829,15 +828,8 @@ class TestIllegalRaiseViaDemotionPath:
 
 
 class TestRoundTrip:
-    # Windows Python 3.12's wall clock advances about every 15.6 ms, so the two
-    # back-to-back promotions here share a ledger timestamp and the second is
-    # refused as a duplicate key. That is a real ledger defect on every platform
-    # (#37), only made likely by the coarse clock; the mark keeps it visible.
-    @pytest.mark.xfail(
-        sys.platform == "win32",
-        reason="#37: ledger records keyed by wall-clock ts collide within one clock tick",
-        strict=False,
-    )
+    # The one-clock-tick variant of this round trip (Windows' ~15.6 ms clock,
+    # #37) lives in test_ledger_clock.py, under a frozen clock.
     def test_promote_then_demote_holds_invariants(self):
         """Promote in-loop → on-loop → out-of-loop, then demote back to in-loop."""
         # Step 1: start at in-loop

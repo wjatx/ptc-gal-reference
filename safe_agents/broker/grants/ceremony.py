@@ -47,6 +47,7 @@ from safe_agents.broker.grants.predicate import (
     evaluate_promotion_predicate,
 )
 from safe_agents.broker.ceremony_identity import attestation_for, is_same_operator
+from safe_agents.broker.grants.ledger_clock import next_ledger_ts
 from safe_agents.broker.grants.proposals import ProposalStore, proposal_expired
 from safe_agents.broker.grants.record_signing import canonical_record_payload
 from safe_agents.broker.grants.term import lapse_pending
@@ -178,6 +179,19 @@ class PromotionRecordStore(Protocol):
         PromotionRecord schema (SCHEMAS.md §7 is frozen). None = an unsigned
         append, byte-for-byte the pre-signing behavior.
         """
+        ...
+
+    def list_records(
+        self,
+        principal: Principal,
+        action_class: str,
+        session: object = None,
+        *,
+        ts_prefix: str | None = None,
+    ) -> list[PromotionRecord]:
+        """A coordinate's records in sk (chronological) order, by partition
+        Query. Every writer reads it: the ledger clock (grants/ledger_clock.py)
+        stamps each new record's ts from the coordinate's last one (#37)."""
         ...
 
 
@@ -706,7 +720,12 @@ class PromotionCeremony:
                 )
 
         # --- acceptance gate passed; write the records ---
-        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        # The ledger clock, not the raw wall clock (#37): strictly after the
+        # coordinate's last record, so a same-tick write neither collides nor
+        # sorts out of order. Stamped before the record is built and signed.
+        ts = next_ledger_ts(
+            self._record_store, proposal.principal, proposal.action_class, session=session
+        )
 
         predicate_text = predicate_result.reason
         if checker_verdict is not None:

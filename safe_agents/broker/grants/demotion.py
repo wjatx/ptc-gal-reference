@@ -24,7 +24,6 @@ See broker/grant-lifecycle.md §"Demotion — automatic, deterministic, no model
 
 from __future__ import annotations
 
-import datetime
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -32,6 +31,7 @@ from safe_agents.broker.schemas import Grant, PromotionRecord
 from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger
 from safe_agents.broker.schemas.promotion_record import DEMOTION_RATIFIER
 from safe_agents.broker.grants.ceremony import PromotionRecordStore
+from safe_agents.broker.grants.ledger_clock import next_ledger_ts
 from safe_agents.broker.grants.store import (
     GrantStore,
     GrantUpdateConflictError,
@@ -252,7 +252,10 @@ def apply_demotion(
         session: boto3 Session carrying the demotion IAM role; passed through
             to store.update_grant and record_store.put_record. The stores
             never assume roles themselves.
-        ts: ISO-8601 timestamp string; defaults to current UTC time.
+        ts: canonical ISO-8601 wall-clock reading; defaults to current UTC
+            time. The record's ts is the ledger clock's advance from it
+            (grants/ledger_clock.py, #37): equal to it unless the
+            coordinate already holds a record at or after it.
         record_signer: the EVALUATOR's RecordSigner (GAL §6.7.2's separate
             system identity), or None. When supplied, the demotion record is
             signed and the signature rides the same atomic write — a configured
@@ -279,7 +282,11 @@ def apply_demotion(
             "only call this after evaluate_demotion_triggers returns True"
         )
 
-    effective_ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat()
+    # The ledger clock (#37): ``ts`` (or the system clock) is the wall-clock
+    # reading, and the record lands strictly after the coordinate's last one.
+    effective_ts = next_ledger_ts(
+        record_store, grant.principal, grant.actionClass, now=ts, session=session
+    )
 
     # --- consistent re-read: distinguishes not-found from conflict cheaply ---
     current = store.get_grant(grant.principal, grant.actionClass)

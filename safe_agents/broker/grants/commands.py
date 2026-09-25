@@ -81,6 +81,7 @@ from safe_agents.broker.grants.ceremony import (
     PromotionCeremony,
     PromotionRecordStore,
 )
+from safe_agents.broker.grants.ledger_clock import next_ledger_ts
 from safe_agents.broker.grants.issuer_keys import (
     IssuerSigningConfigError,
     resolve_record_signer,
@@ -237,9 +238,19 @@ def seed_command(
     refuses first.
     """
     caller = _caller_identity(session)
-    ts = _utc_now(now).isoformat()
+    wall = _utc_now(now)
     created = skipped = failures = 0
     for template in grants:
+        # The ledger clock (#37), per coordinate: a coordinate that already
+        # holds a record (a grant deleted out of band, then re-seeded) gets a
+        # bootstrap ts strictly after it instead of a colliding one.
+        ts = next_ledger_ts(
+            record_store,
+            template.principal,
+            template.actionClass,
+            now=wall,
+            session=session,
+        )
         grant = template.model_copy(update={"promotedBy": caller, "ts": ts})
         record = PromotionRecord(
             recordType="bootstrap",

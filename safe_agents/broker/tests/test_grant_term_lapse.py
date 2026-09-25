@@ -23,7 +23,6 @@ What this file pins, in order:
 from __future__ import annotations
 
 import datetime
-import sys
 
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -575,13 +574,6 @@ def test_re_ratify_cannot_extend_a_term():
     assert refreshed.certifiedUntil == TERM
 
 
-# Windows Python 3.12's wall clock advances about every 15.6 ms, which makes this
-# real defect (#37) likely there; the mark keeps it visible until the fix lands.
-@pytest.mark.xfail(
-    sys.platform == "win32",
-    reason="#37: ledger records keyed by wall-clock ts collide within one clock tick",
-    strict=False,
-)
 def test_re_promotion_sets_a_new_term_and_clears_the_lapse():
     """Recovery is the ordinary upward path: after a lapse, a ratified
     promotion with fresh evidence carries a NEW term (the only way one is set)."""

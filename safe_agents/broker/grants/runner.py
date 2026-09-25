@@ -413,8 +413,9 @@ def derive_corroboration_failure(
 class DemotionLedgerStore(PromotionRecordStore, Protocol):
     """The runner's ledger seam: the append PLUS the same-day dedupe read.
 
-    Extends the ceremony's put_record-only Protocol (the ceremony never reads
-    the ledger); both provided implementations satisfy it."""
+    Now identical to the ceremony's PromotionRecordStore, which gained
+    list_records when every writer began reading the ledger for its clock
+    (grants/ledger_clock.py, #37). Kept as the runner's public name."""
 
     def list_records(
         self,

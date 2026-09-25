@@ -50,6 +50,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from safe_agents.broker.grants.ceremony import PromotionRecordStore
+from safe_agents.broker.grants.ledger_clock import next_ledger_ts
 from safe_agents.broker.grants.store import (
     GrantStore,
     GrantUpdateConflictError,
@@ -110,12 +111,18 @@ def _record_ts(now: datetime.datetime) -> str:
     return now.astimezone(datetime.UTC).isoformat()
 
 
-def build_lapse(grant: Grant, now: datetime.datetime) -> tuple[Grant, PromotionRecord]:
+def build_lapse(
+    grant: Grant, now: datetime.datetime, *, ts: str | None = None
+) -> tuple[Grant, PromotionRecord]:
     """Pure: the lowered grant and the lapse record for a grant owing a lapse.
 
     Raises LapseNotDueError when ``term.lapse_pending(grant, now)`` is false —
     this never builds a record for a grant with no term, a term not yet passed,
     or a grant already at/below lastSafeLevel.
+
+    ``ts`` is the record's stamp. apply_lapse passes the ledger clock's value
+    (grants/ledger_clock.py, #37); a pure caller with no ledger to read may
+    omit it, and ``now`` is used as-is.
     """
     if not lapse_pending(grant, now):
         raise LapseNotDueError(
@@ -123,7 +130,7 @@ def build_lapse(grant: Grant, now: datetime.datetime) -> tuple[Grant, PromotionR
             f"{now.isoformat()} (certifiedUntil={grant.certifiedUntil!r}, level="
             f"{grant.level.value!r}, lastSafeLevel={grant.lastSafeLevel.value!r})"
         )
-    ts = _record_ts(now)
+    ts = ts if ts is not None else _record_ts(now)
     updated = grant.model_copy(
         update={
             "level": grant.lastSafeLevel,
@@ -173,7 +180,10 @@ def apply_lapse(
     Raises LapseNotDueError, QuarantinedGrantError, LapseConflictError, or
     RecordAlreadyExistsError. Every raise writes nothing.
     """
-    updated, record = build_lapse(grant, now)
+    ts = next_ledger_ts(
+        record_store, grant.principal, grant.actionClass, now=now, session=session
+    )
+    updated, record = build_lapse(grant, now, ts=ts)
 
     current = store.get_grant(grant.principal, grant.actionClass)
     if current.quarantined:

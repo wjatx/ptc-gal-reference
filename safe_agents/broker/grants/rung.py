@@ -60,6 +60,7 @@ from safe_agents.broker.grants.ceremony import (
     PromotionRecordStore,
 )
 from safe_agents.broker.ceremony_identity import attestation_for
+from safe_agents.broker.grants.ledger_clock import next_ledger_ts
 from safe_agents.broker.grants.proposals import ProposalStore
 from safe_agents.broker.grants.demotion import (
     DemotionMetrics,
@@ -538,7 +539,8 @@ class RungStateMachine:
                 proposedBy and ratifiedBy — maker ≠ checker is not enforced
                 for tightening (narrowing autonomy needs no second party).
             session: boto3 Session passed through to the stores.
-            ts: ISO-8601 timestamp; defaults to current UTC time.
+            ts: canonical ISO-8601 wall-clock reading; defaults to current UTC
+                time. The record ts is the ledger clock's advance from it (#37).
             evidence: short free-text rationale for the ledger record.
 
         Returns:
@@ -595,7 +597,12 @@ class RungStateMachine:
                 "modified since it was read; re-read and retry"
             )
 
-        effective_ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat()
+        # The ledger clock (#37): ``ts`` (or the system clock) is the wall-clock
+        # reading, and the tightening record lands strictly after the
+        # coordinate's last record. Grant and record share the stamp.
+        effective_ts = next_ledger_ts(
+            self._record_store, grant.principal, grant.actionClass, now=ts, session=session
+        )
         from_level = grant.level
 
         updated = grant.model_copy(
