@@ -62,7 +62,8 @@ function lookupNetworkId(
  * Gates on Network + State + Identity (dependency wired in the entrypoint):
  *   - Network → VPC, broker subnets, broker/endpoint SGs (where the task runs + how it reaches AWS)
  *   - State   → the grants/counters/intents tables + audit bucket (the broker's runtime stores)
- *   - Identity → brokerRole (the task role; the broker's separate IAM identity)
+ *   - Identity → brokerRole (the task role; the broker's separate IAM identity), and agentRole
+ *     (the client task's role; zero authority)
  *
  * Phase C (image push) and Phase D (real grant flow) consume this stack's exports.
  */
@@ -100,12 +101,15 @@ export class ComputeStack extends Stack {
       | string
       | undefined;
 
-    // Optional context: -c brokerManifestPath=/app/agents/broker-manifest.yaml — the in-image
-    // path of the CONSUMER's AgentManifest (the consumer-image-layer pattern: a consumer builds
-    // FROM the base broker image, COPYs its manifests in, and points the broker at one here).
-    // Unset, the broker falls back to its checked-in example manifest — fine for smoke/dev
-    // bringups, never right for a real consumer's durable environment (wrong principal, wrong
-    // connectors). Never bake a consumer path in here (base stays agent-agnostic, sa#139).
+    // Context: -c brokerManifestPath=/app/agents/broker-manifest.yaml — the in-image path of the
+    // CONSUMER's AgentManifest (the consumer-image-layer pattern: a consumer builds FROM the base
+    // broker image, COPYs its manifests in, and points the broker at one here). Required for the
+    // broker to START: this task runs BROKER_STORE=dynamo, and on the dynamo arm an unset
+    // BROKER_MANIFEST refuses at boot rather than falling back to the checked-in example manifest
+    // (boot_config.resolve_manifest_path, #197/#205). The task exits, the service never reaches
+    // steady state, and the deployment circuit breaker rolls the rollout back. Synth does not
+    // throw on its absence, because a brokerDesiredCount=0 bringup legitimately deploys before any
+    // consumer image exists. Never bake a consumer path in here (base stays agent-agnostic, sa#139).
     const brokerManifestPath = this.node.tryGetContext('brokerManifestPath') as
       | string
       | undefined;
@@ -125,8 +129,8 @@ export class ComputeStack extends Stack {
         ? (JSON.parse(capabilityRolesCtx) as CapabilitySpec[])
         : (capabilityRolesCtx ?? []);
 
-    // Optional context: -c reuseComputeArtifacts=true — reference the ECR repos and broker log
-    // group by name instead of creating them. Needed when RE-creating this stack in a durable
+    // Optional context: -c reuseComputeArtifacts=true — reference the ECR repos and the broker
+    // and client log groups by name instead of creating them. Needed when RE-creating this stack in a durable
     // (RETAIN-polarity) environment: the repos and log group survive stack deletion by design
     // (images are the deployment artifact; see removalPolicyFor), so a fresh CREATE collides on
     // their names. First-time bringup in a clean account leaves this off.
@@ -325,7 +329,7 @@ export class ComputeStack extends Stack {
         // the broker a real connector/grant injection path.
         ...(grantClassesOverride ? { BROKER_GRANT_CLASSES: grantClassesOverride } : {}),
         // The consumer's AgentManifest path inside the (consumer-layered) image — see the
-        // brokerManifestPath context note above. Unset = the base image's example manifest.
+        // brokerManifestPath context note above. Unset = the broker refuses to boot.
         ...(brokerManifestPath ? { BROKER_MANIFEST: brokerManifestPath } : {}),
       },
       secrets: {
@@ -364,6 +368,57 @@ export class ComputeStack extends Stack {
       },
     });
 
+    // ── Client task (#42) ─────────────────────────────────────────────────────────────────────────
+    // A one-shot task that plays the agent: it sends the brokered calls named on its command line to
+    // broker.safe-agents.local and prints each decision as a JSON line (call_client). It exists so a
+    // deployed broker can be shown deciding without an LLM or a model credential in the loop. Not a
+    // service: an operator starts it with `aws ecs run-task`, overriding the container command with
+    // `--call TOOL.OP JSON_ARGS` pairs; the default command sends nothing and prints the registry.
+    //
+    // Its identity is the AGENT's, not the broker's. The task role is agentRole, which holds zero
+    // authority (IdentityStack #15), imported immutable so CDK can attach nothing to it; there are no
+    // secrets; and the execution role is its own, so it can pull the image and write its log stream
+    // and nothing else. If the client could reach a credential, the demonstration would be of a
+    // broker that decides for a caller who could have acted without it.
+    //
+    // It runs the broker image's `latest`, which carries the SDK the client lives in, with the
+    // broker entrypoint replaced. Placement is the run-task caller's: the agent subnets and agent SG
+    // Network already publishes (agent-subnet-ids, agent-sg-id), since the broker SG admits only the
+    // agent SG. In open mode those subnets are public, so the task needs assignPublicIp=ENABLED to
+    // pull its image; in secure mode the pull goes through the interface endpoints.
+    const agentRole = Role.fromRoleArn(this, 'AgentRole', importValue(env, 'agent-role-arn'), {
+      mutable: false,
+    });
+    const clientLogGroup = reuseArtifacts
+      ? LogGroup.fromLogGroupName(this, 'ClientLogs', `/safe-agents/${env}/client`)
+      : new LogGroup(this, 'ClientLogs', {
+          logGroupName: `/safe-agents/${env}/client`,
+          retention: RetentionDays.ONE_WEEK,
+          removalPolicy: removalPolicyFor(env),
+        });
+    const clientTaskDef = new ecs.FargateTaskDefinition(this, 'ClientTask', {
+      family: resourceName(env, 'client'),
+      cpu: 256,
+      memoryLimitMiB: 512,
+      taskRole: agentRole,
+      runtimePlatform: {
+        cpuArchitecture: ecs.CpuArchitecture.ARM64,
+        operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
+      },
+    });
+    clientTaskDef.addContainer('client', {
+      image: ecs.ContainerImage.fromEcrRepository(repo, 'latest'),
+      // Replace the broker entrypoint, so a run-task containerOverrides.command supplies only the
+      // client's arguments. No default command: the base image's ENTRYPOINT already reset the
+      // python image's CMD, so an un-overridden run sends no calls and prints the registry.
+      entryPoint: ['python3', '-m', 'safe_agents.broker.prototype.call_client'],
+      logging: ecs.LogDrivers.awsLogs({ logGroup: clientLogGroup, streamPrefix: 'client' }),
+      environment: {
+        BROKER_URL: `http://${SERVICE_DISCOVERY_NAME}.${NAMESPACE_NAME}:${TOOL_API_PORT}`,
+        PYTHONUNBUFFERED: '1',
+      },
+    });
+
     // ── Cross-stack outputs ───────────────────────────────────────────────────────────────────────
     // Phase C (image push) + later arms consume these.
     publish(this, env, 'cluster-name', cluster.clusterName);
@@ -374,5 +429,8 @@ export class ComputeStack extends Stack {
     publish(this, env, 'ecr-agent-repo-uri', agentRepo.repositoryUri);
     publish(this, env, 'ecr-agent-repo-name', agentRepo.repositoryName);
     publish(this, env, 'cloudmap-namespace-name', namespace.namespaceName);
+    // The family, not a revision ARN: run-task resolves a bare family to its latest ACTIVE
+    // revision, so the published value stays true across redeploys.
+    publish(this, env, 'client-task-family', clientTaskDef.family);
   }
 }

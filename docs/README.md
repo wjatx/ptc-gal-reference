@@ -199,7 +199,7 @@ it rather than copy it.
 ## Runbooks
 
 - `cdk-context-contract.md` — the twenty-five CDK context keys a deploy can take, sorted by
-  whether omitting one fails loudly, degrades silently, or lands a harmless default. Thirteen
+  whether omitting one fails loudly, degrades silently, or lands a harmless default. Twelve
   degrade silently, which is the reason to read this before any deploy or redeploy.
 - `broker-service-bringup.md` — ordered bringup of the persistent broker service from a torn-down
   floor: compute at zero tasks first, build and push the image, seed envelope then grants then

@@ -48,7 +48,7 @@ it there is that project's call, under whatever rules it works under.
   [wjatx/ptc-gal-standards](https://github.com/wjatx/ptc-gal-standards) alongside and pass
   `--spec-dir`. Without it the suite still runs green, and the tests that compare spec text
   against shipped schemas skip rather than fail, saying why.
-- Read `docs/cdk-context-contract.md` before touching `infra/`. Thirteen of the twenty-five
+- Read `docs/cdk-context-contract.md` before touching `infra/`. Twelve of the twenty-five
   context values degrade silently when omitted.
 - Claims about what is demonstrated against what is asserted belong to
   `docs/lf-reference-implementation.md`. Match it rather than restating it, and read

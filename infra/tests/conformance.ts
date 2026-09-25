@@ -11,7 +11,7 @@
 import { App, Tags } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { Environment } from '../lib/environment';
-import { resourceName, stackName } from '../lib/naming';
+import { exportName, resourceName, stackName } from '../lib/naming';
 import { NetworkStack } from '../lib/network-stack';
 import { StateStack } from '../lib/state-stack';
 import { IdentityStack } from '../lib/identity-stack';
@@ -1818,6 +1818,84 @@ function capabilityBrokerRoleGetsScopedAssumeRole(): boolean {
   return false;
 }
 
+// ── checks: Compute client task (#42) ─────────────────────────────────────────────────────────
+// The client task plays the agent, so its whole point is that it holds the agent's authority and
+// nothing more: were it given a secret or the broker's role, the demonstration would show a broker
+// deciding for a caller that could have acted without it. Located by FAMILY, not logical id, so a
+// construct rename cannot make these vacuously pass on a missing resource (each throws instead).
+const CLIENT_TASK_FAMILY = resourceName(ENV, 'client');
+
+function clientTaskDef(): [string, CfnResource] {
+  const found = resourcesOfType(computeDefaultTemplate, 'AWS::ECS::TaskDefinition').filter(
+    ([, r]) => r.Properties?.Family === CLIENT_TASK_FAMILY,
+  );
+  if (found.length !== 1) {
+    throw new Error(`expected one task definition with family ${CLIENT_TASK_FAMILY}, found ${found.length}`);
+  }
+  return found[0];
+}
+
+function clientTaskHasNoSecrets(): boolean {
+  const [, taskDef] = clientTaskDef();
+  const containers = (taskDef.Properties?.ContainerDefinitions ?? []) as Record<string, unknown>[];
+  if (containers.length === 0) throw new Error('client task definition has no containers');
+  for (const c of containers) {
+    const secrets = (c.Secrets ?? []) as { Name?: string }[];
+    if (secrets.length > 0) {
+      throw new Error(`client container ${String(c.Name)} carries secrets: ${secrets.map((x) => x.Name).join(', ')}`);
+    }
+  }
+  return true;
+}
+
+function clientTaskRoleIsAgentRole(): boolean {
+  const [, taskDef] = clientTaskDef();
+  const roleArn = JSON.stringify(taskDef.Properties?.TaskRoleArn);
+  const agentImport = JSON.stringify({ 'Fn::ImportValue': exportName(ENV, 'agent-role-arn') });
+  if (roleArn !== agentImport) {
+    throw new Error(`client task role is ${roleArn}, expected the imported agent role ${agentImport}`);
+  }
+  return true;
+}
+
+function clientTaskIsNotAService(): boolean {
+  const [clientId] = clientTaskDef();
+  for (const [id, svc] of resourcesOfType(computeDefaultTemplate, 'AWS::ECS::Service')) {
+    if (refId(svc.Properties?.TaskDefinition) === clientId) {
+      throw new Error(`service ${id} runs the client task definition`);
+    }
+  }
+  return true;
+}
+
+function clientExecutionRoleOnlyPullsAndLogs(): boolean {
+  // The execution role is the one identity on this task that touches AWS before the container
+  // starts, and a secret on the task definition would be fetched by it. So it must be the client's
+  // own (never the broker's, which holds GetSecretValue on the HMAC key) and hold only ECR pull and
+  // log writes, with no managed policy riding along.
+  const [, taskDef] = clientTaskDef();
+  const execArn = taskDef.Properties?.ExecutionRoleArn as { 'Fn::GetAtt'?: [string, string] } | undefined;
+  const execRoleId = execArn?.['Fn::GetAtt']?.[0];
+  if (!execRoleId) throw new Error(`client execution role is not a role in this stack: ${JSON.stringify(execArn)}`);
+  const execRole = computeDefaultTemplate.Resources[execRoleId];
+  if (execRole.Properties?.ManagedPolicyArns) {
+    throw new Error(`client execution role carries managed policies: ${JSON.stringify(execRole.Properties.ManagedPolicyArns)}`);
+  }
+  let statements = 0;
+  for (const [, policy] of resourcesOfType(computeDefaultTemplate, 'AWS::IAM::Policy')) {
+    const roles = (policy.Properties?.Roles ?? []) as unknown[];
+    if (!roles.some((r) => refId(r) === execRoleId)) continue;
+    const doc = policy.Properties?.PolicyDocument as { Statement?: Statement[] } | undefined;
+    for (const st of doc?.Statement ?? []) {
+      statements += 1;
+      const stray = actionsOf(st).filter((a) => !a.startsWith('ecr:') && !a.startsWith('logs:'));
+      if (stray.length > 0) throw new Error(`client execution role grants ${stray.join(', ')}`);
+    }
+  }
+  if (statements === 0) throw new Error('client execution role has no policy statements (cannot pull its image)');
+  return true;
+}
+
 // ── the conformance table ──────────────────────────────────────────────────────────────────────
 interface Row {
   id: string; // checklist reference
@@ -2354,6 +2432,31 @@ const ROWS: Row[] = [
     group: 'Compute',
     desc: 'the broker role gains sts:AssumeRole scoped to exactly the capability role (not Resource: *)',
     check: capabilityBrokerRoleGetsScopedAssumeRole,
+  },
+  // Compute client task (#42)
+  {
+    id: 'compute/client-task-no-secrets',
+    group: 'Compute',
+    desc: 'the client task definition injects no secrets',
+    check: clientTaskHasNoSecrets,
+  },
+  {
+    id: 'compute/client-task-role-is-agent-role',
+    group: 'Compute',
+    desc: "the client task's role is the imported zero-authority agent role, not the broker role",
+    check: clientTaskRoleIsAgentRole,
+  },
+  {
+    id: 'compute/client-task-not-a-service',
+    group: 'Compute',
+    desc: 'no ECS service runs the client task definition (it is run on demand with run-task)',
+    check: clientTaskIsNotAService,
+  },
+  {
+    id: 'compute/client-execution-role-pull-and-logs-only',
+    group: 'Compute',
+    desc: "the client's execution role is its own and grants only ECR pull and log writes",
+    check: clientExecutionRoleOnlyPullsAndLogs,
   },
 ];
 

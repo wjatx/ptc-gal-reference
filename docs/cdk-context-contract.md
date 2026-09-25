@@ -15,9 +15,9 @@ required in the sense of stopping you. Sort by what a missing value *does*:
 
 | Mode | What you see | How many |
 |---|---|---|
-| **(a) Hard fail** | synth or deploy stops with an error naming the key | 6 |
-| **(b) Silent degradation** | deploy succeeds, and a resource, a gate or a control is quietly absent | 13 |
-| **(c) Harmless default** | deploy succeeds with a documented, intended default | 6 |
+| **(a) Hard fail** | synth or deploy stops, or the service never starts | 9 |
+| **(b) Silent degradation** | deploy succeeds, and a resource, a gate or a control is quietly absent | 12 |
+| **(c) Harmless default** | deploy succeeds with a documented, intended default | 4 |
 
 Mode (b) is the whole hazard. A deploy that omits `channelsVerifyKeysArn` comes up green with
 signature verification switched off. A redeploy that omits `makerTrustedPrincipals` comes up green
@@ -49,6 +49,17 @@ another key was supplied:
   relation to `channelsMissileerDrainImageTag`.
 - Setting either drain image tag while `channelsDeployFunction=false` throws rather than deploying
   no drain, because the drain construct lives past that flag's early return.
+
+`brokerManifestPath` is required for a different reason: the broker cannot start without it. It
+sets `BROKER_MANIFEST`, and the broker task runs `BROKER_STORE=dynamo`, where an unset manifest is a
+boot refusal (`BrokerConfigError`, "refusing to fall back to the checked-in example manifest"), not
+a fallback. Synth does not check it, because a `brokerDesiredCount=0` bringup legitimately deploys
+before any consumer image exists. So the failure arrives at deploy time with one or more tasks: each
+task exits at boot, the service never reaches steady state, and the deployment circuit breaker rolls
+the rollout back. CloudFormation reports the circuit breaker; only the broker log group
+(`/safe-agents/<env>/broker`) names the missing variable. The path names a manifest inside the
+image, normally one a consumer layer built `FROM` the base broker image copies in;
+`examples/embedded_agent/Containerfile.broker` is the smallest such layer.
 
 > `channelsMissileerDrainManifestPath` is read through a line-wrapped `tryGetContext(` call, so the
 > obvious one-line grep for context keys does not find it. It was missing from every inventory of
@@ -106,10 +117,6 @@ control's authority must not sit in the role. The trap is the combination — if
 enables the classifier screen while this context is omitted, the screen has no IAM path to Bedrock
 and fails closed, surfacing only as a `ScreenError` alarm.
 
-**`brokerManifestPath`** sets `BROKER_MANIFEST`. Omitted, the broker falls back to its checked-in
-**example** manifest. Fine for a smoke bringup, never right for a durable environment: you get a
-healthy, running broker configured for the wrong principal with the wrong connectors.
-
 **`capabilityRoles`** takes a JSON array of capability specs. Omitted, no per-capability roles are
 created and no `sts:AssumeRole` statement is added. A malformed JSON value throws, and an entry with
 empty `actions` or `resources` throws a named error, so a *present* value fails loudly even though
@@ -144,7 +151,8 @@ actually running. Recover the live tag before any channels deploy.
 ## Redeploy traps — mode (a), but only on the second deploy
 
 `reuseComputeArtifacts` and `reuseChannelsArtifacts` both default to false, which is correct on a
-first deploy into a clean account: CDK creates the ECR repositories and log groups. In a durable
+first deploy into a clean account: CDK creates the ECR repositories and log groups (for Compute,
+the broker's and the client task's). In a durable
 environment those resources are `RETAIN`, so they survive a stack deletion, and a subsequent
 re-create collides on their fixed names and **fails at deploy time**, not at synth. Pass them as
 true when redeploying a stack whose retained artifacts still exist.
@@ -184,7 +192,7 @@ ID form is the rename-proof one, since the numbers outlive any repo or org renam
 | `secureNetwork` | (c) | `false` | app → network, compute |
 | `brokerDesiredCount` | (a) on first deploy | `1` | compute |
 | `brokerGrantClasses` | (c) | unset | compute |
-| `brokerManifestPath` | (b) | example manifest | compute |
+| `brokerManifestPath` | (a) when a task starts | unset; the broker refuses to boot | compute |
 | `capabilityRoles` | (b) | `[]` | compute |
 | `reuseComputeArtifacts` | (a) on redeploy | `false` | compute |
 | `reuseChannelsArtifacts` | (a) on redeploy | `false` | channels |

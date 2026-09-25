@@ -141,9 +141,10 @@ takes the target environment as **context**, validated against `development` / `
 `production` — a missing or misspelled value (`dev`) fails fast with an actionable error.
 
 > **`docs/cdk-context-contract.md` is the reference for all 25 context values.** `environment` is
-> the only one that stops you; six hard-fail, five take harmless defaults, and **thirteen degrade
-> silently** — a deploy that omits `channelsVerifyKeysArn` comes up green with peer signature
-> verification off, and one that omits `brokerManifestPath` runs the checked-in *example* manifest.
+> the only one that stops you on every deploy; eight more hard-fail under a condition, four take
+> harmless defaults, and **twelve degrade silently** — a deploy that omits `channelsVerifyKeysArn`
+> comes up green with peer signature verification off. One that omits `brokerManifestPath` fails
+> later: the broker refuses to boot and the circuit breaker rolls the service back.
 > Read it before a first deploy. This README documents two of the twenty-five.
 
 ```bash
