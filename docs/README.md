@@ -15,8 +15,8 @@ from, kept for the reasoning they carry.
 - `evaluating.md`: the evaluator's guide, picking up where the root `README.md`'s laptop setup
   stops: which path to take (laptop, AWS, OpenShift) against what each can show, the laptop tour
   in order (suite, conformance statement, the gateway demo, your own search key and the taint
-  hold, connecting a real MCP client, the embedded agent), and the honest state of the AWS and
-  OpenShift paths.
+  hold, connecting a real MCP client, the embedded agent), an AWS tour from a CDK-bootstrapped
+  account to one allowed and one refused call decided on Fargate, and the OpenShift path.
 - `lf-reference-implementation.md`: the claim and where to attack it (listed again below with
   the other outward-facing documents).
 
