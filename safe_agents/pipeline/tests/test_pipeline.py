@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 import yaml
 
+from safe_agents.broker.tests.platform_marks import requires_posix_exec
 from safe_agents.pipeline import (
     FakeAWS,
     ManifestError,
@@ -364,6 +365,7 @@ class TestDryRun:
 # ---------------------------------------------------------------------------
 
 class TestSmokePhase:
+    @requires_posix_exec
     def test_smoke_passes_real_harness_against_test_stub(
         self, valid_manifest_file: Path
     ) -> None:
@@ -384,6 +386,28 @@ class TestSmokePhase:
             f"Smoke phase failed against test-stub: {result.error}"
         )
         assert result.phase == "smoke"
+
+    def test_smoke_fails_with_one_clear_reason_on_a_windows_host(
+        self, valid_manifest_file: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """On Windows the real harness refuses outright, so the smoke phase reports
+        the missing POSIX host once instead of five exec errors dressed as contract
+        violations. Runs everywhere by faking the platform the harness checks."""
+        from safe_agents.contract import harness  # noqa: PLC0415
+
+        monkeypatch.setattr(harness.sys, "platform", "win32")
+        with pytest.raises(harness.UnsupportedHostError, match="POSIX host"):
+            harness.run_harness(TEST_STUB_DIR)
+
+        result = smoke_phase(
+            load_manifest(valid_manifest_file),
+            TEST_STUB_DIR,
+            dry_run=False,
+            harness_fn=harness.run_harness,
+        )
+        assert not result.success
+        assert "needs a POSIX host" in (result.error or "")
+        assert "ELEMENT_" not in (result.error or "")
 
     def test_smoke_harness_fn_injected(
         self, valid_manifest_file: Path
@@ -610,6 +634,7 @@ class TestFullPipeline:
         assert [pr.phase for pr in result.phase_results] == EXPECTED_PHASE_ORDER
         assert result.aborted_at is None
 
+    @requires_posix_exec
     def test_smoke_only_with_real_harness(self, fake_aws: FakeAWS) -> None:
         """
         End-to-end: provision+deploy in dry-run, smoke with real harness against

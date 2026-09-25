@@ -477,8 +477,26 @@ ALL_CHECKS = [
 ]
 
 
+POSIX_HOST_REQUIRED = (
+    "the runner-contract harness needs a POSIX host. It executes the agent's run.sh "
+    "and notify.sh as a Linux container runtime would, which Windows cannot do. Run "
+    "it on macOS, Linux or WSL."
+)
+
+
+class UnsupportedHostError(RuntimeError):
+    """The host cannot execute the agent's shell entrypoints, so no check can run."""
+
+
 def run_harness(agent_dir: Path) -> list[CheckResult]:
-    """Run all 8 checks against agent_dir. Returns results in order."""
+    """Run all 8 checks against agent_dir. Returns results in order.
+
+    Raises UnsupportedHostError on Windows. Every executing check would otherwise
+    fail with an OS error that reads like a contract violation, and the checks that
+    expect a broken stub to fail would pass for the wrong reason.
+    """
+    if sys.platform == "win32":
+        raise UnsupportedHostError(POSIX_HOST_REQUIRED)
     return [check(agent_dir) for check in ALL_CHECKS]
 
 
@@ -520,24 +538,16 @@ def main() -> None:
     parser.add_argument("agent_dir", help="Path to the agent directory to check")
     args = parser.parse_args()
 
-    if sys.platform == "win32":
-        # Every executing check runs the agent's run.sh or notify.sh directly, as
-        # the container runtime would. Windows cannot exec a shell script, so each
-        # check would fail with an OS error that reads like a contract violation.
-        print(
-            "ERROR: the runner-contract harness needs a POSIX host. It executes the "
-            "agent's run.sh and notify.sh as a Linux container runtime would, which "
-            "Windows cannot do. Run it on macOS, Linux or WSL.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-
     agent_dir = Path(args.agent_dir).resolve()
     if not agent_dir.is_dir():
         print(f"ERROR: {agent_dir} is not a directory", file=sys.stderr)
         sys.exit(1)
 
-    results = run_harness(agent_dir)
+    try:
+        results = run_harness(agent_dir)
+    except UnsupportedHostError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)
     print_results(results)
     sys.exit(0 if all(r.passed for r in results) else 1)
 

@@ -421,7 +421,12 @@ def smoke_phase(
             "has provision+deploy completed?",
         )
 
-    results = harness_fn(agent_dir)
+    from safe_agents.contract.harness import UnsupportedHostError  # noqa: PLC0415
+
+    try:
+        results = harness_fn(agent_dir)
+    except UnsupportedHostError as exc:
+        return _fail("smoke", False, steps, f"Conformance harness cannot run here: {exc}")
     failures = [r for r in results if not r.passed]
     if failures:
         detail = "; ".join(f"{r.name}: {r.reason}" for r in failures)

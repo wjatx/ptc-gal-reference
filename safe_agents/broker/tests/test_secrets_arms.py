@@ -125,9 +125,13 @@ class TestDirSecretsProvider:
             ("cred\n", "cred"),                  # `echo cred > file`
             ("cred\r\n", "cred"),                # a CRLF-writing editor
             ("cred\n\n", "cred\n"),              # only ONE newline is stripped
+            ("cred\r\n\r\n", "cred\r\n"),        # ...and only one CRLF
+            ("cred\r", "cred\r"),                # a lone CR is not a line ending here
             ("cred ", "cred "),                  # other whitespace is the credential
             (" cred", " cred"),
             ("head\nbody", "head\nbody"),        # internal newlines survive (PEM, JSON)
+            ("head\r\nbody", "head\r\nbody"),    # ...byte for byte, CRLF included
+            ("a\rb", "a\rb"),                    # an interior CR is credential material
             ('{"k": "v"}\n', '{"k": "v"}'),      # a JSON-shaped credential
             ("", ""),                            # an empty file is an empty credential
         ],
@@ -135,9 +139,39 @@ class TestDirSecretsProvider:
     def test_strips_exactly_one_trailing_newline(
         self, tmp_path: Path, written: str, expected: str
     ) -> None:
+        # write_bytes, never write_text: text mode on Windows turns every "\n" into
+        # "\r\n", so the file would not hold the bytes this case names.
         root = _secrets_dir(tmp_path)
-        (root / "leaf").write_text(written, encoding="utf-8")
+        (root / "leaf").write_bytes(written.encode("utf-8"))
         assert DirSecretsProvider(str(root)).fetch_secret("leaf") == expected
+
+    @pytest.mark.parametrize("value", ["head\nbody", "head\r\nbody", "a\rb", "cred"])
+    def test_store_then_fetch_round_trips_verbatim(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        # A rotated credential is written by store_secret and read back by
+        # fetch_secret; neither side may translate line endings on any platform.
+        provider = DirSecretsProvider(str(_secrets_dir(tmp_path)))
+        provider.store_secret("leaf", value)
+        assert (_secrets_dir(tmp_path) / "leaf").read_bytes() == value.encode("utf-8")
+        assert provider.fetch_secret("leaf") == value
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "﻿cred".encode("utf-16-le"),   # Windows PowerShell 5.1 `echo cred > f`
+            "﻿cred".encode("utf-16-be"),
+            b"\xef\xbb\xbfcred",                # UTF-8 with a byte-order mark
+        ],
+    )
+    def test_byte_order_mark_refuses_loudly(self, tmp_path: Path, raw: bytes) -> None:
+        # A BOM is never part of a credential, and silently keeping it would surface
+        # as an opaque 401 from the remote API. ValueError, deliberately NOT a
+        # "missing secret" error, so no dev-stub fallback can absorb it.
+        root = _secrets_dir(tmp_path)
+        (root / "leaf").write_bytes(raw)
+        with pytest.raises(ValueError, match="byte-order mark"):
+            DirSecretsProvider(str(root)).fetch_secret("leaf")
 
     @pytest.mark.parametrize(
         "name", ["../outside", "a/b", "..", ".", "", "a\\b", "/etc/passwd"]

@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from safe_agents.broker.tests.platform_marks import requires_posix_exec
 from safe_agents.pipeline import (
     FakeAWS,
     SMOKE_MODE_LOCAL,
@@ -41,6 +42,15 @@ TEST_STUB_MANIFEST = AGENTS_DIR / "test-stub.yaml"
 TEST_STUB_DIR = AGENTS_DIR / "test-stub"
 
 ENV = "development"
+
+
+def _failure_detail(result) -> str:
+    """Why a PipelineResult failed. It has no `error` of its own: each PhaseResult
+    carries one, and `aborted_at` names the phase that stopped the run."""
+    lines = [f"aborted_at={result.aborted_at!r}"]
+    lines += [f"  {pr.phase}: {pr.error}" for pr in result.phase_results if not pr.success]
+    return "\n".join(lines)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -279,6 +289,7 @@ class TestLocalSmokePreserved:
             "Local smoke must not look up instances"
         )
 
+    @requires_posix_exec
     def test_local_smoke_real_harness_test_stub_passes_8_checks(self) -> None:
         """Local smoke with the real harness against agents/test-stub must pass all 8."""
         from safe_agents.contract.harness import run_harness  # noqa: PLC0415
@@ -327,7 +338,7 @@ class TestAgentDirResolution:
             smoke_mode=SMOKE_MODE_LOCAL,
             harness_fn=capturing_harness,
         )
-        assert result.success, f"Smoke failed: {result.error}"
+        assert result.success, f"Smoke failed: {_failure_detail(result)}"
         assert observed_dirs, "harness must have been called"
         resolved = observed_dirs[0]
         assert resolved.name == "test-stub", (
@@ -358,12 +369,13 @@ class TestAgentDirResolution:
             phases=("smoke",),
             harness_fn=capturing_harness,
         )
-        assert result.success, f"Smoke failed: {result.error}"
+        assert result.success, f"Smoke failed: {_failure_detail(result)}"
         assert observed_dirs[0].name == "test-stub", (
             f"Without agent_package, smoke resolves to agents/<manifest.name>; "
             f"resolved to {observed_dirs[0]!r}"
         )
 
+    @requires_posix_exec
     def test_smoke_ec2_local_smoke_against_test_stub_passes_all_8(self) -> None:
         """End-to-end: smoke-ec2.yaml local smoke must pass all 8 checks via test-stub."""
         from safe_agents.contract.harness import run_harness  # noqa: PLC0415
@@ -378,11 +390,8 @@ class TestAgentDirResolution:
             harness_fn=run_harness,
         )
         assert result.success, (
-            f"smoke-ec2 local smoke must pass all 8 checks via agents/test-stub; "
-            f"error: {result.error}\n"
-            + "\n".join(
-                f"  {pr.phase}: {pr.error}" for pr in result.phase_results if not pr.success
-            )
+            "smoke-ec2 local smoke must pass all 8 checks via agents/test-stub; "
+            f"{_failure_detail(result)}"
         )
 
     def test_dry_run_smoke_ec2_shows_coherent_plan(self) -> None:

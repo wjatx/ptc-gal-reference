@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from safe_agents.broker.tests.platform_marks import requires_posix_exec
 from safe_agents.contract.harness import (
     CLAUSE_8_BROKER_CO_PLACEMENT,
     ELEMENT_1_HEADLESS_ENTRYPOINT,
@@ -39,13 +40,8 @@ from safe_agents.contract.harness import (
 )
 
 # The harness executes the agent's run.sh and notify.sh directly, as a Linux
-# container runtime would. On Windows every executing check would fail for want of
-# a POSIX exec, and the broken-stub tests would then pass for the wrong reason.
-pytestmark = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="runner-contract harness execs POSIX shell scripts (run.sh, notify.sh); "
-    "Windows cannot",
-)
+# container runtime would, and refuses on Windows (UnsupportedHostError).
+pytestmark = requires_posix_exec
 
 # ---------------------------------------------------------------------------
 # Paths

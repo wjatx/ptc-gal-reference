@@ -114,6 +114,15 @@ class LocalFileSecretsProvider:
         return secrets[secret_name]
 
 
+# A BOM is refused rather than stripped. Windows PowerShell 5.1's
+# `echo value > file` writes UTF-16LE with the first mark here.
+_BYTE_ORDER_MARKS: tuple[tuple[bytes, str], ...] = (
+    (b"\xff\xfe", "UTF-16 little-endian"),
+    (b"\xfe\xff", "UTF-16 big-endian"),
+    (b"\xef\xbb\xbf", "UTF-8"),
+)
+
+
 class DirSecretsProvider:
     """Reads each credential from its OWN file under a directory — one file per
     secret leaf, the shape every container platform projects (#248).
@@ -138,8 +147,9 @@ class DirSecretsProvider:
     * **One trailing newline is stripped.** A projected Secret carries no trailing
       newline but ``echo secret > file`` adds one, and a stray ``\\n`` on a bearer
       token surfaces as an opaque 401 from the remote API rather than as a local
-      error. Exactly one trailing ``\\n`` (or ``\\r\\n``) is removed; any other
-      whitespace is part of the credential and is preserved.
+      error. Exactly one trailing ``\\n`` (or ``\\r\\n``) is removed; every other
+      byte, including an interior CR, is part of the credential and is preserved.
+      A file starting with a byte-order mark is refused with ValueError.
     * **Leaves only.** A secret name containing a path separator, or equal to
       ``.``/``..``, is REFUSED rather than resolved — a name is a leaf under the
       mount root, never a path out of it. This raises ValueError, deliberately NOT
@@ -189,7 +199,20 @@ class DirSecretsProvider:
         return candidate
 
     def fetch_secret(self, secret_name: str) -> str:
-        raw = self._resolve(secret_name).read_text(encoding="utf-8")
+        path = self._resolve(secret_name)
+        # Bytes, never read_text: text mode's universal newlines rewrite every
+        # "\r\n" and lone "\r" to "\n" on EVERY platform, which alters an interior
+        # CR in the credential and leaves the "\r\n" strip below unreachable.
+        data = path.read_bytes()
+        bom = next((name for mark, name in _BYTE_ORDER_MARKS if data.startswith(mark)), None)
+        if bom is not None:
+            raise ValueError(
+                f"secret file {path} starts with a {bom} byte-order mark, which is "
+                "never part of a credential. Re-save it as UTF-8 without a BOM (in "
+                "PowerShell: Set-Content -NoNewline -Encoding utf8NoBOM, or "
+                "[IO.File]::WriteAllText)."
+            )
+        raw = data.decode("utf-8")
         if raw.endswith("\r\n"):
             return raw[:-2]
         if raw.endswith("\n"):
@@ -220,7 +243,9 @@ class DirSecretsProvider:
         target = self._resolve(secret_name)
         fd, tmp = tempfile.mkstemp(dir=str(self._root), prefix=".rotate-")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            # newline="": write the value verbatim. Text mode on Windows would turn
+            # an interior "\n" into "\r\n", and fetch_secret returns bytes as-is.
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
                 handle.write(value)
                 handle.flush()
                 os.fsync(handle.fileno())
