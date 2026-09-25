@@ -214,7 +214,7 @@ class TestSecretMappingEndToEnd:
         # The mapped name exists in the secrets file; the default name does not —
         # so receiving the right VALUE proves connector_secrets drove the lookup.
         secrets_file = tmp_path / "secrets.json"
-        secrets_file.write_text(json.dumps({"custom/github-secret": "sekrit-value"}))
+        secrets_file.write_text(json.dumps({"custom/github-secret": "sekrit-value"}), encoding="utf-8")
         monkeypatch.setenv("BROKER_SECRETS_FILE", str(secrets_file))
 
         manifest = _manifest(
@@ -312,7 +312,7 @@ class TestStoreCannotInject:
     def test_providers_arg_fed_solely_from_manifest(self) -> None:
         # Grep-guard in the debake style: every providers= feed in the composition
         # root must read manifest.connector_providers, nothing else.
-        src = Path(broker_server.__file__).read_text()
+        src = Path(broker_server.__file__).read_text(encoding="utf-8")
         feeds = re.findall(r"providers\s*=\s*([^\s,)]+)", src)
         assert feeds, "expected build_runtime to pass providers= to resolve_connectors"
         assert set(feeds) == {"manifest.connector_providers"}, (

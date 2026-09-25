@@ -88,7 +88,7 @@ def _name_real_backends(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     """Name a durable audit sink + real-shaped secrets file so a dynamo-arm build
     clears the F3 gate without AWS."""
     secrets = tmp_path / "secrets.json"
-    secrets.write_text(json.dumps({"github": "cred-github"}))
+    secrets.write_text(json.dumps({"github": "cred-github"}), encoding="utf-8")
     monkeypatch.setenv("BROKER_AUDIT_PATH", str(tmp_path / "audit.jsonl"))
     monkeypatch.setenv("BROKER_SECRETS_FILE", str(secrets))
 

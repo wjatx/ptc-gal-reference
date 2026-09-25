@@ -137,7 +137,7 @@ def write_snapshot(
             source="fake",
             captured_at=captured_at,
             entries=entries,
-        ).model_dump_json()
+        ).model_dump_json(), encoding="utf-8"
     )
     return str(path)
 
@@ -161,7 +161,7 @@ mcp_servers:
 {tools_yaml}
 tool_ops:
 {ops_yaml}
-"""
+""", encoding="utf-8"
     )
     return str(path)
 

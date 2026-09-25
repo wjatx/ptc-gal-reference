@@ -292,7 +292,7 @@ def test_golden_prereceipts_chain_verifies():
     pre-receipts record recomputes byte-for-byte.
     """
     path = pathlib.Path(__file__).parent / "fixtures" / "golden_prereceipts_chain.json"
-    records = [AuditRecord.model_validate(r) for r in json.loads(path.read_text())]
+    records = [AuditRecord.model_validate(r) for r in json.loads(path.read_text(encoding="utf-8"))]
     verify_chain(records)  # must not raise
     assert all(
         r.intentId is None and r.storedCallDigest is None and r.resultDigest is None

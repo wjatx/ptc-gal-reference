@@ -72,11 +72,11 @@ def test_a_missing_tape_reads_as_empty_not_an_error(tmp_path):
 
 def test_reader_detects_an_edited_record(tape):
     """The chain's actual guarantee: an isolated in-place edit is caught."""
-    lines = open(tape).read().splitlines()
+    lines = open(tape, encoding="utf-8").read().splitlines()
     record = json.loads(lines[1])
     record["op"] = "delete_entities"  # rewrite one field, leave the hash alone
     lines[1] = json.dumps(record)
-    with open(tape, "w") as handle:
+    with open(tape, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
 
     finding = check_chain_integrity(FileTapeReader(tape))
@@ -84,8 +84,8 @@ def test_reader_detects_an_edited_record(tape):
 
 
 def test_reader_detects_a_deleted_record(tape):
-    lines = open(tape).read().splitlines()
-    with open(tape, "w") as handle:
+    lines = open(tape, encoding="utf-8").read().splitlines()
+    with open(tape, "w", encoding="utf-8") as handle:
         handle.write("\n".join([lines[0], lines[2]]) + "\n")
 
     finding = check_chain_integrity(FileTapeReader(tape))
@@ -136,8 +136,8 @@ def test_verify_reports_consistency_and_never_claims_tamper_evidence(tape, capsy
 
 
 def test_a_broken_chain_exits_nonzero_and_says_where(tape, capsys):
-    lines = open(tape).read().splitlines()
-    with open(tape, "w") as handle:
+    lines = open(tape, encoding="utf-8").read().splitlines()
+    with open(tape, "w", encoding="utf-8") as handle:
         handle.write("\n".join([lines[0], lines[2]]) + "\n")
 
     assert tape_cli.main(["--path", tape, "--verify"]) == tape_cli.EXIT_BROKEN

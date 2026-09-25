@@ -241,7 +241,7 @@ def load_channels_manifest(path: str | Path) -> ChannelsManifest:
     `FileNotFoundError` if `path` is absent, `ValueError` if it is not a YAML
     mapping, and `pydantic.ValidationError` if the manifest is malformed.
     """
-    raw = yaml.safe_load(Path(path).read_text())
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(
             f"channels manifest {path} must be a YAML mapping; got {type(raw).__name__}"

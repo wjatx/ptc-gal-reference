@@ -110,7 +110,7 @@ class TestNoNaiveDatetimeConformance:
     def test_no_forbidden_naive_datetime_pattern_in_base_source(self) -> None:
         all_violations: list[str] = []
         for path in _non_test_source_files():
-            tree = ast.parse(path.read_text(), filename=str(path))
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             rel = path.relative_to(SAFE_AGENTS_ROOT.parent)
             all_violations.extend(find_forbidden_datetime_patterns(tree, str(rel)))
         assert all_violations == [], (

@@ -94,7 +94,7 @@ def _name_sqlite_arm(
 ) -> Path:
     """Name every value a durable arm requires (F1–F3) plus the db path."""
     secrets = tmp_path / "secrets.json"
-    secrets.write_text(json.dumps({"github": "cred-github", "search": "cred-search"}))
+    secrets.write_text(json.dumps({"github": "cred-github", "search": "cred-search"}), encoding="utf-8")
     db_path = tmp_path / db_name
     monkeypatch.setenv("BROKER_STORE", "sqlite")
     monkeypatch.setenv("BROKER_SQLITE_PATH", str(db_path))

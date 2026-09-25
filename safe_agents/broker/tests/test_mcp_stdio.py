@@ -41,6 +41,7 @@ from safe_agents.broker.mcp.registry import MemoryToolRegistry
 from safe_agents.broker.prototype import mcp_construction as _mcpc
 from safe_agents.broker.runtime import FakeSecretsProvider
 from safe_agents.broker.schemas import AgentManifest
+from safe_agents.broker.tests.platform_marks import requires_pgrep
 from safe_agents.broker.schemas.mcp_registry import (
     McpRespawnPolicy,
     McpServerDecl,
@@ -51,7 +52,7 @@ from safe_agents.broker.schemas.mcp_registry import (
 )
 from safe_agents.connectors.mcp_connector import McpConnector
 
-pytestmark = pytest.mark.stdio
+pytestmark = [pytest.mark.stdio, requires_pgrep]
 
 _SERVER_ID = "ledger"
 _REPO_ROOT = str(Path(__file__).resolve().parents[3])

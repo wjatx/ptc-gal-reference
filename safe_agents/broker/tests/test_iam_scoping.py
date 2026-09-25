@@ -317,7 +317,7 @@ class TestManifestCapabilityIamCoherence:
 class TestScopedS3ExampleManifest:
     def test_manifest_declares_assumed_role_and_capability_iam(self) -> None:
         manifest_path = _EXAMPLES_ROOT / "scoped_s3" / "manifest.yaml"
-        data = yaml.safe_load(manifest_path.read_text())
+        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         manifest = AgentManifest.model_validate(data)
 
         auth = manifest.connector_auth["s3"]

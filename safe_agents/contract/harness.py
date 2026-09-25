@@ -88,7 +88,7 @@ def _load_manifest(agent_dir: Path) -> tuple[Optional[dict], Optional[str]]:
     if not mf.exists():
         return None, f"manifest.yaml not found in {agent_dir}"
     try:
-        with mf.open() as f:
+        with mf.open(encoding="utf-8") as f:
             return yaml.safe_load(f), None
     except yaml.YAMLError as exc:
         return None, f"manifest.yaml parse error: {exc}"
@@ -252,7 +252,7 @@ def check_element_3(agent_dir: Path) -> CheckResult:
                 ELEMENT_3_PREFLIGHT_GATE, False,
                 "pre-flight run produced no run_record.json",
             )
-        with record_file.open() as f:
+        with record_file.open(encoding="utf-8") as f:
             record = json.load(f)
         if record.get("status") != "nothing-to-do":
             return CheckResult(
@@ -316,7 +316,7 @@ def check_element_5(agent_dir: Path) -> CheckResult:
                 "no run_record.json produced with no AWS creds (local-file fallback absent)",
             )
         try:
-            with record_file.open() as f:
+            with record_file.open(encoding="utf-8") as f:
                 record = json.load(f)
         except json.JSONDecodeError as exc:
             return CheckResult(
@@ -519,6 +519,18 @@ def main() -> None:
     )
     parser.add_argument("agent_dir", help="Path to the agent directory to check")
     args = parser.parse_args()
+
+    if sys.platform == "win32":
+        # Every executing check runs the agent's run.sh or notify.sh directly, as
+        # the container runtime would. Windows cannot exec a shell script, so each
+        # check would fail with an OS error that reads like a contract violation.
+        print(
+            "ERROR: the runner-contract harness needs a POSIX host. It executes the "
+            "agent's run.sh and notify.sh as a Linux container runtime would, which "
+            "Windows cannot do. Run it on macOS, Linux or WSL.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     agent_dir = Path(args.agent_dir).resolve()
     if not agent_dir.is_dir():

@@ -129,7 +129,7 @@ def load_manifest(path: Path) -> DeploymentManifest:
         raise ManifestError(f"Manifest not found: {path}")
 
     try:
-        with path.open() as fh:
+        with path.open(encoding="utf-8") as fh:
             raw = yaml.safe_load(fh)
     except yaml.YAMLError as exc:
         raise ManifestError(f"Manifest parse error in {path}: {exc}") from exc

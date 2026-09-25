@@ -255,7 +255,7 @@ def test_execute_end_to_end_produces_campaign_and_content_alarm(tmp_path: Path, 
     assert all("verdicts" not in p for p in listed_prefixes)
 
     out = capsys.readouterr().out
-    written = json.loads(json_out.read_text())
+    written = json.loads(json_out.read_text(encoding="utf-8"))
     assert written[0]["campaign_id"] == reports[0].campaign_id
     assert reports[0].campaign_id in out  # full JSON dump landed on stdout too
 

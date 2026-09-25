@@ -96,7 +96,7 @@ def render_user_data(params: dict[str, str]) -> str:
             f"render_user_data: missing required template params: {sorted(missing)}"
         )
 
-    with _TEMPLATE_PATH.open() as fh:
+    with _TEMPLATE_PATH.open(encoding="utf-8") as fh:
         rendered = fh.read()
 
     for key, value in params.items():

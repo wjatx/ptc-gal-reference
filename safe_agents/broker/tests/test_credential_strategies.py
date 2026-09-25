@@ -266,7 +266,7 @@ class TestDefaults:
 class TestOAuthApiExampleManifest:
     def test_manifest_declares_oauth_refresh(self) -> None:
         manifest_path = _EXAMPLES_ROOT / "oauth_api" / "manifest.yaml"
-        data = yaml.safe_load(manifest_path.read_text())
+        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         manifest = AgentManifest.model_validate(data)
 
         auth = manifest.connector_auth["api"]
@@ -376,7 +376,7 @@ class TestOAuthRemoteMcpExampleManifest:
 
     def test_manifest_declares_header_delivery_and_compiles(self) -> None:
         manifest_path = _EXAMPLES_ROOT / "oauth_remote_mcp" / "manifest.yaml"
-        data = yaml.safe_load(manifest_path.read_text())
+        data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         manifest = AgentManifest.model_validate(data)
 
         auth = manifest.connector_auth["vendor_mcp"]
@@ -404,7 +404,7 @@ class TestOAuthRemoteMcpExampleManifest:
         """
         manifest_path = _EXAMPLES_ROOT / "oauth_remote_mcp" / "manifest.yaml"
         manifest = AgentManifest.model_validate(
-            yaml.safe_load(manifest_path.read_text())
+            yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
         )
         respawn = manifest.mcp_servers["vendor_mcp"].respawn
         assert respawn is not None, "a remote server on an expiring credential needs respawn"

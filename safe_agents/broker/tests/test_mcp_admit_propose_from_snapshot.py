@@ -110,13 +110,13 @@ def write_snapshot(
         entries=snapshot_entries,
     )
     path = tmp_path / name
-    path.write_text(snapshot.model_dump_json())
+    path.write_text(snapshot.model_dump_json(), encoding="utf-8")
     return str(path)
 
 
 def write_tool_def_json(tmp_path, tool_def: McpToolDef, name: str = "def.json") -> str:
     path = tmp_path / name
-    path.write_text(tool_def.model_dump_json())
+    path.write_text(tool_def.model_dump_json(), encoding="utf-8")
     return str(path)
 
 
@@ -380,7 +380,7 @@ def test_tampered_def_hash_in_snapshot_refuses(store, proposal_store, monkeypatc
 
 def test_malformed_snapshot_file_refuses(store, proposal_store, monkeypatch, tmp_path):
     bad_path = tmp_path / "bad.json"
-    bad_path.write_text("not json")
+    bad_path.write_text("not json", encoding="utf-8")
     set_caller(monkeypatch, MAKER_ARN)
     rc = admit_propose_command(
         propose_via_snapshot_args(str(bad_path)),

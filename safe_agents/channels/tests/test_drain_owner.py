@@ -110,7 +110,7 @@ _SPY_PATH = f"{__name__}:OwnerSpyReceiver"
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     manifest_path = tmp_path / "drain-manifest.yaml"
-    manifest_path.write_text(_MANIFEST_YAML)
+    manifest_path.write_text(_MANIFEST_YAML, encoding="utf-8")
     monkeypatch.setenv("CHANNELS_DRAIN_MANIFEST", str(manifest_path))
     monkeypatch.setenv("CHANNELS_DRAIN_RECEIVER", _SPY_PATH)
 

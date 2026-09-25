@@ -73,7 +73,10 @@ from safe_agents.broker.schemas.mcp_registry import (
     RegistryStatus,
     compute_tool_def_hash,
 )
+from safe_agents.broker.tests.platform_marks import requires_pgrep
 from safe_agents.connectors.mcp_connector import McpConnector
+
+pytestmark = requires_pgrep
 
 _SERVER_ID = "toyhttp"
 _FIXTURE = str(Path(__file__).resolve().parent / "fixtures" / "streamable_http_toy_server.py")

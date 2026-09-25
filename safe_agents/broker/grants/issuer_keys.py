@@ -174,6 +174,7 @@ def _read_local_key_file(path: str, role_env: SigningRoleEnv) -> str:
       signature is that only that role's identity could have produced it.
     """
     import stat  # noqa: PLC0415
+    import sys  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
     from safe_agents.broker.prototype.boot_config import (  # noqa: PLC0415
@@ -189,6 +190,18 @@ def _read_local_key_file(path: str, role_env: SigningRoleEnv) -> str:
             f"{role_env.role} key is Secrets-Manager-held material: set "
             f"{role_env.key_secret_arn_env} instead. The file arm exists "
             "for the local (no-AWS) floor."
+        )
+    if sys.platform == "win32":
+        # The gate below reads POSIX group/other bits, and Windows does not have
+        # them: st_mode there reports every writable file as 0o666, so the check
+        # would refuse every key with advice (chmod 600) that cannot satisfy it.
+        # Skipping it would load a key whose privacy nothing checked. Refusing
+        # with the reason is the honest middle, and it fails toward less authority.
+        raise IssuerSigningConfigError(
+            f"{role_env.key_file_env}={path}: a file-held {role_env.role} signing key "
+            "is not supported on Windows, because its owner-only file mode cannot be "
+            "checked there. Run the ceremony on macOS, Linux or WSL, or hold the key "
+            f"in Secrets Manager via {role_env.key_secret_arn_env}."
         )
     key_path = Path(path)
     try:

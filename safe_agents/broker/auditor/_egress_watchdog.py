@@ -223,7 +223,7 @@ def load_snapshot_rules(path: str) -> list[dict]:
     (infra/snapshots/<arm>.json) of the form {"rules": [...], ...metadata}. The
     wrapped form is what gen-egress-snapshot.py produces.
     """
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     if isinstance(data, dict):
         return list(data.get("rules", []))

@@ -231,7 +231,7 @@ def box_role_extensions(
 # ---------------------------------------------------------------------------
 
 def _read_box_file(name: str) -> str:
-    return (_BOX_DIR / name).read_text()
+    return (_BOX_DIR / name).read_text(encoding="utf-8")
 
 
 def render_box_user_data(

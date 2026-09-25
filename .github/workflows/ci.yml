@@ -14,6 +14,11 @@
 #               egress snapshots matching a fresh regeneration.
 #   container   the ceremony arc running in a plain Linux container as a UID the
 #               image was not built for, with no AWS anything.
+#   laptop      the path a tester follows on their own machine, on macOS and on
+#               native Windows: install, the full suite from the root with the
+#               specifications present, the clause summary, the embedded example,
+#               and the MCP gateway refusing an undeclared tool over real stdio.
+#               Windows is only ever checked here; nobody on the project runs it.
 #
 # What it does NOT assert. No job here touches a cloud account, assumes a role,
 # or holds a credential, so nothing below is evidence about deployed
@@ -32,6 +37,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Lets a branch be run by hand, which is the only way to see the laptop job on
+  # Windows before a pull request exists.
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -199,3 +207,67 @@ jobs:
           PLATFORM: linux/amd64
           ARBITRARY_UID: "60000"
         run: ./safe_agents/arms/local/container-arc-run.sh
+
+  laptop:
+    name: "laptop — ${{ matrix.os }}, the tester's path"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing says nothing about the other; report both.
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    # bash on every OS, Git for Windows' on windows-latest. The commands are the
+    # ones a tester types in PowerShell; only the assertions around them need a shell.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The runner's git defaults to core.autocrlf=true on Windows, as a tester's
+      # usually does. .gitattributes is what keeps the checkout LF, so this job
+      # deliberately leaves that default alone rather than masking it.
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      # Cloned the same way a tester would, with no line-ending override, so the
+      # specifications arrive with CRLF on Windows and the readers must cope.
+      - name: Clone the specifications
+        run: git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
+
+      - name: Install (dev extra)
+        run: python -m pip install -e ".[dev]"
+
+      # -rs lists every skip with its reason. On Windows the POSIX-only tests skip
+      # (pgrep, bash -n, the runner-contract harness), and each says which
+      # dependency it needed, so the list is the platform gap in writing.
+      - name: Run the suite
+        run: python -m pytest -q -rs
+
+      - name: The spec-gated tests actually ran
+        run: |
+          python -m pytest safe_agents/broker/tests/test_spec_contract_drift.py \
+            -q --no-header 2>&1 | tee "$RUNNER_TEMP/spec-gated.txt"
+          if grep -qE '[0-9]+ skipped' "$RUNNER_TEMP/spec-gated.txt"; then
+            echo "::error::Spec-gated tests skipped — the specification clone did not take, so this run checked no conformance."
+            exit 1
+          fi
+
+      - name: Clause summary
+        run: python -m safe_agents.contract.spec_clauses --summary --spec-dir spec
+
+      # Redirected, because that is where Windows used to fail: a pipe gets the
+      # ANSI code page, which cannot encode the clause text.
+      - name: Clause extraction, redirected to a file
+        run: python -m safe_agents.contract.spec_clauses --spec-dir spec > "$RUNNER_TEMP/clauses.json"
+
+      - name: Embedded agent example
+        run: python -m examples.embedded_agent.agent
+
+      # Also part of the suite above; run by name so its result is visible on its
+      # own line. It spawns `python -m safe_agents.broker.gateway`, sends initialize,
+      # tools/list and a tools/call of the undeclared payments__transfer, and
+      # asserts the broker's refusal comes back.
+      - name: MCP gateway refuses an undeclared tool over stdio
+        run: python -m pytest -v safe_agents/broker/tests/test_gateway_subprocess.py

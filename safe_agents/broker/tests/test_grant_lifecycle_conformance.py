@@ -446,7 +446,7 @@ class TestL3DemotionDeterminism:
         }
         grants_dir = Path(inspect.getfile(evaluate_demotion_triggers)).parent
         for module_file in ("demotion.py", "runner.py", "rung.py"):
-            tree = ast.parse((grants_dir / module_file).read_text())
+            tree = ast.parse((grants_dir / module_file).read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     names = [alias.name for alias in node.names]

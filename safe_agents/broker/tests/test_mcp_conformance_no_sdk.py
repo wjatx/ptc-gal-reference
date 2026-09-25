@@ -153,7 +153,7 @@ def _ratify_argv(proposal_id: str) -> list[str]:
 
 def _write_def(tmp_path, tool_def: McpToolDef):
     path = tmp_path / "tool_def.json"
-    path.write_text(tool_def.model_dump_json())
+    path.write_text(tool_def.model_dump_json(), encoding="utf-8")
     return path
 
 

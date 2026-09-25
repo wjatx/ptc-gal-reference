@@ -228,7 +228,7 @@ class TestExamplesDoNotImportInternals:
     def test_no_example_python_imports_broker_internals(self) -> None:
         offenders: list[str] = []
         for py in sorted(_EXAMPLES_DIR.rglob("*.py")):
-            hits = _internal_import_hits(py.read_text())
+            hits = _internal_import_hits(py.read_text(encoding="utf-8"))
             if hits:
                 offenders.append(f"{py.relative_to(_REPO_ROOT)}:\n" + "\n".join(hits))
         assert not offenders, (
@@ -248,7 +248,7 @@ class TestCompositionRootIsAgentAgnostic:
 
     @pytest.mark.parametrize("identity", FORBIDDEN_IDENTITIES)
     def test_broker_server_names_no_consumer(self, identity: str) -> None:
-        src = _BROKER_SERVER_SRC.read_text()
+        src = _BROKER_SERVER_SRC.read_text(encoding="utf-8")
         hits = [
             f"  line {i}: {ln.strip()}"
             for i, ln in enumerate(src.splitlines(), 1)
@@ -323,6 +323,6 @@ class TestExampleProviderConnector:
     def test_provider_module_passes_the_boundary_guard(self) -> None:
         # Redundant with the rglob sweep above, but pins the sa#141 example by
         # name: the consumer connector imports only public surfaces.
-        src = (_EXAMPLES_DIR / "missileer" / "trackfeed_connector.py").read_text()
+        src = (_EXAMPLES_DIR / "missileer" / "trackfeed_connector.py").read_text(encoding="utf-8")
         assert _internal_import_hits(src) == []
         assert "safe_agents.connectors" in src  # written against the public surface

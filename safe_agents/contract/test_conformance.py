@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,15 @@ from safe_agents.contract.harness import (
     check_element_6,
     check_element_7,
     run_harness,
+)
+
+# The harness executes the agent's run.sh and notify.sh directly, as a Linux
+# container runtime would. On Windows every executing check would fail for want of
+# a POSIX exec, and the broken-stub tests would then pass for the wrong reason.
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="runner-contract harness execs POSIX shell scripts (run.sh, notify.sh); "
+    "Windows cannot",
 )
 
 # ---------------------------------------------------------------------------
@@ -90,7 +100,7 @@ class TestReferenceStubPasses:
     def test_harness_cli_exits_zero(self):
         """Full end-to-end: harness.py exits 0 for the test-stub."""
         proc = subprocess.run(
-            ["python3", str(CONTRACT_DIR / "harness.py"), str(TEST_STUB)],
+            [sys.executable, str(CONTRACT_DIR / "harness.py"), str(TEST_STUB)],
             capture_output=True,
             text=True,
         )
@@ -120,11 +130,11 @@ class TestNamedFailures:
     def _patch_manifest(stub: Path, **removals) -> None:
         """Remove named top-level keys from manifest.yaml."""
         mf = stub / "manifest.yaml"
-        with mf.open() as f:
+        with mf.open(encoding="utf-8") as f:
             manifest = yaml.safe_load(f)
         for key in removals:
             manifest.pop(key, None)
-        with mf.open("w") as f:
+        with mf.open("w", encoding="utf-8") as f:
             yaml.dump(manifest, f)
 
     # --- Clause 8 -----------------------------------------------------------
@@ -143,7 +153,7 @@ class TestNamedFailures:
 
         # CLI harness must exit non-zero and name the violation
         proc = subprocess.run(
-            ["python3", str(CONTRACT_DIR / "harness.py"), str(stub)],
+            [sys.executable, str(CONTRACT_DIR / "harness.py"), str(stub)],
             capture_output=True,
             text=True,
         )
@@ -156,10 +166,10 @@ class TestNamedFailures:
         """broker.sidecar=false must trigger CLAUSE_8_BROKER_CO_PLACEMENT."""
         stub = self._copy_stub(tmp_path)
         mf = stub / "manifest.yaml"
-        with mf.open() as f:
+        with mf.open(encoding="utf-8") as f:
             manifest = yaml.safe_load(f)
         manifest["broker"]["sidecar"] = False
-        with mf.open("w") as f:
+        with mf.open("w", encoding="utf-8") as f:
             yaml.dump(manifest, f)
 
         result = check_clause_8(stub)
@@ -201,11 +211,11 @@ class TestNamedFailures:
         """Omitting connector_creds_in_agent must produce ELEMENT_2_SECRETS_FROM_ENV."""
         stub = self._copy_stub(tmp_path)
         mf = stub / "manifest.yaml"
-        with mf.open() as f:
+        with mf.open(encoding="utf-8") as f:
             manifest = yaml.safe_load(f)
         # Remove the explicit assertion
         manifest.get("env", {}).pop("connector_creds_in_agent", None)
-        with mf.open("w") as f:
+        with mf.open("w", encoding="utf-8") as f:
             yaml.dump(manifest, f)
 
         result = check_element_2(stub)

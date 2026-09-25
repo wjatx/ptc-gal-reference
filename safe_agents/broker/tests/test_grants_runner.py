@@ -1018,7 +1018,7 @@ def test_load_evidence_json_unusable_refuses(tmp_path):
         _load_evidence_json(str(missing), CorroborationRecord, "--corroboration-json")
 
     malformed = tmp_path / "bad.json"
-    malformed.write_text('{"k": 5, "n": 3, "agreeing": 1, "computed_at": "t"}')
+    malformed.write_text('{"k": 5, "n": 3, "agreeing": 1, "computed_at": "t"}', encoding="utf-8")
     with pytest.raises(RunnerConfigError):
         _load_evidence_json(str(malformed), CorroborationRecord, "--corroboration-json")
 

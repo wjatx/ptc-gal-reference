@@ -439,7 +439,7 @@ def propose_command(
 
     try:
         artifact = ConfidenceArtifact.model_validate_json(
-            Path(args.artifact_json).read_text()
+            Path(args.artifact_json).read_text(encoding="utf-8")
         )
     except (OSError, ValidationError) as exc:
         print(f"REFUSED: --artifact-json {args.artifact_json} is unusable: {exc}")

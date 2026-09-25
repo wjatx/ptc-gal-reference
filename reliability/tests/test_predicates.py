@@ -19,7 +19,7 @@ from reliability.predicates import (
 
 def test_file_exists_true(tmp_path):
     f = tmp_path / "audit.log"
-    f.write_text("some data")
+    f.write_text("some data", encoding="utf-8")
     assert file_exists(f) is True
 
 
@@ -34,7 +34,7 @@ def test_file_exists_false_is_directory(tmp_path):
 
 def test_file_exists_accepts_str_path(tmp_path):
     f = tmp_path / "x.log"
-    f.write_text("x")
+    f.write_text("x", encoding="utf-8")
     assert file_exists(str(f)) is True
 
 

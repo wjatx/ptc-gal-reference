@@ -104,11 +104,11 @@ class TestConfigFileValidity:
     @pytest.mark.parametrize("path", [RECIPE_PATH, INFRA_PATH, PIPELINE_PATH, DIST_PATH])
     def test_json_files_parse(self, path: Path) -> None:
         """Every JSON config must parse (syntactic validity)."""
-        json.loads(path.read_text())
+        json.loads(path.read_text(encoding="utf-8"))
 
     def test_component_yaml_parses(self) -> None:
         """component-base.yaml must be valid YAML with the AWSTOE shape."""
-        doc = yaml.safe_load(COMPONENT_PATH.read_text())
+        doc = yaml.safe_load(COMPONENT_PATH.read_text(encoding="utf-8"))
         assert doc.get("schemaVersion") == 1.0, "component must declare schemaVersion 1.0"
         phase_names = {p["name"] for p in doc["phases"]}
         assert {"build", "validate"} <= phase_names, (
@@ -116,19 +116,19 @@ class TestConfigFileValidity:
         )
 
     def test_recipe_names_match_teardown_prefix(self) -> None:
-        recipe = json.loads(RECIPE_PATH.read_text())
+        recipe = json.loads(RECIPE_PATH.read_text(encoding="utf-8"))
         assert recipe["name"] == rhel_bake.IB_RESOURCE_PREFIX, (
             "recipe name must match the teardown IB_RESOURCE_PREFIX so teardown finds it"
         )
 
     def test_infra_and_dist_names_match_prefix(self) -> None:
-        infra = json.loads(INFRA_PATH.read_text())
-        dist = json.loads(DIST_PATH.read_text())
+        infra = json.loads(INFRA_PATH.read_text(encoding="utf-8"))
+        dist = json.loads(DIST_PATH.read_text(encoding="utf-8"))
         assert infra["name"] == f"{rhel_bake.IB_RESOURCE_PREFIX}-infra"
         assert dist["name"] == f"{rhel_bake.IB_RESOURCE_PREFIX}-dist"
 
     def test_pipeline_arns_reference_rhel_resources(self) -> None:
-        pipeline = json.loads(PIPELINE_PATH.read_text())
+        pipeline = json.loads(PIPELINE_PATH.read_text(encoding="utf-8"))
         assert pipeline["name"] == f"{rhel_bake.IB_RESOURCE_PREFIX}-pipeline"
         for key in (
             "imageRecipeArn",
@@ -147,7 +147,7 @@ class TestConfigFileValidity:
 class TestRecipeRhelParent:
     def test_recipe_root_device_is_sda1(self) -> None:
         """RHEL roots at /dev/sda1 (NOT AL2023's /dev/xvda)."""
-        recipe = json.loads(RECIPE_PATH.read_text())
+        recipe = json.loads(RECIPE_PATH.read_text(encoding="utf-8"))
         devices = [m["deviceName"] for m in recipe["blockDeviceMappings"]]
         assert "/dev/sda1" in devices, (
             "recipe must map the RHEL root device /dev/sda1 (arm64 EC2 uses /dev/xvda)"
@@ -158,7 +158,7 @@ class TestRecipeRhelParent:
 
     def test_recipe_parent_is_rhel_not_al2023(self) -> None:
         """The parent image must be a RHEL 9 reference, not the AL2023 arm64 managed parent."""
-        recipe = json.loads(RECIPE_PATH.read_text())
+        recipe = json.loads(RECIPE_PATH.read_text(encoding="utf-8"))
         parent = recipe["parentImage"]
         assert "amazon-linux" not in parent.lower(), (
             "recipe parentImage must not be the AL2023 managed image (that is the EC2 arm)"
@@ -173,7 +173,7 @@ class TestRecipeRhelParent:
         )
 
     def test_recipe_encrypted_gp3_root(self) -> None:
-        recipe = json.loads(RECIPE_PATH.read_text())
+        recipe = json.loads(RECIPE_PATH.read_text(encoding="utf-8"))
         ebs = recipe["blockDeviceMappings"][0]["ebs"]
         assert ebs["encrypted"] is True, "root volume must be encrypted"
         assert ebs["volumeType"] == "gp3", "root volume must be gp3"
@@ -185,7 +185,7 @@ class TestRecipeRhelParent:
 
 class TestComponentBakesToolchain:
     def _content(self) -> str:
-        return COMPONENT_PATH.read_text()
+        return COMPONENT_PATH.read_text(encoding="utf-8")
 
     def test_supported_os_is_rhel9(self) -> None:
         """The component header/deploy comment must target RHEL 9 (create-component OS)."""
@@ -291,7 +291,7 @@ class TestComponentBakesToolchain:
 
 class TestDistConfigTagging:
     def test_ami_tag_is_base_rhel(self) -> None:
-        dist = json.loads(DIST_PATH.read_text())
+        dist = json.loads(DIST_PATH.read_text(encoding="utf-8"))
         tags = dist["distributions"][0]["amiDistributionConfiguration"]["amiTags"]
         assert tags["safe-agents:ami"] == "base-rhel", (
             "dist-config must tag the AMI safe-agents:ami=base-rhel so provision resolves it"
@@ -299,7 +299,7 @@ class TestDistConfigTagging:
 
     def test_dist_tag_matches_teardown_and_provision(self) -> None:
         """The dist-config tag, teardown filter, and provision filter must agree."""
-        dist = json.loads(DIST_PATH.read_text())
+        dist = json.loads(DIST_PATH.read_text(encoding="utf-8"))
         tag_value = dist["distributions"][0]["amiDistributionConfiguration"]["amiTags"][
             "safe-agents:ami"
         ]

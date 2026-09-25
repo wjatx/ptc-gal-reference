@@ -352,7 +352,7 @@ def execute(
     full_json = json.dumps([r.model_dump(mode="json") for r in reports], indent=2)
     print(full_json)
     if json_out is not None:
-        Path(json_out).write_text(full_json)
+        Path(json_out).write_text(full_json, encoding="utf-8")
 
     return reports
 

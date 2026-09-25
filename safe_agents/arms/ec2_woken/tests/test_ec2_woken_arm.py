@@ -392,7 +392,7 @@ class TestGuardrailHoldsNoCredentials:
 
     @pytest.fixture(scope="class")
     def statements(self) -> list[dict]:
-        template = yaml.load(TEMPLATE.read_text(), Loader=_CfnLoader)  # noqa: S506 — trusted local file
+        template = yaml.load(TEMPLATE.read_text(encoding="utf-8"), Loader=_CfnLoader)  # noqa: S506 — trusted local file
         policies = template["Resources"]["GuardrailFunction"]["Properties"]["Policies"]
         stmts: list[dict] = []
         for policy in policies:
@@ -449,7 +449,7 @@ class TestGuardrailHoldsNoCredentials:
         # Tokens are assembled from fragments so this guard does not itself introduce the
         # channel-specific vocabulary into the tree (keeps the forbidden-strings grep clean).
         forbidden = ["tele" + "gram", "chat" + "_id", "trading" + "-agent", "al" + "paca", "hai" + "ku"]
-        blob = TEMPLATE.read_text().lower()
+        blob = TEMPLATE.read_text(encoding="utf-8").lower()
         for token in forbidden:
             assert token not in blob, f"forbidden channel-specific string {token!r} in template"
 

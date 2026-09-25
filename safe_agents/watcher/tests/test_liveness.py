@@ -86,7 +86,7 @@ def _write_agent_manifest(
         },
         "envelope": {"polarity": "abstain"},
         "liveness": liveness,
-    }))
+    }), encoding="utf-8")
     return path
 
 
@@ -419,14 +419,14 @@ def test_weekday_calendar_alarms_on_weekday(tmp_path: Path) -> None:
 
 
 def test_monitored_targets_is_empty_when_nothing_opts_in(tmp_path):
-    (tmp_path / "a.yaml").write_text("name: unmonitored\narm: fargate\n")
+    (tmp_path / "a.yaml").write_text("name: unmonitored\narm: fargate\n", encoding="utf-8")
 
     assert monitored_targets(tmp_path, ["staging", "production"], "2026-07-29") == []
 
 
 def test_monitored_targets_lists_each_agent_environment_pair(tmp_path):
     (tmp_path / "a.yaml").write_text(
-        "name: watched\narm: fargate\nliveness:\n  monitored: true\n"
+        "name: watched\narm: fargate\nliveness:\n  monitored: true\n", encoding="utf-8"
     )
 
     targets = monitored_targets(tmp_path, ["staging", "production"], "2026-07-29")
@@ -437,7 +437,7 @@ def test_monitored_targets_lists_each_agent_environment_pair(tmp_path):
 def test_monitored_targets_honours_declared_environments(tmp_path):
     (tmp_path / "a.yaml").write_text(
         "name: prodonly\narm: fargate\nliveness:\n  monitored: true\n"
-        "  environments: [production]\n"
+        "  environments: [production]\n", encoding="utf-8"
     )
 
     targets = monitored_targets(tmp_path, ["staging", "production"], "2026-07-29")
@@ -447,7 +447,7 @@ def test_monitored_targets_honours_declared_environments(tmp_path):
 
 def test_monitored_targets_skips_the_local_arm(tmp_path):
     (tmp_path / "a.yaml").write_text(
-        "name: onbox\narm: local\nliveness:\n  monitored: true\n"
+        "name: onbox\narm: local\nliveness:\n  monitored: true\n", encoding="utf-8"
     )
 
     assert monitored_targets(tmp_path, ["staging"], "2026-07-29") == []
@@ -460,9 +460,9 @@ def test_the_selector_is_shared_with_check_liveness(tmp_path):
     that is NOT a target must not — and both answers come from the same function.
     """
     (tmp_path / "watched.yaml").write_text(
-        "name: watched\narm: fargate\nliveness:\n  monitored: true\n"
+        "name: watched\narm: fargate\nliveness:\n  monitored: true\n", encoding="utf-8"
     )
-    (tmp_path / "ignored.yaml").write_text("name: ignored\narm: fargate\n")
+    (tmp_path / "ignored.yaml").write_text("name: ignored\narm: fargate\n", encoding="utf-8")
 
     targets = monitored_targets(tmp_path, ["staging"], "2026-07-29")
     alarms = check_liveness(tmp_path, ["staging"], "2026-07-29", lambda *_: None)
@@ -473,9 +473,9 @@ def test_the_selector_is_shared_with_check_liveness(tmp_path):
 
 def test_empty_target_set_is_reported_and_never_claims_health(tmp_path, capsys):
     """The regression. The old code printed a health claim here and exited 0."""
-    (tmp_path / "a.yaml").write_text("name: unmonitored\narm: fargate\n")
+    (tmp_path / "a.yaml").write_text("name: unmonitored\narm: fargate\n", encoding="utf-8")
     fixture = tmp_path / "f.json"
-    fixture.write_text("{}")
+    fixture.write_text("{}", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc:
         main([
@@ -496,9 +496,9 @@ def test_require_targets_makes_an_empty_set_a_failure(tmp_path):
     """Ships OFF so a fresh consumer is not permanently red; a consumer with a
     SCHEDULED run sets it, because a silently-empty target set there means the
     watcher has been watching nothing."""
-    (tmp_path / "a.yaml").write_text("name: unmonitored\narm: fargate\n")
+    (tmp_path / "a.yaml").write_text("name: unmonitored\narm: fargate\n", encoding="utf-8")
     fixture = tmp_path / "f.json"
-    fixture.write_text("{}")
+    fixture.write_text("{}", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc:
         main([

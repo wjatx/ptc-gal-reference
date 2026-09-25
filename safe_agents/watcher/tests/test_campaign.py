@@ -415,7 +415,7 @@ def test_purity_no_aws_no_clock_reads():
     """AST-based (not substring) so prose mentioning 'boto3' in a docstring
     doesn't false-positive — mirrors the no-naive-datetime conformance guard
     (safe_agents/broker/tests/test_no_naive_datetime_conformance.py)."""
-    source = Path(inspect.getfile(campaign_module)).read_text()
+    source = Path(inspect.getfile(campaign_module)).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
     imported_modules: set[str] = set()

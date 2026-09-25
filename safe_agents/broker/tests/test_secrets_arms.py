@@ -20,6 +20,7 @@ fetched from (LazyBotoSecretsProvider does not import boto3 until first fetch).
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -151,6 +152,22 @@ class TestDirSecretsProvider:
         with pytest.raises(ValueError, match="is not a leaf"):
             provider.fetch_secret(name)
 
+    @pytest.mark.skipif(
+        sys.platform != "win32",
+        reason="drive-qualified names are ordinary leaves on POSIX; the escape is Windows-only",
+    )
+    @pytest.mark.parametrize("name", ["Q:outside", "a:b"])
+    def test_drive_qualified_names_refuse_on_windows(
+        self, tmp_path: Path, name: str
+    ) -> None:
+        # No separator, so the leaf checks pass, yet on Windows joining "Q:x" to the
+        # root yields "Q:x" and discards the root. The parent check is what holds.
+        # (A name on the root's own drive resolves inside it, so these use drives a
+        # temp directory will not be on.)
+        provider = DirSecretsProvider(str(_secrets_dir(tmp_path)))
+        with pytest.raises(ValueError, match="directly under the secrets directory"):
+            provider.fetch_secret(name)
+
     def test_traversal_refusal_is_not_a_missing_secret(self, tmp_path: Path) -> None:
         from safe_agents.broker.prototype.broker_server import _is_missing_secret
 
@@ -180,10 +197,10 @@ class TestDirSecretsProvider:
         """Pins the behaviour the dir arm deliberately does NOT share, so a future
         change to either one cannot silently converge them."""
         path = tmp_path / "secrets.json"
-        path.write_text(json.dumps({"github": "old-cred"}))
+        path.write_text(json.dumps({"github": "old-cred"}), encoding="utf-8")
         provider = LocalFileSecretsProvider(str(path))
         assert provider.fetch_secret("github") == "old-cred"
-        path.write_text(json.dumps({"github": "rotated-cred"}))
+        path.write_text(json.dumps({"github": "rotated-cred"}), encoding="utf-8")
         assert provider.fetch_secret("github") == "old-cred"  # cached for its lifetime
 
 
@@ -326,7 +343,7 @@ class TestMcpCommandsSelectTheSameArm:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         path = tmp_path / "secrets.json"
-        path.write_text(json.dumps({"alpaca": "cred-alpaca"}))
+        path.write_text(json.dumps({"alpaca": "cred-alpaca"}), encoding="utf-8")
         monkeypatch.setenv("BROKER_SECRETS_FILE", str(path))
         provider = _resolve_secrets_provider()
         assert isinstance(provider, LocalFileSecretsProvider)

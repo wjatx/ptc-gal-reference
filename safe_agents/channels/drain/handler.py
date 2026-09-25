@@ -168,7 +168,7 @@ def _load_manifest() -> AgentManifest:
     path = os.environ.get("CHANNELS_DRAIN_MANIFEST")
     if not path:
         raise DrainConfigError("CHANNELS_DRAIN_MANIFEST is unset — the drain has no manifest")
-    raw = yaml.safe_load(Path(path).read_text())
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise DrainConfigError(
             f"drain manifest {path} must be a YAML/JSON mapping; got {type(raw).__name__}"

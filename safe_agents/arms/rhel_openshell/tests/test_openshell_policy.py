@@ -220,7 +220,7 @@ SANDBOX_SCRIPT = (
 class TestSandboxLifecycleSequence:
     def setup_method(self):
         assert SANDBOX_SCRIPT.exists(), f"run-agent-sandbox.sh not found at {SANDBOX_SCRIPT}"
-        self.script = SANDBOX_SCRIPT.read_text()
+        self.script = SANDBOX_SCRIPT.read_text(encoding="utf-8")
 
     def test_sandbox_create_with_true_dev_null(self):
         """The create command must use `-- true </dev/null` to avoid blocking stdin."""
@@ -266,7 +266,7 @@ class TestSandboxLifecycleSequence:
 
 class TestConcurrencyGate:
     def setup_method(self):
-        self.script = SANDBOX_SCRIPT.read_text()
+        self.script = SANDBOX_SCRIPT.read_text(encoding="utf-8")
 
     def test_flock_present(self):
         assert "flock" in self.script, "flock-based concurrency gate not found"
@@ -293,7 +293,7 @@ class TestConcurrencyGate:
 
 class TestSecretInjection:
     def setup_method(self):
-        self.script = SANDBOX_SCRIPT.read_text()
+        self.script = SANDBOX_SCRIPT.read_text(encoding="utf-8")
 
     def test_runner_key_allowlist_present(self):
         """The script must declare an explicit allowlist of runner keys."""

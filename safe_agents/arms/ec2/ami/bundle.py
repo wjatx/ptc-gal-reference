@@ -517,7 +517,7 @@ def read_manifest_identity(manifest_path: Path) -> tuple[str, str | None]:
     """
     import yaml  # noqa: PLC0415 — lazy import, like argparse in main()
 
-    with manifest_path.open() as fh:
+    with manifest_path.open(encoding="utf-8") as fh:
         raw = yaml.safe_load(fh)
     if not isinstance(raw, dict) or not raw.get("name"):
         raise SystemExit(

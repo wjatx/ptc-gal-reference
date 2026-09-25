@@ -74,7 +74,7 @@ class FakeSqsClient:
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     manifest_path = tmp_path / "channels-manifest.yaml"
-    manifest_path.write_text(_MANIFEST_YAML)
+    manifest_path.write_text(_MANIFEST_YAML, encoding="utf-8")
 
     monkeypatch.setenv("CHANNELS_MANIFEST", str(manifest_path))
     monkeypatch.setenv("CHANNELS_DEDUPE_TABLE", "dedupe-table")

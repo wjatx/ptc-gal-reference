@@ -79,7 +79,7 @@ def _envelope_manifest_principal(manifest_path: Path) -> Principal | None:
     if not manifest_path.exists():
         raise SeedPrincipalError(f"Manifest not found: {manifest_path}")
     try:
-        raw = yaml.safe_load(manifest_path.read_text())
+        raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise SeedPrincipalError(f"Manifest parse error in {manifest_path}: {exc}") from exc
     block = raw.get("principal") if isinstance(raw, dict) else None

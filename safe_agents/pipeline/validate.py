@@ -145,7 +145,7 @@ def validate_manifest_extended(
             )
         else:
             try:
-                with policy_path.open() as fh:
+                with policy_path.open(encoding="utf-8") as fh:
                     policy = yaml.safe_load(fh)
             except yaml.YAMLError as exc:
                 errors.append(f"policy file {policy_path} parse error: {exc}")

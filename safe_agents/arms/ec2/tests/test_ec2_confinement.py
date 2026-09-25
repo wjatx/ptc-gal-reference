@@ -19,6 +19,7 @@ import subprocess
 from pathlib import Path
 
 from safe_agents.arms.ec2.provision import render_user_data
+from safe_agents.broker.tests.platform_marks import requires_posix_bash
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -66,7 +67,7 @@ class TestNetnsConfinementScripts:
         )
 
     def test_netns_setup_creates_namespace_and_veth(self) -> None:
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "ip netns add" in content, "must create the named network namespace"
         assert "type veth peer name" in content, "must create a veth pair (host↔agent link)"
         assert "ip link set" in content and "netns" in content, (
@@ -80,7 +81,7 @@ class TestNetnsConfinementScripts:
         veth, plus host ip_forward + MASQUERADE for the veth /30. The old `blackhole default` (the
         dead-end that required a co-located stub) must be gone.
         """
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "ip route add blackhole" not in content, (
             "the netns must no longer install a blackhole default route — it forwards to the broker"
         )
@@ -96,28 +97,28 @@ class TestNetnsConfinementScripts:
 
     def test_netns_wires_dns_for_broker_resolution(self) -> None:
         """The netns must get a resolv.conf so broker.safe-agents.local resolves via the VPC resolver."""
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "/etc/netns/" in content and "resolv.conf" in content, (
             "agent-netns-setup.sh must install a per-netns /etc/netns/<ns>/resolv.conf so DNS works"
         )
 
     def test_netns_constants_match_the_committed_snapshot(self) -> None:
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "10.255.255.1" in content, "host veth IP must be 10.255.255.1"
         assert "10.255.255.2" in content, "agent veth IP must be 10.255.255.2"
         assert "PREFIX=30" in content, "the point-to-point link must be a /30"
 
     def test_netns_setup_is_idempotent(self) -> None:
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "ip netns del" in content, "must delete any prior namespace first (idempotent re-run)"
 
     def test_netns_setup_fails_loudly_without_ip(self) -> None:
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "command -v ip" in content, "must assert `ip` is present and fail loudly if not"
 
     def test_netns_setup_fails_loudly_without_iptables(self) -> None:
         """Forwarding needs MASQUERADE; a missing iptables must fail loudly (AMI-gap guard)."""
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "command -v iptables" in content, (
             "must assert `iptables` is present (MASQUERADE) and fail loudly if the AMI lacks it"
         )
@@ -132,8 +133,9 @@ class TestRunBrokeredRunner:
     split: oauth fetch + run record on the HOST, claude -p + brokered tool call in the NETNS."""
 
     def _content(self) -> str:
-        return RUN_BROKERED_SCRIPT.read_text()
+        return RUN_BROKERED_SCRIPT.read_text(encoding="utf-8")
 
+    @requires_posix_bash
     def test_bash_n_clean(self) -> None:
         proc = subprocess.run(
             ["bash", "-n", str(RUN_BROKERED_SCRIPT)], capture_output=True, text=True
@@ -209,7 +211,7 @@ class TestNetnsConfinementWiring:
     """user-data.sh.tmpl wires the netns + broker-service model; the EC2 arm is always-autonomous."""
 
     def _user_data(self) -> str:
-        return USER_DATA_TMPL.read_text()
+        return USER_DATA_TMPL.read_text(encoding="utf-8")
 
     def _rendered(self) -> str:
         return render_user_data(_RENDER_PARAMS)
@@ -308,7 +310,7 @@ class TestSmokeEgressAssertions:
     """smoke-egress.sh proves (not trusts) the confinement: four assertions, run in-netns."""
 
     def _content(self) -> str:
-        return SMOKE_EGRESS_SCRIPT.read_text()
+        return SMOKE_EGRESS_SCRIPT.read_text(encoding="utf-8")
 
     def test_runs_assertions_inside_the_netns(self) -> None:
         assert "ip netns exec" in self._content()

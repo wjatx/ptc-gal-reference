@@ -156,7 +156,7 @@ def load_agent_manifest(path: Path) -> AgentManifest:
     and pydantic.ValidationError if the manifest is malformed (e.g. a missing
     polarity — never silently defaulted).
     """
-    raw = yaml.safe_load(Path(path).read_text())
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(
             f"manifest {path} must be a YAML mapping; got {type(raw).__name__}"

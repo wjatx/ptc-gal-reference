@@ -755,6 +755,13 @@ def main() -> None:
                              "in the public reference implementation")
     args = parser.parse_args()
 
+    # The clause text carries characters such as ≠ and →. When stdout is a pipe or
+    # a file, Windows encodes it in the ANSI code page, which has no ≠, so printing
+    # the clauses there raised UnicodeEncodeError partway through. The JSON form is
+    # UTF-8 by definition (RFC 8259), so say so rather than inherit a locale.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+
     if not args.spec_dir.is_dir():
         # The specifications are NOT vendored into the reference implementation; they are
         # maintained as their own licensed artifact. A reader hitting this has done nothing

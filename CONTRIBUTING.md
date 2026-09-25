@@ -62,9 +62,26 @@ One venv, one install:
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e ".[dev]"
 python3 -m pytest
 ```
+
+On native Windows, in PowerShell, with Python 3.12 or later from python.org or
+`winget install Python.Python.3.12`:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -m pytest
+```
+
+If PowerShell refuses to run `Activate.ps1`, allow local scripts for your user
+once with `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or skip activation
+and call `.venv\Scripts\python.exe` directly. Use `python`, not `python3`: on
+Windows the latter is usually the Microsoft Store stub. A handful of tests skip
+there, each naming the POSIX tool it needs (`pgrep`, `bash`, or the runner-contract
+harness's shell scripts). CI runs this same path on Windows and macOS.
 
 The suite is a few thousand tests and needs no cloud account, no container
 runtime, and no credentials. Run `pytest` from the repository root rather than

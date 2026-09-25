@@ -128,7 +128,7 @@ class TestChannelsDebakeGuard:
         offenders: list[str] = []
         for py in _base_sources():
             rel = py.relative_to(_REPO_ROOT)
-            for lineno, text, pattern, reason in _hits(py.read_text()):
+            for lineno, text, pattern, reason in _hits(py.read_text(encoding="utf-8")):
                 offenders.append(
                     f"  {rel}:{lineno}: {text!r} matches {pattern!r} ({reason})"
                 )

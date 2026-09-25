@@ -22,7 +22,7 @@ _MANIFEST_PATH = _EXAMPLES_ROOT / "confidence_budget" / "manifest.yaml"
 
 class TestConfidenceBudgetExampleManifest:
     def test_manifest_parses_and_knob_round_trips(self) -> None:
-        data = yaml.safe_load(_MANIFEST_PATH.read_text())
+        data = yaml.safe_load(_MANIFEST_PATH.read_text(encoding="utf-8"))
         manifest = AgentManifest.model_validate(data)
 
         knob = manifest.envelope.confidence
@@ -40,7 +40,7 @@ class TestConfidenceBudgetExampleManifest:
     def test_report_publish_is_high_blast_irreversible(self) -> None:
         # The high-blast weight (1.0) only bites because report.publish is classified
         # external + irreversible — the fact the README's worked draws depend on.
-        data = yaml.safe_load(_MANIFEST_PATH.read_text())
+        data = yaml.safe_load(_MANIFEST_PATH.read_text(encoding="utf-8"))
         manifest = AgentManifest.model_validate(data)
         op = {f"{o.tool}.{o.op}": o for o in manifest.tool_ops}["report.publish"]
         assert op.external is True
@@ -51,7 +51,7 @@ class TestReporterPolicyPayload:
     def test_payload_validates_and_meets_the_bar(self) -> None:
         from examples.confidence_budget.reporter_policy import confidence_payload
 
-        data = yaml.safe_load(_MANIFEST_PATH.read_text())
+        data = yaml.safe_load(_MANIFEST_PATH.read_text(encoding="utf-8"))
         knob = AgentManifest.model_validate(data).envelope.confidence
 
         payload = confidence_payload(agreeing=9, total=10, computed_at="2026-07-12T00:00:00Z")
@@ -67,7 +67,7 @@ class TestReporterPolicyPayload:
     def test_below_bar_agreement_fails_the_same_bar(self) -> None:
         from examples.confidence_budget.reporter_policy import confidence_payload
 
-        data = yaml.safe_load(_MANIFEST_PATH.read_text())
+        data = yaml.safe_load(_MANIFEST_PATH.read_text(encoding="utf-8"))
         knob = AgentManifest.model_validate(data).envelope.confidence
 
         # 8/10 = 0.8 < 0.85 → below-bar (README worked call 2, the abstain path).

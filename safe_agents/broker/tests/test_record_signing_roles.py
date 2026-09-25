@@ -888,3 +888,16 @@ def test_no_verify_keys_at_all_skips_loudly_and_annotates():
         a.startswith(ANNOTATION_SIGNING_EPOCH_UNENFORCEABLE) for a in report.annotations
     )
     assert report.violations == ()
+
+
+@pytest.mark.parametrize("role_env", ROLE_ENVS)
+def test_a_file_held_key_refuses_on_windows(role_env, monkeypatch, tmp_path):
+    """Windows has no group/other mode bits, so the owner-only gate cannot be
+    evaluated there. Loading the key anyway would skip the gate; the file arm
+    refuses instead and says why."""
+    monkeypatch.delenv("BROKER_STORE", raising=False)
+    monkeypatch.setattr("sys.platform", "win32")
+    key = tmp_path / "key.pem"
+    key.write_text("unused", encoding="utf-8")
+    with pytest.raises(issuer_keys.IssuerSigningConfigError, match="not supported on Windows"):
+        issuer_keys._read_local_key_file(str(key), role_env)

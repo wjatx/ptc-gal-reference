@@ -58,7 +58,7 @@ def write_run_record(
 
     # Local file — always written (the pull-checkable fallback)
     record_dir = Path(os.environ.get("SA_RUN_RECORD_DIR", "."))
-    (record_dir / RUN_RECORD_FILENAME).write_text(json.dumps(record, indent=2))
+    (record_dir / RUN_RECORD_FILENAME).write_text(json.dumps(record, indent=2), encoding="utf-8")
 
     # DynamoDB — optional; silently degrade if unavailable or unconfigured
     table_name = os.environ.get("SA_DYNAMO_TABLE")

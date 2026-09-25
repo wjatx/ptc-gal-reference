@@ -43,7 +43,7 @@ def load_envelope_block(manifest_path: Path) -> dict:
         raise EnvelopeSeedError(f"Manifest not found: {manifest_path}")
 
     try:
-        raw = yaml.safe_load(manifest_path.read_text())
+        raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
         raise EnvelopeSeedError(f"Manifest parse error in {manifest_path}: {exc}") from exc
 

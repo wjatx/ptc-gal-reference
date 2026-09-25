@@ -175,7 +175,18 @@ class DirSecretsProvider:
                 f"against the secrets directory {self._root}: a name is a single "
                 "filename under the mount root, never a path out of it."
             )
-        return self._root / secret_name
+        candidate = self._root / secret_name
+        # Separator checks alone are POSIX-complete but not Windows-complete: there
+        # a name like "D:x" carries a DRIVE, and joining it discards the root
+        # entirely. Requiring the joined path to sit directly under the root closes
+        # that on every platform, and on POSIX it can never fire after the checks
+        # above.
+        if candidate.parent != self._root:
+            raise ValueError(
+                f"secret name {secret_name!r} does not resolve to a file directly "
+                f"under the secrets directory {self._root} — refusing it."
+            )
+        return candidate
 
     def fetch_secret(self, secret_name: str) -> str:
         raw = self._resolve(secret_name).read_text(encoding="utf-8")
@@ -213,6 +224,10 @@ class DirSecretsProvider:
                 handle.write(value)
                 handle.flush()
                 os.fsync(handle.fileno())
+            # mkstemp already creates the file owner-only on POSIX; this restates it
+            # rather than relying on that. On Windows chmod can only toggle the
+            # read-only flag, so it is a no-op for privacy there: the file inherits
+            # the ACL of the secrets directory, which is where that boundary lives.
             os.chmod(tmp, 0o600)
             os.replace(tmp, target)
         except BaseException:

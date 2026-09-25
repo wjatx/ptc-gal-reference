@@ -111,7 +111,7 @@ def _provision(tmp_path: Path) -> dict[str, str]:
                     }
                 )
             }
-        )
+        ), encoding="utf-8"
     )
     secrets_file.chmod(0o600)
 
@@ -123,7 +123,7 @@ def _provision(tmp_path: Path) -> dict[str, str]:
             serialization.PrivateFormat.PKCS8,
             serialization.NoEncryption(),
         )
-        .decode()
+        .decode(), encoding="utf-8"
     )
     issuer_key.chmod(0o600)
 
@@ -229,7 +229,7 @@ def _drive_gateway(env: dict[str, str]) -> dict:
 
 
 def _read_chain(path: Path) -> list[AuditRecord]:
-    lines = [line for line in path.read_text().splitlines() if line.strip()]
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     return [AuditRecord.model_validate_json(line) for line in lines]
 
 
@@ -247,7 +247,7 @@ def test_gateway_serves_ceremony_admitted_alpaca_tools_over_stdio(tmp_path, caps
         env,
     )
     assert snap.returncode == 0, f"snapshot: {snap.stdout}{snap.stderr}"
-    snapshot = json.loads(snapshot_path.read_text())
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
     advertised = {entry["tool_def"]["tool_name"] for entry in snapshot["entries"]}
     assert len(advertised) >= 60, f"expected the full advertised set, saw {len(advertised)}"
     # The refusal below is only meaningful because the vendor DOES offer this tool.

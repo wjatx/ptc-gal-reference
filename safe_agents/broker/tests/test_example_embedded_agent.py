@@ -39,7 +39,7 @@ _SANCTIONED_BROKER_MODULES = {"safe_agents.broker.api", "safe_agents.broker.sche
 
 
 def _manifest() -> AgentManifest:
-    return AgentManifest.model_validate(yaml.safe_load(_MANIFEST_PATH.read_text()))
+    return AgentManifest.model_validate(yaml.safe_load(_MANIFEST_PATH.read_text(encoding="utf-8")))
 
 
 class TestEmbeddedAgentManifest:
@@ -121,7 +121,7 @@ class TestEmbeddedAgentImportSurface:
         """
         broker_imports: set[str] = set()
         for path in sorted(_EXAMPLE_ROOT.glob("*.py")):
-            tree = ast.parse(path.read_text(), filename=str(path))
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module:
                     module = node.module

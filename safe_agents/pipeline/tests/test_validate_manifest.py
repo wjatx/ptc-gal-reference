@@ -43,7 +43,7 @@ TEST_STUB_MANIFEST = AGENTS_DIR / "test-stub.yaml"
 def _write_manifest(tmp_path: Path, content: dict, name: str = "agent.yaml") -> Path:
     """Write a manifest dict as YAML and return the path."""
     p = tmp_path / name
-    p.write_text(yaml.dump(content))
+    p.write_text(yaml.dump(content), encoding="utf-8")
     return p
 
 
@@ -180,7 +180,7 @@ def test_valid_policy_file_passes(tmp_path: Path) -> None:
           allow_hosts:
             - api.anthropic.com
           deny_by_default: true
-    """))
+    """), encoding="utf-8")
 
     data = _base_manifest()
     data["policy"] = "policies/test-agent.yaml"
@@ -204,7 +204,7 @@ def test_policy_with_connector_ip_fails(tmp_path: Path) -> None:
             - api.anthropic.com
             - 10.0.1.42          # connector IP — must NOT appear here
           deny_by_default: true
-    """))
+    """), encoding="utf-8")
 
     data = _base_manifest()
     data["policy"] = "policies/test-agent.yaml"

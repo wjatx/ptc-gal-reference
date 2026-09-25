@@ -200,7 +200,7 @@ def _resolve_tool_def_from_snapshot(
     should be hand-writing definitions).
     """
     try:
-        snapshot = McpServerSnapshot.model_validate_json(Path(args.from_snapshot).read_text())
+        snapshot = McpServerSnapshot.model_validate_json(Path(args.from_snapshot).read_text(encoding="utf-8"))
     except (OSError, ValidationError) as exc:
         return None, f"REFUSED: --from-snapshot {args.from_snapshot} is unusable: {exc}"
 
@@ -312,7 +312,7 @@ def admit_propose_command(
             return 2
     else:
         try:
-            tool_def = McpToolDef.model_validate_json(Path(args.tool_def_json).read_text())
+            tool_def = McpToolDef.model_validate_json(Path(args.tool_def_json).read_text(encoding="utf-8"))
         except (OSError, ValidationError) as exc:
             print(f"REFUSED: --tool-def-json {args.tool_def_json} is unusable: {exc}")
             return 1
@@ -592,7 +592,7 @@ def _load_snapshot_and_decl(
     from an operator-NAMED image-baked manifest, never a store.
     """
     try:
-        snapshot = McpServerSnapshot.model_validate_json(Path(snapshot_path).read_text())
+        snapshot = McpServerSnapshot.model_validate_json(Path(snapshot_path).read_text(encoding="utf-8"))
     except (OSError, ValidationError) as exc:
         return None, None, f"REFUSED: --snapshot {snapshot_path} is unusable: {exc}"
 
@@ -1273,7 +1273,7 @@ def snapshot_command(args: argparse.Namespace) -> int:
         entries=entries,
     )
     out_path = Path(args.out)
-    out_path.write_text(snapshot.model_dump_json(indent=2) + "\n")
+    out_path.write_text(snapshot.model_dump_json(indent=2) + "\n", encoding="utf-8")
     print(
         f"snapshot written: {out_path} server_id={args.server_id} "
         f"transport={decl.transport} tools={len(entries)}"
@@ -1334,7 +1334,7 @@ def diff_command(args: argparse.Namespace, *, store: ToolRegistryStore) -> int:
     here (flag if that behavior is actually wanted).
     """
     try:
-        snapshot = McpServerSnapshot.model_validate_json(Path(args.snapshot).read_text())
+        snapshot = McpServerSnapshot.model_validate_json(Path(args.snapshot).read_text(encoding="utf-8"))
     except (OSError, ValidationError) as exc:
         print(f"REFUSED: --snapshot {args.snapshot} is unusable: {exc}")
         return 2

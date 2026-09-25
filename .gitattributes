@@ -1,0 +1,9 @@
+# Check out every text file with LF endings, on every platform.
+#
+# Git for Windows (and GitHub's Windows runners) default to core.autocrlf=true,
+# which rewrites LF to CRLF on checkout. That breaks things here in three ways:
+# shell scripts staged onto Linux boxes gain a \r on every line, tests that compare
+# a file's bytes to what the code staged see different bytes, and anything whose
+# integrity binds stored bytes would hash differently on a Windows checkout. Every
+# file in the index is already LF, so this changes nothing for macOS or Linux.
+* text=auto eol=lf

@@ -181,7 +181,7 @@ def _offending_imports(source: str) -> list[str]:
 
 class TestSplitReadyImports:
     def test_methods_imports_only_schemas_and_stdlib(self) -> None:
-        src = Path(methods_module.__file__).read_text()
+        src = Path(methods_module.__file__).read_text(encoding="utf-8")
         offenders = _offending_imports(src)
         assert not offenders, (
             "methods.py reached beyond the contract surface — a reference constructor "

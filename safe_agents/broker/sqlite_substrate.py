@@ -237,7 +237,12 @@ def _open_read_only(db_path: str | Path) -> sqlite3.Connection:
             "store would read as 'no grants exist' — evidence assembled against a "
             "phantom store, failing toward more authority. Check the mount."
         )
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, isolation_level=None)
+    # as_uri() rather than f"file:{path}": it percent-encodes the path, so a '?',
+    # '#' or '%' in a directory name cannot be read as URI syntax, and on Windows
+    # it yields the file:///C:/... form SQLite expects instead of a bare drive path
+    # full of backslashes.
+    uri = path.absolute().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, isolation_level=None)
     conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS}")
     _verify_schema(conn, path)
     return conn

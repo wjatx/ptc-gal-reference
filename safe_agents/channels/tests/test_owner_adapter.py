@@ -260,7 +260,7 @@ _RESERVED_VERB_COMMANDS = {
 @pytest.mark.parametrize("manifest_path", _OWNER_MANIFESTS, ids=lambda p: p.name)
 @pytest.mark.parametrize("verb,command", sorted(_RESERVED_VERB_COMMANDS.items()))
 def test_reference_manifest_routes_every_reserved_verb(manifest_path, verb, command):
-    manifest = ChannelsManifest.model_validate(yaml.safe_load(manifest_path.read_text()))
+    manifest = ChannelsManifest.model_validate(yaml.safe_load(manifest_path.read_text(encoding="utf-8")))
     assert isinstance(manifest.adapter, OwnerAdapterConfig)
     adapter = OwnerInboundAdapter(manifest.adapter, _TOKEN, manifest.routing)
 

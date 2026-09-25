@@ -49,6 +49,7 @@ from safe_agents.arms.rhel_openshell.provision import (
     rhel_openshell_teardown,
     _pick_newest_rhel_ami,
 )
+from safe_agents.broker.tests.platform_marks import requires_posix_bash
 from safe_agents.pipeline import FakeAWS, load_manifest, run_pipeline
 
 # ---------------------------------------------------------------------------
@@ -249,7 +250,7 @@ class TestUserDataRendering:
 
     def test_ssm_agent_install_present(self) -> None:
         """Template must install SSM agent (RHEL marketplace AMIs omit it)."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "amazon-ssm-agent" in content, (
             "user-data must install the SSM agent (RHEL AMIs do not bundle it)"
         )
@@ -265,7 +266,7 @@ class TestUserDataRendering:
         first starts at login time. Wrong order means OpenShell sandbox creation
         fails with 'controller cpu is not available'.
         """
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         delegate_idx = content.find("Delegate=cpu cpuset io memory pids")
         useradd_idx = content.find("useradd")
         assert delegate_idx != -1, (
@@ -279,7 +280,7 @@ class TestUserDataRendering:
 
     def test_dev_user_creation_present(self) -> None:
         """Template must create the dev user with NOPASSWD sudo."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "useradd" in content and "dev" in content, (
             "user-data must create the dev user"
         )
@@ -293,7 +294,7 @@ class TestUserDataRendering:
         In the thin-launcher model, the heavy install (including the HARNESS-COUPLING block)
         lives in bootstrap/scripts/setup-claude.sh rather than user-data.sh.tmpl.
         """
-        content = SETUP_CLAUDE_SCRIPT.read_text()
+        content = SETUP_CLAUDE_SCRIPT.read_text(encoding="utf-8")
         start_idx = content.find("HARNESS-COUPLING BLOCK START")
         end_idx = content.find("HARNESS-COUPLING BLOCK END")
         assert start_idx != -1, "HARNESS-COUPLING BLOCK START marker missing from setup-claude.sh"
@@ -307,7 +308,7 @@ class TestUserDataRendering:
 
     def test_oauth_token_fetch_inside_harness_block(self) -> None:
         """The OAuth token check must be inside the HARNESS-COUPLING block in setup-claude.sh."""
-        content = SETUP_CLAUDE_SCRIPT.read_text()
+        content = SETUP_CLAUDE_SCRIPT.read_text(encoding="utf-8")
         start_idx = content.find("HARNESS-COUPLING BLOCK START")
         end_idx = content.find("HARNESS-COUPLING BLOCK END")
         block = content[start_idx:end_idx]
@@ -317,7 +318,7 @@ class TestUserDataRendering:
 
     def test_podman_install_present(self) -> None:
         """install-openshell.sh must install rootless podman (OpenShell container driver)."""
-        content = INSTALL_OPENSHELL_SCRIPT.read_text()
+        content = INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8")
         assert "podman" in content, (
             "install-openshell.sh must install rootless podman (OpenShell uses it as its container driver)"
         )
@@ -330,7 +331,7 @@ class TestUserDataRendering:
         DBUS_SESSION_BUS_ADDRESS must be set for `systemctl --user` to work.
         """
         # The thin user-data invokes bootstrap.sh as the dev user.
-        tmpl = TEMPLATE_PATH.read_text()
+        tmpl = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "sudo -u dev -H" in tmpl, (
             "user-data must invoke bootstrap.sh AS the dev user via sudo -u dev -H"
         )
@@ -338,7 +339,7 @@ class TestUserDataRendering:
             "user-data must invoke bootstrap.sh (the heavy install lives there)"
         )
         # install-openshell.sh (running as dev) sets the user-bus vars.
-        osh = INSTALL_OPENSHELL_SCRIPT.read_text()
+        osh = INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8")
         assert "openshell" in osh.lower(), "install-openshell.sh must install OpenShell"
         assert "install.sh | sh" in osh, "must use the native OpenShell installer"
         assert "XDG_RUNTIME_DIR" in osh and "DBUS_SESSION_BUS_ADDRESS" in osh, (
@@ -357,7 +358,7 @@ class TestUserDataRendering:
 
     def test_s3_bundle_delivery_present(self) -> None:
         """Thin user-data must pull the agent code bundle from S3."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "s3 cp" in content or "aws s3" in content, (
             "user-data must pull the agent bundle from S3"
         )
@@ -368,7 +369,7 @@ class TestUserDataRendering:
 
     def test_platform_contract_bundle_delivery_present(self) -> None:
         """Thin user-data must pull the platform/contract bundle from S3 (harness delivery)."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "platform/contract/bundle.tar.gz" in content, (
             "user-data must pull platform/contract/bundle.tar.gz from S3 so the "
             "conformance harness lands at /opt/safe-agents/core/contract/harness.py"
@@ -376,7 +377,7 @@ class TestUserDataRendering:
 
     def test_rhel_bootstrap_bundle_delivery_present(self) -> None:
         """Thin user-data must pull the rhel-bootstrap bundle from S3."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "rhel-bootstrap" in content, (
             "user-data must pull the rhel-bootstrap bundle from S3 "
             "(platform/rhel-bootstrap/bundle.tar.gz)"
@@ -384,14 +385,14 @@ class TestUserDataRendering:
 
     def test_user_data_invokes_bootstrap_sh(self) -> None:
         """Thin user-data must invoke bootstrap.sh to do the heavy install."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "bootstrap.sh" in content, (
             "user-data.sh.tmpl must invoke bootstrap.sh; the heavy install lives there"
         )
 
     def test_systemd_timer_enabled(self) -> None:
         """bootstrap.sh must enable + start the agent's systemd timer."""
-        content = BOOTSTRAP_SCRIPT.read_text()
+        content = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
         assert "systemctl enable" in content and ".timer" in content, (
             "bootstrap.sh must enable the agent's systemd timer"
         )
@@ -401,20 +402,20 @@ class TestUserDataRendering:
 
     def test_set_x_present(self) -> None:
         """Template must have 'set -x' for execution tracing to the log."""
-        assert "set -x" in TEMPLATE_PATH.read_text(), (
+        assert "set -x" in TEMPLATE_PATH.read_text(encoding="utf-8"), (
             "user-data must contain 'set -x' to trace each command to the bootstrap log"
         )
 
     def test_err_trap_present(self) -> None:
         """Template must set a trap on ERR so failures are never silent."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "trap" in content and "ERR" in content, (
             "user-data must define 'trap ... ERR' to catch any failed command"
         )
 
     def test_fail_marker_written_on_error(self) -> None:
         """Template must write a .FAILED marker when the ERR trap fires."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert "FAIL_MARKER" in content or "BOOTSTRAP_FAILED" in content or ".FAILED" in content, (
             "user-data error handler must write a *.FAILED marker file "
             "so failed bootstraps are detectable without parsing the full log"
@@ -457,7 +458,7 @@ class TestNoDevHarnessAccent:
     @pytest.mark.parametrize("pattern,label", _FORBIDDEN)
     def test_forbidden_pattern_absent(self, pattern: str, label: str) -> None:
         """The given development-harness pattern must not appear in the user-data template."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         assert pattern not in content, (
             f"user-data template contains a development-harness accent {label!r} ({pattern!r}). "
             "The thin user-data launcher must contain only root pre-bootstrap essentials."
@@ -465,7 +466,7 @@ class TestNoDevHarnessAccent:
 
     def test_no_hardcoded_agent_names(self) -> None:
         """The template must not contain hardcoded agent names."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         forbidden_names = ["example-agent", "test-stub", "alpaca", "telegram", "tavily"]
         for name in forbidden_names:
             assert name not in content.lower(), (
@@ -508,7 +509,7 @@ class TestBootstrapStructure:
 
     def test_tmux_in_install_tools(self) -> None:
         """install-tools.sh must install tmux — required by run-agent-sandbox.sh."""
-        content = INSTALL_TOOLS_SCRIPT.read_text()
+        content = INSTALL_TOOLS_SCRIPT.read_text(encoding="utf-8")
         assert "tmux" in content, (
             "install-tools.sh must install tmux; it is required by run-agent-sandbox.sh "
             "for the flock-based concurrency gate (a prior re-derivation dropped this)"
@@ -520,7 +521,7 @@ class TestBootstrapStructure:
         Pinning (e.g. OPENSHELL_VERSION=0.0.71) caused a release-asset 404 when upstream
         churned to 0.0.72. The native installer always installs the current latest.
         """
-        content = INSTALL_OPENSHELL_SCRIPT.read_text()
+        content = INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8")
         # No 'OPENSHELL_VERSION=0.0' or similar concrete version pin in a functional line.
         # Comments explaining the no-pin decision are OK.
         non_comment_lines = [
@@ -541,7 +542,7 @@ class TestBootstrapStructure:
         A manual `gateway add` uses the wrong port and creates a mis-registered entry.
         Comments may reference the phrase for documentation.
         """
-        content = INSTALL_OPENSHELL_SCRIPT.read_text()
+        content = INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8")
         non_comment = "\n".join(
             ln for ln in content.splitlines() if not ln.strip().startswith("#")
         )
@@ -552,7 +553,7 @@ class TestBootstrapStructure:
 
     def test_openshell_xdg_and_dbus_set(self) -> None:
         """install-openshell.sh must set XDG_RUNTIME_DIR + DBUS_SESSION_BUS_ADDRESS."""
-        content = INSTALL_OPENSHELL_SCRIPT.read_text()
+        content = INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8")
         assert "XDG_RUNTIME_DIR" in content, (
             "install-openshell.sh must set XDG_RUNTIME_DIR so systemctl --user can connect"
         )
@@ -562,13 +563,13 @@ class TestBootstrapStructure:
 
     def test_openshell_enable_linger(self) -> None:
         """install-openshell.sh must enable linger so the podman socket survives logout."""
-        assert "enable-linger" in INSTALL_OPENSHELL_SCRIPT.read_text(), (
+        assert "enable-linger" in INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8"), (
             "install-openshell.sh must enable linger for the dev user"
         )
 
     def test_harness_coupling_markers_in_setup_claude(self) -> None:
         """setup-claude.sh must bracket the Claude Code install with HARNESS-COUPLING markers."""
-        content = SETUP_CLAUDE_SCRIPT.read_text()
+        content = SETUP_CLAUDE_SCRIPT.read_text(encoding="utf-8")
         assert "HARNESS-COUPLING BLOCK START" in content, (
             "HARNESS-COUPLING BLOCK START missing from setup-claude.sh"
         )
@@ -578,7 +579,7 @@ class TestBootstrapStructure:
 
     def test_sa_profile_gate_in_bootstrap(self) -> None:
         """bootstrap.sh must gate interactive-only tools behind SA_PROFILE=interactive."""
-        content = BOOTSTRAP_SCRIPT.read_text()
+        content = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
         assert "SA_PROFILE" in content, "SA_PROFILE gate missing from bootstrap.sh"
         assert "interactive" in content, (
             "bootstrap.sh must reference SA_PROFILE=interactive for gated tools"
@@ -595,7 +596,7 @@ class TestBootstrapStructure:
         """
         lines = [
             ln.strip()
-            for ln in BOOTSTRAP_SCRIPT.read_text().splitlines()
+            for ln in BOOTSTRAP_SCRIPT.read_text(encoding="utf-8").splitlines()
             if ln.strip() and not ln.strip().startswith("#")
         ]
         assert lines[-1] == "exit 0", (
@@ -605,7 +606,7 @@ class TestBootstrapStructure:
 
     def test_languages_gated_by_sa_profile(self) -> None:
         """install-languages.sh must only run inside the SA_PROFILE=interactive block."""
-        content = BOOTSTRAP_SCRIPT.read_text()
+        content = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
         assert "install-languages.sh" in content, "install-languages.sh not referenced in bootstrap.sh"
         # The languages call must appear AFTER the SA_PROFILE=interactive guard.
         lang_idx = content.find("install-languages.sh")
@@ -620,7 +621,7 @@ class TestBootstrapStructure:
 
     def test_k8s_tools_gated_by_sa_profile(self) -> None:
         """install-k8s-tools.sh must only run inside the SA_PROFILE=interactive block."""
-        content = BOOTSTRAP_SCRIPT.read_text()
+        content = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
         assert "install-k8s-tools.sh" in content, "install-k8s-tools.sh not referenced in bootstrap.sh"
         gate_idx = content.find('"interactive"')
         k8s_idx = content.find("install-k8s-tools.sh")
@@ -630,7 +631,7 @@ class TestBootstrapStructure:
 
     def test_remote_control_gated_by_sa_profile(self) -> None:
         """Remote Control service must only be installed in the SA_PROFILE=interactive block."""
-        content = BOOTSTRAP_SCRIPT.read_text()
+        content = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
         assert "claude-remote-control.service" in content or "remote-control" in content, (
             "bootstrap.sh must reference Remote Control service installation"
         )
@@ -647,7 +648,7 @@ class TestBootstrapStructure:
         (docs/model-egress.md, sa#35), NOT OpenShell. The sandbox runtime installs only
         on the interactive dev-box profile, so its install call must sit after the gate.
         """
-        content = BOOTSTRAP_SCRIPT.read_text()
+        content = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
         assert "install-openshell.sh" in content, (
             "install-openshell.sh not referenced in bootstrap.sh"
         )
@@ -666,7 +667,7 @@ class TestBootstrapStructure:
         The unconditional install steps are tools + python + claude only (3/3). OpenShell
         must not appear as a numbered 'always' step; it is interactive-profile-only.
         """
-        content = BOOTSTRAP_SCRIPT.read_text()
+        content = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
         # The always-steps region ends where the interactive gate begins.
         gate_idx = content.find('if [ "${SA_PROFILE}" = "interactive" ]')
         assert gate_idx != -1, "interactive gate block not found in bootstrap.sh"
@@ -687,7 +688,7 @@ class TestBootstrapStructure:
         run-brokered.sh on the autonomous profile (under /opt, SELinux-clean). It must NOT invoke
         the OpenShell sandbox launcher (run-agent-sandbox.sh), which is the interactive run path.
         """
-        content = BOOTSTRAP_SCRIPT.read_text()
+        content = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
         assert "ExecStart=${RUN_EXEC}" in content, (
             "the systemd system service must exec the profile-selected RUN_EXEC"
         )
@@ -1271,7 +1272,7 @@ class TestNetnsConfinementScripts:
 
     def test_netns_setup_creates_namespace_and_veth(self) -> None:
         """agent-netns-setup.sh must create the named netns + a veth pair."""
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "ip netns add" in content, "must create the named network namespace"
         assert "type veth peer name" in content, "must create a veth pair (host↔agent link)"
         assert "ip link set" in content and "netns" in content, (
@@ -1285,7 +1286,7 @@ class TestNetnsConfinementScripts:
         veth, plus host ip_forward + a nftables MASQUERADE for the veth /30. The old
         `blackhole default` (the dead-end that required a co-located stub) must be gone.
         """
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "ip route add blackhole" not in content, (
             "the netns must no longer install a blackhole default route — it forwards to the broker"
         )
@@ -1298,7 +1299,7 @@ class TestNetnsConfinementScripts:
 
     def test_netns_uses_nft_masquerade(self) -> None:
         """RHEL 9 ships nftables (not the iptables wrapper); the MASQUERADE is an nft rule."""
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "masquerade" in content, (
             "the host must MASQUERADE the veth /30 so netns return traffic is SNATed to the host IP"
         )
@@ -1315,28 +1316,28 @@ class TestNetnsConfinementScripts:
 
     def test_netns_wires_dns_for_broker_resolution(self) -> None:
         """The netns must get a resolv.conf so broker.safe-agents.local resolves via the VPC resolver."""
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "/etc/netns/" in content and "resolv.conf" in content, (
             "agent-netns-setup.sh must install a per-netns /etc/netns/<ns>/resolv.conf so DNS works"
         )
 
     def test_netns_constants_match_the_committed_snapshot(self) -> None:
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "10.255.255.1" in content, "host veth IP must be 10.255.255.1"
         assert "10.255.255.2" in content, "agent veth IP must be 10.255.255.2"
         assert "PREFIX=30" in content, "the point-to-point link must be a /30"
 
     def test_netns_setup_is_idempotent(self) -> None:
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "ip netns del" in content, "must delete any prior namespace first (idempotent re-run)"
 
     def test_netns_setup_fails_loudly_without_ip(self) -> None:
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "command -v ip" in content, "must assert `ip` is present and fail loudly if not"
 
     def test_netns_setup_fails_loudly_without_nft(self) -> None:
         """Forwarding needs MASQUERADE; a missing `nft` must fail loudly (AMI-gap guard)."""
-        content = AGENT_NETNS_SETUP_SCRIPT.read_text()
+        content = AGENT_NETNS_SETUP_SCRIPT.read_text(encoding="utf-8")
         assert "command -v nft" in content, (
             "must assert `nft` (nftables) is present (MASQUERADE) and fail loudly if the AMI lacks it"
         )
@@ -1347,8 +1348,9 @@ class TestRunBrokeredRunner:
     split: oauth fetch + run record on the HOST, claude -p + brokered tool call in the NETNS."""
 
     def _content(self) -> str:
-        return RUN_BROKERED_SCRIPT.read_text()
+        return RUN_BROKERED_SCRIPT.read_text(encoding="utf-8")
 
+    @requires_posix_bash
     def test_bash_n_clean(self) -> None:
         proc = subprocess.run(
             ["bash", "-n", str(RUN_BROKERED_SCRIPT)], capture_output=True, text=True
@@ -1434,7 +1436,7 @@ class TestNetnsConfinementWiring:
     """bootstrap.sh wires the netns + broker-service model, gated to the autonomous profile."""
 
     def _content(self) -> str:
-        return BOOTSTRAP_SCRIPT.read_text()
+        return BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
 
     def test_netns_setup_unit_installed_under_autonomous_guard(self) -> None:
         content = self._content()
@@ -1493,7 +1495,7 @@ class TestNetnsConfinementWiring:
         heredoc = re.search(r"<<AGENTENV\n(.*?)\nAGENTENV", content, re.DOTALL)
         assert heredoc, "bootstrap.sh must write agent.env via the AGENTENV heredoc"
         refs = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", heredoc.group(1)))
-        passed = set(re.findall(r"^\s*(SA_[A-Z0-9_]+)=", TEMPLATE_PATH.read_text(), re.MULTILINE))
+        passed = set(re.findall(r"^\s*(SA_[A-Z0-9_]+)=", TEMPLATE_PATH.read_text(encoding="utf-8"), re.MULTILINE))
         unknown = sorted(refs - passed)
         assert not unknown, (
             f"agent.env heredoc references vars never exported across the sudo boundary: {unknown}; "
@@ -1536,7 +1538,7 @@ class TestSmokeEgressAssertions:
     """smoke-egress.sh proves (not trusts) the confinement: four assertions, run in-netns."""
 
     def _content(self) -> str:
-        return SMOKE_EGRESS_SCRIPT.read_text()
+        return SMOKE_EGRESS_SCRIPT.read_text(encoding="utf-8")
 
     def test_runs_assertions_inside_the_netns(self) -> None:
         assert "ip netns exec" in self._content()
@@ -1588,7 +1590,7 @@ class TestOfflineBootGuards:
         The unconditional install ran BEFORE the S3 bundle pulls, so on the no-NAT
         subnet it tripped the ERR trap and killed the whole bootstrap.
         """
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         guard_idx = content.find("command -v aws")
         install_idx = content.find("awscli-exe-linux-x86_64.zip")
         assert guard_idx != -1, "user-data must guard the AWS CLI install with `command -v aws`"
@@ -1601,7 +1603,7 @@ class TestOfflineBootGuards:
 
     def test_usr_local_bin_on_path_before_aws_guard(self) -> None:
         """The baked CLI lives in /usr/local/bin, which cloud-init's root PATH omits."""
-        content = TEMPLATE_PATH.read_text()
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
         path_idx = content.find("export PATH=/usr/local/bin:$PATH")
         guard_idx = content.find("command -v aws")
         assert path_idx != -1 and path_idx < guard_idx, (
@@ -1611,7 +1613,7 @@ class TestOfflineBootGuards:
 
     def test_core_dnf_block_guarded_in_install_tools(self) -> None:
         """EPEL setup + the core dnf install must run only when a core binary is missing."""
-        content = INSTALL_TOOLS_SCRIPT.read_text()
+        content = INSTALL_TOOLS_SCRIPT.read_text(encoding="utf-8")
         guard_idx = content.find("_MISSING_CMDS")
         assert guard_idx != -1, (
             "install-tools.sh must probe for missing core binaries before touching dnf"
@@ -1625,7 +1627,7 @@ class TestOfflineBootGuards:
 
     def test_pip_upgrade_only_inside_pip_missing_branch(self) -> None:
         """`pip install --upgrade pip` needs PyPI; it must never run unconditionally."""
-        content = INSTALL_PYTHON_ENV_SCRIPT.read_text()
+        content = INSTALL_PYTHON_ENV_SCRIPT.read_text(encoding="utf-8")
         assert "python3 -m pip --version" in content, (
             "install-python-env.sh must probe for pip before any pip network operation"
         )
@@ -1637,7 +1639,7 @@ class TestOfflineBootGuards:
                 )
 
     def test_uv_install_guarded(self) -> None:
-        content = INSTALL_PYTHON_ENV_SCRIPT.read_text()
+        content = INSTALL_PYTHON_ENV_SCRIPT.read_text(encoding="utf-8")
         guard_idx = content.find("command -v uv")
         install_idx = content.find("astral.sh/uv/install.sh")
         assert guard_idx != -1 and install_idx != -1 and guard_idx < install_idx, (
@@ -1645,7 +1647,7 @@ class TestOfflineBootGuards:
         )
 
     def test_ruff_install_guarded(self) -> None:
-        content = INSTALL_PYTHON_ENV_SCRIPT.read_text()
+        content = INSTALL_PYTHON_ENV_SCRIPT.read_text(encoding="utf-8")
         guard_idx = content.find("command -v ruff")
         assert guard_idx != -1, (
             "install-python-env.sh must guard the ruff install on `command -v ruff`"

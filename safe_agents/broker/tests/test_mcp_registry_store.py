@@ -173,7 +173,7 @@ def run_propose(proposal_store, monkeypatch, tool_def_path, *, caller=MAKER_ARN,
 
 def write_tool_def(tmp_path, name: str, tool_def: McpToolDef):
     path = tmp_path / name
-    path.write_text(tool_def.model_dump_json())
+    path.write_text(tool_def.model_dump_json(), encoding="utf-8")
     return path
 
 

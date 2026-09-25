@@ -100,7 +100,7 @@ def _write_snapshot(path: Path, entries: list[McpToolDef]) -> None:
         captured_at="2026-07-19T00:00:00+00:00",
         entries=[McpSnapshotEntry(tool_def=d, def_hash=compute_tool_def_hash(d)) for d in entries],
     )
-    path.write_text(snapshot.model_dump_json())
+    path.write_text(snapshot.model_dump_json(), encoding="utf-8")
 
 
 def _write_manifest(path: Path, tool_names: list[str]) -> None:
@@ -125,7 +125,7 @@ mcp_servers:
 {tools_yaml}
 tool_ops:
 {tool_ops_yaml}
-"""
+""", encoding="utf-8"
     )
 
 
@@ -351,7 +351,7 @@ class TestDiffCommand:
     def test_malformed_snapshot_file_refuses(self, tmp_path, capsys) -> None:
         store = MemoryToolRegistry()
         bad_path = tmp_path / "bad.json"
-        bad_path.write_text("not json")
+        bad_path.write_text("not json", encoding="utf-8")
         manifest_path = tmp_path / "manifest.yaml"
         _write_manifest(manifest_path, ["get_entry"])
         args = argparse.Namespace(
@@ -366,7 +366,7 @@ class TestDiffCommand:
         snapshot_path = tmp_path / "snap.json"
         _write_snapshot(snapshot_path, [_tool_def("get_entry")])
         manifest_path = tmp_path / "manifest.yaml"
-        manifest_path.write_text("envelope:\n  polarity: abstain\nmcp_servers: {}\n")
+        manifest_path.write_text("envelope:\n  polarity: abstain\nmcp_servers: {}\n", encoding="utf-8")
         args = argparse.Namespace(
             snapshot=str(snapshot_path), manifest=str(manifest_path), table_name=None
         )

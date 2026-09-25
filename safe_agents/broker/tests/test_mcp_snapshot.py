@@ -36,6 +36,9 @@ pytest.importorskip("mcp", reason="the stdio transport needs the optional `mcp` 
 
 from safe_agents.broker.mcp.commands import main
 from safe_agents.broker.schemas.mcp_registry import McpServerSnapshot, compute_tool_def_hash
+from safe_agents.broker.tests.platform_marks import requires_pgrep
+
+pytestmark = requires_pgrep
 
 _REPO_ROOT = str(Path(__file__).resolve().parents[3])
 _SERVER_ID = "ledger"
@@ -68,7 +71,7 @@ def _server_pids() -> list[int]:
 @pytest.fixture
 def manifest_path(tmp_path: Path) -> Path:
     path = tmp_path / "manifest.yaml"
-    path.write_text(_MANIFEST_YAML)
+    path.write_text(_MANIFEST_YAML, encoding="utf-8")
     return path
 
 
@@ -102,7 +105,7 @@ class TestSnapshotCapturesLiveServer:
         )
         assert rc == 0, capsys.readouterr().out
 
-        snapshot = McpServerSnapshot.model_validate_json(out_path.read_text())
+        snapshot = McpServerSnapshot.model_validate_json(out_path.read_text(encoding="utf-8"))
         assert snapshot.server_id == _SERVER_ID
         assert snapshot.transport == "stdio"
         assert sorted(e.tool_def.tool_name for e in snapshot.entries) == [
@@ -110,7 +113,7 @@ class TestSnapshotCapturesLiveServer:
             "list_entries",
         ]
         # Round-trips through the typed model AND through the file unchanged.
-        reloaded = McpServerSnapshot.model_validate(json.loads(out_path.read_text()))
+        reloaded = McpServerSnapshot.model_validate(json.loads(out_path.read_text(encoding="utf-8")))
         assert reloaded == snapshot
 
         for entry in snapshot.entries:
@@ -137,7 +140,7 @@ class TestSnapshotCapturesLiveServer:
             ]
         )
         assert rc == 0
-        snapshot = McpServerSnapshot.model_validate_json(out_path.read_text())
+        snapshot = McpServerSnapshot.model_validate_json(out_path.read_text(encoding="utf-8"))
         # Every entry's tool_def carries the full McpToolDef shape, including the
         # unhashed metadata fields introduced ahead of this item — present as
         # (possibly None) attributes, proving the snapshot captures the WHOLE
@@ -223,7 +226,7 @@ class TestSnapshotNeedsNoRegistryStore:
                     "input_schema": {"type": "object"},
                     "description": "d",
                 }
-            )
+            ), encoding="utf-8"
         )
         rc = main(
             [

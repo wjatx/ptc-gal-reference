@@ -87,7 +87,7 @@ class TestDebakeGuard:
 
     @pytest.mark.parametrize("pattern,reason", FORBIDDEN)
     def test_no_agent_specific_constant(self, pattern: str, reason: str) -> None:
-        src = _BROKER_SERVER_SRC.read_text()
+        src = _BROKER_SERVER_SRC.read_text(encoding="utf-8")
         hits = [
             f"  line {i}: {ln.strip()}"
             for i, ln in enumerate(src.splitlines(), 1)
@@ -169,7 +169,7 @@ class TestDefaultManifestIsFictionalExample:
 
     def test_retired_consumer_absent_from_default_manifest(self) -> None:
         # Belt-and-suspenders: the literal string must not survive anywhere in the file.
-        assert "example-agent" not in _EXAMPLE_MANIFEST.read_text()
+        assert "example-agent" not in _EXAMPLE_MANIFEST.read_text(encoding="utf-8")
 
     def test_default_runtime_serves_its_grant_classes(self) -> None:
         manifest = load_agent_manifest(_EXAMPLE_MANIFEST)
@@ -214,13 +214,13 @@ class TestLoadAgentManifest:
 
     def test_non_mapping_raises(self, tmp_path: Path) -> None:
         p = tmp_path / "bad.yaml"
-        p.write_text("- just\n- a\n- list\n")
+        p.write_text("- just\n- a\n- list\n", encoding="utf-8")
         with pytest.raises(ValueError, match="must be a YAML mapping"):
             load_agent_manifest(p)
 
     def test_missing_polarity_is_not_silently_defaulted(self, tmp_path: Path) -> None:
         # polarity is never defaulted — a missing one is a hard validation error.
         p = tmp_path / "no_polarity.yaml"
-        p.write_text("envelope:\n  caps:\n    actions_per_run: 1\n")
+        p.write_text("envelope:\n  caps:\n    actions_per_run: 1\n", encoding="utf-8")
         with pytest.raises(Exception):  # pydantic.ValidationError
             load_agent_manifest(p)

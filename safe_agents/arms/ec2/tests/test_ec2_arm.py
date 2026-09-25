@@ -174,7 +174,7 @@ class TestUserDataRendering:
     def test_no_hardcoded_agent_names_in_template(self) -> None:
         """The template file itself must not contain hardcoded agent names."""
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
-        template_text = template_path.read_text()
+        template_text = template_path.read_text(encoding="utf-8")
         # These strings would indicate a consumer-agent or test-specific leak.
         forbidden = ["example-agent", "test-stub", "alpaca", "telegram", "tavily"]
         for name in forbidden:
@@ -198,7 +198,7 @@ class TestUserDataRendering:
         are allowed — those would fail in a PRIVATE_ISOLATED subnet with no IGW/NAT.
         """
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
-        template_text = template_path.read_text()
+        template_text = template_path.read_text(encoding="utf-8")
 
         forbidden_patterns = [
             # Package manager calls that require internet
@@ -234,14 +234,14 @@ class TestUserDataRendering:
         bootstrap failure is never silent — the log always shows which line died.
         """
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
-        assert "set -x" in template_path.read_text(), (
+        assert "set -x" in template_path.read_text(encoding="utf-8"), (
             "user-data must contain 'set -x' to trace each command to the bootstrap log"
         )
 
     def test_user_data_has_err_trap(self) -> None:
         """user-data.sh.tmpl must set a trap on ERR so failures are never silent (sa#88)."""
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
-        content = template_path.read_text()
+        content = template_path.read_text(encoding="utf-8")
         assert "trap" in content and "ERR" in content, (
             "user-data must define 'trap ... ERR' to catch any failed command"
         )
@@ -253,7 +253,7 @@ class TestUserDataRendering:
         reading the full log (e.g. SSM agent checks for the .FAILED file).
         """
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
-        content = template_path.read_text()
+        content = template_path.read_text(encoding="utf-8")
         assert ".FAILED" in content or "FAIL_MARKER" in content or "BOOTSTRAP_FAILED" in content, (
             "user-data error handler must write a *.FAILED marker file so failed "
             "bootstraps are detectable without parsing the full log"
@@ -266,7 +266,7 @@ class TestUserDataRendering:
         user-data must pull from exactly that path or the instance boots without code.
         """
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
-        content = template_path.read_text()
+        content = template_path.read_text(encoding="utf-8")
         # The template uses shell variables; check that the structural segments agree
         # with BUNDLE_CURRENT_KEY = "agents/{name}/current/bundle.tar.gz".
         assert "agents/" in content, (
@@ -279,7 +279,7 @@ class TestUserDataRendering:
     def test_user_data_extracts_bundle_to_agent_dir(self) -> None:
         """user-data.sh.tmpl must extract the bundle into /opt/agents/<name> (sa#88)."""
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
-        content = template_path.read_text()
+        content = template_path.read_text(encoding="utf-8")
         # The AGENT_DIR variable is set to /opt/agents/${AGENT_NAME}; verify it exists.
         assert "/opt/agents/" in content or "AGENT_DIR" in content, (
             "user-data must extract the S3 bundle into /opt/agents/<name>"
@@ -291,7 +291,7 @@ class TestUserDataRendering:
     def test_user_data_enables_and_starts_systemd_timer(self) -> None:
         """user-data.sh.tmpl must enable + start the agent's systemd timer (sa#88)."""
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
-        content = template_path.read_text()
+        content = template_path.read_text(encoding="utf-8")
         assert "systemctl enable" in content and ".timer" in content, (
             "user-data must enable the agent's systemd timer so runs happen on schedule"
         )
@@ -754,7 +754,7 @@ class TestAmiComponentContent:
         'awscli2' is not a valid AL2023 dnf package; the official aarch64 installer
         must be used instead. user-data calls 'aws s3 cp' and 'aws secretsmanager'.
         """
-        content = _COMPONENT_PATH.read_text()
+        content = _COMPONENT_PATH.read_text(encoding="utf-8")
         assert "awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" in content, (
             "component-base.yaml must install AWS CLI v2 via the official arm64 installer "
             "(awscli2 is not a valid AL2023 dnf package)"
@@ -762,7 +762,7 @@ class TestAmiComponentContent:
 
     def test_awscli_verify_step_present(self) -> None:
         """Gap 1: VerifyInstalls must confirm 'aws --version' succeeds after bake."""
-        content = _COMPONENT_PATH.read_text()
+        content = _COMPONENT_PATH.read_text(encoding="utf-8")
         assert "aws --version" in content, (
             "VerifyInstalls must include 'aws --version' to confirm the CLI is on PATH"
         )
@@ -775,7 +775,7 @@ class TestAmiComponentContent:
           - component does not clone the private repo
           - user-data.sh.tmpl fetches the platform/contract bundle from S3
         """
-        component_content = _COMPONENT_PATH.read_text()
+        component_content = _COMPONENT_PATH.read_text(encoding="utf-8")
         # Org-agnostic on purpose: this pinned `Third-Ralph/safe-agents` until
         # the repo moved (#290), after which it would have passed regardless of
         # what the component cloned.
@@ -789,7 +789,7 @@ class TestAmiComponentContent:
             "component-base.yaml must not reference GITHUB_TOKEN; "
             "the AMI bakery has no git auth — harness arrives via S3 at boot"
         )
-        user_data_content = _USER_DATA_PATH.read_text()
+        user_data_content = _USER_DATA_PATH.read_text(encoding="utf-8")
         assert "platform/contract/bundle.tar.gz" in user_data_content, (
             "user-data.sh.tmpl must pull the platform/contract bundle from S3 at boot "
             "so the harness lands at /opt/safe-agents/core/contract/harness.py"
@@ -801,7 +801,7 @@ class TestAmiComponentContent:
         tar -xzf ... -C /opt/safe-agents/core places contract/harness.py at the
         path phases.py SSM-execs: /opt/safe-agents/core/contract/harness.py.
         """
-        user_data_content = _USER_DATA_PATH.read_text()
+        user_data_content = _USER_DATA_PATH.read_text(encoding="utf-8")
         assert "/opt/safe-agents/core" in user_data_content, (
             "user-data.sh.tmpl must extract the platform bundle to /opt/safe-agents/core "
             "so the harness is at /opt/safe-agents/core/contract/harness.py"
@@ -809,7 +809,7 @@ class TestAmiComponentContent:
 
     def test_pyyaml_available_for_harness(self) -> None:
         """Gap 2: python3-pyyaml must be installed; the harness imports yaml at runtime."""
-        content = _COMPONENT_PATH.read_text()
+        content = _COMPONENT_PATH.read_text(encoding="utf-8")
         assert "python3-pyyaml" in content or "pyyaml" in content.lower(), (
             "component-base.yaml must install python3-pyyaml so the system python3 "
             "can run the harness (harness.py imports yaml at the top level)"
@@ -822,13 +822,13 @@ class TestAmiComponentContent:
         'No such file' failure mode: if one side drifts, this test breaks.
         """
         # phases.py must reference the canonical harness path.
-        phases_content = _PHASES_PATH.read_text()
+        phases_content = _PHASES_PATH.read_text(encoding="utf-8")
         assert _HARNESS_PATH in phases_content, (
             f"phases.py _smoke_remote must reference {_HARNESS_PATH!r}; "
             "if this path changes, update phases.py and user-data.sh.tmpl together"
         )
         # user-data.sh.tmpl must extract the bundle to the parent of that path.
-        user_data_content = _USER_DATA_PATH.read_text()
+        user_data_content = _USER_DATA_PATH.read_text(encoding="utf-8")
         assert "/opt/safe-agents/core" in user_data_content, (
             f"user-data.sh.tmpl must extract the platform bundle to /opt/safe-agents/core "
             f"so the harness lands at {_HARNESS_PATH!r} as phases.py expects"
@@ -1206,7 +1206,7 @@ class TestBundleCli:
 
         agent_dir = tmp_path / "dummy-agent"
         agent_dir.mkdir()
-        (agent_dir / "run.sh").write_text("#!/bin/bash\necho hello\n")
+        (agent_dir / "run.sh").write_text("#!/bin/bash\necho hello\n", encoding="utf-8")
 
         fake_s3 = _FakeS3()
         env = "development"
@@ -1267,7 +1267,7 @@ class TestBundleCli:
 
         agent_dir = tmp_path / "my-agent"
         agent_dir.mkdir()
-        (agent_dir / "run.sh").write_text("#!/bin/bash\n")
+        (agent_dir / "run.sh").write_text("#!/bin/bash\n", encoding="utf-8")
 
         fake_s3 = _FakeS3()
         env = "development"

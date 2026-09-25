@@ -43,7 +43,7 @@ _FORBIDDEN_PREFIXES = (
 
 
 def _load() -> dict:
-    return yaml.safe_load(_MANIFEST_PATH.read_text())
+    return yaml.safe_load(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
 def test_manifest_validates_as_written():

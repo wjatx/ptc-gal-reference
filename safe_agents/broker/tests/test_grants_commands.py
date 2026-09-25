@@ -107,7 +107,7 @@ def enforcement_store():
 @pytest.fixture
 def artifact_path(tmp_path):
     path = tmp_path / "artifact.json"
-    path.write_text(_ARTIFACT.model_dump_json())
+    path.write_text(_ARTIFACT.model_dump_json(), encoding="utf-8")
     return path
 
 

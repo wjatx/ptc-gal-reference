@@ -33,6 +33,7 @@ verify_chain() reporting a seq gap — i.e. an honest concurrent write is indist
 from tampering, which is precisely the confusion the chain exists to resolve.
 
 So the critical section is cross-process: ``lock`` takes an exclusive flock on the tape
+(a LockFile on a sidecar on Windows, see WINDOWS LOCKING below)
 AND re-derives seq/last_hash from what is actually on disk before emit() reads them.
 The cached counters are therefore a fast path, never the authority — a non-empty file
 always wins over the constructor's ``initial_seq``/``initial_last_hash``.
@@ -50,6 +51,7 @@ import contextlib
 import logging
 import os
 import threading
+import time
 
 from pydantic import ValidationError
 
@@ -57,32 +59,117 @@ from safe_agents.broker.schemas import AuditRecord
 
 from ._hash import GENESIS_PREV_HASH
 
-try:  # POSIX only — the local arm's platforms (macOS, Linux) all have it.
+try:  # POSIX: macOS and Linux, where the local arm's lock is flock(2).
     import fcntl
 except ImportError:  # pragma: no cover — non-POSIX host
     fcntl = None  # type: ignore[assignment]
 
+try:  # Windows: the same cross-process critical section, via LockFile.
+    import msvcrt
+except ImportError:  # pragma: no cover — non-Windows host
+    msvcrt = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+# WINDOWS LOCKING. flock(2) does not exist there, and dropping to in-process safety
+# would bring back exactly the #301 corruption on a laptop running the gateway and
+# a ceremony CLI side by side. msvcrt.locking is the portable stand-in, with two
+# differences that shape how it is used:
+#
+#   * It is MANDATORY, per handle. A locked byte range refuses reads and writes
+#     through every OTHER handle, including this process's own append() handle.
+#     So the lock is never taken on the tape itself: it is taken on byte 0 of a
+#     sidecar file (<tape>.lock) that nothing ever reads or writes, and the tape's
+#     bytes stay reachable to every reader exactly as on POSIX.
+#   * It has no shared mode. A reader that asked for a shared lock takes the
+#     exclusive one, which serialises concurrent readers. That costs throughput on
+#     a single-user laptop and never correctness, so it is the right way to be wrong.
+#
+# LK_NBLCK in a polling loop rather than LK_LOCK, because LK_LOCK gives up after ten
+# one-second retries and raises; flock blocks until the lock is free, and the two
+# platforms should have the same waiting semantics.
+_WINDOWS_LOCK_SUFFIX = ".lock"
+_WINDOWS_LOCK_POLL_SECONDS = 0.01
+
+
+def _windows_lock_path(path: str) -> str:
+    return path + _WINDOWS_LOCK_SUFFIX
+
+
+def _acquire(handle, *, exclusive: bool) -> None:
+    """Take the cross-process lock on an open handle (the tape on POSIX, the
+    sidecar on Windows). A host with neither primitive runs unlocked."""
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+    elif msvcrt is not None:
+        handle.seek(0)
+        while True:
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                return
+            except OSError:
+                time.sleep(_WINDOWS_LOCK_POLL_SECONDS)
+
+
+def _release_lock(handle) -> None:
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    elif msvcrt is not None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+
+def _open_lock_handle(path: str, *, for_write: bool):
+    """The handle the lock is taken on, for a tape at ``path``.
+
+    POSIX locks the tape itself. A read path opens it read-only, because a
+    verifier may legitimately hold only read access to the tape (a read-only mount
+    is how the cluster partitions it), and flock works on a read-only descriptor.
+    Windows locks the sidecar; see the WINDOWS LOCKING note above.
+    """
+    if fcntl is None and msvcrt is not None:
+        return open(_windows_lock_path(path), "ab")
+    if for_write:
+        # "a+" creates the tape if absent — correct here, unlike the read paths,
+        # because the write lock is taken only when a write is imminent.
+        return open(path, "a+", encoding="utf-8")
+    return open(path, "rb")
 
 
 @contextlib.contextmanager
 def _flocked(path: str, *, exclusive: bool):
-    """Hold an advisory lock on an EXISTING tape file for the duration of the block.
+    """Hold the cross-process lock for an EXISTING tape file for the block.
 
     A missing file is a no-op: there is no other writer to race with yet, and
     creating one here would make a read path silently mint the tape it reads.
-    On a host without fcntl the block still runs — degraded to in-process safety
-    only, which is stated in the module docstring rather than hidden.
+    On a host with neither fcntl nor msvcrt the block still runs, degraded to
+    in-process safety only, which is stated here rather than hidden.
     """
-    if fcntl is None or not os.path.exists(path):
+    if (fcntl is None and msvcrt is None) or not os.path.exists(path):
         yield None
         return
-    with open(path, "rb") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
+    try:
+        lock_handle = _open_lock_handle(path, for_write=False)
+    except OSError as exc:
+        if fcntl is not None:
+            raise
+        # Windows only: the sidecar could not be created, typically because the
+        # reader holds only read access to the tape's directory. Reading unlocked
+        # risks catching a concurrent writer's half-written line, which _scan
+        # already tolerates as a torn tail; refusing to read at all would be worse.
+        logger.warning(
+            "FileAuditSink: cannot open lock sidecar for %r (%s); reading unlocked.",
+            path,
+            exc,
+        )
+        yield None
+        return
+    with lock_handle as handle:
+        _acquire(handle, exclusive=exclusive)
         try:
             yield handle
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            _release_lock(handle)
 
 
 def _scan(path: str) -> tuple[list[AuditRecord], int, bool]:
@@ -157,11 +244,13 @@ class _TapeLock:
     def __enter__(self) -> _TapeLock:
         self._sink._thread_lock.acquire()
         try:
-            # "a+" creates the tape if absent — correct here, unlike the read
-            # paths, because entering this lock means a write is imminent.
-            self._handle = open(self._sink._path, "a+", encoding="utf-8")
-            if fcntl is not None:
-                fcntl.flock(self._handle.fileno(), fcntl.LOCK_EX)
+            # Entering this lock means a write is imminent, so the tape is
+            # created if absent. On POSIX the lock handle's "a+" open does that;
+            # on Windows the lock lives on a sidecar, so create the tape here.
+            if fcntl is None and msvcrt is not None:
+                open(self._sink._path, "ab").close()
+            self._handle = _open_lock_handle(self._sink._path, for_write=True)
+            _acquire(self._handle, exclusive=True)
             self._sink._refresh_from_disk()
         except BaseException:
             # Never strand the in-process lock when acquisition fails partway —
@@ -177,8 +266,7 @@ class _TapeLock:
     def _release(self) -> None:
         try:
             if self._handle is not None:
-                if fcntl is not None:
-                    fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+                _release_lock(self._handle)
                 self._handle.close()
                 self._handle = None
         finally:
@@ -272,7 +360,10 @@ class FileAuditSink:
         """Append the record as one JSON line. Rejects out-of-order seq values."""
         if record.seq != self._seq:
             raise ValueError(f"seq mismatch: expected {self._seq}, got {record.seq}")
-        with open(self._path, "a", encoding="utf-8") as handle:
+        # newline="" keeps the line terminator a bare LF on every platform. Text
+        # mode on Windows would otherwise write CRLF, and a tape's bytes should
+        # not depend on which operating system appended them.
+        with open(self._path, "a", encoding="utf-8", newline="") as handle:
             handle.write(record.model_dump_json() + "\n")
         self._last_hash = record.hash
         self._seq += 1

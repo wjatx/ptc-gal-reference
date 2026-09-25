@@ -54,7 +54,7 @@ def _make_agent_dir(tmp_path: Path, files: dict[str, str]) -> Path:
     agent_dir = tmp_path / "test-stub"
     agent_dir.mkdir()
     for name, content in files.items():
-        (agent_dir / name).write_text(content)
+        (agent_dir / name).write_text(content, encoding="utf-8")
     return agent_dir
 
 
@@ -102,7 +102,7 @@ def test_bundle_agent_excludes_pycache(tmp_path: Path) -> None:
     agent_dir = _make_agent_dir(tmp_path, {"run.sh": "echo hi"})
     pycache = agent_dir / "__pycache__"
     pycache.mkdir()
-    (pycache / "cached.cpython-312.pyc").write_text("compiled")
+    (pycache / "cached.cpython-312.pyc").write_text("compiled", encoding="utf-8")
 
     data = bundle_agent(agent_dir, "test-stub")
     assert not any("__pycache__" in n for n in _names_in_bundle(data))
@@ -120,7 +120,7 @@ def test_bundle_agent_excludes_git_dir(tmp_path: Path) -> None:
     agent_dir = _make_agent_dir(tmp_path, {"run.sh": "#!/bin/bash"})
     git_dir = agent_dir / ".git"
     git_dir.mkdir()
-    (git_dir / "HEAD").write_text("ref: refs/heads/main")
+    (git_dir / "HEAD").write_text("ref: refs/heads/main", encoding="utf-8")
 
     data = bundle_agent(agent_dir, "test-stub")
     assert not any(".git" in n for n in _names_in_bundle(data))
@@ -255,7 +255,7 @@ def _make_contract_dir(tmp_path: Path, files: dict[str, str]) -> Path:
     contract_dir = tmp_path / "contract"
     contract_dir.mkdir()
     for name, content in files.items():
-        (contract_dir / name).write_text(content)
+        (contract_dir / name).write_text(content, encoding="utf-8")
     return contract_dir
 
 
@@ -292,7 +292,7 @@ def test_bundle_platform_contract_excludes_pycache(tmp_path: Path) -> None:
     contract_dir = _make_contract_dir(tmp_path, {"harness.py": "# harness"})
     pycache = contract_dir / "__pycache__"
     pycache.mkdir()
-    (pycache / "harness.cpython-312.pyc").write_text("compiled")
+    (pycache / "harness.cpython-312.pyc").write_text("compiled", encoding="utf-8")
     data = bundle_platform_contract(contract_dir)
     assert not any("__pycache__" in n for n in _names_in_bundle(data))
 
@@ -357,11 +357,11 @@ def _make_ec2_bootstrap_dir(tmp_path: Path) -> Path:
     root = tmp_path / "bootstrap"
     scripts = root / "scripts"
     scripts.mkdir(parents=True)
-    (scripts / "agent-netns-setup.sh").write_text("#!/usr/bin/env bash\nip netns add agent-ns\n")
-    (scripts / "smoke-egress.sh").write_text("#!/usr/bin/env bash\n")
+    (scripts / "agent-netns-setup.sh").write_text("#!/usr/bin/env bash\nip netns add agent-ns\n", encoding="utf-8")
+    (scripts / "smoke-egress.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     # The stub file remains in the source tree (the `local` arm build-COPYs it) but must be
     # EXCLUDED from the delivered ec2 bundle in the two-box model.
-    (scripts / "model-proxy-stub.py").write_text("#!/usr/bin/env python3\n")
+    (scripts / "model-proxy-stub.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
     return root
 
 
@@ -369,7 +369,7 @@ def _make_ec2_box_dir(tmp_path: Path) -> Path:
     """A minimal ec2/box/ tree: the run-brokered.sh runner (sa#35)."""
     box = tmp_path / "box"
     box.mkdir(parents=True)
-    (box / "run-brokered.sh").write_text("#!/usr/bin/env bash\nclaude -p hi\n")
+    (box / "run-brokered.sh").write_text("#!/usr/bin/env bash\nclaude -p hi\n", encoding="utf-8")
     return box
 
 
@@ -423,7 +423,7 @@ def test_bundle_ec2_bootstrap_excludes_pycache(tmp_path: Path) -> None:
     root = _make_ec2_bootstrap_dir(tmp_path)
     pycache = root / "scripts" / "__pycache__"
     pycache.mkdir()
-    (pycache / "model_proxy_stub.cpython-312.pyc").write_text("compiled")
+    (pycache / "model_proxy_stub.cpython-312.pyc").write_text("compiled", encoding="utf-8")
     data = bundle_ec2_bootstrap(root)
     assert not any("__pycache__" in n for n in _names_in_bundle(data))
 
@@ -455,7 +455,7 @@ def test_upload_ec2_bootstrap_uploads_exact_bytes_and_result() -> None:
 
 def test_ec2_bootstrap_key_matches_user_data_pull() -> None:
     """The bundle key must match the key user-data.sh.tmpl pulls (or the box boots unconfined)."""
-    user_data = (Path(__file__).parent.parent / "user-data.sh.tmpl").read_text()
+    user_data = (Path(__file__).parent.parent / "user-data.sh.tmpl").read_text(encoding="utf-8")
     assert EC2_BOOTSTRAP_KEY in user_data, (
         "user-data.sh.tmpl must pull the ec2-bootstrap bundle from EC2_BOOTSTRAP_KEY"
     )
@@ -484,7 +484,7 @@ def _component_commands() -> list[str]:
 
 
 def _component_yaml_text() -> str:
-    return _COMPONENT_YAML.read_text()
+    return _COMPONENT_YAML.read_text(encoding="utf-8")
 
 
 def test_component_does_not_install_awscli2_via_dnf() -> None:
@@ -553,18 +553,18 @@ def test_component_verifies_aws_version() -> None:
 
 def test_read_manifest_identity_name_and_package_differ(tmp_path: Path) -> None:
     m = tmp_path / "smoke-rhel-openshell.yaml"
-    m.write_text("name: smoke-rhel-openshell\nagent_package: test-stub\narm: rhel-openshell\n")
+    m.write_text("name: smoke-rhel-openshell\nagent_package: test-stub\narm: rhel-openshell\n", encoding="utf-8")
     assert read_manifest_identity(m) == ("smoke-rhel-openshell", "test-stub")
 
 
 def test_read_manifest_identity_package_absent_returns_none(tmp_path: Path) -> None:
     m = tmp_path / "test-stub.yaml"
-    m.write_text("name: test-stub\narm: ec2\n")
+    m.write_text("name: test-stub\narm: ec2\n", encoding="utf-8")
     assert read_manifest_identity(m) == ("test-stub", None)
 
 
 def test_read_manifest_identity_missing_name_raises(tmp_path: Path) -> None:
     m = tmp_path / "broken.yaml"
-    m.write_text("arm: ec2\n")
+    m.write_text("arm: ec2\n", encoding="utf-8")
     with pytest.raises(SystemExit):
         read_manifest_identity(m)

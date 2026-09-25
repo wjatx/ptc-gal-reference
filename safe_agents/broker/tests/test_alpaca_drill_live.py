@@ -84,6 +84,7 @@ from safe_agents.broker.runtime import AgentRequest  # noqa: E402
 from safe_agents.broker.schemas import AgentManifest  # noqa: E402
 from safe_agents.broker.schemas.mcp_registry import compute_tool_def_hash  # noqa: E402
 from safe_agents.broker.taint import TurnContext  # noqa: E402
+from safe_agents.broker.tests.platform_marks import requires_pgrep  # noqa: E402
 from safe_agents.channels.keys import key_resolver_from_map  # noqa: E402
 
 _DRILL_DIR = Path(__file__).resolve().parents[3] / "examples" / "alpaca_paper_drill"
@@ -125,10 +126,11 @@ def _quote_args(input_schema: dict) -> dict:
 
 
 @requires_paper_keys
+@requires_pgrep
 @mock_aws
 def test_alpaca_paper_drill_local_proof(monkeypatch, caplog, tmp_path, capsys):
     manifest = AgentManifest.model_validate(
-        yaml.safe_load((_DRILL_DIR / "manifest.yaml").read_text())
+        yaml.safe_load((_DRILL_DIR / "manifest.yaml").read_text(encoding="utf-8"))
     )
 
     # --- broker-side secret leaf: flat JSON string map, 0600 file, values
@@ -144,7 +146,7 @@ def test_alpaca_paper_drill_local_proof(monkeypatch, caplog, tmp_path, capsys):
                     }
                 )
             }
-        )
+        ), encoding="utf-8"
     )
     secrets_file.chmod(0o600)
     monkeypatch.setenv("BROKER_SECRETS_FILE", str(secrets_file))
@@ -210,7 +212,7 @@ def test_alpaca_paper_drill_local_proof(monkeypatch, caplog, tmp_path, capsys):
     for name in _DECLARED:
         d = by_name[name]
         def_path = tmp_path / f"tool-def-{name}.json"
-        def_path.write_text(d.model_dump_json())
+        def_path.write_text(d.model_dump_json(), encoding="utf-8")
 
         monkeypatch.setattr(
             _mcp_commands, "_caller_identity", lambda session=None: _MAKER_ARN

@@ -620,7 +620,7 @@ class TestRunShSmokeParameterization:
     containerOverrides can point the proof at whatever action class is really granted."""
 
     def _content(self) -> str:
-        return RUN_SH.read_text()
+        return RUN_SH.read_text(encoding="utf-8")
 
     def test_smoke_call_env_defaults(self) -> None:
         content = self._content()

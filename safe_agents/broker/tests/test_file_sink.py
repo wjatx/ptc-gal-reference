@@ -107,7 +107,7 @@ def test_empty_and_missing_file_start_fresh(tmp_path):
     assert fresh.last_hash == GENESIS_PREV_HASH
 
     empty = str(tmp_path / "empty.jsonl")
-    open(empty, "w").close()
+    open(empty, "w", encoding="utf-8").close()
     fresh2 = FileAuditSink.resuming(empty)
     assert fresh2.next_seq == 0
 

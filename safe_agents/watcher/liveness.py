@@ -90,7 +90,7 @@ def load_agent_manifests(agents_dir: Path) -> list[dict]:
     manifests: list[dict] = []
     for path in sorted(agents_dir.glob("*.yaml")):
         try:
-            with path.open() as fh:
+            with path.open(encoding="utf-8") as fh:
                 m = yaml.safe_load(fh)
             if isinstance(m, dict):
                 m["_source_path"] = str(path)
@@ -365,7 +365,7 @@ def main(argv: list[str] | None = None) -> None:
     agents_dir = Path(args.agents_dir)
 
     if args.fixture:
-        with open(args.fixture) as fh:
+        with open(args.fixture, encoding="utf-8") as fh:
             fixtures = json.load(fh)
         reader = make_fixture_reader(fixtures)
     else:

@@ -124,7 +124,7 @@ def test_load_envelope_block_missing_manifest_raises(tmp_path):
 
 def test_load_envelope_block_missing_envelope_key_raises(tmp_path):
     manifest = tmp_path / "no-envelope.yaml"
-    manifest.write_text("name: no-envelope\narm: ec2\n")
+    manifest.write_text("name: no-envelope\narm: ec2\n", encoding="utf-8")
 
     with pytest.raises(EnvelopeSeedError, match="No 'envelope:' block"):
         load_envelope_block(manifest)
@@ -132,7 +132,7 @@ def test_load_envelope_block_missing_envelope_key_raises(tmp_path):
 
 def test_load_envelope_block_non_mapping_envelope_raises(tmp_path):
     manifest = tmp_path / "bad-envelope.yaml"
-    manifest.write_text("name: bad\nenvelope: [not, a, mapping]\n")
+    manifest.write_text("name: bad\nenvelope: [not, a, mapping]\n", encoding="utf-8")
 
     with pytest.raises(EnvelopeSeedError, match="must be a YAML mapping"):
         load_envelope_block(manifest)
@@ -144,7 +144,7 @@ def test_seed_envelope_rejects_invalid_envelope(tmp_path):
     from pydantic import ValidationError
 
     manifest = tmp_path / "no-polarity.yaml"
-    manifest.write_text("name: bad\nenvelope:\n  high_stakes: true\n")
+    manifest.write_text("name: bad\nenvelope:\n  high_stakes: true\n", encoding="utf-8")
 
     store = InMemoryEnvelopeStore()
     with pytest.raises(ValidationError):
@@ -275,7 +275,7 @@ def _write_manifest(tmp_path: Path, name: str, agent_id: str | None) -> Path:
         else ""
     )
     path = tmp_path / name
-    path.write_text(principal_block + _ENVELOPE_YAML_BLOCK)
+    path.write_text(principal_block + _ENVELOPE_YAML_BLOCK, encoding="utf-8")
     return path
 
 

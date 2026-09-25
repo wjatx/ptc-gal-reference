@@ -69,7 +69,7 @@ def test_screen_none_builds_without_a_screen():
 
 def test_yaml_round_trip(tmp_path):
     path = tmp_path / "channels-manifest.yaml"
-    path.write_text(_EXAMPLE_YAML)
+    path.write_text(_EXAMPLE_YAML, encoding="utf-8")
 
     m = load_channels_manifest(path)
 
@@ -93,7 +93,7 @@ def test_yaml_round_trip(tmp_path):
 
 def test_loader_rejects_non_mapping(tmp_path):
     path = tmp_path / "bad.yaml"
-    path.write_text("- just\n- a\n- list\n")
+    path.write_text("- just\n- a\n- list\n", encoding="utf-8")
     with pytest.raises(ValueError, match="must be a YAML mapping"):
         load_channels_manifest(path)
 

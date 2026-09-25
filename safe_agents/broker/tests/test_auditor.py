@@ -431,7 +431,7 @@ def test_committed_snapshot_loads_and_self_matches(arm):
     # The generator stamps which flag-gated topology the SG layer reflects, read
     # from NetworkStack's authoritative network-mode declaration (never inferred
     # from the rules — that would be circular with the assertions below).
-    network_mode = json.loads(path.read_text()).get("network_mode")
+    network_mode = json.loads(path.read_text(encoding="utf-8")).get("network_mode")
     assert network_mode in ("secure", "open"), \
         f"snapshot must declare its network_mode, got {network_mode!r}"
 

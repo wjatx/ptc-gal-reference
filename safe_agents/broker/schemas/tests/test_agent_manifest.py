@@ -64,7 +64,7 @@ def test_round_trip_all_blocks() -> None:
 
 def test_fixture_file_round_trips() -> None:
     """The YAML fixture (every block) loads and validates identically."""
-    raw = yaml.safe_load(FIXTURE.read_text())
+    raw = yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
     manifest = AgentManifest.model_validate(raw)
     assert manifest.principal is not None
     assert manifest.principal.tier == "B"

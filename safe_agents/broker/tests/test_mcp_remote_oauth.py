@@ -58,6 +58,9 @@ from safe_agents.broker.schemas.mcp_registry import (
     RegistryStatus,
     compute_tool_def_hash,
 )
+from safe_agents.broker.tests.platform_marks import requires_pgrep
+
+pytestmark = requires_pgrep
 
 # One attempt is enough: the reconnect target is already listening again.
 _RESPAWN = McpRespawnPolicy(max_attempts=1, backoff_seconds=0.0)
@@ -440,7 +443,7 @@ def _write_manifest_yaml(tmp_path, port: int, *, header_map: dict | None) -> str
 
     manifest = _manifest(port, header_map=header_map)
     path = tmp_path / "manifest.yaml"
-    path.write_text(_yaml.safe_dump(manifest.model_dump(mode="json", exclude_none=True)))
+    path.write_text(_yaml.safe_dump(manifest.model_dump(mode="json", exclude_none=True)), encoding="utf-8")
     return str(path)
 
 
@@ -450,7 +453,7 @@ def _dir_secrets(tmp_path, monkeypatch, refresh_token: str) -> None:
     a ceremony on a laptop actually has."""
     secrets_dir = tmp_path / "secrets"
     secrets_dir.mkdir()
-    (secrets_dir / _REFRESH_LEAF).write_text(refresh_token)
+    (secrets_dir / _REFRESH_LEAF).write_text(refresh_token, encoding="utf-8")
     monkeypatch.setenv("BROKER_SECRETS", "dir")
     monkeypatch.setenv("BROKER_SECRETS_DIR", str(secrets_dir))
     monkeypatch.delenv("BROKER_SECRET_PREFIX", raising=False)
@@ -485,7 +488,7 @@ def test_snapshot_authenticates_to_a_remote_server(toy_server, tmp_path, monkeyp
         )
     ) == 0
 
-    captured = json.loads(out.read_text())
+    captured = json.loads(out.read_text(encoding="utf-8"))
     assert captured["server_id"] == _SERVER_ID
     assert captured["transport"] == "streamable-http"
     assert sorted(e["tool_def"]["tool_name"] for e in captured["entries"]) == sorted(_TOOLS)
@@ -493,7 +496,7 @@ def test_snapshot_authenticates_to_a_remote_server(toy_server, tmp_path, monkeyp
     # directly consumable by `admit-propose --from-snapshot`.
     assert all(e["def_hash"] for e in captured["entries"])
     # And nothing credential-shaped reached the artifact.
-    assert _REFRESH_TOKEN not in out.read_text()
+    assert _REFRESH_TOKEN not in out.read_text(encoding="utf-8")
 
 
 def test_snapshot_without_header_map_still_fails_closed(

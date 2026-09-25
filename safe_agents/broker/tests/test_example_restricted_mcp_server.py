@@ -35,7 +35,7 @@ _MANIFEST_PATH = (
 
 def _raw() -> dict:
     """The manifest as a fresh dict, safe to mutate per-test."""
-    return yaml.safe_load(_MANIFEST_PATH.read_text())
+    return yaml.safe_load(_MANIFEST_PATH.read_text(encoding="utf-8"))
 
 
 def test_manifest_validates_as_written() -> None:

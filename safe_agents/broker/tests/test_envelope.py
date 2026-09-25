@@ -83,7 +83,7 @@ def _real_agent_envelopes() -> list[tuple[str, dict]]:
     """Collect (filename, envelope-dict) pairs for every agents/*.yaml with an envelope."""
     pairs = []
     for path in sorted(AGENTS_DIR.glob("*.yaml")):
-        raw = yaml.safe_load(path.read_text())
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         envelope = raw.get("envelope")
         if envelope is not None:
             pairs.append((path.name, envelope))
@@ -109,7 +109,7 @@ def test_real_envelopes_fixture_is_nonempty() -> None:
 def test_polarity_only_envelope_validates() -> None:
     """smoke-rhel-openshell.yaml declares polarity only — proves every other field is optional."""
     envelope = yaml.safe_load(
-        (AGENTS_DIR / "smoke-rhel-openshell.yaml").read_text()
+        (AGENTS_DIR / "smoke-rhel-openshell.yaml").read_text(encoding="utf-8")
     )["envelope"]
     assert envelope == {"polarity": "abstain"}
     Envelope.model_validate(envelope)

@@ -27,6 +27,7 @@ from safe_agents.arms.ec2_woken.box_provision import (
     ec2_woken_box_teardown,
     render_box_user_data,
 )
+from safe_agents.broker.tests.platform_marks import requires_posix_bash
 from safe_agents.pipeline import FakeAWS, load_manifest
 
 # drain_logic is a box-side module (not on the package path); import it by file location.
@@ -411,6 +412,7 @@ class TestDrainLogic:
 # ---------------------------------------------------------------------------
 
 class TestShellScriptsParse:
+    @requires_posix_bash
     @pytest.mark.parametrize("script", [RUN_BROKERED, DRAIN, EMIT_READY])
     def test_bash_n_clean(self, script: Path) -> None:
         assert script.is_file(), f"missing box script: {script}"

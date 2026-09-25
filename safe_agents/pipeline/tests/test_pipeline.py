@@ -72,7 +72,7 @@ MINIMAL_VALID_MANIFEST = textwrap.dedent("""\
 def valid_manifest_file(tmp_path: Path) -> Path:
     """Write a minimal valid deployment manifest and return its path."""
     f = tmp_path / "my-agent.yaml"
-    f.write_text(MINIMAL_VALID_MANIFEST)
+    f.write_text(MINIMAL_VALID_MANIFEST, encoding="utf-8")
     return f
 
 
@@ -130,10 +130,10 @@ class TestManifestParsing:
     def test_envelope_is_preserved(self, valid_manifest_file: Path, tmp_path: Path) -> None:
         """Envelope half (broker-facing) is preserved pass-through in raw."""
         f = tmp_path / "with-envelope.yaml"
-        with valid_manifest_file.open() as fh:
+        with valid_manifest_file.open(encoding="utf-8") as fh:
             data = yaml.safe_load(fh)
         data["envelope"] = {"polarity": "abstain", "caps": {"actions_per_run": 0}}
-        f.write_text(yaml.dump(data))
+        f.write_text(yaml.dump(data), encoding="utf-8")
         m = load_manifest(f)
         assert m.envelope == {"polarity": "abstain", "caps": {"actions_per_run": 0}}
 
@@ -169,7 +169,7 @@ def test_missing_required_field_fails(
     data = yaml.safe_load(MINIMAL_VALID_MANIFEST)
     del data[remove_field]
     f = tmp_path / "bad.yaml"
-    f.write_text(yaml.dump(data))
+    f.write_text(yaml.dump(data), encoding="utf-8")
     with pytest.raises(ManifestError) as exc_info:
         load_manifest(f)
     assert expected_fragment in str(exc_info.value), (
@@ -181,7 +181,7 @@ def test_bad_arm_fails(tmp_path: Path) -> None:
     data = yaml.safe_load(MINIMAL_VALID_MANIFEST)
     data["arm"] = "docker"
     f = tmp_path / "bad-arm.yaml"
-    f.write_text(yaml.dump(data))
+    f.write_text(yaml.dump(data), encoding="utf-8")
     with pytest.raises(ManifestError) as exc_info:
         load_manifest(f)
     assert "arm" in str(exc_info.value).lower()
@@ -198,7 +198,7 @@ def test_missing_smoke_prompt_fails(tmp_path: Path) -> None:
     data = yaml.safe_load(MINIMAL_VALID_MANIFEST)
     del data["smoke"]["prompt"]
     f = tmp_path / "bad-smoke.yaml"
-    f.write_text(yaml.dump(data))
+    f.write_text(yaml.dump(data), encoding="utf-8")
     with pytest.raises(ManifestError) as exc_info:
         load_manifest(f)
     assert "smoke.prompt" in str(exc_info.value)
@@ -496,11 +496,11 @@ class TestAgentPackageResolution:
         agent_repo = tmp_path / "external-agent-repo"
         agent_repo.mkdir()
         manifest_path = agent_repo / "my-agent.yaml"
-        manifest_path.write_text(MINIMAL_VALID_MANIFEST)
+        manifest_path.write_text(MINIMAL_VALID_MANIFEST, encoding="utf-8")
         # The agent package sits beside its manifest, holding an agent-owned connector.
         pkg_dir = agent_repo / "my-agent"
         pkg_dir.mkdir()
-        (pkg_dir / "connector.py").write_text("# dummy agent-owned connector\n")
+        (pkg_dir / "connector.py").write_text("# dummy agent-owned connector\n", encoding="utf-8")
 
         seen: list[Path] = []
         result = run_pipeline(
@@ -524,7 +524,7 @@ class TestAgentPackageResolution:
         where the manifest lives."""
         manifest_path = tmp_path / "manifests" / "my-agent.yaml"
         manifest_path.parent.mkdir(parents=True)
-        manifest_path.write_text(MINIMAL_VALID_MANIFEST)
+        manifest_path.write_text(MINIMAL_VALID_MANIFEST, encoding="utf-8")
         # Package lives under a SEPARATE root, not beside the manifest.
         agent_root = tmp_path / "packages"
         pkg_dir = agent_root / "my-agent"
@@ -548,7 +548,7 @@ class TestAgentPackageResolution:
     ) -> None:
         """agent_dir has the highest precedence."""
         manifest_path = tmp_path / "my-agent.yaml"
-        manifest_path.write_text(MINIMAL_VALID_MANIFEST)
+        manifest_path.write_text(MINIMAL_VALID_MANIFEST, encoding="utf-8")
         explicit = tmp_path / "explicit-pkg"
         explicit.mkdir()
 
@@ -644,7 +644,7 @@ class TestFullPipeline:
         data = yaml.safe_load(MINIMAL_VALID_MANIFEST)
         data["arm"] = "fargate"
         f = tmp_path / "fargate-agent.yaml"
-        f.write_text(yaml.dump(data))
+        f.write_text(yaml.dump(data), encoding="utf-8")
 
         result = run_pipeline(
             f,

@@ -699,7 +699,7 @@ def _load_evidence_json(path: str, model: type, flag: str):
     the one polarity this runner must never have.
     """
     try:
-        return model.model_validate_json(Path(path).read_text())
+        return model.model_validate_json(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise RunnerConfigError(f"{flag} {path} is unusable: {exc}") from exc
 
