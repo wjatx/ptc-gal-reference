@@ -86,6 +86,29 @@ Doer fetches it inside `execute()` and the response type has no field to carry o
 here. What does not hold is anything about *confining* the agent: on a laptop, an embedded agent
 that wanted a credential could read the same environment the broker reads.
 
+## The same two calls on the AWS arm
+
+The manifest is also the smallest one that makes the Fargate broker decide an allow and a refusal
+without an LLM or a third-party credential, so `Containerfile.broker` layers it onto the base broker
+image. Build both from the repository root:
+
+```bash
+podman build --platform linux/arm64 -f safe_agents/arms/local/Containerfile.broker \
+  -t safe-agents-broker:base .
+podman build --platform linux/arm64 -f examples/embedded_agent/Containerfile.broker \
+  --build-arg BASE_IMAGE=safe-agents-broker:base -t safe-agents-broker:embedded .
+```
+
+Push the second image as the broker repository's `latest` and deploy Compute with
+`-c brokerManifestPath=/app/examples/embedded_agent/manifest.yaml`. The calls themselves come from
+`python -m safe_agents.broker.prototype.call_client`, which Compute packages as the
+`safe-agents-<env>-client` task definition under the zero-authority agent role.
+
+One difference from the laptop run: the Doer fetches a credential for every tool it executes, and
+on the Secrets Manager arm that is `safe-agents/<env>/connectors/search`. `LocalSearchConnector`
+ignores the value, but the secret has to exist, or the allow is recorded as `allow/failed` and the
+agent receives a deny. Any placeholder string will do.
+
 ## Relationships
 
 - `docs/consuming-the-sdk.md` §2 — the two-tier import surface this example is written against.

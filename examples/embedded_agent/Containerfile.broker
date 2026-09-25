@@ -1,0 +1,39 @@
+# Containerfile.broker — the embedded_agent example's CONSUMER broker image (#42).
+#
+# The consumer-image-layer pattern (docs/broker-image-cutover.md): the agent-
+# agnostic base broker image + this consumer's files, nothing else. It exists so
+# the AWS arm can show one allowed and one refused brokered call with no LLM and
+# no third-party credential: the manifest grants `search.query` (served by the
+# in-process LocalSearchConnector, which never dials out) and classifies but does
+# not grant `notify.send`.
+#
+# Build from the REPO ROOT with the base image tag as BASE_IMAGE (no default — a
+# build without it must fail rather than pin a stale digest):
+#
+#   podman build --platform linux/arm64 -f safe_agents/arms/local/Containerfile.broker \
+#     -t safe-agents-broker:base .
+#   podman build --platform linux/arm64 -f examples/embedded_agent/Containerfile.broker \
+#     --build-arg BASE_IMAGE=safe-agents-broker:base -t safe-agents-broker:embedded .
+#
+# No ENTRYPOINT/CMD override — the base broker server entrypoint is inherited.
+# No baked BROKER_MANIFEST — the deploy passes
+# `-c brokerManifestPath=/app/examples/embedded_agent/manifest.yaml`, which the
+# task definition injects as BROKER_MANIFEST (an unset one refuses at boot on the
+# durable arm, #205).
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# The base image ends on `USER broker`; step up only to stage, then drop.
+USER root
+# The manifest's connector_providers names
+# `examples.embedded_agent.local_search_connector:LocalSearchConnector`, which the
+# registry resolves with importlib. `examples` is a namespace package (no
+# __init__.py), so it imports from whichever sys.path entry holds /app. The base
+# entrypoint runs `python3 -m` from WORKDIR /app, which puts /app on sys.path only
+# as the working directory; PYTHONPATH makes the provider path independent of how
+# or where the process is started (ECS exec, a command override, a different cwd).
+COPY --chown=broker:broker examples/embedded_agent/manifest.yaml \
+     examples/embedded_agent/local_search_connector.py \
+     /app/examples/embedded_agent/
+ENV PYTHONPATH=/app
+USER broker
