@@ -259,3 +259,99 @@ class TestRefusalIsNotFailure:
 
         new = sink.records()[before:]
         assert [(r.decision, r.outcome) for r in new] == [("allow", "failed")]
+
+
+class _Breaker:
+    def execute(self, tool, op, args, credential):  # noqa: ANN001, ARG002
+        raise TimeoutError("upstream went away")
+
+
+class _Refuser:
+    def execute(self, tool, op, args, credential):  # noqa: ANN001, ARG002
+        from safe_agents.broker.runtime.doer import ConnectorRefusedError
+
+        raise ConnectorRefusedError("declared but no admitted registry row")
+
+
+def _break_connector(runtime) -> None:
+    runtime._doer._connectors["search"] = _Breaker()
+
+
+def _refuse_at_connector(runtime) -> None:
+    runtime._doer._connectors["search"] = _Refuser()
+
+
+def _drop_secrets(runtime) -> None:
+    from safe_agents.broker.runtime.secrets import FakeSecretsProvider
+
+    runtime._doer._secrets = FakeSecretsProvider({})
+
+
+def _leave_alone(runtime) -> None:  # noqa: ARG001
+    pass
+
+
+class TestOutcomesReadDifferently:
+    """The README promises a gate refusal and an execution failure read differently.
+
+    An outside run found they did not: a declared tool whose connector failed came
+    back as "refused by the broker", and a missing credential came back as a raw
+    KeyError string. Each outcome now has its own framing, keyed on structured
+    fields (`decision_kind`, `execution_outcome`, or the broker raising), never on
+    the reason text.
+    """
+
+    @pytest.mark.parametrize(
+        ("wire_name", "arrange", "decision_kind", "execution_outcome", "prefix", "absent"),
+        [
+            pytest.param(
+                "payments__transfer",
+                _leave_alone,
+                "deny",
+                None,
+                "payments.transfer refused by the broker: no manifest entry",
+                "allowed",
+                id="undeclared-tool-is-a-gate-refusal",
+            ),
+            pytest.param(
+                "search__query",
+                _break_connector,
+                "deny",
+                "failed",
+                "search.query was allowed by the broker but failed at the connector",
+                "refused by the broker",
+                id="declared-tool-connector-failure",
+            ),
+            pytest.param(
+                "search__query",
+                _refuse_at_connector,
+                "deny",
+                "refused",
+                "search.query was allowed by the broker but refused at the connector",
+                "refused by the broker",
+                id="declared-tool-connector-refusal",
+            ),
+            pytest.param(
+                "search__query",
+                _drop_secrets,
+                "error",
+                None,
+                "search.query did not complete: the broker hit an internal error (KeyError)",
+                "unknown secret",
+                id="missing-secret-is-framed-not-raw",
+            ),
+        ],
+    )
+    def test_each_outcome_has_its_own_framing(
+        self, surface, wire_name, arrange, decision_kind, execution_outcome, prefix, absent
+    ) -> None:
+        gateway, _ = surface
+        arrange(gateway._runtime)
+
+        result = gateway.call(wire_name, {"query": "broker"})
+
+        assert result.ok is False
+        assert result.decision_kind == decision_kind
+        assert result.execution_outcome == execution_outcome
+        assert result.text.startswith(prefix), result.text
+        assert absent not in result.text

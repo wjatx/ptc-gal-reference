@@ -195,6 +195,12 @@ class BrokerResponse:
     result: Any = None
     # True when the outcome was an idempotent replay (executor not called again).
     idempotent: bool = False
+    # Set ONLY when the PDP allowed the call and the connector then did not complete
+    # it: "failed" or "refused", the same vocabulary as AuditRecord.outcome. The
+    # reply stays deny-shaped (no effect happened), so without this a mouth cannot
+    # tell "the gate said no" from "the gate said yes and execution broke" except
+    # by string-matching `reason`. None on every gate decision.
+    execution_outcome: str | None = None
 
 
 class BrokerRuntime:
@@ -1402,13 +1408,16 @@ class BrokerRuntime:
                 store=self._enforcement_store,
                 executor=_executor,
             )
-        except ConnectorExecutionError:
+        except ConnectorExecutionError as exc:
             # Deny-shaped reply — reuse the existing deny shape; no new schema. The
             # reason is generic; the specific error lives only on the broker-private tape.
+            # `execution_outcome` carries the one structured bit a mouth needs to say
+            # the gate allowed this, mirroring the outcome the audit record just got.
             return BrokerResponse(
                 decision_kind="deny",
                 reason="connector execution failed",
                 idempotent=False,
+                execution_outcome="refused" if exc.refused else "failed",
             )
 
         effective = result.decision

@@ -48,6 +48,7 @@ honest agent produces in normal operation.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -73,6 +74,13 @@ _WIRE_SEPARATOR = "__"
 #: sees them, which is enforcement in the wrong place by the wrong component.
 #: Tracked as the #266 surface finding.
 _PERMISSIVE_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": True}
+
+logger = logging.getLogger(__name__)
+
+#: `decision_kind` for an answer the broker never gave: `handle_request` raised
+#: before replying. Not a Decision verb, deliberately, so nothing downstream can
+#: mistake an internal fault for a policy outcome.
+_NO_DECISION = "error"
 
 
 class GatewayNameCollision(ValueError):
@@ -104,6 +112,11 @@ class GatewayResult:
     require_approval alike. An approval hold is not a success: the effect has not
     happened, and a client that treated "pending" as "done" would report an action
     the broker is still holding.
+
+    `execution_outcome` is set when the broker ALLOWED the call and the connector
+    then failed or refused it (`BrokerResponse.execution_outcome`). The text reads
+    differently for that case on purpose: an operator chasing a gate refusal and
+    one chasing a missing credential are looking in different places.
     """
 
     ok: bool
@@ -112,6 +125,7 @@ class GatewayResult:
     structured: Any = None
     reason: str | None = None
     intent_id: str | None = None
+    execution_outcome: str | None = None
 
 
 def _as_text(marshalled: Any) -> str:
@@ -220,9 +234,32 @@ class GatewaySurface:
                     reason="unroutable tool name",
                 )
 
-        response = self._runtime.handle_request(
-            AgentRequest(tool=tool, op=op, args=arguments)
-        )
+        try:
+            response = self._runtime.handle_request(
+                AgentRequest(tool=tool, op=op, args=arguments)
+            )
+        except Exception as exc:  # noqa: BLE001 — frame it; never leak internals
+            # The broker raised instead of replying (a secrets, store or audit fault;
+            # `pep.py` lets those surface loudly rather than dress them as a deny).
+            # There is no decision to report, so the text claims none: it does not
+            # say the gate allowed or refused. The detail goes to stderr for the
+            # operator, as the HTTP mouth does, and not to the agent, since an
+            # internal message can carry paths or resource names.
+            logger.error(
+                "broker raised handling %s.%s: %s: %s",
+                tool, op, type(exc).__name__, exc,
+                exc_info=True,
+            )
+            return GatewayResult(
+                ok=False,
+                text=(
+                    f"{tool}.{op} did not complete: the broker hit an internal error "
+                    f"({type(exc).__name__}) before it could reply; the detail is on "
+                    "the broker's stderr"
+                ),
+                decision_kind=_NO_DECISION,
+                reason="internal broker error",
+            )
 
         if response.decision_kind in ("allow", "transform"):
             # ONE marshal, not a third copy. `broker/marshal.py` is homed as a
@@ -247,6 +284,23 @@ class GatewaySurface:
                 decision_kind=response.decision_kind,
                 reason=response.reason,
                 intent_id=response.intent_id,
+            )
+
+        if response.execution_outcome is not None:
+            # The gate allowed this; the connector then did not complete it. Keyed
+            # on the structured field, never on the reason text. The reason is
+            # generic by design (pep.py keeps the connector's error off the agent's
+            # reply), so the text points at where the detail does live.
+            verb = "refused" if response.execution_outcome == "refused" else "failed"
+            return GatewayResult(
+                ok=False,
+                text=(
+                    f"{tool}.{op} was allowed by the broker but {verb} at the "
+                    "connector; the detail is on the broker's audit record"
+                ),
+                decision_kind=response.decision_kind,
+                reason=response.reason,
+                execution_outcome=response.execution_outcome,
             )
 
         return GatewayResult(
