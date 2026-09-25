@@ -43,6 +43,7 @@ from pydantic import ValidationError
 
 from safe_agents.broker.approval import (
     ExecutionResult,
+    IntentAlreadyPendingError,
     IntentStore,
     IntentView,
     QuarantinedIntentError,
@@ -120,6 +121,10 @@ _REJECT_CAS_WIN_REASON = REJECTED_BY_OWNER_REASON
 # FLAGGED_BY_OWNER_REASON is the reason string on a clean flag (a marker-claim win),
 # distinct from every unknown / foreign / non-executed / already-flagged refusal.
 FLAGGED_BY_OWNER_REASON = "flagged by owner"
+
+# #39: the deny reason when a hold's intent id is already pending for another
+# call. The intent id follows after a colon so the tape joins it to that hold.
+INTENT_ID_COLLISION_REASON = "intent id already pending"
 
 # One-shot per-intent marker (a cap-1 counter) that makes flag_intent idempotent
 # without an IntentStore-protocol seam: the IntentStore exposes only a pending→X
@@ -475,6 +480,36 @@ class BrokerRuntime:
             reason=f"intent quarantined: {exc.reason}",
             intent_id=exc.intent_id,
         )
+
+    def _deny_intent_id_collision(
+        self, call: BrokeredCall, exc: IntentAlreadyPendingError
+    ) -> BrokerResponse:
+        """Refuse a hold whose intent id is already pending for another call (#39).
+
+        One ERROR log and one audit record, then a deny. The record carries the
+        refused call's own coordinates and the colliding intent id, which joins
+        it to the hold record of the intent that kept the slot.
+        """
+        reason = f"{INTENT_ID_COLLISION_REASON}: {exc.intent_id}"
+        logger.error(
+            "intent id collision: intent_id=%s tool=%s op=%s",
+            exc.intent_id,
+            call.tool,
+            call.op,
+        )
+        emit(
+            self._audit_sink,
+            principal=call.principal,
+            tool=call.tool,
+            op=call.op,
+            args=call.args,
+            decision="deny",
+            outcome="denied",
+            envelope_hash=self._envelope_hash,
+            reason=reason,
+            intent_id=exc.intent_id,
+        )
+        return BrokerResponse(decision_kind="deny", reason=reason, idempotent=False)
 
     def _quarantined_intent_result(
         self, exc: QuarantinedIntentError, op: str
@@ -1505,6 +1540,13 @@ class BrokerRuntime:
                     reason=f"intent quarantined: {exc.reason}",
                     idempotent=False,
                 )
+            except IntentAlreadyPendingError as exc:
+                # #39: a different call already holds this intent id pending.
+                # The store refused to overwrite it, so that hold stays intact
+                # and approvable to its own call. This call is NOT held: deny
+                # it on the tape and to the agent, toward less authority. A
+                # retry gets a fresh ts and so a fresh id (#38).
+                return self._deny_intent_id_collision(call, exc)
             coalesced = approval.status == "coalesced"
 
             # sa#160 flood alarm: count NEW holds per principal+op+UTC-day; past

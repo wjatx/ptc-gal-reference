@@ -70,11 +70,12 @@ def _intent_id(call: BrokeredCall) -> str:
     ``ts`` and held under a fresh id. Collapsing identical holds onto one id is the
     approval-queue dedup knob's job (``dedup_intent_id``), not this function's.
 
-    Two distinct holds must never share an id (#38). Every hold is written under its
-    id with a blind put, so a shared id silently replaces the first pending intent
-    with the second: both callers are told the same id, and approving it releases
-    whichever call was written last. ``storedCallDigest`` records which call ran; it
-    does not stop the wrong one running. Distinctness rests on ``ts`` and
+    Two distinct holds must never share an id (#38). Every intent store once wrote
+    holds with a blind put, so a shared id silently replaced the first pending
+    intent with the second, and approving it released whichever call was written
+    last. The stores now refuse to overwrite a pending intent (#39) and the PEP
+    denies the second call, which keeps the first hold safe but still refuses a
+    call that should have been held. Distinctness rests on ``ts`` and
     ``turnId`` together: the PEP stamps ``ts`` strictly increasing per runtime
     (``BrokerRuntime._stamp_call_ts``) and mints ``turnId`` per runtime, because the
     wall clock alone repeats inside one tick (about 15.6 ms on Windows). Args are

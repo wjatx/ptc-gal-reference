@@ -28,7 +28,7 @@ from typing import Any, Callable
 from safe_agents.broker.schemas import BrokeredCall, Intent
 from safe_agents.broker.schemas.decision import RequireApproval
 
-from .store import IntentStore
+from .store import IntentAlreadyPendingError, IntentStore
 from .types import ApprovalResult, ExecutionResult, NotifierEvent
 
 # The rejection_reason reject() returns on a clean CAS win — the ONE signal that
@@ -149,6 +149,13 @@ def materialize(
         computed from. Defaults to the wall clock. Both derive from this one
         instant, so ``expiry - ts`` is exactly ``expiry_seconds``.
 
+    Raises
+    ------
+    IntentAlreadyPendingError
+        Without dedup, when a pending intent already holds the PDP's intent id
+        (#39). That intent is a different call and is left intact; nothing is
+        held and nobody is notified for this one.
+
     Returns
     -------
     ApprovalResult
@@ -184,7 +191,18 @@ def materialize(
         approvedBy=None,
         ts=ts,
     )
-    store.put_intent(intent)
+    try:
+        store.put_intent(intent)
+    except IntentAlreadyPendingError:
+        # The put is conditional on the id not holding a pending intent (#39).
+        # Under dedup the id is content-derived, so a pending intent here is an
+        # identical hold that won a race past the check above: coalesce onto
+        # it, exactly as if the check had seen it. Without dedup the id is
+        # ts-based and a pending intent under it is a DIFFERENT call; the
+        # refusal propagates and the caller must not report a hold.
+        if dedup_id is not None:
+            return ApprovalResult(status="coalesced", intent_id=dedup_id)
+        raise
 
     if notifier is not None:
         notifier(

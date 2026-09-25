@@ -36,6 +36,8 @@ from pathlib import Path
 from safe_agents.broker import sqlite_substrate as substrate
 from safe_agents.broker.approval.store import (
     EXECUTED_INTENT_RETENTION_DAYS,
+    PENDING_STATUS,
+    IntentAlreadyPendingError,
     intent_from_item,
     intent_item_attrs,
 )
@@ -85,16 +87,21 @@ class SqliteIntentStore(substrate.SqliteStoreBase):
         return f"INTENT#{intent_id}", "v0"
 
     def put_intent(self, intent: Intent) -> None:
-        # A blind put matching DynamoIntentStore's put_item (overwrite
-        # allowed) — spelled as read-check then insert-or-update, never
-        # REPLACE. The expires_at column carries the expiry normalized through
-        # datetime parsing so a 'Z'-suffixed expiry lands in '+00:00' form.
+        # Conditional put matching DynamoIntentStore's (#39): refuse to
+        # replace a pending intent, write over an absent or resolved one.
+        # Spelled as read-check then insert-or-update inside BEGIN IMMEDIATE,
+        # never REPLACE, so the check and the write see one state. The
+        # expires_at column carries the expiry normalized through datetime
+        # parsing so a 'Z'-suffixed expiry lands in '+00:00' form.
         pk, sk = self._item_key(intent.id)
         expires_at = _parse_utc(intent.expiry).isoformat()
         conn = self._connection()
         with substrate.transaction(conn):
             attrs = intent_item_attrs(intent, self._hmac_key)
-            if substrate.get_item(conn, pk, sk) is None:
+            existing = substrate.get_item(conn, pk, sk)
+            if existing is not None and existing.get("status") == PENDING_STATUS:
+                raise IntentAlreadyPendingError(intent.id)
+            if existing is None:
                 substrate.put_new_item(conn, pk, sk, attrs, expires_at=expires_at)
             else:
                 substrate.update_existing_item(conn, pk, sk, attrs, expires_at=expires_at)

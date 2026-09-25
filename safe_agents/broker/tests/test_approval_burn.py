@@ -159,6 +159,9 @@ def test_other_principal_cannot_force_expiry(b: dict) -> None:
     b_runtime, _ = _runtime(b, store)
     a_id = _hold(a_runtime)
     held = store.get_intent(a_id)
+    # put_intent refuses to overwrite a pending intent (#39), so drop the
+    # fresh hold before writing its backdated copy under the same id.
+    del store._items[a_id]
     store.put_intent(
         held.model_copy(
             update={"expiry": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()}

@@ -47,6 +47,34 @@ from safe_agents.broker.schemas import BrokeredCall, Intent
 # (#204); this is only the /flag review window, so a week, not forever.
 EXECUTED_INTENT_RETENTION_DAYS = 7
 
+# The one status put_intent refuses to overwrite (#39). A pending intent is a
+# live hold that a human may be looking at; replacing it would make approving
+# its id release a different call. Resolved intents (approved, rejected,
+# expired, executed, refused) may be overwritten, because the approval-queue
+# dedup path (sa#160) re-holds identical content under the same id once the
+# earlier hold has resolved.
+PENDING_STATUS = "pending"
+
+
+class IntentAlreadyPendingError(Exception):
+    """Create refused: a pending intent already holds this id (#39).
+
+    Every backend's put_intent is conditional on the id NOT holding a pending
+    intent. Two distinct held calls sharing an id is a defect upstream (#38
+    removed the known source), and a blind put would silently replace the
+    first hold: the human approves one call and the broker releases another,
+    while the first can never run. Refusing keeps the first hold intact and
+    approvable to its own call. The caller decides what the refusal means:
+    materialize() treats it as coalescing when the id is content-derived
+    (dedup), and the PEP otherwise denies the new call with an audit record.
+    """
+
+    def __init__(self, intent_id: str) -> None:
+        self.intent_id = intent_id
+        super().__init__(
+            f"intent {intent_id!r} is already pending; refusing to overwrite it"
+        )
+
 
 class QuarantinedIntentError(Exception):
     """Read refused: the stored intent bytes failed HMAC verification (#349).
@@ -168,7 +196,12 @@ class IntentStore(Protocol):
     """
 
     def put_intent(self, intent: Intent) -> None:
-        """Persist a new intent. Called once at creation (status=pending)."""
+        """Persist a new intent. Called once at creation (status=pending).
+
+        Conditional and atomic (#39): raises IntentAlreadyPendingError when an
+        intent with this id is already pending, leaving that intent untouched.
+        An absent id or a resolved intent under the id is written over.
+        """
         ...
 
     def get_intent(self, intent_id: str) -> Intent | None:
@@ -238,6 +271,11 @@ class InMemoryIntentStore:
     def put_intent(self, intent: Intent) -> None:
         lock = self._get_lock(intent.id)
         with lock:
+            # The check and the write share the per-intent lock, so this is the
+            # in-memory mirror of Dynamo's conditional put (#39).
+            existing = self._items.get(intent.id)
+            if existing is not None and existing.get("status") == PENDING_STATUS:
+                raise IntentAlreadyPendingError(intent.id)
             self._items[intent.id] = intent_item_attrs(intent, self._hmac_key)
 
     def get_intent(self, intent_id: str) -> Intent | None:
@@ -320,6 +358,8 @@ class DynamoIntentStore:
     def put_intent(self, intent: Intent) -> None:
         from datetime import datetime  # noqa: PLC0415
 
+        from botocore.exceptions import ClientError  # noqa: PLC0415
+
         # Compute epoch seconds from the ISO-8601 expiry for DynamoDB TTL.
         expiry_dt = datetime.fromisoformat(intent.expiry.replace("Z", "+00:00"))
         ttl = int(expiry_dt.timestamp())
@@ -330,7 +370,21 @@ class DynamoIntentStore:
             "ttl": ttl,
             **intent_item_attrs(intent, self._hmac_key),
         }
-        self._table.put_item(Item=item)
+        # Conditional put (#39): refuse to replace a pending intent. The
+        # condition is evaluated server-side against the stored item, so two
+        # racing puts of one id cannot both land on a pending slot. Needs only
+        # dynamodb:PutItem; a ConditionExpression is not a separate action.
+        try:
+            self._table.put_item(
+                Item=item,
+                ConditionExpression="attribute_not_exists(pk) OR #status <> :pending",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={":pending": PENDING_STATUS},
+            )
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                raise IntentAlreadyPendingError(intent.id) from exc
+            raise
 
     def get_intent(self, intent_id: str) -> Intent | None:
         resp = self._table.get_item(Key={"pk": f"INTENT#{intent_id}", "sk": "v0"})

@@ -37,6 +37,7 @@ from safe_agents.broker.approval.sqlite_store import SqliteIntentStore
 from safe_agents.broker.approval.store import (
     EXECUTED_INTENT_RETENTION_DAYS,
     InMemoryIntentStore,
+    IntentAlreadyPendingError,
     QuarantinedIntentError,
     canonical_intent_payload,
 )
@@ -740,6 +741,78 @@ class TestIntentConformance:
         assert before is not None
         assert store.transition_status("intent-1", "pending", "approved", "maintainer") is True
         assert intent_backend.raw_expires_at("intent-1") == before
+
+
+# Other-call args for the #39 collision cases: a DIFFERENT call under the same id.
+OTHER_ARGS = {"amount": 999, "to": "acct-other"}
+
+# Transition paths from pending to each resolved status, as (expected, new) steps.
+RESOLVED_PATHS = {
+    "approved": [("pending", "approved")],
+    "rejected": [("pending", "rejected")],
+    "expired": [("pending", "expired")],
+    "executed": [("pending", "approved"), ("approved", "executed")],
+    "refused": [("pending", "approved"), ("approved", "refused")],
+}
+
+
+def make_other_intent(intent_id: str = "intent-1") -> Intent:
+    """A different call held under an existing intent's id (the #39 collision)."""
+    return make_intent(intent_id).model_copy(
+        update={
+            "materializedRequest": make_call().model_copy(update={"args": OTHER_ARGS}),
+            "renderedForHuman": "transfer 999 to acct-other",
+        }
+    )
+
+
+class TestIntentCreateIsConditional:
+    """#39: put_intent refuses to overwrite a PENDING intent, on every backend.
+
+    A blind put let a second hold under a colliding id replace the first: the
+    human approved one call and the broker released the other. Resolved intents
+    stay overwritable, because the dedup path (sa#160) re-holds identical
+    content under its content-derived id once the earlier hold resolved.
+    """
+
+    def test_create_over_pending_is_refused_and_first_is_intact(self, intent_backend):
+        store = intent_backend.store
+        store.put_intent(make_intent())
+        with pytest.raises(IntentAlreadyPendingError) as excinfo:
+            store.put_intent(make_other_intent())
+        assert excinfo.value.intent_id == "intent-1"
+
+        kept = store.get_intent("intent-1")
+        assert kept.status == "pending"
+        assert kept.materializedRequest == make_call()
+        assert kept.renderedForHuman == "transfer 100 to acct-xyz"
+        # Still approvable, and what it releases is its OWN frozen call.
+        assert store.transition_status("intent-1", "pending", "approved", "maintainer") is True
+        assert store.get_intent("intent-1").materializedRequest.args == make_call().args
+
+    def test_refused_create_leaves_no_partial_write(self, intent_backend):
+        if intent_backend.name != "sqlite":
+            pytest.skip("the expires_at column exists only on sqlite")
+        store = intent_backend.store
+        store.put_intent(make_intent())
+        before = intent_backend.raw_expires_at("intent-1")
+        with pytest.raises(IntentAlreadyPendingError):
+            store.put_intent(make_other_intent().model_copy(update={"expiry": "2030-01-01T00:00:00Z"}))
+        assert intent_backend.raw_expires_at("intent-1") == before
+
+    @pytest.mark.parametrize("resolved", sorted(RESOLVED_PATHS))
+    def test_create_over_resolved_overwrites(self, intent_backend, resolved):
+        store = intent_backend.store
+        store.put_intent(make_intent())
+        for expected, new in RESOLVED_PATHS[resolved]:
+            assert store.transition_status("intent-1", expected, new, "maintainer") is True
+        assert store.get_intent("intent-1").status == resolved
+
+        store.put_intent(make_other_intent())
+        got = store.get_intent("intent-1")
+        assert got.status == "pending"
+        assert got.approvedBy is None and got.executedAt is None
+        assert got.materializedRequest.args == OTHER_ARGS
 
 
 def _evil_payload(intent_id: str = "intent-1") -> str:

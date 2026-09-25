@@ -18,6 +18,7 @@ Exports:
     InMemoryIntentStore — thread-safe in-process fake for tests; no AWS required
     DynamoIntentStore   — production DynamoDB implementation (lazy boto3)
     QuarantinedIntentError — raised by get_intent on stored-bytes HMAC failure (#349)
+    IntentAlreadyPendingError: raised by put_intent over a pending intent's id (#39)
     ReleaseRefusedError — raised by a release executor whose revalidation refused (#9)
     ApprovalResult      — return type of materialize()
     ExecutionResult     — return type of approve()
@@ -36,6 +37,7 @@ from .engine import (
 from .store import (
     DynamoIntentStore,
     InMemoryIntentStore,
+    IntentAlreadyPendingError,
     IntentStore,
     QuarantinedIntentError,
 )
@@ -49,6 +51,7 @@ __all__ = [
     "InMemoryIntentStore",
     "DynamoIntentStore",
     "QuarantinedIntentError",
+    "IntentAlreadyPendingError",
     "ReleaseRefusedError",
     "RELEASE_REFUSED_REASON_PREFIX",
     "ApprovalResult",
