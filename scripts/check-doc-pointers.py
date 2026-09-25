@@ -21,6 +21,9 @@ drowns:
   this one; the path is right and correctly absent here.
 * **Partial paths.** `broker/tests/test_x.py` where the first segment is not a real
   top-level directory is a fragment, not a location.
+* **Generated files.** `infra/cdk.context.json` is written by the tool that uses it and
+  is gitignored, so a runbook that tells the reader to clear it names a path that is
+  correctly absent from any checkout. A path git ignores is treated like a sibling repo.
 
 Line numbers are deliberately NOT checked. They rot honestly as code moves, and
 failing on them trains people to disable the check.
@@ -47,6 +50,7 @@ report a confident, wrong, low number.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -81,6 +85,17 @@ def standing_docs() -> list[Path]:
 
 def top_level_dirs() -> set[str]:
     return {p.name for p in ROOT.iterdir() if p.is_dir() and not p.name.startswith(".")}
+
+
+def _git_ignored(candidate: str) -> bool:
+    """Whether git ignores `candidate`: a generated or local file, correctly absent."""
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", candidate],
+        cwd=ROOT,
+        check=False,
+        stderr=subprocess.DEVNULL,  # an absolute path is outside the repo: not ignored
+    )
+    return result.returncode == 0
 
 
 def _relocated(candidate: str) -> str | None:
@@ -121,6 +136,8 @@ def dead_pointers() -> tuple[list[tuple[Path, int, str, str]], int]:
                 # `references/x.md` from docs/, `../ARCHITECTURE.md` from core/.
                 if (doc.parent / candidate).exists():
                     continue
+                if _git_ignored(candidate):
+                    continue  # generated or local; absent from every checkout by design
 
                 fix = _relocated(candidate)
                 if fix is None:
