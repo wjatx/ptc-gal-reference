@@ -251,8 +251,15 @@ npx cdk deploy SafeAgents-Identity-{env} -c environment={env} \
   -c checkerTrustedPrincipals=$CLI -c demotionTrustedPrincipals=$CLI \
   -c promotionTrustedPrincipals=$CLI -c makerTrustedPrincipals=$CLI \
   -c auditorTrustedPrincipals=$CLI \
+  -c githubOidcSubjects=repo:<owner>/<repo>:*,repo:<owner>@<owner-id>/<repo>@<repo-id>:* \
   --require-approval never
 ```
+
+`githubOidcSubjects` is the sixth context, and the one whose omission fails silently. Unset, the
+deploy succeeds and both read-only watcher roles trust a sentinel no GitHub token can present, so
+a CI workflow that assumed them (the keyless grants audit) stops working with nothing in the deploy
+output to say why. Pass both spellings of the repository whose workflows assume them; drop the line
+only if no workflow does. `docs/cdk-context-contract.md` explains the two forms.
 
 Verify after deploy: `aws iam get-role --role-name <role> --query Role.AssumeRolePolicyDocument`
 — gated NEW roles (Maker/Checker/Auditor) trust ONLY the named ARNs; gated EXISTING roles
