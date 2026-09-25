@@ -4,8 +4,9 @@
 #   ./safe_agents/arms/openshift/cluster-arc-run.sh            # build + run both legs
 #   SKIP_BUILD=1 ./safe_agents/arms/openshift/cluster-arc-run.sh   # reuse the images
 #
-# TWELVE Jobs and two Deployments across FIVE ServiceAccounts (#250 Phases 3-6.1,
-# #310, #154). The first six legs:
+# ELEVEN Jobs and two Deployments across FIVE ServiceAccounts (#250 Phases 3-5,
+# #310, #154), plus a twelfth Job for Phase 6.1 when its manifest is present (it is
+# not, in this tree; see step 15). The first six legs:
 #
 #   0. bootstrap (safe-agents-checker) creates the grant store the maker may only
 #                                      read
@@ -57,7 +58,10 @@
 #                                      admits that tool and would falsify it.
 #  10.  posture      (…-agent)         a posture report in cluster vocabulary from
 #                                      inside a pod, reporting the two refusals as
-#                                      UNKNOWN rather than claiming them (Phase 6.1)
+#                                      UNKNOWN rather than claiming them (Phase 6.1).
+#                                      CONDITIONAL on 59-job-posture.yaml, which this
+#                                      tree does not ship; without it the drill prints
+#                                      PHASE 6.1: NOT RUN instead of a predicate.
 #
 # Demonstration 3 is leg 4, unchanged. The sandbox in demonstration 1 is the POD's own
 # SCC + NetworkPolicy, never the EC2/AMI OpenShell box [ruling: maintainer,
@@ -209,7 +213,21 @@ if [ -z "${SKIP_BUILD:-}" ]; then
       sleep 2
       i=$((i + 1))
     done
-    [ "$phase" = "Complete" ] || die "$label build did not complete (phase=${phase:-<none>})"
+    if [ "$phase" != "Complete" ]; then
+      # The phase alone hides the cause. A build pod that never schedules (on OpenShift
+      # Local, the default VM memory cannot fit the BuildConfig's 2Gi request) ends as
+      # `Cancelled` with nothing in the build log, and the reason is only in the events.
+      local build
+      build=$(oc -n "$NS" get build -l "buildconfig=$bc" \
+                --sort-by=.metadata.creationTimestamp \
+                -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)
+      if [ -n "$build" ]; then
+        printf '   recent events for build pod %s-build:\n' "$build" >&2
+        oc -n "$NS" get events --field-selector "involvedObject.name=$build-build" \
+          --sort-by=.lastTimestamp 2>&1 | tail -n 6 | sed 's/^/     /' >&2 || true
+      fi
+      die "$label build did not complete (phase=${phase:-<none>}); see the events above"
+    fi
     ok "$label"
   }
   build_and_assert safe-agents-broker-base "base broker image built"
@@ -413,8 +431,13 @@ say "15. Phase 6.1 — the posture report, generated where the containment is"
 # the platform, and is deliberately absent from the public reference implementation
 # [2026-08-10]. The arm predates it by twelve minor versions (v0.57.0 -> v0.69.0), so a
 # tree without it is the arm as it ran for most of its life, not a broken one.
-if [ -f "$(dirname "$0")/59-job-posture.yaml" ]; then
+# "$HERE", never "$(dirname "$0")": the script cd'd to the repository root at the top,
+# so a relative $0 (`./cluster-arc-run.sh`) no longer resolves from here, and the
+# check would skip the leg even in a tree that ships it.
+POSTURE_RAN=""
+if [ -f "$HERE/59-job-posture.yaml" ]; then
   run_leg safe-agents-posture 59-job-posture.yaml "agent / posture in cluster vocabulary"
+  POSTURE_RAN=1
 else
   printf '  (skipping the posture leg: not present in this tree)\n'
 fi
@@ -461,10 +484,22 @@ printf '  OpenShell box [ruling: maintainer, 2026-07-28]. The composition claim 
 printf '  depend on which sandbox, but it must NAME the one in the picture, and wiring in\n'
 printf '  the EC2/AMI box would put an AWS dependency inside the cluster arm.\n'
 
-printf '\n\033[32mPHASE 6.1 PREDICATE: PASS\033[0m\n'
-printf '  and the posture report said all of it back in cluster vocabulary from inside a\n'
-printf '  pod — ServiceAccount, SCC, mount topology — while reporting the two\n'
-printf '  REFUSALS above as UNKNOWN rather than claiming them. posture makes no\n'
-printf '  network calls, so it cannot have attempted either; asserting them from the\n'
-printf '  manifest is exactly the overclaim this audience is best equipped to find,\n'
-printf '  and the leg FAILS if a future edit does it.\n'
+# Every sentence of the 6.1 predicate is evidence from the posture leg: what the report
+# said, and that it reported the two refusals as UNKNOWN. The refusals themselves are
+# leg 5's and are already claimed under Phase 4. So when the leg did not run there is
+# nothing left to print as a PASS, and printing one anyway would be the very overclaim
+# the predicate exists to catch.
+if [ -n "$POSTURE_RAN" ]; then
+  printf '\n\033[32mPHASE 6.1 PREDICATE: PASS\033[0m\n'
+  printf '  and the posture report said all of it back in cluster vocabulary from inside a\n'
+  printf '  pod — ServiceAccount, SCC, mount topology — while reporting the two\n'
+  printf '  REFUSALS above as UNKNOWN rather than claiming them. posture makes no\n'
+  printf '  network calls, so it cannot have attempted either; asserting them from the\n'
+  printf '  manifest is exactly the overclaim this audience is best equipped to find,\n'
+  printf '  and the leg FAILS if a future edit does it.\n'
+else
+  printf '\n\033[33mPHASE 6.1: NOT RUN\033[0m\n'
+  printf '  the posture leg (59-job-posture.yaml) is not part of this tree, so nothing\n'
+  printf '  here tested how a posture report describes this deployment. The two refusals\n'
+  printf '  it would have reported on are evidenced by leg 5 and claimed under Phase 4.\n'
+fi

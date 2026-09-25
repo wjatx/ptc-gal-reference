@@ -15,7 +15,7 @@ three postures; the table below maps them to the three places you can run this.
 |---|---|---|---|
 | **Laptop** (posture 1) | The test suite, the generated conformance statement, the broker deciding real MCP tool calls, the taint hold, the audit tape, the broker embedded as a library | Any claim that rests on a boundary between the broker and the agent: grant writes denied by the platform, credentials held across a boundary, the agent's own built-in tools being confined | About ten minutes. No account |
 | **AWS** (posture 3) | The broker under its own cloud identity, with an out-of-scope action refused by IAM rather than by broker code, and maker≠checker enforced by comparing credential ARNs | An end-to-end tool call decided on AWS by following a runbook: no guided walkthrough exists yet (see [AWS](#aws)) | Hours, an AWS account you can create IAM roles in, and a small daily cost |
-| **OpenShift** (posture 2) | The ceremony arc in pods under separate ServiceAccounts, with a leg's writes to grant rows and to another leg's audit records refused by the kernel on read-only mounts, and an agent pod holding no credentials working only through the broker | Anything on vanilla Kubernetes, which the drill does not support today | Cluster admin on an OpenShift cluster; about six minutes for a full run |
+| **OpenShift** (posture 2) | The ceremony arc in pods under separate ServiceAccounts, with a leg's writes to grant rows and to another leg's audit records refused by the kernel on read-only mounts, and an agent pod holding no credentials working only through the broker | Anything on vanilla Kubernetes, which the drill does not support today | Cluster admin on an OpenShift cluster, or OpenShift Local on a laptop (a free Red Hat account, about 14 GiB of RAM for the VM); from about 150 s to 19 minutes for a full run, depending on the cluster |
 
 Starting with the laptop is reasonable, and so is stopping there, as long as the conclusions
 stay inside posture 1.
@@ -221,6 +221,11 @@ first; it states each claim beside its limits, including that the broker can sti
 own tape.
 
 It needs cluster admin, `oc`, BuildConfigs, the internal image registry and the `restricted-v2`
-SCC, so vanilla Kubernetes is not supported today. It was verified on OpenShift 4.20. OpenShift
-Local (CRC) provides all of those and is expected to run it unchanged, but nobody has tried it
-yet; a report either way is welcome.
+SCC, so vanilla Kubernetes is not supported today. It was verified on OpenShift 4.20, and on
+OpenShift Local (CRC 2.51, OpenShift 4.18.2) on an arm64 Apple silicon laptop on 2026-09-24,
+unchanged apart from one setting: the VM's memory raised to 14336 MiB, because the default
+cannot schedule the 2Gi build pod. The cost of the laptop path is a free Red Hat account for the
+pull secret, about 14 GiB of RAM and 35 GB of disk for the VM, and a first `crc start` of about
+25 minutes (about 3 when warm); the drill itself then took about 150 s with builds. The exact
+sequence is in
+[the arm README's OpenShift Local section](../safe_agents/arms/openshift/README.md#openshift-local-a-laptop).

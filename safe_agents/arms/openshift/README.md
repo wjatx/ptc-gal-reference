@@ -27,8 +27,14 @@ a thin README.
   vanilla Kubernetes will not do; the internal image registry must be enabled (the consumer
   build pulls its base through `image-registry.openshift-image-registry.svc:5000`), and a
   default StorageClass must be able to bind a 1Gi ReadWriteOnce claim. Verified on OpenShift
-  4.20 / OVN-Kubernetes; the one CNI-sensitive piece — the post-DNAT API-server egress rule,
-  argued below — is generated from the live cluster at apply time rather than checked in.
+  4.20 / OVN-Kubernetes, and on OpenShift Local 4.18.2 on arm64 (Apple silicon) on 2026-09-24;
+  the one CNI-sensitive piece, the post-DNAT API-server egress rule argued below, is
+  generated from the live cluster at apply time rather than checked in.
+- **Room for a 2Gi build pod.** Each BuildConfig in `20-builds.yaml` sets a 2Gi memory limit and
+  no request, so the scheduler reserves 2Gi for the build pod. A node without that much
+  allocatable memory leaves the pod unschedulable, and the build ends as `phase=Cancelled` with
+  nothing in its log. The driver prints the build pod's recent events when that happens, and the
+  scheduler's reason is there. OpenShift Local's default VM (10.75 GiB) hits this; see below.
 - **On the host:** `oc` logged in (`oc whoami` answers), bash, and `python3` with the
   `cryptography` package importable — the driver mints a per-run Ed25519 issuer key locally
   before handing it to the cluster as a Secret.
@@ -47,41 +53,79 @@ A first run spends most of its time in the two in-cluster builds; `SKIP_BUILD=1`
 them. The drill discards the previous run's store by default (`KEEP_STORE=1` to keep it), so
 re-running is always safe.
 
-**One known diff, 2026-08-12.** The posture ladder's positions were renamed from "rung N"
-to "posture N", so `cluster-arc-run.sh` now prints `Posture 2` where the
-captured log reads `Rung 2`. The log is deliberately NOT hand-corrected — editing recorded output
-to match a change we made is manufacturing evidence — so it carries the old word until the next
-cluster re-capture. Three lines, all prose in a `printf`; no predicate moved.
+**What success looks like:** exit code 0, every leg admitted under `restricted-v2`, and three
+green predicate blocks at the end (Phases 3, 4 and 5), followed by `PHASE 6.1: NOT RUN`. The
+Phase 6.1 leg is not part of this tree (see the file list below), so the driver says it did not
+run rather than printing a predicate it has no evidence for.
 
-**What success looks like:** exit code 0, every leg admitted under `restricted-v2`, and four
-green predicate blocks — Phases 3, 4, 5 and 6.1 — at the end. `expected-output.log` beside
-this file is the complete log of a real run, captured rather than composed, to diff yours
-against — **re-captured 2026-08-10 on OpenShift 4.20.30 at safe-agents 0.72.0**, full build
-included, 5m39s wall clock, in a namespace that did not exist when the run began. **Wall clock is
-strongly cluster-dependent and varies run to run on the same cluster** — four captures of this same
-work took 19m, 9m56s, 11m56s and 5m39s, so a much faster run is not evidence the builds were
-skipped. Check the two `PASS ... image built` lines instead — and note that until 2026-08-10 those
-lines could not be trusted for exactly that purpose: `oc start-build --follow` exits 0 even when the
-build FAILS, so a failed build printed `PASS ... image built` on the very next line. The driver now
-waits for the build object to reach a terminal phase and requires `Complete`, so the line means what
-it says.
+**No reference capture ships in this tree.** Earlier versions of this README pointed at an
+`expected-output.log` to diff against; that file was never part of this repository. Check these
+invariants in your own log instead:
 
-Values that legitimately differ: the server URL and API endpoint IPs, **any DNS-resolved external
-address** (`api.github.com` moves between runs), pod name suffixes, assigned UIDs, generated ids
-(grants, intents, ledger entries), timestamps, **the audit-chain hashes** (they cover timestamps,
-so they can never match), and build output. What should **not** differ: the PASS/FAIL lines, the
-mechanism named in every refusal, and the decision/outcome columns of the audit tape.
+- every `PASS` line, and no `FAIL` line, including the two `PASS ... image built` lines on a run
+  with builds;
+- the mechanism each refusal names (the kernel's EROFS on the read-only mounts, HTTP 403 from
+  RBAC, a connection timeout from the egress policy, and the broker's own deny or hold), since
+  a refusal for the wrong reason fails the leg even when the attempt failed;
+- the `decision` and `outcome` columns of the audit tape printed at step 13b: the first
+  `peer.publish` is `allow` / `executed` and the last is `require_approval` / `held`.
 
-**Re-capture, never edit.** If your run differs outside that list it is either a real portability
-finding or a reason to re-capture from a real run — hand-patching this file to match makes it
-agree with nothing. And note the invalidation surface is wider than this directory: a change
-anywhere under `safe_agents/` that the drill exercises can move the output, which is how the
-superseded capture went stale while this arm itself was untouched.
+Values that legitimately vary between runs: the server URL and API endpoint IPs, **any
+DNS-resolved external address** (`api.github.com` moves between runs), pod name suffixes,
+assigned UIDs, generated ids (grants, intents, ledger entries), timestamps, **the audit-chain
+hashes** (they cover timestamps, so they can never match), build output, and wall clock.
 
-**Teardown:** `oc delete ns safe-agents` — everything, including the per-run secrets, goes
-with the namespace. If a later run hangs waiting for the PVC, a completed Job's pod is holding
-the claim's protection finalizer: `oc -n safe-agents delete jobs --all` clears it (the driver
-does this itself at the top of every run).
+**Wall clock is strongly cluster-dependent and varies run to run on the same cluster.** Runs of
+this work on OpenShift 4.20 took between 5m39s and 19m with builds; on OpenShift Local on an Apple
+silicon laptop, about 150 s. A fast run is not evidence the builds were skipped; the two
+`PASS ... image built` lines are. Until 2026-08-10 those lines could not be trusted for that
+purpose: `oc start-build --follow` exits 0 even when the build FAILS, so a failed build printed
+`PASS ... image built` on the very next line. The driver now waits for the build object to reach
+a terminal phase and requires `Complete`, so the line means what it says.
+
+**Teardown:** `oc delete ns safe-agents`. Everything, including the per-run secrets, goes with
+the namespace. If a later run hangs waiting for the PVC, a completed Job's pod is holding the
+claim's protection finalizer: `oc -n safe-agents delete jobs --all` clears it (the driver does
+this itself at the top of every run).
+
+On a StorageClass whose `reclaimPolicy` is `Retain` (OpenShift Local's
+`crc-csi-hostpath-provisioner` is one), each run leaves a `Released` PersistentVolume behind,
+because the driver deletes the claim at the top of every run and the namespace deletion removes
+the last one. Remove the ones this drill left:
+
+```
+oc get pv -o jsonpath='{range .items[?(@.status.phase=="Released")]}{.metadata.name} {.spec.claimRef.namespace}/{.spec.claimRef.name}{"\n"}{end}' \
+  | awk '$2=="safe-agents/safe-agents-store" {print $1}' | xargs -r oc delete pv
+```
+
+That deletes the PersistentVolume objects. On OpenShift Local the data they pointed at may stay
+on the VM's disk; `crc delete` removes the whole VM when you are finished with it.
+
+### OpenShift Local (a laptop)
+
+Verified on 2026-09-24 with OpenShift Local (CRC 2.51, OpenShift 4.18.2) on an arm64 Apple
+silicon Mac with 24 GB of RAM. It needs a free Red Hat account for the pull secret. The VM takes
+14 GiB of that RAM and about 35 GB of disk. A 24 GB machine worked; no smaller one was tried.
+
+```
+crc setup                        # also needed when the crc binary and its daemon differ in version
+crc config set memory 14336      # the default 10.75 GiB cannot schedule a 2Gi build pod
+crc start                        # cold start about 25 minutes, including certificate renewal; warm about 3
+crc console --credentials        # prints the kubeadmin password
+oc login -u kubeadmin -p <password> https://api.crc.testing:6443
+oc get co                        # wait until no operator shows PROGRESSING True
+cd safe_agents/arms/openshift && ./cluster-arc-run.sh
+```
+
+`crc start` can return while cluster operators are still progressing; a drill started then can
+fail for reasons unrelated to the arm, so wait for `oc get co` to settle first. The run took about
+150 s including both builds on that machine. Tear down with the two commands above: the namespace,
+then the Released PersistentVolumes, since `crc-csi-hostpath-provisioner` retains them.
+
+Without the memory setting the first build never schedules and the driver stops at
+`FAIL base broker image built build did not complete (phase=Cancelled)`, with the scheduler's
+reason in the events it prints just above. 14336 MiB is the value that was verified; a smaller
+increase may also work and has not been tried.
 
 **`SKIP_BUILD=1` only skips the image, and the split is not where you would guess.**
 The drill *scripts* ride in a ConfigMap, so editing them and re-running with `SKIP_BUILD=1`
@@ -95,7 +139,8 @@ of code that has never heard of `BROKER_CEREMONY_IDENTITY`.
 The driver applies `oc apply -k .` (everything that can exist before an image does), mints a
 per-run issuer signing key, HMAC key and peer transport token, runs both BuildConfigs, then
 runs the Jobs in strict order around two long-lived Deployments (the broker and the peer).
-Teardown is `oc delete ns safe-agents`.
+Teardown is `oc delete ns safe-agents`, plus the Released PersistentVolumes on a `Retain`
+StorageClass (above).
 
 ## What the legs prove
 

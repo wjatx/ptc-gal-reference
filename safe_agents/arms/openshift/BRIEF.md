@@ -22,15 +22,16 @@ Specifically useful, in order:
 1. Every place you stopped, re-read, guessed, or worked around — verbatim, including the ones
    that turned out to be your cluster rather than our artifact. Unflattering is fine; that is
    the point.
-2. Anything in your output that differs from `expected-output.log` **outside** the README's
-   may-differ list (server URLs, DNS-resolved addresses, pod suffixes, UIDs, generated ids,
-   timestamps, audit-chain hashes, build output). The PASS/FAIL lines, the mechanism named in
-   every refusal, and the decision/outcome columns of the audit tape should not differ; if they
-   do, that is a real portability finding.
+2. Any place your output breaks one of the invariants the README lists: the PASS/FAIL lines,
+   the mechanism named in every refusal, and the decision/outcome columns of the audit tape. No
+   reference capture ships in this tree, so those invariants are the comparison; a break in any
+   of them is a real portability finding. Values on the README's may-vary list (server URLs,
+   DNS-resolved addresses, pod suffixes, UIDs, generated ids, timestamps, audit-chain hashes,
+   build output) are expected to differ.
 3. Any numbered claim below that your run does not support — or that you can defeat on your own
    cluster.
 4. For the record: OpenShift version, CNI, and wall clock (which is strongly cluster-dependent;
-   three captures of this same work took 19m, 9m56s and 11m56s).
+   runs of this same work have taken from about 150 s on OpenShift Local to 19m on OpenShift 4.20).
 
 Send it in whatever form is cheapest for you. We will record it verbatim in the repo,
 including the parts we think are wrong — a report that exists only in someone's memory of a
@@ -42,7 +43,7 @@ Every piece of evidence this artifact carries is self-produced: the drill was de
 people who built the controls, so a green run proves the drill ran, not that the controls work
 against someone who did not write them. The closest we have come to a cold run: a driver with
 none of the building session's context completed the drill from the README alone on a second
-cluster (OpenShift 4.20.30 against the reference capture's 4.20.29), in a namespace that did
+cluster (OpenShift 4.20.30, one patch release after the cluster it was built on), in a namespace that did
 not exist when the run began — 86 PASS / 0 FAIL — and found six real defects in the artifact's
 prose and checks along the way, since fixed.
 
@@ -53,7 +54,7 @@ it."* You do not have that layer. That is why we are asking you.
 
 ## The claims, each traced to the leg that shows it
 
-Quoted lines below are the drill's own output (`expected-output.log`); the README declares the
+Quoted lines below are the drill's own output, copied from real runs; the README declares the
 PASS/FAIL lines and named mechanisms invariant across runs, so your log should contain them
 too. No claim here is sourced from prose alone.
 
@@ -143,6 +144,9 @@ NetworkPolicy can express "may read entries, may not delete them". The dangerous
 from the server, so the deny is the second line of defence.
 
 **9. The posture report declines credit for proofs it did not run.**
+*Not shown by this tree:* the posture leg is not shipped here, and the drill prints
+`PHASE 6.1: NOT RUN` in place of this claim's predicate. The rest of this entry describes the
+leg where it runs.
 Shown by the posture leg: "PASS the report names this pod's identity, and reports both refusals
 as UNKNOWN rather than claiming them" — the posture report makes no network calls, so it cannot
 have *attempted* the egress or RBAC refusals the drill proved a few steps earlier, and a
