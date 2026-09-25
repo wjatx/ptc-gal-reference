@@ -372,6 +372,7 @@ secrets, which no stack owns:
 cd infra
 npx cdk destroy SafeAgents-Compute-${ENV} SafeAgents-Identity-${ENV} SafeAgents-State-${ENV} \
   SafeAgents-Network-${ENV} -c environment=${ENV}
+npx cdk context --clear
 cd ..
 for s in broker-hmac-key connectors/search; do
   aws secretsmanager delete-secret --secret-id "safe-agents/${ENV}/${s}" \
@@ -383,6 +384,13 @@ On `development` the buckets, tables, repositories and log groups are deleted wi
 including their contents. The four KMS keys enter AWS's minimum seven-day pending-deletion window,
 during which they are not billed. The secrets are deleted without a recovery window so that a
 second run can create them again under the same names. The CDK bootstrap stack is yours and stays.
+
+Clearing the CDK context matters only if you will deploy again. The Compute stack finds the VPC,
+subnets and security groups by looking up the Network stack's SSM parameters at synth time, and
+CDK caches those answers in `infra/cdk.context.json`. After a teardown the cache names a VPC that
+no longer exists, and the next Compute deploy fails creating its Cloud Map namespace with a Route
+53 `InvalidVPCId` error. If you hit that, clear the context, delete the rolled-back Compute stack,
+and deploy it again.
 
 ### What this costs
 
