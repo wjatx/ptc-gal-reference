@@ -50,11 +50,11 @@ Two limits on that claim, stated here because they are the first things worth pr
   single clause id appears in a single test. So a green suite is evidence about our vocabulary, not
   about the numbered clauses an independent implementer reads. Bidirectional traceability is
   specified and unbuilt.
-- **22 of 81 conformance clauses are not supported** — 27%, not a handful. Each is individually
-  marked in the draft with the requirement that is missing and an issue tracking it, because a spec
-  clause is not a shipped control. The count is generated from the markers, never hand-written
-  (`python3 -m safe_agents.contract.spec_clauses --summary`), so a reader can regenerate it rather
-  than take it on trust. No clause has been outgrown by the implementation.
+- **23 of 82 conformance clauses are not supported**, more than a quarter and not a handful. Each is
+  individually marked in the draft with the requirement that is missing and an issue tracking it,
+  because a spec clause is not a shipped control. The count is generated from the markers, never
+  hand-written (`python3 -m safe_agents.contract.spec_clauses --summary --spec-dir spec`), so a
+  reader can regenerate it rather than take it on trust. No clause has been outgrown by the implementation.
 
 ## What we adopt
 

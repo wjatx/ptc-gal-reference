@@ -65,6 +65,7 @@ MARKED_SET_MISMATCH    = "MARKED_SET_MISMATCH"
 EXCEEDED_SET_MISMATCH  = "EXCEEDED_SET_MISMATCH"
 ORIGIN_MISSING         = "ORIGIN_MISSING"
 TRACKING_ISSUE_UNRESOLVABLE = "TRACKING_ISSUE_UNRESOLVABLE"
+PROSE_COUNT_MISMATCH   = "PROSE_COUNT_MISMATCH"
 
 # --- Where the clauses live ------------------------------------------------
 # Headings are matched verbatim so a section rename is a loud
@@ -499,6 +500,92 @@ def verify_extraction(rows: list[ClauseRow]) -> list[CheckResult]:
     return results
 
 
+# --- Do the prose counts agree with the inventory? -------------------------
+#
+# The conformance statement is derived, never authored, and the documents say
+# so. On 2026-09-24 three of them still disagreed with it: one said 78 clauses,
+# one 81, and one "22 of 81 not supported", while the generator reported 23 of
+# 82. Each had been right once and none was re-derived when the specifications
+# grew, so the sentence promising the count was generated was itself the stale
+# part. Any number a document states about the inventory is checked here.
+#
+# Each form names what its groups mean. A group is compared to the inventory
+# under the same name: `total` to the row count, `supported` and `unsupported`
+# to the PICS answers. The last form catches any other "N of M conformance
+# clauses" or "M conformance clauses" phrasing, so a rewrite that changes the
+# verb still has its total checked even before its meaning is added here.
+
+PROSE_COUNT_FORMS: tuple[re.Pattern[str], ...] = tuple(re.compile(p) for p in (
+    r"(?P<unsupported>\d+)\s+of\s+(?:the\s+)?(?P<total>\d+)\s+conformance\s+clauses"
+    r"\s+are\s+not\s+supported",
+    r"(?P<supported>\d+)\s+of\s+(?:the\s+)?(?P<total>\d+)\s+conformance\s+clauses"
+    r"\s+are\s+supported(?:\.\s+(?P<unsupported>\d+)\s+are\s+not\b)?",
+    # The comment beside a `--summary` invocation in a code block.
+    r"#\s*(?P<total>\d+)\s+(?:clauses|rows),\s+marker\s+state",
+    # Not after a letter or dash, so "E1-E14 conformance clauses" (another
+    # clause family, cited as a range) is not read as a count of these.
+    r"(?<![\w\-\u2013])(?:\d+\s+of\s+(?:the\s+)?)?(?P<total>\d+)\s+conformance\s+clauses",
+))
+
+# The specifications are a separate repository with their own history, and a
+# virtualenv or build directory is not prose anyone reads.
+_PROSE_SKIP_DIRS = frozenset({"spec", "node_modules", "build", "dist", "cdk.out"})
+
+
+def _prose_files(repo_root: Path) -> list[Path]:
+    found: list[Path] = []
+    for path in sorted(repo_root.rglob("*.md")):
+        parts = path.relative_to(repo_root).parts[:-1]
+        if any(p in _PROSE_SKIP_DIRS or p.startswith(".") or p.endswith(".egg-info")
+               for p in parts):
+            continue
+        found.append(path)
+    return found
+
+
+def check_prose_counts(rows: list[ClauseRow], repo_root: Path) -> list[CheckResult]:
+    """Every clause count stated in the repository's markdown matches the inventory.
+
+    One result per claim found, failing ones naming file:line, what the prose
+    says and what the generator says. Pure and offline. Returns a single failing
+    result if no claim is found at all, since a scanner that has stopped seeing
+    the claims would otherwise pass forever.
+    """
+    actual = {
+        "total": len(rows),
+        "supported": sum(1 for r in rows if pics_answer(r) == PICS_SUPPORTED),
+        "unsupported": sum(1 for r in rows if pics_answer(r) == PICS_NOT_SUPPORTED),
+    }
+    results: list[CheckResult] = []
+    for path in _prose_files(repo_root):
+        text = path.read_text(encoding="utf-8")
+        claimed_at: set[int] = set()
+        for form in PROSE_COUNT_FORMS:
+            for m in form.finditer(text):
+                # The catch-all form must not re-report a claim a specific
+                # form already read with its full meaning.
+                if any(m.start() <= pos < m.end() for pos in claimed_at):
+                    continue
+                claimed_at.update(range(m.start(), m.end()))
+                where = f"{path.relative_to(repo_root)}:{text.count(chr(10), 0, m.start()) + 1}"
+                wrong = [
+                    f"{name} {m.group(name)} (generated: {actual[name]})"
+                    for name, value in m.groupdict().items()
+                    if value is not None and int(value) != actual[name]
+                ]
+                results.append(CheckResult(
+                    PROSE_COUNT_MISMATCH, not wrong,
+                    f"{where}: prose says " + ", ".join(wrong) if wrong
+                    else f"{where}: \"{' '.join(m.group(0).split())}\" matches the inventory",
+                ))
+    if not results:
+        results.append(CheckResult(
+            PROSE_COUNT_MISMATCH, False,
+            f"no clause-count claim found under {repo_root}; the scanner has stopped seeing them",
+        ))
+    return results
+
+
 # --- Output ----------------------------------------------------------------
 
 RULE = "=" * 78
@@ -691,6 +778,13 @@ def main() -> None:
         sys.exit(2)
 
     results = verify_extraction(rows)
+    # The implementation's own documents, not the spec directory's: a reader
+    # pointing --spec-dir elsewhere is still reading these counts. Only from a
+    # source checkout: an installed copy has no documents beside it, and the
+    # check would report that it had stopped seeing claims.
+    repo_root = Path(__file__).resolve().parents[2]
+    if (repo_root / "pyproject.toml").is_file():
+        results = results + check_prose_counts(rows, repo_root)
 
     if args.check_issues:
         # Appended to the offline results so one exit code covers both, and

@@ -32,7 +32,7 @@ gaps yourself.
 
 Two things from it worth surfacing here:
 
-- **23 of the 78 conformance clauses are not supported.** The count is generated from
+- **23 of the 82 conformance clauses are not supported.** The count is generated from
   per-clause markers in the specifications, never written by hand.
 - **No independent party has run any of this.** Every drill was designed by the people whose work it
   tests, which makes a green drill evidence that the drill ran rather than evidence that the control
@@ -69,7 +69,7 @@ alongside and point the extractor at the checkout:
 ```bash
 git clone https://github.com/wjatx/ptc-gal-standards
 
-# 78 clauses, marker state, and the extraction self-checks.
+# 82 clauses, marker state, and the extraction self-checks.
 python3 -m safe_agents.contract.spec_clauses --summary --spec-dir ptc-gal-standards
 
 # Our completed statement, and the blank proforma an independent implementer would fill.

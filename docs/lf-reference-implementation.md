@@ -21,13 +21,14 @@ than smoothed over. The rest of this document is mostly a description of those d
 
 ## Conformance status
 
-**55 of 78 conformance clauses are supported. 23 are not.**
+**59 of 82 conformance clauses are supported. 23 are not.**
 
 That statement is generated, never written by hand:
 
 ```
-python3 -m safe_agents.contract.spec_clauses --pics-ri    # our completed statement
-python3 -m safe_agents.contract.spec_clauses --pics       # the blank proforma
+git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
+python3 -m safe_agents.contract.spec_clauses --pics-ri --spec-dir spec   # our completed statement
+python3 -m safe_agents.contract.spec_clauses --pics --spec-dir spec      # the blank proforma
 ```
 
 The generator extracts every clause from the specifications, reads each clause's
@@ -115,13 +116,15 @@ The conformance statement, the clause inventory, and the extraction self-checks 
 checkout with no cloud account:
 
 ```
-python3 -m safe_agents.contract.spec_clauses --summary   # 81 rows, marker state, self-checks
-python3 -m pytest                                        # the full suite
+git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
+python3 -m safe_agents.contract.spec_clauses --summary --spec-dir spec   # 82 rows, marker state, self-checks
+python3 -m pytest                                                        # the full suite
 ```
 
-Run `pytest` from the repository root rather than `pytest safe_agents/`: the broker packages are
-4068 of the tests, and the reliability library the watcher depends on carries another 154 that the
-narrower path silently skips.
+Run `pytest` from the repository root rather than `pytest safe_agents/`: the reliability library the
+watcher depends on and the observability package carry their own tests, which the narrower path
+silently skips. The specifications are cloned to `spec/` because that is where the tests look for
+them; without the clone, the tests that compare specification text against shipped schemas skip.
 
 The live demonstrations require deployed infrastructure and are not reproducible from a checkout
 alone. That asymmetry is deliberate to note: the parts you can check yourself are the parts we make

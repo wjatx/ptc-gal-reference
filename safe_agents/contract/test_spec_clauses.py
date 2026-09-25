@@ -5,7 +5,8 @@ These pin the exit predicate against the real specs, so a spec edit that breaks
 extraction fails here rather than silently shrinking the inventory the
 implemented-vs-unbuilt pass works from:
 
-  1. 81 rows total — 43 PTC + 38 GAL, no numbering gaps, no duplicates.
+  1. EXPECTED_TOTAL_ROWS rows, per spec as EXPECTED_ROW_COUNTS, no numbering
+     gaps, no duplicates.
   2. The rows carrying an implementation-status marker at conformance-clause
      scope are exactly EXPECTED_MARKED in spec_clauses.py, forms and tracking
      issues included.
@@ -33,8 +34,10 @@ from safe_agents.contract.spec_clauses import (
     SPEC_GAL,
     SPEC_PTC,
     ClauseRow,
+    PROSE_COUNT_MISMATCH,
     SpecFormatError,
     TrackingCheckUnavailable,
+    check_prose_counts,
     extract_issue_citations,
     resolve_tracking_issues,
     extract_all,
@@ -199,6 +202,46 @@ def test_source_lines_point_at_the_clause(rows: list[ClauseRow]) -> None:
             assert row.clause_id in lines[row.source_line - 1], (
                 f"{filename}:{row.source_line} does not contain {row.clause_id}"
             )
+
+
+def test_prose_clause_counts_match_the_inventory(rows: list[ClauseRow]) -> None:
+    """Every clause count stated in the repository's markdown is the generated one."""
+    results = check_prose_counts(rows, REPO_ROOT)
+    wrong = [r.reason for r in results if not r.passed]
+    assert not wrong, (
+        "a document states a clause count the generator disagrees with; re-derive it "
+        "from `python3 -m safe_agents.contract.spec_clauses --pics-ri --spec-dir spec`:\n  "
+        + "\n  ".join(wrong)
+    )
+
+
+@pytest.mark.parametrize(("prose", "expected_in_reason"), [
+    ("**1 of 82 conformance clauses are not supported.**", "unsupported 1"),
+    ("2 of the 82 conformance clauses are supported. 23 are not.", "supported 2"),
+    ("3 of 82 conformance clauses are supported. 4 are not.", "unsupported 4"),
+    ("python3 -m ... --summary   # 5 rows, marker state, self-checks", "total 5"),
+    ("A rewrite: 23 of 6 conformance clauses remain unbuilt.", "total 6"),
+])
+def test_prose_count_forms_name_the_wrong_number(
+    rows: list[ClauseRow], tmp_path: Path, prose: str, expected_in_reason: str,
+) -> None:
+    (tmp_path / "doc.md").write_text("intro\n\n" + prose + "\n", encoding="utf-8")
+    [result] = check_prose_counts(rows, tmp_path)
+    assert result.name == PROSE_COUNT_MISMATCH
+    assert not result.passed
+    assert result.reason.startswith("doc.md:3: ")
+    assert expected_in_reason in result.reason
+
+
+def test_prose_count_ignores_other_clause_families_and_the_spec_checkout(
+    rows: list[ClauseRow], tmp_path: Path,
+) -> None:
+    """A range of another family is not a count, and spec/ is not our prose."""
+    (tmp_path / "doc.md").write_text("the E1–E14 conformance clauses\n", encoding="utf-8")
+    (tmp_path / "spec").mkdir()
+    (tmp_path / "spec" / "GAL-SPEC.md").write_text("81 conformance clauses\n", encoding="utf-8")
+    [result] = check_prose_counts(rows, tmp_path)
+    assert not result.passed and "no clause-count claim found" in result.reason
 
 
 # ---------------------------------------------------------------------------
