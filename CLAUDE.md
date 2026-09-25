@@ -1,8 +1,8 @@
 # CLAUDE.md — PTC & GAL reference implementation
 
-Orientation for a coding agent working inside this repository. Read `README.md` for the claim,
-`ARCHITECTURE.md` for the technical floor, and `docs/lf-notional-architecture.md` for how the
-pieces fit.
+Orientation for a coding agent working inside this repository. Read `README.md` for setup,
+`docs/lf-reference-implementation.md` for the claim, `ARCHITECTURE.md` for the technical floor,
+and `docs/lf-notional-architecture.md` for how the pieces fit.
 
 **This file deliberately diverges from its sibling in the private safe-agents tree, and that is not
 drift to fix.** The two repos need different instructions: this one is public and written for an

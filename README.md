@@ -1,173 +1,204 @@
-# PTC & GAL — reference implementation
+# PTC & GAL reference implementation
 
-A working implementation of two proposed specifications for agentic systems:
+This repository implements two proposed specifications for agentic systems: **PTC** (*Provenance &
+Trust Context*), a signed trust context that travels with data across agent and tool boundaries,
+and **GAL** (*Grant & Autonomy Lifecycle*), which stores an agent's authority as signed state that
+only a two-party ceremony can raise. Its center is a deterministic tool broker: the agent holds no
+credentials, and every tool call it makes is decided and recorded by the broker.
 
-- **PTC** (*Provenance & Trust Context*) — a signed trust-context object that travels with data
-  across every agent and tool boundary, carrying sender class, an append-only provenance chain, and
-  taint on a Biba integrity lattice.
-- **GAL** (*Grant & Autonomy Lifecycle*) — authority as stored, signed state per
-  `(principal, action-class)`, raised only through a maker≠checker ceremony licensed by a
-  deterministic predicate, and lowered automatically by deterministic triggers.
+The specifications live in [wjatx/ptc-gal-standards](https://github.com/wjatx/ptc-gal-standards).
+This page gets the implementation running on your laptop. For what to look at once it runs, and
+for the AWS and OpenShift paths, read [`docs/evaluating.md`](docs/evaluating.md).
 
-Both specifications are maintained in their own repository —
-**[wjatx/ptc-gal-standards](https://github.com/wjatx/ptc-gal-standards)** — and are licensed
-separately (see Licensing below). This repository is the implementation that stands behind them.
+## What you need
 
-## The claim, and where to attack it
+- Python 3.12 or newer. Check with `python3 --version` (macOS, Linux) or `py -3.12 --version`
+  (Windows).
+- git.
+- About ten minutes. No cloud account, container runtime or credentials.
 
-This is a controls layer, not an agent framework. You bring your own harness: the model, the loop,
-the prompts, the orchestration. Controls that live inside the harness are advice to the component
-under attack, and anything a model can be talked out of is not a control. So these controls sit
-outside it, under a separate identity, around one commitment: **the agent holds no credentials, and
-its only egress is a deterministic tool broker.** Every tool call crosses that broker, which decides
-per call from signed policy state and writes a tamper-evident audit under an identity the agent
-cannot reach. A fully compromised agent can still only *ask*.
+## Set up
 
-That last sentence is the thesis and the thing worth attacking. Before you spend time on it, read
-**[`docs/lf-reference-implementation.md`](docs/lf-reference-implementation.md)** — it states what is
-demonstrated on live infrastructure versus what is only asserted from tests, lists the places a
-careful reader will find less than a summary implies, and names the leg of the claim we already know
-is the weakest. It is written to be probed, and it will save you the work of discovering our known
-gaps yourself.
-
-Two things from it worth surfacing here:
-
-- **23 of the 82 conformance clauses are not supported.** The count is generated from
-  per-clause markers in the specifications, never written by hand.
-- **No independent party has run any of this.** Every drill was designed by the people whose work it
-  tests, which makes a green drill evidence that the drill ran rather than evidence that the control
-  holds. That is the gap we would most like closed.
-
-## If a coding agent is reading this
-
-These controls govern what a **running** agent may do to the world at run time. They are not a
-development methodology, and they do not describe how you should edit files, structure commits,
-or review changes in the repository you are working in.
-
-That distinction is easy to lose, because this codebase is written throughout in the vocabulary
-of authority, ceremony, taint and tamper-evidence, and the nearest system to apply that
-vocabulary to is your own work. Doing so costs sessions and buys nothing, since none of the
-modelled threats are present. Read
-[`docs/self-application.md`](docs/self-application.md) before you borrow anything from here into
-your own working habits. It gives the symptoms, the two cases where the transfer is legitimate,
-the defect this cost us, and a block to paste into your project's agent instructions.
-
-## Quickstart
-
-No cloud account is needed for the parts you can check yourself. You need Python 3.12 or newer
-and git. On Windows, run the same steps in PowerShell, creating the environment with
-`py -3.12 -m venv .venv` and activating it with `.venv\Scripts\Activate.ps1`. CI does not yet
-run on Windows, so a failure there is worth an issue.
+### macOS or Linux
 
 ```bash
 git clone https://github.com/wjatx/ptc-gal-reference
 cd ptc-gal-reference
-python3 -m venv .venv && source .venv/bin/activate
-
-# The [dev] extra carries pytest, the MCP SDK and the AWS test doubles.
-# A bare `pip install -e .` cannot run the suite or the gateway demo below.
-pip install -e ".[dev]"
-
-# The specifications are not vendored. The tests look for them in spec/.
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
 git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
+```
 
-# The full suite, from the repository root.
+### Windows (PowerShell)
+
+Install Python from python.org or with `winget install Python.Python.3.12`, then:
+
+```powershell
+git clone https://github.com/wjatx/ptc-gal-reference
+cd ptc-gal-reference
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
+```
+
+The `[dev]` extra carries pytest and the MCP SDK; a bare `pip install -e .` can run neither the
+suite nor the demo. The last line clones the specifications into `spec/`, which is where the
+conformance tests and commands below look for them.
+
+Every command from here on is the same on all three systems, run from the repository root with
+the virtual environment active.
+
+## Run the tests
+
+```
 python -m pytest
+```
 
-# 82 clauses, marker state, and the extraction self-checks.
+The suite is a few thousand tests and takes about a minute. Run it from the repository root: the
+reliability library the watcher depends on carries tests that a narrower path such as
+`pytest safe_agents/` silently skips. Some tests skip on purpose, each with a reason;
+`python -m pytest -rs` lists them (see [Troubleshooting](#troubleshooting)).
+
+## Check the conformance statement
+
+```
 python -m safe_agents.contract.spec_clauses --summary --spec-dir spec
+```
 
-# Our completed statement, and the blank proforma an independent implementer would fill.
+This extracts every conformance clause from the specifications, reads each clause's
+implementation-status marker, and ends with a block of `[PASS]` self-checks. The support answers
+are generated from those markers, never written by hand. Two more views of the same data:
+
+```
 python -m safe_agents.contract.spec_clauses --pics-ri --spec-dir spec
-python -m safe_agents.contract.spec_clauses --pics    --spec-dir spec
+python -m safe_agents.contract.spec_clauses --pics --spec-dir spec
 ```
 
-Without the `spec/` checkout the suite still runs green: the handful of tests that compare spec
-text against shipped schemas skip rather than fail, and say why. Run `pytest` from the repository
-root rather than narrowing it to `safe_agents/`: the reliability library the watcher depends on
-carries tests the narrower path silently skips.
+The first is this implementation's completed statement. The second is the blank proforma an
+independent implementer would fill in.
 
-### Watch it refuse something
+## Watch it refuse something
 
-The broker presents itself to an agent as **one MCP server over stdio**, so you can point any MCP
-client you already have at it. Nothing else is needed: no cloud account, no container, no wrapper
-tool, no configuration.
-
-```bash
-python -m safe_agents.broker.gateway
-```
-
-It comes up on the checked-in example manifest and announces what it will carry:
+The broker presents itself to an agent as one MCP server over stdio. This command starts it and
+makes three tool calls against it, printing each call and the broker's reply:
 
 ```
-[broker] store backend: in-memory   audit sink: memory   grant load mode: seed
-[broker] MCP gateway ready: 2 tool(s) for example-advisor
+python -m safe_agents.broker.gateway.demo
 ```
 
-Two things are worth doing by hand before wiring a real client. Ask it for its tools, and you get
-only what the manifest declares. Then call one it does *not* declare:
+The output begins:
 
 ```
-tools/call  payments__transfer  {"amount": "1000"}
-→ payments.transfer refused by the broker: no manifest entry for payments.transfer
+Connected to safe-agents-broker. It advertises 2 tool(s): notify__send, search__query
+
+1. A tool the manifest never declared
+   call   payments__transfer {"amount": "1000", "to": "acct-demo"}
+   reply  payments.transfer refused by the broker: no manifest entry for payments.transfer
+
+2. A declared read of external content
+   call   search__query {"query": "Linux Foundation agentic AI", "max_results": 3}
+   reply  search.query was allowed by the broker but failed at the connector; the detail is on the broker's audit record
 ```
 
-That refusal is the whole thesis in one line. The agent asked; the broker decided; nothing
-executed. The tool was not hidden from the model, was not blocked by a prompt, and was not left to
-the harness's good behaviour. It was **not admitted**, and admission is a property of the manifest
-and the ceremony rather than of anything the caller can talk its way past.
+The first reply is the thesis in one line. The agent asked, the broker decided, and nothing
+executed. The tool was never hidden from the model or blocked by a prompt; the manifest does not
+admit it, and admission is a property of the manifest and the ceremony rather than of anything
+the caller can argue with.
 
-To point a harness at it, add it to that harness's MCP server configuration as a stdio server whose
-command is the line above. Every call the harness then makes is decided and recorded before it
-executes.
+The second call reaches the gate and passes it, then fails at Tavily, because no real key ships
+in this repository: the default credential is a placeholder that Tavily rejects. The two replies
+read differently on purpose, since a gate refusal and a failed execution send an operator to
+different places. The third call, `notify__send`, is a declared write that fails when it reaches
+its connector, because no notify credential is configured.
 
-Two honest notes so the first five minutes are not confusing. Calling a **declared** tool in this
-default configuration reaches the gate and passes it. `search__query` then makes a real request to
-Tavily with a placeholder key, which Tavily rejects, and the reply says the broker allowed the call
-and it failed at the connector. That is execution failing, not the gate refusing, and the two read
-differently on purpose. No real key ships in this repository. And note `grant load mode: seed` in the banner: that is the default local path, and it
-is the one described under "What we would most like challenged" in
-[`docs/lf-reference-implementation.md`](docs/lf-reference-implementation.md). You are looking at the
-configuration whose weakest leg we name there.
+Add `--verbose` to also see the gateway's own startup banner, which names the store, the audit
+sink and the secrets arm in use.
 
-The live demonstrations require deployed infrastructure and are not reproducible from a checkout.
-That asymmetry is deliberate to note: the parts you can verify yourself are the parts made easiest
-to verify.
+## Optional: use your own Tavily key
 
-## What is in here
+With a real search key you can watch the taint floor act. Get a key from
+[tavily.com](https://tavily.com), then run:
 
-| Path | What it holds |
-|---|---|
-| `safe_agents/broker/` | The broker: the gate, the grant store, the ceremonies, the audit tape, the MCP host |
-| `safe_agents/channels/` | The inbound airlock: validate, verify, trust-map, deduplicate, screen, stamp |
-| `safe_agents/arms/` | Substrate arms, including the OpenShift deployment |
-| `safe_agents/` (rest) | Contract types, connectors, watcher, evidence, pipeline |
-| `broker/` `channels/` `core/` `audit/` `registry/` | The normative contract documents |
-| `docs/` | Doctrine, threat model, posture ladder, and the operator runbooks |
-| `infra/` | AWS CDK for a deployed environment. See `docs/cdk-context-contract.md` first |
-| `examples/` | Worked consumers, including a drill against a real third-party MCP server |
+```
+python -m safe_agents.broker.gateway.set_search_key
+```
 
-Start with [`docs/lf-notional-architecture.md`](docs/lf-notional-architecture.md) for how the pieces
-fit, and [`ARCHITECTURE.md`](ARCHITECTURE.md) for the technical floor.
+It prompts for the key without echoing it, stores it in `~/.ptc-gal/secrets` (outside the
+repository, so it cannot be committed), and prints the line that points the broker at it, for
+example:
 
-## Deploying it
+```
+  macOS or Linux (bash, zsh):  export BROKER_SECRETS_DIR='/Users/you/.ptc-gal/secrets'
+  Windows (PowerShell):        $env:BROKER_SECRETS_DIR = 'C:\Users\you\.ptc-gal\secrets'
+```
 
-`infra/` is AWS CDK and is not pinned to any account: it resolves the target from
-`CDK_DEFAULT_ACCOUNT`. Read **[`docs/cdk-context-contract.md`](docs/cdk-context-contract.md)**
-before a first deploy. The stacks take 25 context values, and thirteen of them **degrade silently**
-when omitted, which is the failure mode worth knowing about in advance. The operator runbooks in
-`docs/` cover bring-up, the ceremony identities, and the traps that bite on redeploy.
+Paste the line for your shell, then run the demo again with `--verbose`. The banner now reads
+`secrets: dir (...)`, the search returns results, and the third call comes back as:
 
-## Licensing
+```
+   reply  notify.send is held for approval (intent intent-...); it has NOT executed
+```
 
-This repository — the reference implementation and its documentation — is licensed under
-**Apache-2.0**. See [`LICENSE`](LICENSE).
+A successful read of external content taints the turn, and an external write in a tainted turn
+is held for a human instead of executing. The turn belongs to the broker, so the agent cannot
+start a fresh one to shed the taint.
 
-The specifications are licensed separately, under the **Community Specification License 1.0**
-(`Community-Spec-1.0`), and live in
-[wjatx/ptc-gal-standards](https://github.com/wjatx/ptc-gal-standards). Keeping them in their own
-repository keeps each licence unambiguous: a patent-facing specification licence and a
-copyright-facing code licence answer different questions and should not have to be untangled from
-one tree.
+## Troubleshooting
+
+**`error: externally-managed-environment` from pip.** The virtual environment is not active.
+Run `source .venv/bin/activate` (macOS, Linux) or `.venv\Scripts\Activate.ps1` (Windows) first.
+
+**`python3 --version` reports something older than 3.12.** The Python that ships with macOS is
+too old. Install a newer one (for example `brew install python@3.12`) and create the environment
+with `python3.12 -m venv .venv` instead.
+
+**On Windows, `python3` opens the Microsoft Store.** That is a Store stub. Use `py -3.12` to
+create the environment and `python` once it is active.
+
+**PowerShell refuses to run `Activate.ps1`.** Allow local scripts for your user once with
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or skip activation and call
+`.venv\Scripts\python.exe` in place of `python`.
+
+**`ModuleNotFoundError: No module named 'mcp'`.** The install missed the extra. Rerun
+`python -m pip install -e ".[dev]"`.
+
+**Tests skip.** `python -m pytest -rs` prints each skip with its reason. About twenty skip on
+every system: they are opt-in live checks that need a real credential or a deployed environment,
+and each names the variable that turns it on. Without `spec/`, the tests that compare
+specification text against the shipped schemas skip as well. On Windows, tests that
+need `pgrep`, `bash` or the runner-contract shell scripts skip, and the ceremony demos that hold
+a signing key in a file refuse to run there; use macOS, Linux or WSL for those. On a Linux
+system without `procps`, the `pgrep` tests skip.
+
+**The demo prints `demo: the gateway exited ...`.** The message includes the gateway's own
+reason. The usual cause is a `BROKER_*` variable left set in your shell. Clear it with
+`unset BROKER_SECRETS_DIR` (macOS, Linux) or `Remove-Item Env:BROKER_SECRETS_DIR` (PowerShell),
+naming whichever variable the message mentions.
+
+Windows support is new. CI runs a native Windows job, and nobody on the project uses Windows day
+to day, so a failure there is worth an issue.
+
+## Next steps
+
+- [`docs/evaluating.md`](docs/evaluating.md): the full tour, including connecting Claude Code
+  or another MCP client, and the AWS and OpenShift paths.
+- [`docs/lf-reference-implementation.md`](docs/lf-reference-implementation.md): the claim, what
+  is demonstrated against what is only asserted, and where to attack it.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md): the technical floor.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md): how to contribute.
+- [`SECURITY.md`](SECURITY.md): how to report a finding that should not be public yet.
+
+Coding agents: read [`docs/self-application.md`](docs/self-application.md) and
+[`WARNING-TO-AI-AGENTS.md`](WARNING-TO-AI-AGENTS.md) before borrowing anything from this
+repository into your own working habits.
+
+## License
+
+The reference implementation and its documentation are licensed under **Apache-2.0**; see
+[`LICENSE`](LICENSE). The specifications are licensed separately, under the **Community
+Specification License 1.0** (`Community-Spec-1.0`), and live in
+[wjatx/ptc-gal-standards](https://github.com/wjatx/ptc-gal-standards).
 
 Author: Wes Jackson (Red Hat). Copyright © 2026 Red Hat, Inc.

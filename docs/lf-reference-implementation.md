@@ -19,6 +19,21 @@ consequence worth stating plainly: **the specifications describe a design, not t
 the two diverge, the specification is the thing to build to, and the divergence is recorded rather
 than smoothed over. The rest of this document is mostly a description of those divergences.
 
+## The claim
+
+This is a controls layer. You bring your own harness: the model, the loop, the prompts, the
+orchestration. Controls that live inside the harness are advice to the component under attack,
+and a model can be talked out of advice. So these controls sit outside the harness, under a
+separate identity, around one commitment: **the agent holds no credentials, and its only egress
+is a deterministic tool broker.** Every tool call crosses that broker, which decides per call
+from signed policy state and writes a tamper-evident audit under an identity the agent cannot
+reach. A fully compromised agent can still only *ask*.
+
+That last sentence is the thesis and the thing worth attacking. The sections below state what
+stands behind it and where the evidence stops, so that you do not have to rediscover our known
+gaps yourself. "What we would most like challenged", at the end, names the leg we already know
+is the weakest.
+
 ## Conformance status
 
 **59 of 82 conformance clauses are supported. 23 are not.**

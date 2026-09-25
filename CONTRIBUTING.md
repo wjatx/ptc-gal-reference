@@ -106,7 +106,8 @@ extractor is separate and does take a path:
 `python3 -m safe_agents.contract.spec_clauses --spec-dir DIR`.
 
 To exercise the broker rather than test it, see "Watch it refuse something" in
-the [README](README.md).
+the [README](README.md) and the laptop tour in
+[`docs/evaluating.md`](docs/evaluating.md).
 
 ## Filing issues
 

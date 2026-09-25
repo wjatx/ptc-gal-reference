@@ -10,6 +10,32 @@ The specifications themselves are not here. They are maintained in
 `PTC.md` and `GAL.md` in this directory are the earlier design spines those specifications grew
 from, kept for the reasoning they carry.
 
+## Start here
+
+- `evaluating.md`: the evaluator's guide, picking up where the root `README.md`'s laptop setup
+  stops: which path to take (laptop, AWS, OpenShift) against what each can show, the laptop tour
+  in order (suite, conformance statement, the gateway demo, your own search key and the taint
+  hold, connecting a real MCP client, the embedded agent), and the honest state of the AWS and
+  OpenShift paths.
+- `lf-reference-implementation.md`: the claim and where to attack it (listed again below with
+  the other outward-facing documents).
+
+## What is in this repository
+
+| Path | What it holds |
+|---|---|
+| `safe_agents/broker/` | The broker: the gate, the grant store, the ceremonies, the audit tape, the MCP host |
+| `safe_agents/channels/` | The inbound airlock: validate, verify, trust-map, deduplicate, screen, stamp |
+| `safe_agents/arms/` | Substrate arms, including the OpenShift deployment |
+| `safe_agents/` (rest) | Contract types, connectors, watcher, evidence, pipeline |
+| `broker/` `channels/` `core/` `audit/` `registry/` | The normative contract documents |
+| `docs/` | Doctrine, threat model, posture ladder, and the operator runbooks |
+| `infra/` | AWS CDK for a deployed environment. See `cdk-context-contract.md` first |
+| `examples/` | Worked consumers, including a drill against a real third-party MCP server |
+
+Start with `lf-notional-architecture.md` for how the pieces fit, and the root `ARCHITECTURE.md`
+for the technical floor.
+
 ## The auto-agents corpus
 
 This codebase is the engineering encoding of a design developed in a separate corpus,
