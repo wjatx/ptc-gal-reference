@@ -196,5 +196,5 @@ Turning the topology back on is a deploy sequence, not a redesign:
 Run the conformance gate (`cd infra && npm test`) before deploying; its Network checks assert the
 isolated-subnet, no-open-egress, endpoint-SG, and gateway-prefix-list invariants against the synthesized
 template, so a regression in the topology fails fast without touching AWS. And note the environment
-rule: `development` may be flipped freely, but `production` is a real consumer's floor — coordinate
+rule: `development` may be flipped freely, but once a consumer depends on `production`, coordinate
 before deploying either mode there (`docs/environments.md`).

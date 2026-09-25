@@ -69,8 +69,8 @@ it rather than copy it.
 ## Design documents
 
 - `environments.md` — environment ownership rules: `development` is the platform's
-  ephemeral iteration floor; `production` is durable and claimed by a real consumer agent —
-  coordinate before touching it.
+  ephemeral iteration floor; `production` is durable and belongs to consumers, so coordinate
+  before touching it once one depends on it.
 - `consumer-image-contract.md` — the contract between the Fargate arm's task definition and
   any consumer-built agent image: injected env, entrypoint obligations, run record,
   packaging. The smoke image is the reference implementation; this doc is normative.

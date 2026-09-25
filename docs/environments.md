@@ -23,13 +23,14 @@ Environments are exactly `development` / `staging` / `production` (a closed enum
   G-gate-style live proofs, and teardown/rebuild cycles all happen here, without coordination.
   Nothing anyone else depends on may live in `development` — observed reality is multiple
   `SafeAgents-Compute-development` delete cycles in a single morning.
-- **`production` is real consumers' durable infrastructure.** As of 2026-07-01 it is claimed by
-  **a live consumer agent**, the first real SDK consumer (`docs/consuming-the-sdk.md`), which stands up
-  its own floor under `-c environment=production` precisely because it needs a lifecycle *it*
-  controls. `SafeAgents-*-production` stacks are **never** free real estate: do not `cdk destroy`,
-  redeploy, or "quickly test against" them the way you would `development`. If platform work ever
-  genuinely needs a durable-environment live proof (e.g. `RETAIN`-specific behavior), coordinate
-  with the consumer first.
+- **`production` is consumers' durable infrastructure.** A consumer stands up its floor under
+  `-c environment=production` (`docs/consuming-the-sdk.md`) because it needs a lifecycle *it*
+  controls. Once one depends on it, `SafeAgents-*-production` stacks are **never** free real
+  estate: do not `cdk destroy`, redeploy, or "quickly test against" them the way you would
+  `development`. If platform work genuinely needs a durable-environment live proof (e.g.
+  `RETAIN`-specific behavior), coordinate with the consumer first. Before any consumer depends on
+  it, `production` can be torn down and redeployed like any other floor; whether one does is a
+  fact about your account, so check rather than assume in either direction.
 - **`staging` is the promotion tier** (see `infra/README.md` §Environment promotion) and follows
   the durable rules: coordinate before touching.
 

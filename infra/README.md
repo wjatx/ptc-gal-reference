@@ -94,7 +94,7 @@ references silently.
 
 **Environment ownership.** `development` is the platform team's ephemeral iteration floor —
 torn down and rebuilt freely. `staging`/`production` are durable (`RemovalPolicy.RETAIN`) and
-`production` is claimed by a real consumer agent; coordinate before deploying to or
+`production` belongs to consumers; once one depends on it, coordinate before deploying to or
 destroying anything there. The binding rules live in `docs/environments.md` (sa#111).
 
 ## Planned architecture — layered CDK foundation, per environment
