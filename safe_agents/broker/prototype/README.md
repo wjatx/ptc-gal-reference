@@ -19,6 +19,16 @@ python -m safe_agents.broker.prototype.fake_agent
 
 (Override `BROKER_HOST`/`BROKER_PORT` on the server, `BROKER_URL` on the agent.)
 
+`fake_agent` walks a fixed tour of the example manifest's ops. To send exactly the calls you name,
+against any manifest, use `call_client`, which prints the registry and then one JSON line per
+decision. A deny exits 0, because the broker decided; an unreachable broker or an HTTP error exits 1.
+It is what the Compute stack's client task runs.
+
+```sh
+python -m safe_agents.broker.prototype.call_client \
+  --call search.query '{"query": "broker"}' --call notify.send '{"to": "ops"}'
+```
+
 ## What you'll see (and what it proves)
 
 - **Capability-scoped registry** — the agent can only *see* ops that are both in the static
