@@ -18,7 +18,7 @@ fi
 log "Setting up Python environment..."
 
 # AL2023 and RHEL 9 ship Python 3.x; ensure pip is present.
-# Offline guard (sa#109): when pip is already there (baked AMI), touch neither dnf
+# Offline guard: when pip is already there (baked AMI), touch neither dnf
 # nor PyPI — the isolated no-NAT subnet can reach neither, and an unconditional
 # `pip install --upgrade pip` aborts the whole bootstrap under `set -e`.
 if python3 -m pip --version &>/dev/null; then
@@ -44,7 +44,7 @@ else
 fi
 
 # Install ruff (linter — used in pre-commit and agent workflows).
-# Offline guard (sa#109): skip when already baked in. If it is missing AND the box
+# Offline guard: skip when already baked in. If it is missing AND the box
 # has no egress, warn loudly but do NOT abort — ruff is lint tooling, not part of
 # the autonomous run path, and failing here would kill bootstrap before the netns
 # confinement units install.

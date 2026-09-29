@@ -1,5 +1,5 @@
 """
-RHEL+OpenShell arm provisioner and teardown — arm=rhel-openshell (sa#91).
+RHEL+OpenShell arm provisioner and teardown — arm=rhel-openshell.
 
 Re-derives the RHEL host provisioning from a development harness's reference
 (its infrastructure/dev-box.yaml + bootstrap.sh), re-derived CLEAN per the
@@ -9,13 +9,13 @@ How it plugs into the pipeline:
     provision_phase() in safe_agents/pipeline/phases.py calls rhel_openshell_provision()
     for arm=rhel-openshell. teardown_phase() calls rhel_openshell_teardown().
 
-Reuses the EC2 arm's hardened pipeline gating (sa#90):
+Reuses the EC2 arm's hardened pipeline gating:
     wait_for_clean_start, _ensure_foundation, _wait_for_iam_propagation,
     _run_instances_with_iam_retry, wait_for_ssm_online are imported from
     arms.ec2.provision — the canonical implementation lives there.
 
 RHEL-specific differences from the EC2 arm:
-    AMI:      Prefers the prebuilt safe-agents RHEL base AMI (sa#109, tag
+    AMI:      Prefers the prebuilt safe-agents RHEL base AMI (tag
               safe-agents:ami=base-rhel) — like the EC2 arm's tag-resolved base AMI
               but built from a RHEL 9 x86_64 parent. Falls back to the RHEL 9
               marketplace AMI (Red Hat owner 309956199498 + name filter) when no
@@ -23,13 +23,13 @@ RHEL-specific differences from the EC2 arm:
     Instance: m7i.xlarge (x86_64, 4 vCPU, 16 GB). Root /dev/sda1, 100 GB gp3.
               RHEL+OpenShell is x86_64 only; arm64 is not supported by OpenShell.
     Subnet:   agent-subnet-ids (isolated, no NAT) + agent SG + endpoint SG — the same
-              converged two-box placement the EC2 arm uses (sa#35). The confined agent
+              converged two-box placement the EC2 arm uses. The confined agent
               does a real brokered round-trip against the broker SERVICE; the netns is a
               defense-in-depth layer that FORWARDS to the broker (agent-netns-setup.sh).
     IAM:      GetSecretValue on <agent>/* (deploy key, runner-keys, oauth token);
               EC2 arm uses the narrower <agent>/claude-oauth-token* path. Plus the
               tables-CMK KMS grant (run-record PutItem into the CMK-encrypted table).
-    Bootstrap:Config-only on the prebuilt AMI (sa#109): the internet toolchain (SSM
+    Bootstrap:Config-only on the prebuilt AMI: the internet toolchain (SSM
               agent, AWS CLI, node/claude via npm, dnf core tools) is baked in, so a
               box in the isolated no-NAT subnet boots without egress. bootstrap.sh's
               install scripts are guarded (command -v short-circuits) — see the RHEL
@@ -132,7 +132,7 @@ def agent_role_extensions(
     all under the agent's own Secrets Manager namespace (<agent>/*).
     The broker connector-keys path (*/connectors/*) is entirely absent.
 
-    Converged two-box model (sa#35): run-brokered.sh writes a run record to the
+    Converged two-box model: run-brokered.sh writes a run record to the
     CMK-encrypted agent-runs table, so the role gains a KMS grant on the ONE tables
     CMK (GenerateDataKey/Decrypt) — mirrors the EC2 arm's RunRecordKey statement.
 
@@ -211,7 +211,7 @@ def agent_role_extensions(
 # RHEL AMI resolution
 # ---------------------------------------------------------------------------
 
-# Tag that identifies a prebuilt safe-agents RHEL base AMI (sa#109). The RHEL
+# Tag that identifies a prebuilt safe-agents RHEL base AMI. The RHEL
 # bakery (arms/rhel_openshell/ami) tags its output AMI with this so a fresh
 # provision into the ISOLATED no-NAT subnet boots config-only — the toolchain
 # (node/claude/aws-cli/ssm-agent) is already baked in, no internet needed at boot.
@@ -249,13 +249,13 @@ def _pick_newest_rhel_ami(images: list[dict]) -> str:
 def _resolve_base_ami(aws: "AWSInterface") -> str:
     """Resolve the AMI the RHEL box launches from.
 
-    Prefers a prebuilt safe-agents RHEL base AMI (sa#109): the newest self-owned
+    Prefers a prebuilt safe-agents RHEL base AMI: the newest self-owned
     image tagged ``safe-agents:ami=base-rhel``. That AMI has the toolchain baked
     in, so the box boots config-only in the ISOLATED no-NAT agent subnet.
 
     Falls back to the RHEL 9 marketplace AMI (owner + name filter) when no bake
     exists yet — a fresh account, or before the first bake runs. The fallback is
-    the pre-sa#109 behavior; it only completes bootstrap in a subnet with egress.
+    the behavior before the prebuilt AMI; it only completes bootstrap in a subnet with egress.
     """
     baked = aws.describe_images(BASE_RHEL_AMI_TAG_FILTER)
     if baked:
@@ -354,7 +354,7 @@ def rhel_openshell_provision(
 ) -> str:
     """Provision the RHEL+OpenShell host for arm=rhel-openshell.
 
-    Reuses the EC2 arm's hardened five-step gating (sa#90):
+    Reuses the EC2 arm's hardened five-step gating:
       0. wait_for_clean_start — prior instances terminated; IAM profile stable.
       1. ensure_foundation (idempotent) — create/reuse instance profile + inline policy.
       2. wait_for_iam_propagation — poll until role visible in profile, then buffer.
@@ -402,7 +402,7 @@ def rhel_openshell_provision(
         return value
 
     agent_role_arn = _ssm("agent-role-arn")
-    # Converged two-box confinement (sa#35, Option A): the box runs in the ISOLATED agent subnet
+    # Converged two-box confinement (Option A): the box runs in the ISOLATED agent subnet
     # (no NAT) on the agent SG — whose only egress is the broker SG (+ the endpoint SG for the AWS
     # interface endpoints) — the SAME placement the proven EC2 arm + ec2-woken box use. The subnet
     # has no internet route and the agent SG permits only the broker, so the box (and anything in
@@ -411,7 +411,7 @@ def rhel_openshell_provision(
     # the broker. The endpoint SG lets the box reach Secrets Manager (its oauth) + DynamoDB (run
     # records) + SSM (on-demand run-brokered invocation) from a no-NAT subnet.
     #
-    # sa#109: this box now launches from a prebuilt RHEL base AMI (tag safe-agents:ami=base-rhel,
+    # This box now launches from a prebuilt RHEL base AMI (tag safe-agents:ami=base-rhel,
     # resolved by _resolve_base_ami below) with the internet toolchain — SSM agent, AWS CLI,
     # node/claude via npm, dnf core tools — baked in. npm's registry is not S3-backed, so baking is
     # exactly what lets a FRESH provision into this isolated no-NAT subnet complete bootstrap. When
@@ -428,7 +428,7 @@ def rhel_openshell_provision(
 
     role_name = agent_role_arn.split("/")[-1]
 
-    # AMI: prefer the prebuilt safe-agents RHEL base AMI (sa#109, tag
+    # AMI: prefer the prebuilt safe-agents RHEL base AMI (tag
     # safe-agents:ami=base-rhel); fall back to the RHEL 9 marketplace AMI when no
     # bake exists. The prebuilt AMI is what makes this box config-only in the
     # isolated no-NAT subnet.
@@ -472,7 +472,7 @@ def rhel_openshell_provision(
     )
 
     # -- Render user-data ------------------------------------------------------
-    # sa#35: broker_dns / agent_runs_table / region are threaded into the box env contract
+    # Two-box model: broker_dns / agent_runs_table / region are threaded into the box env contract
     # (/etc/safe-agents/agent.env) so run-brokered.sh can do the broker-SERVICE round-trip + the
     # run-record write, replacing the old co-located model-proxy stub.
     params: dict[str, str] = {

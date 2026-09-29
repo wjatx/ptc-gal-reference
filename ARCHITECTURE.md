@@ -54,11 +54,11 @@ A2A mesh — what multiplies, and which mesh properties are free versus delibera
 
 | Schema | Purpose |
 |---|---|
-| **Grant** | Per (principal × action-class): level, envelopeHash, promotedBy, evidence, lastSafeLevel, demotionTriggers, demotionReason, labelLatency, ownerId. Integrity is **not** a schema field: the stored bytes are HMAC'd into the item-level `grantHash` attribute (`#246`), so the basis is what was stored, never a re-serialization. |
+| **Grant** | Per (principal × action-class): level, envelopeHash, promotedBy, evidence, lastSafeLevel, demotionTriggers, demotionReason, labelLatency, ownerId. Integrity is **not** a schema field: the stored bytes are HMAC'd into the item-level `grantHash` attribute, so the basis is what was stored, never a re-serialization. |
 | **BrokeredCall** | The typed request: principal, tool, op, args, the **static** manifest entry (effect/external/reversible — from code, never from the model), taint, session, ts. |
 | **Decision** | The five verbs under default-deny: `allow` · `deny` · `transform` · `require_approval` · `abstain`. |
 | **Intent** | Durable state for a held action (out-of-band approval): id, materializedRequest (the exact BrokeredCall to execute), renderedForHuman (what-you-see), status, expiry, approvedBy, ts. Makes "draft and hold" physically true — the approved artifact is executed verbatim, not re-derived. |
-| **AuditRecord** | Hash-chained: seq, ts, principal, tool, op, argsDigest, decision, reason, envelopeHash, approvedBy, outcome, error, seed, prevHash, hash — plus the optional approval receipts `intentId` / `storedCallDigest` / `resultDigest` (`#198`), hash-covered only when present so pre-receipts chains still verify byte-for-byte. `storedCallDigest` is recomputed independently at release, which is what makes executed==approved provable after the intent expires. Broker-emitted, append-only, external; the writing role cannot delete it. |
+| **AuditRecord** | Hash-chained: seq, ts, principal, tool, op, argsDigest, decision, reason, envelopeHash, approvedBy, outcome, error, seed, prevHash, hash — plus the optional approval receipts `intentId` / `storedCallDigest` / `resultDigest`, hash-covered only when present so pre-receipts chains still verify byte-for-byte. `storedCallDigest` is recomputed independently at release, which is what makes executed==approved provable after the intent expires. Broker-emitted, append-only, external; the writing role cannot delete it. |
 | **Budgets** | Per period: error / attention / escalation / fallback (atomic counters). |
 | **PromotionRecord** | Maker-checker: actionClass, principal, fromLevel, toLevel, evidence, predicate, proposedBy, ratifiedBy, ts. |
 
@@ -124,7 +124,7 @@ as a stand-in for `trading` gets it backwards.
 Where the four domains actually land:
 
 - **trading** is the one with *real* consumers, and they are not fictional examples: a live consumer
-  agent's own repo, `examples/alpaca_paper_drill/`, and the brokerage MCP work under #221.
+  agent's own repo, `examples/alpaca_paper_drill/`, and the brokerage MCP work.
 - **communications** and **operations** have their polarity interest discharged by the archetypes
   (per-action and act-safe respectively).
 - **build-fixer** has no polarity archetype **on purpose** — its contribution is the *approval

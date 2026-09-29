@@ -1,4 +1,4 @@
-# Containerfile — the channels drain worker, as a Lambda container image (sa#155).
+# Containerfile — the channels drain worker, as a Lambda container image.
 #
 # Reference-tier (channels/DRAIN.md §"Reference binding"): the base image a
 # consumer FROMs to add its own AgentManifest + Receiver (see

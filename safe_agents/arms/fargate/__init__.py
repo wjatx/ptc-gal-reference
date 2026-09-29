@@ -1,5 +1,5 @@
 """
-Fargate arm — scheduled, serverless agent compute (Arm 3, sa#36).
+Fargate arm — scheduled, serverless agent compute (Arm 3).
 
 Two-task topology (NOT a sidecar): the broker runs as its own long-lived ECS
 service (broker.safe-agents.local); the agent runs as a separate short-lived

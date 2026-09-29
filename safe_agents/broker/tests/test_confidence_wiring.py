@@ -1,4 +1,4 @@
-"""Wiring tests for the #184 calibrated-uncertainty slice (W1–W10).
+"""Wiring tests for the calibrated-uncertainty slice (W1–W10).
 
 The evidence CONTRACT (the artifact, meets_bar, the blast derivation, the error draw,
 the demotion signal) is unit-tested in test_evidence_contract.py (E1–E10). THIS suite
@@ -425,7 +425,7 @@ def test_w10_stale_artifact_above_bar_abstains():
 
 # ---------------------------------------------------------------------------
 # W11 — the duck-typed consumer request (channels/DRAIN.md receivers) carries only
-# tool/op/args/idempotency_key. #184's confidence read must tolerate the absent
+# tool/op/args/idempotency_key. The confidence read must tolerate the absent
 # attribute (absent == None, the same "no artifact" declaration) — regression for
 # the 2026-07-13 live drain AttributeError.
 # ---------------------------------------------------------------------------

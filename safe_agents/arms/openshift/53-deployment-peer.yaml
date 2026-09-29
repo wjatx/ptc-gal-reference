@@ -1,4 +1,4 @@
-# The peer airlock endpoint for demonstration 2 (#250 Phase 5).
+# The peer airlock endpoint for demonstration 2 (Phase 5).
 #
 # A fourth workload under a FIFTH ServiceAccount, holding nothing. It mounts no PVC
 # and no connector secret; the only thing it is given is the shared transport token,

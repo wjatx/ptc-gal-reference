@@ -1,4 +1,4 @@
-"""sa#152 Slice B — the reference Bedrock classifier screen.
+"""The reference Bedrock classifier screen.
 
 The screen is reference-tier (docs/contract-vs-reference.md); these tests prove
 it satisfies the gate-7 clauses of channels/SCREENING.md with a fake Converse

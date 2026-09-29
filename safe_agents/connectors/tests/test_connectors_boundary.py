@@ -1,4 +1,4 @@
-"""Connector-boundary tests (sa#106 Phase 4).
+"""Connector-boundary tests.
 
 Asserts the shared-vs-agent-owned split holds structurally:
   1. safe_agents.connectors imports cleanly and exposes the protocol + the

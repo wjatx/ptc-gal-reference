@@ -1,4 +1,4 @@
-"""Envelope store client — Phase 3 Slice A of the broker-destub epic (sa#136).
+"""Envelope store client — Phase 3 Slice A of the broker-destub epic.
 
 Protocol + InMemoryEnvelopeStore (for tests) + DynamoDBEnvelopeStore
 (production). Mirrors broker/grants/store.py's shape, with one deliberate

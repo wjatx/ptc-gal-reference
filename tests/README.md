@@ -1,7 +1,7 @@
 # tests — platform test and assurance harness
 
 > **Status: design pending.** This directory is a scaffold. Epics: reliability & testing
-> (sa#6), security & safety (sa#7).
+>, security & safety.
 
 The base platform has two distinct test concerns that must both pass in CI before any agent
 deploys: **policy correctness** (does the broker decide what the rules say?) and **red-team

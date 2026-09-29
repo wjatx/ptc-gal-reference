@@ -1,6 +1,6 @@
 """Integration tests for broker.runtime — the capability-confined doer and broker runtime.
 
-Acceptance criteria from #56:
+Acceptance criteria:
   1. Full round-trip (allow):
        agent call → registry → taint → decide(allow) → enforce → doer executes stub
        connector with an injected credential → AuditRecord emitted with a valid chain
@@ -282,24 +282,24 @@ def test_confinement_runtime_public_api_has_no_connector_or_doer():
         name for name in dir(runtime)
         if not name.startswith("_") and callable(getattr(runtime, name))
     ]
-    # Expected agent-facing API: served_registry + handle_request. new_turn (sa#136)
-    # and session_turn (sa#155, the channels drain's ingest seam) are broker/
+    # Expected agent-facing API: served_registry + handle_request. new_turn
+    # and session_turn (the channels drain's ingest seam) are broker/
     # harness-owned turn controls, NOT agent-facing: they are wired to no HTTP route
     # (broker_server.py serves only /registry and /call), so the agent — which
     # reaches the runtime only across that surface — cannot call them, and neither
     # exposes a connector/Doer/secret (session_turn returns a TurnContext, whose
-    # taint is add-only). approve_intent / reject_intent (sa#176) are the out-of-band
+    # taint is add-only). approve_intent / reject_intent are the out-of-band
     # approval seam the channels drain worker calls for an authenticated owner; they
     # use the Doer/intent-store INTERNALLY and return only an ExecutionResult — no
     # Doer, connector, secret, or store reference crosses the surface — and are
-    # likewise wired to no agent-facing HTTP route. flag_intent (#193 Phase 6c) is the
+    # likewise wired to no agent-facing HTTP route. flag_intent is the
     # same shape: an out-of-band owner seam that writes only the false_action evidence
     # counter and returns an ExecutionResult — no execution, no reference crosses out.
-    # close (#221 P3, MCP-HOST.md M20) is the service-shutdown seam: the process's
+    # close (MCP-HOST.md M20) is the service-shutdown seam: the process's
     # SIGTERM handler drives it after the request loop drains so connector-held
     # children are reaped in order; it takes nothing, returns None, and is wired to
     # no agent-facing HTTP route — no connector, Doer, or secret crosses out.
-    # describe_intent (#301) is the READ half of the same out-of-band owner seam:
+    # describe_intent is the READ half of the same out-of-band owner seam:
     # an approver must see the stored call before releasing it. It returns a frozen
     # IntentView of data — no store, no Intent model, no raw args — executes nothing,
     # transitions nothing, answers None for another principal's intent so it cannot
@@ -401,7 +401,7 @@ def test_idempotent_replay():
     assert len(connector.calls) == 1
 
     # Second call with the same key — idempotent replay; connector NOT called again,
-    # but the caller still gets the cached result back (sa#108), not None.
+    # but the caller still gets the cached result back, not None.
     second = runtime.handle_request(request)
     assert second.decision_kind == "allow"
     assert second.idempotent is True
@@ -499,7 +499,7 @@ def test_connector_failure_wal_not_committed():
 
 
 # ---------------------------------------------------------------------------
-# Test 5 — Rename-invariance, end-to-end (#171 exit predicate)
+# Test 5 — Rename-invariance, end-to-end (ToolOp classification exit predicate)
 #
 # The DoD is "a consumer-defined op with a correct classification gates IDENTICALLY
 # regardless of its name." The unit assertion in test_manifest.py proves the table

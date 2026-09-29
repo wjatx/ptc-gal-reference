@@ -1,4 +1,4 @@
-"""Tests for the promotion predicate (sa#57).
+"""Tests for the promotion predicate.
 
 The predicate is a pure function; no mocks, no I/O. All test data is injected
 directly. One data-driven table drives the eligibility cases; each row names
@@ -6,7 +6,7 @@ the gate it exercises:
 
 - Rate gates: below/at/above threshold; counter decomposition
 - Sample gates: insufficient/zero observations; boundary at min_observations
-- Evidence gates (sa#57): artifact missing; artifact stale; uncovered
+- Evidence gates: artifact missing; artifact stale; uncovered
 - Provenance ceiling (docs/PTC.md §9): every maturity × both acting rungs
 - Error budget: unset knob passes; at/over tolerance fails
 - Blast class: high-blast eligible carries requires_human_ratification=True;
@@ -38,7 +38,7 @@ ACTION_CLASS = "read.files"
 
 
 def _artifact(*, stale: bool = False) -> ConfidenceArtifact:
-    """A valid constructed-confidence artifact (#184)."""
+    """A valid constructed-confidence artifact."""
     return ConfidenceArtifact(
         confidence=0.9,
         error_prob=0.1,
@@ -125,7 +125,7 @@ ELIGIBILITY_CASES = [
     ("zero observations", dict(obs=0), False, "insufficient observations"),
     ("1 obs << min 10", dict(obs=1), False, "insufficient observations"),
     ("5 obs < min 10, error present", dict(false_action=1, obs=5), False, "insufficient observations"),
-    # --- evidence gates (sa#57) ---
+    # --- evidence gates ---
     ("artifact missing", dict(artifact=None), False, "evidence artifact missing"),
     ("artifact stale", dict(artifact=STALE_ARTIFACT), False, "stale"),
     ("uncovered", dict(covered=False), False, "covered-distribution"),

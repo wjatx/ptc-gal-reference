@@ -3,7 +3,7 @@
 The impure seam that turns an operator-held Ed25519 key into the pure
 ``RecordSigner`` that ``grants.record_signing`` consumes — the command-side
 binding that module's docstring defers to, mirroring ``channels.keys`` (the
-#181 pattern this adopts).
+Layer A signing pattern this adopts).
 
 **Two ROLES, two key sources, one code path.** GAL-SPEC §6.10 requires every
 ledger record to be signed, and §6.7.2 requires the demotion evaluator to be a
@@ -23,11 +23,11 @@ something a store-loaded config could set, and the authority split would then
 be a value rather than a boundary (docs/config-provenance.md).
 
 Two key SOURCES per role, exactly one of which may be set: a Secrets Manager
-ARN (the cloud floor) or, since #226, a local PEM file (the no-AWS floor —
+ARN (the cloud floor) or, since the local arm, a local PEM file (the no-AWS floor —
 refused on the dynamo arm, and refused outright if the file is readable beyond
 its owner). Both converge on the same signer; nothing downstream knows which.
 
-The verify side (#194) is deliberately asymmetric: the PUBLIC keys live in an
+The verify side is deliberately asymmetric: the PUBLIC keys live in an
 SSM parameter (``{key_id: public_key_pem}`` JSON map), NOT in Secrets Manager —
 verify keys are public material, and the read-only audit watcher keeps reading
 no Secrets Manager at all (the namespace-split doctrine; the ``*/issuer/*`` and
@@ -41,7 +41,7 @@ Ships OFF, per role: with NO signing env configured for a role,
 role's writers keep today's unsigned behaviour (ratify is the exception — it
 REFUSES unless the operator passes ``--allow-unsigned``, and acknowledge
 refuses outright). Half-configured — a key_id without the key source, or a key
-source without a key_id/zone — REFUSES (#196): the operator intended to sign,
+source without a key_id/zone — REFUSES: the operator intended to sign,
 so degrading to an unsigned record is minting a weaker artifact than asked for.
 With no parameter name configured, the verify resolver is None and the audit
 skips RECORD_SIGNATURE_VERIFIES loudly. A set-but-unresolvable value fails
@@ -77,16 +77,16 @@ ISSUER_SIGNING_KEY_SECRET_ARN_ENV = "ISSUER_SIGNING_KEY_SECRET_ARN"
 ISSUER_SIGNING_KEY_ID_ENV = "ISSUER_SIGNING_KEY_ID"
 ISSUER_SIGNING_ZONE_ENV = "ISSUER_SIGNING_ZONE"
 
-# The LOCAL arm's signing-key source (#226's end-to-end arc): a path to a file
+# The LOCAL arm's signing-key source (the local arm's end-to-end arc): a path to a file
 # holding the PEM private key, for a machine with no Secrets Manager to reach.
 # Deliberately a bare PEM in a named file, NOT a structured secrets format. One
 # key, one file, no schema: this is a SIGNING key resolved by path, not a leaf in
-# a credential map, so #126's leaf rule (docs/config-provenance.md, "Secret
+# a credential map, so the bare-leaf rule (docs/config-provenance.md, "Secret
 # naming") governs the connector credentials beside it and not this.
 # Mutually exclusive with the ARN, and REFUSED on the dynamo arm.
 ISSUER_SIGNING_KEY_FILE_ENV = "ISSUER_SIGNING_KEY_FILE"
 
-# The read-only verify side (#194): an SSM parameter NAME whose value is a JSON
+# The read-only verify side: an SSM parameter NAME whose value is a JSON
 # ``{key_id: public_key_pem}`` map of the issuer's PUBLIC keys. Optional;
 # absence = OFF (the audit skips RECORD_SIGNATURE_VERIFIES, loudly).
 ISSUER_VERIFY_KEYS_PARAM_ENV = "ISSUER_VERIFY_KEYS_PARAM"
@@ -160,7 +160,7 @@ def _fetch_secret(secret_arn: str) -> str:
 
 
 def _read_local_key_file(path: str, role_env: SigningRoleEnv) -> str:
-    """Read a role's PEM private key from a local file (the #226 arm).
+    """Read a role's PEM private key from a local file (the local arm).
 
     Two refusals, both failing toward signing nothing:
 
@@ -262,7 +262,7 @@ def _verify_keys_for_role(
 
 
 def resolve_verify_keys_for_role(role_env: SigningRoleEnv) -> KeyResolver | None:
-    """Build one role's read-only KeyResolver, or None when unconfigured (#194)."""
+    """Build one role's read-only KeyResolver, or None when unconfigured."""
     resolved = _verify_keys_for_role(role_env)
     return None if resolved is None else resolved[1]
 
@@ -273,7 +273,7 @@ def resolve_signer_for_role(
     """Build one role's RecordSigner from the cold-start environment, or None.
 
     Returns None only when NO signing env is configured for the role. A key_id
-    without a key SOURCE refuses (#196) — half-configured signing never
+    without a key SOURCE refuses — half-configured signing never
     degrades to unsigned. When a source is set, both a key_id and a zone (the
     ``zone`` argument, else the role's zone env) are required: a signer a
     verifier cannot resolve or attribute is a misconfiguration, never a silent
@@ -289,11 +289,11 @@ def resolve_signer_for_role(
             "records to a key the operator may not have meant. Set exactly one."
         )
     if not secret_arn and not key_file:
-        # Half-configured signing REFUSES (#196): a key_id without any key
+        # Half-configured signing REFUSES: a key_id without any key
         # SOURCE means the operator intended to sign — degrading to an unsigned
         # record here already produced one audit violation live (the Phase 6
         # drill's unsigned 03:31 record). Fail toward less authority, the
-        # #190 write-order polarity applied to config.
+        # conditional-write polarity applied to config.
         if os.environ.get(role_env.key_id_env):
             raise IssuerSigningConfigError(
                 f"{role_env.key_id_env} is set but neither "
@@ -339,7 +339,7 @@ def resolve_signer_for_role(
 
 
 def resolve_issuer_verify_keys() -> KeyResolver | None:
-    """Build the auditor's read-only ISSUER KeyResolver, or None (#194)."""
+    """Build the auditor's read-only ISSUER KeyResolver, or None."""
     return resolve_verify_keys_for_role(ISSUER_ROLE_ENV)
 
 

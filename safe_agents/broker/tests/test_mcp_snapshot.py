@@ -1,18 +1,18 @@
 """test_mcp_snapshot.py — `python -m safe_agents.broker.mcp.commands snapshot`
-(#221 Phase 5 prerequisite, item 2 of 4).
+(the admission ceremony's discovery step).
 
 `snapshot` is PURE pre-admission discovery: it captures an MCP server's full
 live advertised tool set to a typed `McpServerSnapshot` file, touching no
 registry (no read, no write) and needing neither the store HMAC key nor a
 registry table name. Server config comes from an operator-NAMED image-baked
-`AgentManifest` (never a store), matching the #197/#199 discipline.
+`AgentManifest` (never a store), matching the no-implicit-fallback-manifest discipline.
 
 Covers:
   1. A real snapshot (over the same real stdio child `test_mcp_stdio.py`
      drives, `examples/restricted_mcp_server/server.py`) round-trips through
      `McpServerSnapshot`, and each entry's `def_hash` matches an independent
      `compute_tool_def_hash` recomputation.
-  2. The new #221 Phase-5-prerequisite `McpToolDef` metadata fields
+  2. The `McpToolDef` metadata fields
      (title/output_schema/annotations/...) are actually captured for a tool
      that advertises them.
   3. `--server-id` absent from the manifest refuses, exit 2 — before any

@@ -1,4 +1,4 @@
-"""SearchConnector — external web search for the search.query grant (sa#133).
+"""SearchConnector — external web search for the search.query grant.
 
 The second shared read connector (after github.whoami): "verify a claim against
 the live web" is domain-invariant — a trading agent grounding a market claim and a
@@ -28,7 +28,7 @@ provenance, not a fact this connector can supply.
 UNTRUSTED INGESTION — read this before consuming results. Search results are
 free-text web content: the canonical injection carrier, structurally an inbound
 email body per memory/TAINT.md. The broker self-ingests every successful external
-read into the TurnContext (sa#134), so results taint the turn deterministically and
+read into the TurnContext, so results taint the turn deterministically and
 a subsequent external write escalates to require_approval. Any memory write of them
 must still carry taint: untrusted.
 """

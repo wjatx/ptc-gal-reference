@@ -1,4 +1,4 @@
-"""dynamo_init.py — create the broker's single table in DynamoDB Local (local/Mac arm, sa#98).
+"""dynamo_init.py — create the broker's single table in DynamoDB Local (local/Mac arm).
 
 Idempotent. boto3 reads the endpoint from AWS_ENDPOINT_URL_DYNAMODB (set to the dynamodb-local
 container) + dummy creds. One pk/sk table holds every broker item — the single-table design:

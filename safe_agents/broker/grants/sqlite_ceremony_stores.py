@@ -1,4 +1,4 @@
-"""sqlite_ceremony_stores.py — the grant ceremony's auxiliary stores, locally (#247).
+"""sqlite_ceremony_stores.py — the grant ceremony's auxiliary stores, locally.
 
 The grant ceremony needs four durable stores, and after the v0.47.0 slice two of
 them (grants, promotion records) had sqlite arms while these two did not, so the
@@ -10,20 +10,20 @@ missing pair:
   `ratify` (separate invocations by separate identities), so it is the ceremony's
   only cross-process state.
 * :class:`SqliteAcknowledgmentStore` — ACK# items, the DynamoDBAcknowledgmentStore
-  mirror. Append-only signed waivers (#196).
+  mirror. Append-only signed waivers.
 
 Both are deliberately thin: every integrity decision — the proposal HMAC basis,
 the acknowledgment's canonical payload — lives in the domain modules
 (``proposals.py`` / ``acknowledgments.py``) and is imported, never re-derived.
 A second implementation of an integrity rule is a second chance to get it
-wrong, and the #246 lesson is fresh: the MCP sqlite arm silently serialized
+wrong, and the stored-bytes lesson is fresh: the MCP sqlite arm silently serialized
 ledger records differently from its Dynamo twin, and every signature it wrote
 was unverifiable until a drill caught it. So the rule here is that the two arms
 call the SAME serializer and the differential suite proves they store
 byte-identical bytes.
 
 Conditional-write semantics come from ``BEGIN IMMEDIATE`` (see
-``sqlite_substrate``): the read-check inside the transaction IS the #190
+``sqlite_substrate``): the read-check inside the transaction IS the conditional-write
 condition, so `put`'s append-only guarantee and `consume`'s single-shot status
 flip hold against a concurrent writer exactly as their ConditionExpression
 counterparts do.
@@ -72,7 +72,7 @@ class SqliteProposalStore(substrate.SqliteStoreBase):
     ``expires_at`` is duplicated into the indexed column as well as the
     attribute map: the column is what a future sweep queries, the attribute is
     what the Dynamo item carries, and the migrate pump copies the latter.
-    Nothing here deletes — expiry is a predicate at use (sa#213).
+    Nothing here deletes — expiry is a predicate at use.
     """
 
     def __init__(self, hmac_key: bytes, db_path: str | Path) -> None:

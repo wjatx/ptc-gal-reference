@@ -1,4 +1,4 @@
-"""moto-backed tests for S3 audit-chain resume-on-restart (sa#104).
+"""moto-backed tests for S3 audit-chain resume-on-restart.
 
 Why this file exists
 --------------------

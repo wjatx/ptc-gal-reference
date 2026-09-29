@@ -1,4 +1,4 @@
-# SCREENING — the injection-screening standard (sa#43)
+# SCREENING — the injection-screening standard
 
 > **Status: contract (2026-07-08).** Contract-tier per `docs/contract-vs-reference.md`: this
 > document is the normative words, `safe_agents/channels/screening.py` is the typed encoding, and
@@ -23,7 +23,7 @@ deterministic lookup or check; this one may consult a classifier — typically a
 
 Screening is **additive** to the provenance model, never a substitute for it. Taint stays derived
 from provenance alone (`channels/SCHEMAS.md` §Taint); a message that screens clean is exactly as
-tainted afterward as it was before. This resolves the original sa#43 "no content-inspection
+tainted afterward as it was before. This resolves the original screening-standard "no content-inspection
 heuristics" guard: that guard protects *taint* — which remains content-blind — while the screen
 inspects content in the one direction a persuasive payload cannot exploit. An injection that fools
 the screen gains only what it already had; an injection that trips it loses delivery.
@@ -122,7 +122,7 @@ means choosing what happens when the gate is down; wiring a screen is opting int
 The gate condition is falsiness of the verdict — a deterministic predicate over a typed,
 schema-validated value. No model output reaches the drop decision except through `ScreenVerdict`,
 and no `ScreenVerdict` state can do anything but drop-or-continue. This is the deterministic-gate
-invariant (sa#44) instantiated for gate 7:
+invariant instantiated for gate 7:
 
 - The classifier — if there is one — runs *inside* the screen and only ever produces suspicion.
 - The gate — drop or continue — is dispatcher code, pure over the verdict.
@@ -134,14 +134,14 @@ invariant (sa#44) instantiated for gate 7:
 
 ## Provenance categories, reconciled
 
-The original sa#43 body named three provenance categories. They predate `broker/TAINT.md` and the
+The original screening-standard draft named three provenance categories. They predate `broker/TAINT.md` and the
 provenance chain; this table is the normative mapping, and the categories are retired in favor of
 the landed vocabulary:
 
 | Original category | Landed vocabulary | Default posture |
 |---|---|---|
 | `internal-platform` (broker, grant store, infra APIs) | the `internal:` source namespace (`broker/TAINT.md`) | trusted in the base `InputTrustMap`; never taints |
-| `external-service` (any connector result) | `connector:{tool}.{op}` self-ingested sources (`broker/TAINT.md` §1) and non-`internal:` chain sources (`email:…`, `channel:…`, `peer:…`) | untrusted; taints the turn. The only exemption is `Envelope.trusted_read_sources` (sa#137) — consumer-declared, per connector-op, config not model output |
+| `external-service` (any connector result) | `connector:{tool}.{op}` self-ingested sources (`broker/TAINT.md` §1) and non-`internal:` chain sources (`email:…`, `channel:…`, `peer:…`) | untrusted; taints the turn. The only exemption is `Envelope.trusted_read_sources` — consumer-declared, per connector-op, config not model output |
 | `human-channel` (approval path, operator command) | not a namespace — a **sender class** at the airlock: `owner`, transport-authenticated (gate 1) and trust-mapped (gate 5) | the hop is `trusted`, but authenticity never cleans content: an owner forwarding external content taints exactly per the chain (one-way rule 1) |
 
 The categories' original intent — trust is opt-in at ingestion, based on provenance, never content
@@ -160,19 +160,19 @@ inspection — is exactly what landed; only the taxonomy moved.
 | sink ships OFF; null screen appends nothing | `test_verdict_sink_ships_off_and_null_screen_appends_nothing` |
 | a pass never blesses: derived taint identical through a passing screen | `test_pass_never_blesses_taint` |
 | `DropRecord.detail` validates the machine-code pattern | `test_drop_record_detail_is_validated` |
-| position/budget protection: expired, unmapped, replays never reach the screen | lands with the #80 suite: `test_expired_envelope_drops_before_screen` · `test_unmapped_sender_never_reaches_screen` · `test_replay_is_a_noop` (`test_adapters.py`) |
+| position/budget protection: expired, unmapped, replays never reach the screen | lands with the dispatch suite: `test_expired_envelope_drops_before_screen` · `test_unmapped_sender_never_reaches_screen` · `test_replay_is_a_noop` (`test_adapters.py`) |
 
 ## Relationships
 
-- `channels/ADAPTERS.md` (sa#80) — gate 7's position and the "injected, not owned" clause.
+- `channels/ADAPTERS.md` — gate 7's position and the "injected, not owned" clause.
   Injected there, owned here.
-- `channels/TRUST-MAPPING.md` (sa#81) — the one-way rule whose consequence 3 is this standard's
+- `channels/TRUST-MAPPING.md` — the one-way rule whose consequence 3 is this standard's
   boundary; the DropRecord type (`detail` added by this standard).
-- `channels/SCHEMAS.md` (sa#74) — the envelope a screen consumes; §Taint's derived-taint rules,
+- `channels/SCHEMAS.md` — the envelope a screen consumes; §Taint's derived-taint rules,
   which the screen can never influence.
 - `broker/TAINT.md` — §1 "the model is never the judge"; §5 the escalation floor that holds with
   or without a screen.
-- sa#44 — the deterministic-gate invariant (`docs/deterministic-gate.md`); this standard is its
+- The deterministic-gate invariant (`docs/deterministic-gate.md`); this standard is its
   reference instantiation for gate 7.
 - Reference classifier binding — deliberately absent. The first concrete screen (e.g. a Bedrock
   classifier) lands consumer-side or as a named reference component in a later pass, never in

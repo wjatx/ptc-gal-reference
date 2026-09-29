@@ -1,4 +1,4 @@
-"""channels.manifest — the typed consumer config for the inbound airlock (sa#152).
+"""channels.manifest — the typed consumer config for the inbound airlock.
 
 The channels analogue of `broker/schemas/manifest.py`'s `AgentManifest`: a
 consumer supplies a `ChannelsManifest` (in-image YAML, `extra="forbid"`) and the
@@ -67,7 +67,7 @@ class WebhookAdapterConfig(BaseModel):
 
 
 class OwnerAdapterConfig(BaseModel):
-    """Config for `OwnerInboundAdapter` — the human-as-owner shape (sa#176).
+    """Config for `OwnerInboundAdapter` — the human-as-owner shape.
 
     Like the webhook config, the token lives in Secrets Manager and is injected
     at build time; only the non-sensitive header name is config. The address →
@@ -148,7 +148,7 @@ class ChannelsManifest(BaseModel):
     @classmethod
     def _default_adapter_kind(cls, value: object) -> object:
         # BACK-COMPAT: existing YAML has a kind-less adapter dict. Inject the
-        # webhook discriminator before the union resolves so a pre-sa#176
+        # webhook discriminator before the union resolves so a pre-owner-channel
         # manifest keeps resolving to WebhookAdapterConfig. A dict that DOES name
         # a kind, or an already-constructed config instance, passes untouched.
         if isinstance(value, dict) and "kind" not in value:

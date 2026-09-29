@@ -1,6 +1,6 @@
 # Channels-drain bringup runbook
 
-Bringing the sa#155/sa#166 drain workers up on the deployed channels airlock: the drain ECR repo,
+Bringing the drain workers up on the deployed channels airlock: the drain ECR repo,
 the two consumer drain images (base + a consumer layer that bakes an AgentManifest + Receiver), the
 broker read-state seed (envelope → grants → **connector secrets**) for each, the tag-gated deploys,
 and the live smokes. Companion to `docs/channels-airlock-bringup.md` (the inbound half) and
@@ -172,7 +172,7 @@ To ALSO deploy the missileer drain in the same stack update, add its context par
 DRAIN_LIVE_SMOKE=1 python -m pytest safe_agents/channels/tests/test_drain_live.py -v
 ```
 
-Since sa#166 this smoke targets the missileer drain: it injects directly onto
+This smoke now targets the missileer drain: it injects directly onto
 `channel-accepted-missileer` (missileer has no airlock feed) and reads the
 `/channels-drain-missileer` log group. It asserts the happy path (ingest-before-act, one ledger
 object, PII-safe), the D7 wrong-principal terminal drop, and D4 idempotency.
@@ -231,7 +231,7 @@ function is created (phased, like the existing drain gate). Its log group is
 `/safe-agents/development/channels-drain-missileer`, its audit prefix `audit-drain-missileer/` —
 distinct from webhook-peer's `audit-drain/` so the two hash chains never interleave. missileer's
 `search` connector maps via the manifest's `connector_secrets` to the leaf `track-feed-token`,
-resolved as `safe-agents/development/connectors/track-feed-token` (sa#164).
+resolved as `safe-agents/development/connectors/track-feed-token`.
 
 ## Operational boundaries (by design; know them)
 

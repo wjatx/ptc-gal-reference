@@ -1,4 +1,4 @@
-"""test_envelope_load.py — build_runtime's BROKER_ENVELOPE_LOAD switch (sa#136 Slice B).
+"""test_envelope_load.py — build_runtime's BROKER_ENVELOPE_LOAD switch.
 
 Slice B wires the envelope read seam (broker/envelope/read.py) into build_runtime:
 with ``BROKER_ENVELOPE_LOAD=store`` the broker loads its in-force risk envelope from

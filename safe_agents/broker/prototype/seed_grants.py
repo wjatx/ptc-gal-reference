@@ -1,7 +1,7 @@
-"""seed_grants.py — DEPRECATED delegate to the grant-ceremony command surface (#123).
+"""seed_grants.py — DEPRECATED delegate to the grant-ceremony command surface.
 
 This entrypoint was the out-of-band grant seed for the broker's AWS read-mode
-(sa#36 Phase C1) and, in store mode, the de-facto re-stamp path after an
+(the Fargate arm) and, in store mode, the de-facto re-stamp path after an
 envelope-hash change. Both jobs now belong to the sanctioned ceremony commands:
 
     python -m safe_agents.broker.grants.commands seed      # bootstrap (this delegate)
@@ -40,7 +40,7 @@ grants after an envelope-hash change, use `commands re-seed` instead.
 def main() -> int:
     print(_DEPRECATION_BANNER, file=sys.stderr)
     # broker_server imports must stay side-effect-free — same belt-and-braces as
-    # the ceremony commands themselves, scoped so it never leaks (#210).
+    # the ceremony commands themselves, scoped so it never leaks.
     from safe_agents.broker.prototype.boot_config import grant_load_suppressed
 
     with grant_load_suppressed():

@@ -1,6 +1,6 @@
 # Meta-alarm / page-semantics standard
 
-**sa#29 · reliability package · agent-agnostic**
+**Reliability package · agent-agnostic**
 
 A paging watchdog that exits 1 on failure is indistinguishable from a broken
 watchdog process. This document codifies the rule that separates the two signals

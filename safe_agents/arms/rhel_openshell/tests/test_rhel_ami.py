@@ -1,5 +1,5 @@
 """
-RHEL base-AMI bakery tests — acceptance criteria for sa#109.
+RHEL base-AMI bakery tests — acceptance criteria for the prebuilt RHEL AMI.
 
 All tests are AWS-free: every AWS call goes through FakeAWS.
 
@@ -275,7 +275,7 @@ class TestComponentBakesToolchain:
         """The bakery has no git token; the harness arrives via S3 at boot, not a bake clone.
 
         Matched org-agnostically: this asserted the literal
-        `Third-Ralph/safe-agents` until the repo moved (#290), at which point it
+        `Third-Ralph/safe-agents` until the repo moved, at which point it
         would have passed however the component cloned. The pattern deliberately
         does not ban `github.com` outright — the component legitimately adds the
         `cli.github.com` RPM repo to install the GitHub CLI.

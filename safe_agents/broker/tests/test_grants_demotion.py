@@ -1,4 +1,4 @@
-"""Tests for the deterministic demotion evaluator (sa#59).
+"""Tests for the deterministic demotion evaluator.
 
 Coverage:
 - evaluate_demotion_triggers: tripped trigger → should_demote=True
@@ -600,7 +600,7 @@ def test_level_unchanged_still_appends_record():
 
 
 def test_failed_record_leg_cancels_the_demotion():
-    """Atomic record+grant (#244): a failing ledger leg cancels the WHOLE unit
+    """Atomic record+grant: a failing ledger leg cancels the WHOLE unit
     — the grant stays at its prior level with no ledger hole, and the runner
     retries with a fresh read (superseding the old grant-first ordering)."""
 

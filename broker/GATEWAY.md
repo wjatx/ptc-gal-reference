@@ -1,6 +1,6 @@
 # GATEWAY.md — the broker as one MCP server
 
-**Status:** contract + reference implementation, written 2026-07-26 (#283). Code:
+**Status:** contract + reference implementation, written 2026-07-26. Code:
 `safe_agents/broker/gateway/`. Sibling to [`MCP-HOST.md`](MCP-HOST.md), which governs the broker as
 an MCP *client*; this governs the broker as an MCP *server*.
 
@@ -43,7 +43,7 @@ Two modules, split the way the client side already splits:
 | **G7** | **The coordinate↔wire-name map is data.** `(tool, op)` advertises as `tool__op` and the mapping is held as a dict, never re-parsed out of the wire name. Two coordinates that would flatten to the same name **refuse at list time** rather than one silently shadowing the other. |
 | **G8** | **stdout belongs to the protocol.** MCP over stdio frames JSON-RPC on stdout; diagnostics go to stderr. Verified, not assumed: with `build_runtime`'s backend banner left on stdout, a real client dies on `Invalid JSON ... input_value='[broker] envelope load mode: manifest'`. |
 | **G9** | **One marshal.** Connector results are marshalled by `broker/marshal.py`, the dependency-free leaf homed once for exactly this reason. This is its third caller after the HTTP boundary and `enforce()`; a per-transport copy is the "a seam is proven per transport" lesson charging interest again. |
-| **G10** | **No second config surface.** The gateway takes its manifest and backends from the same environment the HTTP mouth uses. On a durable store arm an unnamed `BROKER_MANIFEST` refuses rather than defaulting to the example manifest (#197/#199, `docs/config-provenance.md`). |
+| **G10** | **No second config surface.** The gateway takes its manifest and backends from the same environment the HTTP mouth uses. On a durable store arm an unnamed `BROKER_MANIFEST` refuses rather than defaulting to the example manifest (`docs/config-provenance.md`). |
 
 ## Known limits — v1
 
@@ -53,10 +53,10 @@ this repo's posture doctrine is most wary of.
 **Advertised schemas are placeholders (G6).** `served_registry()` returns `ToolOp` classifications,
 which carry no argument schema; the ratified schemas live in registry rows that `build_runtime`
 does not hand back. So a wrapped agent gets no argument guidance from the gateway. Closing this
-needs a decision about the public surface — tracked as the **#266** surface finding, deliberately
+needs a decision about the public surface — an open public-surface finding, deliberately
 not widened ad hoc mid-build.
 
-**~~An unclassified coordinate is refused without an audit record.~~ FIXED — #281, 2026-07-27.**
+**~~An unclassified coordinate is refused without an audit record.~~ FIXED 2026-07-27.**
 This limit was found by the live drill below and closed the same day. Kept here rather than deleted
 because the *reason* it existed is the durable part.
 
@@ -73,13 +73,13 @@ Both halves are now recorded, per **MCP-HOST.md M26**: a coordinate absent from 
 from `failed`, which means the effect was attempted and broke.
 
 **Drift is checked at connect, not per call.** The gateway is long-lived, which makes connect-time-
-only drift checking a hole here specifically — **#227**.
+only drift checking a hole here specifically — **#92**.
 
-**stdio only.** The HTTP mouth and the CLI call seam are **#285**. Resources and prompts are
-**#222** (decision only).
+**stdio only.** The HTTP mouth and the CLI call seam are open items. Resources and prompts are
+**#89** (decision only).
 
 **Nothing is confined.** The gateway runs as the same OS user as the agent it serves, and MCP-stdio
-children run unconfined (**#269**). This is posture 1 (`docs/posture-ladder.md`); a gateway does not
+children run unconfined (**#104**). This is posture 1 (`docs/posture-ladder.md`); a gateway does not
 move the posture, because a posture is about where the boundary is.
 
 ## Relationships

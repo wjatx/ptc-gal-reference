@@ -1,4 +1,4 @@
-"""peer-receiver.py — the peer airlock endpoint `peer.publish` posts to (#250 Phase 5).
+"""peer-receiver.py — the peer airlock endpoint `peer.publish` posts to (Phase 5).
 
 Runs from the drill ConfigMap on the SAME image every other leg uses, so it adds no
 second build path. Stdlib only apart from the channels schema, which is present
@@ -16,7 +16,7 @@ clean turn, `require_approval` on a tainted one. The receiver exists so the allo
 branch actually lands somewhere, because an allow that quietly fails to execute is
 indistinguishable in effect from a deny, and the contrast would be fake.
 
-WHAT THE CHAIN IT PRINTS DOES *NOT* PROVE (#315). On the `POST /call` path the agent
+WHAT THE CHAIN IT PRINTS DOES *NOT* PROVE (#15). On the `POST /call` path the agent
 supplies `args.envelope` and `PeerConnector` transports it unmodified — correctly, it
 is pure transport. `stamp_outbound`, the seam that would derive the hop's label from
 the broker-held turn's taint, has **no runtime caller**. So the chain printed below is

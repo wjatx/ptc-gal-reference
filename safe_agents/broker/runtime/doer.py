@@ -93,7 +93,7 @@ class ConnectorRefusedError(Exception):
     """A control inside the connector REFUSED this call; nothing was attempted.
 
     The marker that separates "policy said no" from "the effect broke" at the
-    execution layer (#281). A connector-side gate raises a subclass of this; a
+    execution layer. A connector-side gate raises a subclass of this; a
     network timeout, a 500 or a crashed child does not.
 
     It exists because the two are indistinguishable on the audit tape otherwise:
@@ -118,8 +118,8 @@ class ConnectorExecutionError(Exception):
     the underlying exception a :class:`ConnectorRefusedError`? The exception object
     itself must not be chained (it may carry a credential in its args), but its
     TYPE is not secret, so the classification is lifted out before the original is
-    dropped. Without this the PEP cannot tell a refusal from a failure, and #281
-    is exactly that gap.
+    dropped. Without this the PEP cannot tell a refusal from a failure, and a host
+    refusal would be audited as a failure.
     """
 
     def __init__(self, message: str, *, refused: bool = False) -> None:
@@ -200,12 +200,12 @@ class Doer:
         Defaults to the tool name itself (e.g. tool="email" → secret leaf "email").
         Whatever this returns is what the injected SecretsProvider receives — so if
         that provider prefixes (``_PrefixedSecrets`` wraps a leaf to
-        ``<prefix>/connectors/<leaf>``, sa#164), the returned value is a *leaf* under
+        ``<prefix>/connectors/<leaf>``), the returned value is a *leaf* under
         that prefix, not a full secret id.
     credential_strategies:
-        Optional mapping from tool name to a CredentialProvider (#173). A strategy
+        Optional mapping from tool name to a CredentialProvider (#79). A strategy
         resolves the *live* credential at execute time — StaticSecret fetches the
-        leaf verbatim (the pre-#173 behavior), OAuthRefresh mints an access token
+        leaf verbatim (the original behavior), OAuthRefresh mints an access token
         from a broker-held refresh token, etc. A tool absent from this map falls back
         to StaticSecret, so an empty/omitted map is byte-for-byte the old behavior.
         Whichever strategy runs, only the resolved credential reaches the connector —
@@ -278,7 +278,7 @@ class Doer:
             args = call.args
 
         # Credential resolved at execute time — never stored on self, never returned.
-        # The per-tool strategy (#173) resolves the LIVE credential: StaticSecret
+        # The per-tool strategy (#79) resolves the LIVE credential: StaticSecret
         # fetches the leaf verbatim (unchanged), a non-static strategy mints/assumes
         # it broker-side. Long-lived material stays inside the strategy; only the
         # resolved credential crosses into the connector below.
@@ -290,7 +290,7 @@ class Doer:
         # against a vendor issuing ONE-TIME-USE refresh tokens (which OAuth 2.1
         # recommends for public clients) it SPENDS the credential the connect then
         # needs, so a single brokered call burns two grants and fails on the
-        # second. Found live against a real brokerage in #238; a static secret hides it
+        # second. Found live against a real brokerage; a static secret hides it
         # completely, which is why every prior proof passed.
         #
         # A resolution failure is an EXECUTION failure of an allowed call, so it is

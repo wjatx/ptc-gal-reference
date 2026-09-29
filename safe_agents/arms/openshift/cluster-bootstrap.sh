@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # cluster-bootstrap.sh — leg 0: create the grant store, under the signing identity.
 #
-# This leg exists because of the #203 write split. Once the checker-writable key
+# This leg exists because of the maker/checker write split. Once the checker-writable key
 # space (GRANT#/RECORD#/TOOLDEF#/TOOLREC#) lives in its own database file that
 # the maker mounts READ-ONLY, something has to create that file before the maker
 # opens it — and a read-only open deliberately cannot. The maker's leg would
@@ -47,7 +47,7 @@ ok "identity derived from the cluster, never asserted"
 
 say "0b. the #282 shim — a private copy of the projected issuer key"
 # A projected Secret under an fsGroup gets 0440 OR-ed into whatever defaultMode
-# was requested, unconditionally, so #226's check can never pass on the
+# was requested, unconditionally, so the issuer-key mode check can never pass on the
 # projection itself. A compatibility shim, NOT a control: in a pod the boundary
 # protecting this key is the pod, not the file mode.
 printf '   projected: %s\n' "$(stat -L -c 'mode=%a owner=%u:%g' "$PROJECTED_KEY")"

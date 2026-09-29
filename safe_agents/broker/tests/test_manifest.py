@@ -1,4 +1,4 @@
-"""Tests for broker.manifest — the ToolOpTable primitive + the CATALOG reference (#171).
+"""Tests for broker.manifest — the ToolOpTable primitive + the CATALOG reference.
 
 Coverage:
   1. CATALOG load-time shape: validated ToolOp instances, exactly the five generic
@@ -6,7 +6,7 @@ Coverage:
   2. ToolOpTable construction + .entry lookup, including the duplicate-key guard.
   3. .served(principal, grants) capability scoping — removal over refusal.
   4. Reversibility/reads invariants over CATALOG.
-  5. Rename-invariance conformance (#171 exit predicate): a consumer-invented op
+  5. Rename-invariance conformance: a consumer-invented op
      name gates identically to any other op with the same classification.
 """
 
@@ -180,7 +180,7 @@ class TestCatalogInvariants:
 
 
 # ---------------------------------------------------------------------------
-# 5. Rename-invariance conformance (#171 exit predicate)
+# 5. Rename-invariance conformance
 # ---------------------------------------------------------------------------
 
 
@@ -205,7 +205,7 @@ class TestRenameInvariance:
 
 
 # ---------------------------------------------------------------------------
-# 6. Remote (streamable-http) MCP wiring — the M21 manifest invariants (#221 P4)
+# 6. Remote (streamable-http) MCP wiring — the M21 manifest invariants
 # ---------------------------------------------------------------------------
 
 
@@ -268,7 +268,7 @@ class TestRemoteMcpWiring:
 
 
 # ---------------------------------------------------------------------------
-# 7. header_map — the remote credential half, invariant (d) (#237, C10/M25)
+# 7. header_map — the remote credential half, invariant (d) (C10/M25)
 # ---------------------------------------------------------------------------
 
 

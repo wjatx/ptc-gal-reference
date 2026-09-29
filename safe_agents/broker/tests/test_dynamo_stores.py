@@ -1,4 +1,4 @@
-"""Real-DynamoDB tests for the three broker stores (sa#101).
+"""Real-DynamoDB tests for the three broker stores.
 
 Why this file exists
 --------------------
@@ -280,7 +280,7 @@ class TestDynamoStoreIdempotency:
         assert store.get_idempotency("missing") is None
 
     def test_result_json_round_trips(self, table_name):
-        """sa#108: the cached connector result survives the DynamoDB round-trip."""
+        """The cached connector result survives the DynamoDB round-trip."""
         store = DynamoStore(table_name)
         record = IdempotencyRecord(
             key="k-result",
@@ -296,7 +296,7 @@ class TestDynamoStoreIdempotency:
         assert got.result() == {"event_id": "evt-99"}
 
     def test_record_without_result_json_reads_back_none(self, table_name):
-        """Back-compat: a record written without result_json (pre-sa#108, or any
+        """Back-compat: a record written without result_json (pre-result-caching, or any
         non-executing decision) stores no attribute and reads back result None."""
         store = DynamoStore(table_name)
         store.put_idempotency_if_absent(self._record("k-no-result"))
@@ -422,7 +422,7 @@ class TestDynamoStoreLedger:
 # ===========================================================================
 
 
-# The broker-held key the intent store HMACs its stored frozen bytes with (#349).
+# The broker-held key the intent store HMACs its stored frozen bytes with.
 _INTENT_KEY = b"intent-hmac-key"
 
 
@@ -497,7 +497,7 @@ class TestDynamoIntentStore:
 
     def test_executed_transition_stamps_executed_at_and_extends_ttl(self, table_name):
         """The approved→executed transition stamps executedAt and extends the item TTL
-        past the short approval window so the executed intent stays flaggable (#193)."""
+        past the short approval window so the executed intent stays flaggable."""
         from datetime import datetime, timezone
 
         from safe_agents.broker.approval.store import EXECUTED_INTENT_RETENTION_DAYS
@@ -530,11 +530,11 @@ class TestDynamoIntentStore:
         assert new_ttl == executed_epoch + EXECUTED_INTENT_RETENTION_DAYS * 86400
 
     def test_retention_ttl_is_exactly_executed_at_plus_seven_days(self, table_name):
-        """Class-D pin (sa#213): ttl == executedAt + exactly 7 days, epoch arithmetic,
+        """Class-D pin: ttl == executedAt + exactly 7 days, epoch arithmetic,
         anchored to the EXECUTION timestamp — the same anchor the /flag false_action
         back-write keys off. Fixed inputs reproduce the 2026-07-16 live dev-table scan
         (executedAt 2026-07-14T18:21:52Z → ttl 2026-07-21T18:21:52Z, exact); before
-        the sa#213 fix the ttl derived from the store's OWN clock, so the observed
+        the trigger-range fix the ttl derived from the store's OWN clock, so the observed
         equality was a same-second race, not an invariant."""
         from datetime import datetime, timezone
 
@@ -593,7 +593,7 @@ class TestDynamoDBGrantStore:
         assert result.quarantined is False
         assert result.grant.ownerId == "alice"
         assert result.grant.actionClass == "email.send"
-        # The item-level hash is the HMAC over the stored bytes (#246).
+        # The item-level hash is the HMAC over the stored bytes.
         assert result.stored_hash == compute_grant_hash(result.grant, _KEY_A)
 
     def test_get_absent_returns_none(self, table_name):
@@ -612,7 +612,7 @@ class TestDynamoDBGrantStore:
         reader = DynamoDBGrantStore(hmac_key=_KEY_B, table_name=table_name)
         result = reader.get_grant(_GRANT_PRINCIPAL, "email.send")
 
-        assert result.grant is None  # unverified bytes are never parsed (#246)
+        assert result.grant is None  # unverified bytes are never parsed
         assert result.raw_data is not None  # the bytes ride for audit
         assert result.quarantined is True
         assert result.quarantine_reason is not None
@@ -666,7 +666,7 @@ class TestDynamoDBGrantStore:
         assert store.get_grant(_GRANT_PRINCIPAL, "email.send").grant is None
 
     def test_item_without_granthash_reads_quarantined(self, table_name):
-        """The pre-#246 legacy fallback is RETIRED: an item missing its
+        """The pre-stored-bytes legacy fallback is RETIRED: an item missing its
         grantHash attribute cannot be verified, reads back quarantined
         (grant=None), and is not updatable — the remedy is the re-seed
         ceremony, failing toward less authority."""
@@ -716,7 +716,7 @@ class TestDynamoDBGrantStore:
         after = store.get_grant(_GRANT_PRINCIPAL, "email.send")
         assert after.quarantined
 
-    # -- create_grant: the real attribute_not_exists condition (#190) --------
+    # -- create_grant: the real attribute_not_exists condition --------
 
     def test_create_grant_creates_and_reads_back(self, table_name):
         store = DynamoDBGrantStore(hmac_key=_KEY_A, table_name=table_name)
@@ -748,7 +748,7 @@ class TestDynamoDBGrantStore:
 
 
 # Record ts must be canonical (+00:00, never 'Z') — put_record rejects
-# non-canonical ts (#191), unlike grant/other fixtures that keep using _TS.
+# non-canonical ts, unlike grant/other fixtures that keep using _TS.
 _RECORD_TS = "2026-06-28T00:00:00+00:00"
 
 
@@ -872,7 +872,7 @@ class TestDynamoDBPromotionRecordStore:
 
 
 # ===========================================================================
-# DynamoDBProposalStore (#123) — durable promotion proposals, co-located in
+# DynamoDBProposalStore — durable promotion proposals, co-located in
 # the grants table as PROPOSAL# items. Proves the real put condition
 # (append-only content) and the real consume condition (single-shot status
 # flip — the double-ratify race) against moto's expression evaluator.
@@ -1010,7 +1010,7 @@ class TestDynamoDBProposalStore:
 
 
 # ===========================================================================
-# DynamoDBEnvelopeStore (sa#136 Phase 3 Slice A) — co-located in the SAME
+# DynamoDBEnvelopeStore — co-located in the SAME
 # table as grants, as a distinct "ENVELOPE#" item type. Proves the two item
 # types coexist in one real (moto-backed) table without collision, and that
 # a Grant's real GRANT# item is untouched by an ENVELOPE# write for the same

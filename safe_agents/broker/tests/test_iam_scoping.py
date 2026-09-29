@@ -1,6 +1,6 @@
-"""Tests for #175 — per-capability IAM scoping (PTC Phase 3a).
+"""Tests for per-capability IAM scoping (PTC Phase 3a).
 
-Covers the safe_agents/-side of #175: the `assumed_role` credential strategy
+Covers the safe_agents/-side of IAM scoping: the `assumed_role` credential strategy
 (`credentials.AssumedRole`), the `AssumedRoleCredential` bundle it resolves, the
 Doer widening + bundle-aware redaction, and the `capability_iam` manifest block
 (`schemas.capability_iam.CapabilityIam`) the deploy consumes.

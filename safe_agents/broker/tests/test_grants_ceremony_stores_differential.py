@@ -1,12 +1,12 @@
-"""Differential suite for the grant ceremony's auxiliary stores (#247).
+"""Differential suite for the grant ceremony's auxiliary stores.
 
 ONE contract, THREE backends, for the two stores that had no sqlite arm until
 this slice: the promotion-proposal store (PROPOSAL# items — the ceremony's only
 cross-process state, since propose and ratify are separate invocations by
-separate identities) and the acknowledgment store (ACK# items, #196).
+separate identities) and the acknowledgment store (ACK# items).
 
 The clause worth naming is :class:`TestStoredBytesAgreeAcrossArms`. Today's
-#226 drill found that the MCP sqlite arm serialized ledger records differently
+solo-identity drill found that the MCP sqlite arm serialized ledger records differently
 from its Dynamo twin — declaration order vs the canonical sorted-key form the
 signature binds — so every signed record that arm wrote was unverifiable from
 birth, and four suites missed it because they all verified a RE-SERIALIZATION
@@ -382,7 +382,7 @@ class TestAcknowledgmentStoreContract:
 
 
 # ===========================================================================
-# The bytes each arm actually stores — the #246 pin, applied preemptively
+# The bytes each arm actually stores — the stored-bytes pin, applied preemptively
 #
 # The hazard this closes: an arm that persists a DIFFERENT serialization from
 # its sibling passes every round-trip test (a parser does not care about key

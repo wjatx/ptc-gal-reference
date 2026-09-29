@@ -1,8 +1,8 @@
-"""Self-tests for the broker/tests/scaffold.py acceptance-test substrate (sa#138
-Phase 0). Proves each of the three new helpers works against TODAY's code —
-this file must NOT assert any sa#122/sa#124/sa#134 behavior that doesn't exist
-yet; later phases' acceptance tests are the ones that will consume these
-helpers for real.
+"""Self-tests for the broker/tests/scaffold.py acceptance-test substrate.
+Proves each of the three new helpers works against TODAY's code — this
+file must NOT assert any envelope-verification/quarantine/taint-ingestion
+behavior that doesn't exist yet; later phases' acceptance tests are the
+ones that will consume these helpers for real.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ HMAC_KEY = b"test-hmac-key"
 
 def test_make_grant_reads_back_clean():
     """A grant written through put_grant reads back clean: the store stamps
-    the item-level HMAC over the stored bytes at write time (#246), so no
+    the item-level HMAC over the stored bytes at write time, so no
     caller-side hash cooperation is needed."""
     store = InMemoryGrantStore(hmac_key=HMAC_KEY)
     store.put_grant(make_grant("crm.list_deals"))
@@ -61,7 +61,7 @@ def test_make_quarantined_store_reads_back_quarantined():
 
     assert result.quarantined is True
     assert result.quarantine_reason is not None
-    # Tampered bytes are never parsed (#246): grant is None, the raw bytes
+    # Tampered bytes are never parsed: grant is None, the raw bytes
     # ride on the result for audit.
     assert result.grant is None
     assert result.raw_data is not None

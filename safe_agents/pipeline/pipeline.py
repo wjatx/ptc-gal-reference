@@ -151,7 +151,7 @@ def run_pipeline(
         environment=environment,
     )
 
-    # Pre-flight: extended manifest validation (sa#41).
+    # Pre-flight: extended manifest validation (#53).
     # Runs structural + (if repo_root given) policy checks before any AWS call.
     # On failure: logged in phase_results, pipeline aborts.
     # Skip pre-flight for teardown-only runs (manifest may reference unreachable

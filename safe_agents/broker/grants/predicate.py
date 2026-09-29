@@ -1,4 +1,4 @@
-"""Deterministic promotion predicate (sa#57).
+"""Deterministic promotion predicate.
 
 Answers a single boolean question: does the accumulated track record for a
 (principal, action_class) warrant moving up to the next autonomy rung?
@@ -19,7 +19,7 @@ The rate formula:
 
 Eligibility requires, in gate order:
     provenance maturity meets the target rung's ceiling (docs/PTC.md §9)
-    AND a fresh (non-stale) ConfidenceArtifact is present (#184)
+    AND a fresh (non-stale) ConfidenceArtifact is present
     AND covered-distribution soundness is asserted by the proposer
     AND the error budget (if configured) is not in breach
     AND observation_count >= min_observations
@@ -108,7 +108,7 @@ class PredicateResult:
 
     Attributes:
         eligible: True iff the track record warrants promotion. The ceremony
-            (#58) gates the actual grant write on this value; a True here is
+            gates the actual grant write on this value; a True here is
             necessary but not sufficient — maker-checker and blast-radius
             ceremony still apply.
         reason: human-readable explanation, suitable for a PromotionRecord's
@@ -167,7 +167,7 @@ def evaluate_promotion_predicate(
             out-of-loop) carry a provenance ceiling; in-loop is valid only as
             the Recommend-origin grant-creating first promotion — it declares
             no ceiling, but every evidence gate still applies.
-        artifact: the #184 constructed-confidence artifact backing the proposal.
+        artifact: the constructed-confidence artifact backing the proposal.
             None → ineligible (no evidence, no promotion); stale → ineligible
             (label-free drift voids the certification).
         covered: proposer-asserted covered-distribution soundness — an explicit

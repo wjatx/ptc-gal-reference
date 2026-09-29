@@ -88,15 +88,15 @@ Step 4 gates on `broker/` and is where the real substrate value lands.
    sandbox) for EC2 and Fargate arms; the dev-box arm adapter keeps OpenShell with its egress
    policy rewritten to allow only the broker endpoint + `api.anthropic.com`.
 
-   **How the model is reached under "only route is the broker" — RESOLVED (sa#35, `docs/model-egress.md`):**
+   **How the model is reached under "only route is the broker" — RESOLVED (`docs/model-egress.md`):**
    the broker is *also* the model-inference proxy. The agent's single netns route reaches the broker,
    which exposes both the tool-call API and a domain-allowlisted forward proxy for `api.anthropic.com`
    (the agent sets `HTTPS_PROXY` → broker). So "only outbound route is the broker" holds literally,
    even for inference — there is no direct model route and no SG/CIDR rule for the model (it is
    Cloudflare-fronted; the allowlist lives at the proxy). Implemented on the rhel-openshell autonomous
    arm: `agent-netns-setup.sh` + the agent-service `ip netns exec` wrapper + a stub `model-proxy-stub.py`
-   (the real proxy surface is the broker build, sa#12). Filesystem isolation for autonomous agents is
-   a separate gap tracked in sa#95.
+   (the real proxy surface is the broker build). Filesystem isolation for autonomous agents is
+   a separate gap tracked in #67.
 
 2. **Does the broker need its own arm, or is it always a sidecar?** This pass assumes sidecar
    (same host/task as the agent, separate identity). A shared broker *service* (one broker, many

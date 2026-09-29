@@ -1,4 +1,4 @@
-"""write_record_and_grant — the atomic record+grant write (#244).
+"""write_record_and_grant — the atomic record+grant write.
 
 The grants mirror of ``admit_tool_with_record``: either BOTH legs commit or
 NOTHING is written, closing the record-without-grant (and grant-without-

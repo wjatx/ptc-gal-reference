@@ -37,7 +37,7 @@ a human. The safe default is enforced by *absence*, which no prompt injection ca
 `high_stakes: true` and a tight `actions_per_run` cap reflect the launch domain even
 though every granted op is itself low-blast.
 
-## The consumer-owned connector (the sa#141 seam, by construction)
+## The consumer-owned connector (the connector-injection seam, by construction)
 
 Missileer also carries the worked example of **consumer-supplied connector injection**.
 Its `search` is not the base `SearchConnector` but its own track-feed query,
@@ -55,7 +55,7 @@ zero-arg instantiate + `Connector` protocol check, fail-closed on any breakage),
 the Doer fetches the secret leaf `track-feed-token` instead of the default leaf
 `search`. That leaf is resolved under the broker's secret prefix — with
 `BROKER_SECRET_PREFIX=safe-agents/development` it fetches
-`safe-agents/development/connectors/track-feed-token` (sa#164) — so the manifest
+`safe-agents/development/connectors/track-feed-token` — so the manifest
 carries a bare **leaf**, never a value and never a pre-prefixed path, and the connector
 uses the broker-fetched credential without ever logging or returning it. The connector
 imports only the public `safe_agents.connectors` surface; the consumer-boundary AST
@@ -64,7 +64,7 @@ suite builds this runtime end-to-end and asserts the provider class is what got 
 Provider paths are honored only from this image-baked manifest file — nothing
 store-loaded can reach the seam.
 
-## The consumer-owned drain Receiver (the sa#155 seam, by construction)
+## The consumer-owned drain Receiver (the drain-worker seam, by construction)
 
 Missileer also carries the worked example of the **channels drain's Receiver seam**
 (`channels/DRAIN.md`): [`duty_log_receiver.py`](duty_log_receiver.py), injected the same

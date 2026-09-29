@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# cluster-arc-run.sh — host-side driver for the #250 Phase 2 cluster drill.
+# cluster-arc-run.sh — host-side driver for the Phase 2 cluster drill.
 #
 #   ./safe_agents/arms/openshift/cluster-arc-run.sh            # build + run both legs
 #   SKIP_BUILD=1 ./safe_agents/arms/openshift/cluster-arc-run.sh   # reuse the images
 #
-# ELEVEN Jobs and two Deployments across FIVE ServiceAccounts (#250 Phases 3-5,
-# #310, #154), plus a twelfth Job for Phase 6.1 when its manifest is present (it is
+# ELEVEN Jobs and two Deployments across FIVE ServiceAccounts (Phases 3-5,
+# the tape partition, the unbrokered baseline), plus a twelfth Job for Phase 6.1 when its manifest is present (it is
 # not, in this tree; see step 15). The first six legs:
 #
 #   0. bootstrap (safe-agents-checker) creates the grant store the maker may only
@@ -20,7 +20,7 @@
 #                                      never at the same time — so the exact claim is
 #                                      "the broker identity, one pod at a time")
 #   4. tamper    (safe-agents-maker)   tries to erase and forge what leg 3 wrote,
-#                                      and is refused by the kernel (#310)
+#                                      and is refused by the kernel
 #   5. agent     (safe-agents-agent)   holds NOTHING — no mount, no Secret, no
 #                                      RoleBinding — and is refused the internet
 #                                      and the broker Secret while a brokered
@@ -52,7 +52,7 @@
 #
 # Plus two legs that are about the ARGUMENT rather than about a mechanism:
 #
-#   5b. demo-baseline (…-agent)        THE CONTROL (#154) — the same call leg 5 was
+#   5b. demo-baseline (…-agent)        THE CONTROL — the same call leg 5 was
 #                                      refused, made with no broker in the path, and
 #                                      it simply works. Runs at 10b because step 12
 #                                      admits that tool and would falsify it.
@@ -145,7 +145,7 @@ API_PORT=$(oc get endpoints kubernetes -n default -o jsonpath='{.subsets[0].port
 ok "agent -> API server allowed at $(tr '\n' ' ' <<<"$API_EPS")on port $API_PORT (generated, cluster-specific)"
 
 say "2. per-run secrets — generated here, never committed"
-# Per-drill and destroyed with the namespace: ratified in #251 from three
+# Per-drill and destroyed with the namespace: ratified from three
 # independent uses. A reusable dev issuer key would orphan attribution for every
 # record signed under the previous one.
 KEYDIR=$(mktemp -d)
@@ -265,7 +265,7 @@ run_leg() {
 # volume: the checker consumes what the maker wrote, and the serve leg's whole
 # claim is that the pods before it are GONE.
 say "4. leg zero — bootstrap the grant store, as the checker ServiceAccount"
-# Ahead of the maker because of the #203 split: the maker mounts the grant
+# Ahead of the maker because of the maker/checker write split: the maker mounts the grant
 # database read-only, and a read-only open cannot create the file it opens.
 run_leg safe-agents-bootstrap 39-job-bootstrap.yaml "checker / bootstrap"
 
@@ -336,7 +336,7 @@ oc -n "$NS" rollout restart deployment/safe-agents-peer >/dev/null 2>&1 || true
 oc -n "$NS" rollout status deployment/safe-agents-peer --timeout=180s \
   || { oc -n "$NS" logs -l app.kubernetes.io/component=peer --tail=40 2>&1 | sed 's/^/   /'
        die "the peer receiver never became Ready"; }
-# #335: the peer is a leg, and "every leg admitted under restricted-v2" is one of the
+# The peer is a leg, and "every leg admitted under restricted-v2" is one of the
 # three success criteria this README publishes -- so it has to be asserted here rather
 # than left to a reader's cluster query. It was the ONE leg that printed no SCC at all:
 # the twelve Jobs get it from run_leg and the broker Deployment asserts it above, which
@@ -387,7 +387,7 @@ say "13b. the same story from the BROKER's tape, which the agent cannot reach"
 # — so the differential is corroborated by a record the subject of the test could not
 # have produced. Two independent views of the same three calls.
 #
-# NB `reason` is empty on every row including the hold (#316): RequireApproval carries
+# NB `reason` is empty on every row including the hold (#116): RequireApproval carries
 # no reason field, so the tape can say a call was HELD and cannot say why. Printed
 # rather than hidden, because that is the honest state of the evidence today.
 oc -n "$NS" exec deploy/safe-agents-broker -- python3 -c "

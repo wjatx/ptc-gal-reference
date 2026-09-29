@@ -1,4 +1,4 @@
-"""channels.trust_map — the inbound trust-mapping framework (sa#81).
+"""channels.trust_map — the inbound trust-mapping framework.
 
 See channels/TRUST-MAPPING.md for the normative contract; this module is the
 typed encoding. `ChannelTrustMap` answers the airlock question — a
@@ -73,7 +73,7 @@ class ChannelTrustMap(BaseModel):
 
     Exact-match only: no wildcards, no normalization, no model call
     (TRUST-MAPPING.md §"The map shape"). Identity normalization is the
-    adapter's job (sa#80), performed before this seam.
+    adapter's job, performed before this seam.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -122,7 +122,7 @@ class DropRecord(BaseModel):
     content-derived free text; MACHINE_CODE_RE keeps it a closed vocabulary
     so the drop log itself cannot become an injection vector.
 
-    `chain_verified`/`signer_key_id` are evidence-of-check (sa#161 Phase A1,
+    `chain_verified`/`signer_key_id` are evidence-of-check (per the campaign watchdog and
     the `sig:pass` provenance-hop precedent in `channels/SIGNING.md`): they
     let an off-path watchdog attribute this drop at the authentication
     strength the airlock actually verified. `signer_key_id` is a public key

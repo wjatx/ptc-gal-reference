@@ -288,7 +288,7 @@ def test_transform_substitutes_the_pip_op() -> None:
 
 
 def test_transform_passes_args_through_byte_for_byte() -> None:
-    """#273 — transform substitutes the OP and nothing else.
+    """Transform substitutes the OP and nothing else.
 
     `broker/README.md` and `broker/SCHEMAS.md` said this verb could redact a field and
     clamp an amount to the remaining cap. It cannot: the rule's action is ``args=c.args``
@@ -296,9 +296,9 @@ def test_transform_passes_args_through_byte_for_byte() -> None:
 
     This does NOT assert that clamping is forbidden. `spec/PTC-SPEC.md` §PTC-25 requires
     `transform` to produce a substituted operation *plus* clamped arguments, and marks the
-    argument half NOT YET IMPLEMENTED here (tracking #358). Clamping is specified and
+    argument half NOT YET IMPLEMENTED here (tracking #16). Clamping is specified and
     unbuilt, so this test pins today's behavior and is expected to be replaced — not
-    merely deleted — when #358 lands, by tests pinning WHICH narrowings are permitted.
+    merely deleted — when #16 lands, by tests pinning WHICH narrowings are permitted.
 
     What this pins is that the base does not do it TODAY, so the docs and the code cannot
     drift apart again silently. If clamping is built, this test SHOULD fail — and the
@@ -365,7 +365,7 @@ def test_decide_is_deterministic() -> None:
 
 
 def test_decide_is_invariant_to_model_supplied_args() -> None:
-    """sa#44 — the model's words never move the gate (docs/deterministic-gate.md).
+    """The model's words never move the gate (docs/deterministic-gate.md).
 
     ``BrokeredCall.args`` is the ONLY model-authored field the PDP receives: the
     manifest (effect/external/reversible) is looked up from static code, and taint

@@ -1,4 +1,4 @@
-"""channels.owner — the human-as-owner inbound adapter (sa#176, reference-tier).
+"""channels.owner — the human-as-owner inbound adapter (reference-tier).
 
 The second concrete `InboundAdapter` (channels/adapters.py), for the owner
 channel: a human owner sends a RAW command (e.g. `/trader buy AAPL`, or an
@@ -13,7 +13,7 @@ idiom the ABCs are. No transport client, no consumer identity, and no
 channel-specific literal beyond the owner-command grammar lives here — the
 airlock stays channel-agnostic (channels/ADAPTERS.md §"What an adapter is").
 
-Two things a reviewer MUST check (per the sa#176 design answers):
+Two things a reviewer MUST check (per the owner-channel design answers):
 
 (a) `/approve` addressing at N=1. Addressing is an adapter-`normalize`
     responsibility — the first whitespace token of the command is the address.
@@ -54,7 +54,7 @@ KIND = "owner"
 APPROVE_COMMAND = "/approve"
 # The reserved flag verb — the owner's third out-of-band command (beside approve
 # and the raw agent command). "/flag <intent_id>" marks an already-executed op as
-# reviewed-wrong, writing the false_action evidence label (#193 Phase 6c).
+# reviewed-wrong, writing the false_action evidence label.
 FLAG_COMMAND = "/flag"
 
 

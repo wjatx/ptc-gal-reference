@@ -1,4 +1,4 @@
-# Demonstration 2's caller (#250 Phase 5) — the agent, again.
+# Demonstration 2's caller (Phase 5) — the agent, again.
 #
 # Deliberately the SAME ServiceAccount and the SAME `component: agent` label as
 # 52-job-agent.yaml, so 60-networkpolicy.yaml binds to it unchanged. That is what

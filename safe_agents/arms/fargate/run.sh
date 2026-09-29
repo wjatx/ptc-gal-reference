@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run.sh — the confined agent runner for the AWS Fargate arm (sa#36 C2a).
+# run.sh — the confined agent runner for the AWS Fargate arm.
 #
 # Executed as the task's entrypoint. On Fargate the agent is confined by NETWORK TOPOLOGY, not by
 # in-container netns: the task runs in a PRIVATE_ISOLATED subnet (no NAT, no internet route) with a

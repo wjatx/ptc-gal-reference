@@ -1,4 +1,4 @@
-"""Tests for the Envelope liveness contract + deterministic monitor (sa#160).
+"""Tests for the Envelope liveness contract + deterministic monitor.
 
 Three concerns:
   1. The `Liveness` schema validates/rejects correctly and carries into the

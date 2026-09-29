@@ -36,7 +36,7 @@ two reasons:
    role, mTLS cert, source subnet). Everything inside the zone shares that identity, so a claim
    like "I'm sub-agent-7, a restricted researcher" is self-reported by untrusted compute. A
    compromised parent would simply claim whichever identity has the most convenient grants.
-2. **Distinct principals would reopen the sa#136 laundering hole.** Turn identity is broker-owned
+2. **Distinct principals would reopen the turn-identity laundering hole.** Turn identity is broker-owned
    *per principal* precisely so taint cannot be shed by declaring a fresh turn
    (`turn-identity.md`). If a tainted parent could spawn a "clean" sub-agent principal to perform
    the external write, that is the same laundering with an extra step.

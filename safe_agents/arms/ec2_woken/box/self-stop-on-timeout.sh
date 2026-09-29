@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# self-stop-on-timeout.sh — box-side hard lifetime cap for the ec2-woken box (sa#98 belt-and-suspenders).
+# self-stop-on-timeout.sh — box-side hard lifetime cap for the ec2-woken box (belt-and-suspenders).
 #
 # The drain loop (drain.sh) already self-stops the box when its SQS queue goes idle. THIS is the
 # belt-and-suspenders for the case where the drain loop hangs and never reaches that self-stop:

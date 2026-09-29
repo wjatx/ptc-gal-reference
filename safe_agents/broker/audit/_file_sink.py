@@ -14,7 +14,7 @@ and is not built). Treat this sink as the local-arm stand-in for that durable st
 useful for SEEing the tape and verifying the chain within a single run — not as a
 WORM guarantee.
 
-Crash tolerance (sa#102): a crash mid-append can leave a partial, unterminated final
+Crash tolerance: a crash mid-append can leave a partial, unterminated final
 line. Because every complete record is written with a trailing newline, an unterminated
 trailing segment is by definition a torn write that was never a committed record.
 resuming() trims those bytes (crash recovery — not deletion of a record) and records()
@@ -22,7 +22,7 @@ skips them, both with a logged warning. A malformed line that IS newline-termina
 real mid-file corruption and still raises — a partial line is only tolerated as the very
 last, unterminated line.
 
-MULTI-PROCESS (#301): unlike S3ObjectLockSink, whose writer is a single long-lived
+MULTI-PROCESS: unlike S3ObjectLockSink, whose writer is a single long-lived
 broker, this sink's tape is a file two PROCESSES legitimately share. On the local
 floor the gateway daemon and a ceremony CLI are separate processes by design — the
 same premise sqlite_substrate.py runs in WAL mode for. An in-process threading.Lock
@@ -72,7 +72,7 @@ except ImportError:  # pragma: no cover — non-Windows host
 logger = logging.getLogger(__name__)
 
 # WINDOWS LOCKING. flock(2) does not exist there, and dropping to in-process safety
-# would bring back exactly the #301 corruption on a laptop running the gateway and
+# would bring back exactly the multi-process corruption on a laptop running the gateway and
 # a ceremony CLI side by side. msvcrt.locking is the portable stand-in, with two
 # differences that shape how it is used:
 #
@@ -221,7 +221,7 @@ def _scan(path: str) -> tuple[list[AuditRecord], int, bool]:
 
 
 class _TapeLock:
-    """emit()'s critical section, widened to cover other PROCESSES (#301).
+    """emit()'s critical section, widened to cover other PROCESSES.
 
     ``emit()`` does ``with sink.lock:``, then reads ``next_seq``/``last_hash``,
     builds the record's hash from them, and calls ``append()``. Every step must
@@ -291,7 +291,7 @@ class FileAuditSink:
               (default GENESIS_PREV_HASH for a fresh chain).
 
     Both ``initial_*`` values are a starting guess, not a pin: the tape on disk is
-    the authority, and ``lock`` re-derives from it before every append (#301).
+    the authority, and ``lock`` re-derives from it before every append.
     """
 
     def __init__(
@@ -335,7 +335,7 @@ class FileAuditSink:
         record would be concatenated onto the partial one, corrupting the tape. Trimming
         an uncommitted partial line is WAL recovery, not deletion of a committed record.
 
-        Locked (#301): the trim is a truncate, and a concurrent writer's in-flight
+        Locked: the trim is a truncate, and a concurrent writer's in-flight
         record looks exactly like a torn tail. Scanning and trimming under the tape
         lock is what keeps this recovery path from deleting another process's
         record as it is being written.
@@ -393,7 +393,7 @@ class FileAuditSink:
         trailing line is skipped with a logged warning; this reader never mutates the
         file (trimming is resuming()'s job). Mid-file corruption still raises.
 
-        Taken under a SHARED lock (#301) so a reader never catches a concurrent
+        Taken under a SHARED lock so a reader never catches a concurrent
         writer's record half-written — otherwise `example-wrapper audit --verify` could report
         a broken chain that repairs itself on the next run, which is the worst
         possible behaviour for a tamper check.

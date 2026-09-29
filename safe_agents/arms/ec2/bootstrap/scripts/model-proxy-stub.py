@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""model-proxy-stub.py — broker model-inference forward proxy (STUB, safe-agents sa#97).
+"""model-proxy-stub.py — broker model-inference forward proxy (STUB).
 
-The broker's model-egress surface, stubbed until the broker build (sa#12) owns it.
+The broker's model-egress surface, stubbed until the broker build owns it.
 A minimal HTTP CONNECT proxy that allowlists ONLY the model-inference host(s) and
 refuses everything else with 403. It runs in the host root netns (which has NAT),
 binds the broker side of the agent veth, and performs the actual TLS to
@@ -9,7 +9,7 @@ api.anthropic.com on the agent's behalf — so the confined agent (docs/model-eg
 reaches its model via HTTPS_PROXY without any direct internet route, and a
 compromised agent still cannot reach a connector host: this proxy won't CONNECT to one.
 
-Re-derived from the live-proven rhel-openshell copy (sa#35). The proxy is arm-agnostic;
+Re-derived from the live-proven rhel-openshell copy. The proxy is arm-agnostic;
 the constants below MUST match every arm so the committed egress snapshot stays valid.
 
 The allowlist is matched by hostname (the CONNECT target), NOT by IP — api.anthropic.com

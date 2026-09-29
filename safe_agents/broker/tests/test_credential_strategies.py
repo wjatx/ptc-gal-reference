@@ -1,4 +1,4 @@
-"""Tests for #173 — the connector-auth-strategy seam (PTC Phase 3a).
+"""Tests for #79 — the connector-auth-strategy seam (PTC Phase 3a).
 
 Proves clauses C1-C5 of ``broker/CONNECTOR-AUTH.md`` against the already-shipped
 core seam (``safe_agents/broker/schemas/connector_auth.py``,
@@ -7,12 +7,12 @@ param). Mirrors the structure of ``test_connector_providers.py``: test-local
 connector doubles, a ``_manifest(**overrides)`` helper, grouped test classes.
 
   C1 — static unchanged: an unconfigured tool resolves the credential exactly as
-       before #173 (fetch the leaf verbatim).
+       originally (fetch the leaf verbatim).
   C2 — no passthrough: oauth_refresh resolves an ACCESS token broker-side; the
        connector never sees the refresh token, and the fetcher receives the
        resolved refresh token (proving the broker read it).
   C3 — closed catalog: a still-reserved strategy (ambient_identity) and unknown
-       ConnectorAuth fields fail closed. (assumed_role is implemented as of #175 —
+       ConnectorAuth fields fail closed. (assumed_role is implemented now —
        its own coverage lives in test_iam_scoping.py.)
   C4 — fail at build: malformed oauth_refresh params (missing required / unknown)
        and non-empty static_secret params raise at strategy-compile time.
@@ -202,7 +202,7 @@ class TestOAuthRefreshNoPassthrough:
 class TestClosedCatalog:
     def test_reserved_strategy_raises_at_build(self) -> None:
         # ambient_identity remains a reserved name (declared in the enum, no factory) —
-        # selecting it fails loudly at build. assumed_role is implemented as of #175.
+        # selecting it fails loudly at build. assumed_role is implemented.
         with pytest.raises(CredentialStrategyError):
             build_credential_strategies(
                 {"api": ConnectorAuth(strategy=AuthStrategy.AMBIENT_IDENTITY, params={})}
@@ -282,7 +282,7 @@ class TestOAuthApiExampleManifest:
 
 
 # ---------------------------------------------------------------------------
-# C10 — the header_map declaration's own validation (#237)
+# C10 — the header_map declaration's own validation
 # ---------------------------------------------------------------------------
 
 
@@ -363,7 +363,7 @@ class TestHeaderMapDeclaration:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end — the oauth_remote_mcp example manifest (C10, #237)
+# End-to-end — the oauth_remote_mcp example manifest (C10)
 # ---------------------------------------------------------------------------
 
 
@@ -412,12 +412,12 @@ class TestOAuthRemoteMcpExampleManifest:
 
 
 # ---------------------------------------------------------------------------
-# C11 — rotating refresh tokens (#238, found live against a real brokerage)
+# C11 — rotating refresh tokens (found live against a real brokerage)
 # ---------------------------------------------------------------------------
 
 
 class _ReadOnlySecrets:
-    """A provider that can fetch but NOT store — the pre-#238 shape."""
+    """A provider that can fetch but NOT store — the older shape."""
 
     def __init__(self, secrets: dict) -> None:
         self._secrets = dict(secrets)
@@ -473,7 +473,7 @@ class TestRotatingRefreshToken:
     def test_a_read_only_provider_refuses_loudly_rather_than_stranding_the_chain(
         self,
     ) -> None:
-        """The pre-#238 behaviour, now an error instead of silent destruction.
+        """The older behaviour, now an error instead of silent destruction.
 
         The exchange has already succeeded, so the old token is invalid
         server-side. Returning the access token anyway would buy one working
@@ -538,7 +538,7 @@ class TestRotatingRefreshToken:
 
 
 # ---------------------------------------------------------------------------
-# C12 — access-token cache (#173.2, made load-bearing by #238)
+# C12 — access-token cache
 # ---------------------------------------------------------------------------
 
 

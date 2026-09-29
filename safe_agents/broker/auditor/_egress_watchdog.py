@@ -6,7 +6,7 @@ changes. All remediation is a human action.
 The policy source is injected so callers can supply an in-memory fake for tests or
 an AWS/on-box-backed source for production without touching this logic.
 
-Two layers are covered (sa#52; reconciled with docs/model-egress.md):
+Two layers are covered (reconciled with docs/model-egress.md):
 
   layer="sg"          — the box-level security-group egress/ingress rules (CDK synth is
                         the source of truth). Governs what the *box* may reach.
@@ -18,7 +18,7 @@ Two layers are covered (sa#52; reconciled with docs/model-egress.md):
 
 Each rule is a plain dict carrying a "layer" field (default "sg" when absent). Equality is
 key-order-independent (canonical JSON comparison) so field reordering is not treated as
-drift. Severity is assigned per drift item, not as one binary flag (sa#52):
+drift. Severity is assigned per drift item, not as one binary flag:
 
   layer=sg, extra in live, direction=egress  → critical (potential egress bypass)
   layer=sg, extra in live, direction=ingress → warning  (inbound change, monitor only)
@@ -131,7 +131,7 @@ class EgressDriftFinding:
                                         highest severity among the per-rule items
                                         ("critical" if any item is critical, else "warning").
 
-    items          — per-rule DriftItem objects carrying per-category severity (sa#52).
+    items          — per-rule DriftItem objects carrying per-category severity.
     extra_live     — rule dicts present in live but absent from committed (shadow rules).
     extra_committed — rule dicts present in committed but absent from live (missing rules).
 
@@ -162,7 +162,7 @@ def check_egress_drift(source: EgressPolicySource) -> EgressDriftFinding:
     Comparison is symmetric: a rule missing from either side is drift. Order within
     each list does not matter and field reordering is not drift (canonical-key
     equality). Duplicate rules on the same side are deduplicated before comparison.
-    Each drifted rule is classified per its layer/direction/kind (sa#52); the
+    Each drifted rule is classified per its layer/direction/kind; the
     finding-level severity is the highest among the per-rule items.
     """
     committed = source.committed()
@@ -267,8 +267,8 @@ class FilePlusAWSEgressPolicySource:
 
     NOTE (scope): live() covers only the SG layer (layer="sg"). Live introspection of
     the netns/proxy layer (layer="netns_proxy") is the on-box smoke + the off-substrate
-    auditor's job (sa#26) and is NOT implemented here. This class is a partial,
-    SG-only live source; sa#26 owns the full live path (both layers).
+    auditor's job (#50) and is NOT implemented here. This class is a partial,
+    SG-only live source; #50 owns the full live path (both layers).
 
     boto3 is imported lazily so callers that only use InMemoryEgressPolicySource
     (e.g. tests) do not pay the import cost.

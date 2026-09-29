@@ -44,13 +44,13 @@ class Grant(BaseModel):
     # "pending-evidence" vs "failing" demand opposite responses — do not collapse them
     demotionReason: Literal["failing", "pending-evidence"] | None
     # how long until an action of this class yields ground truth (caps re-promotion speed).
-    # ISO-8601 duration, validated at construction (sa#214, whenever-backed): must parse,
+    # ISO-8601 duration, validated at construction (whenever-backed): must parse,
     # be nonnegative, and carry no calendar-ambiguous year/month units. Stored as the
     # exact string given — never normalized (grant hashes cover these bytes).
     labelLatency: str
     # the named human accountable for this grant
     ownerId: str
-    # GAL §5.1/§6.7.6 (#255): the term of the current certification — the instant
+    # GAL §5.1/§6.7.6: the term of the current certification — the instant
     # at which this level stops being certified and the grant lapses to
     # lastSafeLevel. None = no term (the default; terms ship unset, so a
     # deployment setting none behaves exactly as before the lapse arc). Stored
@@ -64,7 +64,7 @@ class Grant(BaseModel):
     @field_validator("labelLatency")
     @classmethod
     def label_latency_is_a_duration(cls, v: str) -> str:
-        """A malformed duration refuses at load, not at first use (sa#214)."""
+        """A malformed duration refuses at load, not at first use."""
         return validate_label_latency(v)
 
     @field_validator("certifiedUntil")

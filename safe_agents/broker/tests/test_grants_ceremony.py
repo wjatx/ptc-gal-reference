@@ -1,4 +1,4 @@
-"""Tests for the maker-checker promotion ceremony (#123).
+"""Tests for the maker-checker promotion ceremony.
 
 Coverage:
 - Successful promotion (predicate-pass + distinct proposer/ratifier) writes
@@ -80,7 +80,7 @@ PREDICATE_CONFIG = dict(
     threshold=0.05,
 )
 
-# A valid constructed-confidence artifact (#184) satisfying the evidence gates
+# A valid constructed-confidence artifact satisfying the evidence gates
 VALID_ARTIFACT = ConfidenceArtifact(
     confidence=0.9,
     error_prob=0.1,
@@ -88,7 +88,7 @@ VALID_ARTIFACT = ConfidenceArtifact(
     computed_at="2026-07-12T00:00:00+00:00",
 )
 
-# sa#57 evidence terms that pass every predicate gate (budget knob unset = OFF)
+# Evidence terms that pass every predicate gate (budget knob unset = OFF)
 EVIDENCE_CONFIG = dict(
     artifact=VALID_ARTIFACT,
     covered=True,
@@ -335,7 +335,7 @@ def test_predicate_fail_blocks_promotion():
     ids=["artifact-missing", "uncovered", "unsigned-lineage"],
 )
 def test_evidence_gate_fail_blocks_promotion(overrides, fragment):
-    """The sa#57 evidence terms are threaded through: an evidence-gate failure
+    """The evidence terms are threaded through: an evidence-gate failure
     rejects before the reviewer is invoked; no write occurs."""
     checker = _FindingsChecker()
     ceremony, grant_store, record_store = _make_ceremony(checker=checker)
@@ -623,7 +623,7 @@ def test_rejection_writes_nothing():
 
 
 class _FailingGrantWriteStore(InMemoryGrantStore):
-    """The atomic write always fails — the whole unit must cancel (#244)."""
+    """The atomic write always fails — the whole unit must cancel."""
 
     def write_record_and_grant(
         self, record, grant, record_store, session=None, *, signature=None, expected=None
@@ -632,7 +632,7 @@ class _FailingGrantWriteStore(InMemoryGrantStore):
 
 
 def test_interrupted_promotion_writes_nothing():
-    """The record and the grant commit as ONE atomic unit (#244): a failed
+    """The record and the grant commit as ONE atomic unit: a failed
     unit leaves NO dangling record and NO authority gain — the old
     record-first polarity trade (a dangling record to reconcile) is gone
     because there is no between to be interrupted in."""
@@ -712,7 +712,7 @@ def test_grant_owner_id_is_preserved():
 
 
 # ---------------------------------------------------------------------------
-# execute — split persistence: Recommend-origin creates, existing updates (#190)
+# execute — split persistence: Recommend-origin creates, existing updates
 # ---------------------------------------------------------------------------
 
 
@@ -745,7 +745,7 @@ def test_recommend_origin_collision_raises():
 
     with pytest.raises(GrantAlreadyExistsError):
         ceremony.execute(proposal, ratifier_id="checker-model-gpt5")
-    # Atomic unit (#244): the failed create cancels the record leg with it —
+    # Atomic unit: the failed create cancels the record leg with it —
     # nothing written; the concurrently-minted grant stands.
     assert record_store.records == []
     assert grant_store.get_grant(PRINCIPAL, ACTION_CLASS).grant.evidence == "seed-evidence"
@@ -779,12 +779,12 @@ def test_execute_refuses_quarantined_grant():
 
 
 # ---------------------------------------------------------------------------
-# execute — the #190 regression: a demotion between propose and ratify
+# execute — the conditional-write regression: a demotion between propose and ratify
 # ---------------------------------------------------------------------------
 
 
 def test_demotion_between_propose_and_ratify_is_refused():
-    """#190: a level change landing between propose and ratify changes the premise;
+    """A level change landing between propose and ratify changes the premise;
     execute refuses, and the level NEVER rises past what the evidence licensed."""
     ceremony, grant_store, record_store = _make_ceremony()
     _seed_grant(grant_store, level=AutonomyLevel.on_loop)
@@ -825,7 +825,7 @@ class _RacingGrantStore(InMemoryGrantStore):
 
 
 def test_conflict_between_reread_and_write_propagates():
-    """#190 at the store level: a hash change between the re-read and the write
+    """Conditional writes at the store level: a hash change between the re-read and the write
     surfaces as GrantUpdateConflictError — never retried, the level never rises."""
     demoted = Grant(
         principal=PRINCIPAL,
@@ -858,7 +858,7 @@ def test_conflict_between_reread_and_write_propagates():
         ceremony.execute(proposal, ratifier_id="checker-model-gpt5")
 
     # The racing demotion stands; the level never rose, and the atomic unit
-    # (#244) canceled the record leg with the conflict — nothing written.
+    # canceled the record leg with the conflict — nothing written.
     assert grant_store.get_grant(PRINCIPAL, ACTION_CLASS).grant.level is AutonomyLevel.in_loop
     assert record_store.records == []
 

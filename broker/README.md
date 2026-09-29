@@ -73,7 +73,7 @@ This is policy enforcement; it uses the standard PEP/PDP/PIP/PAP terms. (`tool-b
 1. The agent calls a tool it was served. The **PEP materializes** the call into a typed
    `BrokeredCall` envelope — the PDP never sees free text. Crucially, `effect` / `external` /
    `reversible` come from the agent's **`ToolOpTable`** — classified once in the consumer's
-   `AgentManifest.tool_ops` (#171), *never* from anything the model says: the model doesn't get to
+   `AgentManifest.tool_ops`, *never* from anything the model says: the model doesn't get to
    assert its `send` is really a `draft`.
 2. The PEP gathers `facts` from the PIP (counters, allowlists, reachability, constructed
    confidence).

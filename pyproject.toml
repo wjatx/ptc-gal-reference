@@ -22,7 +22,7 @@ dependencies = [
     # (channels/SIGNING.md) — asymmetric, for non-repudiable cross-broker
     # lineage the receiver can attribute to the signing broker.
     "cryptography>=42.0",
-    # ISO-8601 duration parsing at the risky time edges (sa#214: labelLatency
+    # ISO-8601 duration parsing at the risky time edges (labelLatency
     # validation) — Rust-backed; the stdlib stays for the UTC-pure core.
     "whenever>=0.10.2,<0.11",
 ]
@@ -34,7 +34,7 @@ aws = [
 # The official MCP python SDK, used ONLY by the reference MCP host client
 # (safe_agents/broker/mcp/client.py). It is optional so the base package imports
 # with no SDK present: client.py imports it lazily and discovery.py (the gate)
-# has zero SDK dependency. Lower bound RAISED to 1.25 by #237: the remote
+# has zero SDK dependency. Lower bound RAISED to 1.25 for remote transport: the remote
 # transport now uses `streamable_http_client` + `create_mcp_http_client`, which
 # the deprecated `streamablehttp_client` predates. Verified present on both 1.25
 # and 1.28.1 (the resolved current); pinning the floor beats carrying a
@@ -52,8 +52,8 @@ dev = [
     "safe-agents[mcp]",
     "pytest>=8.0",
     # moto's DynamoDB/S3 mocks validate the real Condition/Update expression
-    # syntax, so broker's store tests (test_dynamo_stores.py sa#101,
-    # test_s3_sink_resume.py sa#104) run in CI with no container or live AWS.
+    # syntax, so broker's store tests (test_dynamo_stores.py,
+    # test_s3_sink_resume.py) run in CI with no container or live AWS.
     "moto[dynamodb,s3]>=5.0",
     "ruff==0.15.20",
 ]

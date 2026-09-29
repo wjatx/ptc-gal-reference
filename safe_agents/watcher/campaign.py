@@ -1,4 +1,4 @@
-"""Campaign correlation engine — sa#161 input-poisoning campaign watchdog.
+"""Campaign correlation engine — the input-poisoning campaign watchdog.
 
 An off-path watchdog correlates poisoning attempts (airlock drop/screen
 records + broker `approval_queue_flood` signals) into attributed campaigns.

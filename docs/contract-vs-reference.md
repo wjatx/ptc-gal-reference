@@ -39,21 +39,21 @@ outsource it and the platform's claims are no longer the platform's to make.
 
 | Harness part | Floor | Contract | Reference | Roadmap |
 |---|---|---|---|---|
-| **Capability mediation (broker)** | broker-only egress; per-call decisions; separate audit identity | the seven base schemas (`broker/SCHEMAS.md`); connector interface + injection seam | the broker service itself (deliberate exception, above); shipped connectors | #141 |
-| **OS confinement / sandbox** | egress confined to broker at the network layer (runner contract) | the sandbox-provider seam: generate-policy / create / exec / teardown | netns + SG scripts (autonomous); OpenShell policy generator (interactive) | #86, #87, #95 |
-| **Substrate / compute (arms)** | — | `core/RUNNER-CONTRACT.md`, machine-verifiable via the conformance harness | the five arms (`ec2`, `ec2-woken`, `fargate`, `local`, `rhel-openshell`) | #31, #143 |
-| **Model access** | model channel named as an accepted-uninspected egress boundary | `docs/model-egress.md` (the confinement obligation) | per-arm netns + broker-proxy mechanics | #125 |
-| **Identity & turns** | broker-owned turn boundary; zone = principal | `docs/turn-identity.md`, `docs/subagent-identity.md`; principal fields in the schemas | broker session mechanics (sa#136, landed) | — |
-| **Grants & graduated autonomy** | grants gate every call; quarantine on hash mismatch | Grant + PromotionRecord schemas; rung state-machine semantics; actionClass derivation from ToolOp fields (no base catalog — #189) | promotion/demotion predicates; the seed→ceremony path | #53, #55, #57–#60, #123 |
-| **Memory** (no subsystem ships here; an agent brings its own) | memory is a taint source; labels ride write → storage → read-back, non-strippably (`broker/TAINT.md` §8) | record schema; the three-op interface (resolve/search/write) + gate routing; DLP gate semantics; quarantine-not-delete; the memory-provider seam | OKF vault + loader; DynamoDB/pgvector stores; trace retention; async memory-builder | #3, #69, #71, #73, #75, #77, #79 |
-| **Audit** | written broker-side under a separate identity | AuditRecord schema; completeness + retention standard | off-substrate chain verifier; digest sink | #26, #66, #67 |
-| **Channels & airlock** | inbound content is untrusted until mapped | channel-adapter interface; trust-mapping framework; injection-screening standard | specific adapters (Telegram today); dispatch/routing | #43, #80, #81, #82 |
-| **Event-driven work** | — | EventTrigger envelope schema; ephemeral-worker lifecycle contract; maker≠checker gate semantics | the event-driven example agents | #74, #76, #78 |
-| **Observability / liveness** | loud failure over silent degradation | meta-alarm / page-semantics standard; loud-failure pattern library | GH Actions watcher (already being converted to an importable pattern) | #25, #29, #38, #145 |
-| **Scaling** | budgets enforced broker-side | scale-trigger policy shape; queue semantics (once decided) | any concrete autoscaler wiring | #70, #72 |
-| **Secrets** | agent holds no connector credentials | inventory + rotation standard; naming conventions | Secrets Manager provisioning pattern | #50, #126 |
-| **Registry & governance** | envelope hash pins what was approved | manifest schema (`AgentManifest`); catalog lifecycle states | catalog index; cost rollup | #61, #63, #64 |
-| **Lifecycle / pipeline** | complete teardown must exist | `consumer-image-contract.md`; manifest-driven provisioning obligations | the pipeline + CDK stacks | #32, #117 |
+| **Capability mediation (broker)** | broker-only egress; per-call decisions; separate audit identity | the seven base schemas (`broker/SCHEMAS.md`); connector interface + injection seam | the broker service itself (deliberate exception, above); shipped connectors | — |
+| **OS confinement / sandbox** | egress confined to broker at the network layer (runner contract) | the sandbox-provider seam: generate-policy / create / exec / teardown | netns + SG scripts (autonomous); OpenShell policy generator (interactive) | #65, #66, #67 |
+| **Substrate / compute (arms)** | — | `core/RUNNER-CONTRACT.md`, machine-verifiable via the conformance harness | the five arms (`ec2`, `ec2-woken`, `fargate`, `local`, `rhel-openshell`) | #76 |
+| **Model access** | model channel named as an accepted-uninspected egress boundary | `docs/model-egress.md` (the confinement obligation) | per-arm netns + broker-proxy mechanics | — |
+| **Identity & turns** | broker-owned turn boundary; zone = principal | `docs/turn-identity.md`, `docs/subagent-identity.md`; principal fields in the schemas | broker session mechanics (landed) | — |
+| **Grants & graduated autonomy** | grants gate every call; quarantine on hash mismatch | Grant + PromotionRecord schemas; rung state-machine semantics; actionClass derivation from ToolOp fields (no base catalog) | promotion/demotion predicates; the seed→ceremony path | — |
+| **Memory** (no subsystem ships here; an agent brings its own) | memory is a taint source; labels ride write → storage → read-back, non-strippably (`broker/TAINT.md` §8) | record schema; the three-op interface (resolve/search/write) + gate routing; DLP gate semantics; quarantine-not-delete; the memory-provider seam | OKF vault + loader; DynamoDB/pgvector stores; trace retention; async memory-builder | — |
+| **Audit** | written broker-side under a separate identity | AuditRecord schema; completeness + retention standard | off-substrate chain verifier; digest sink | #50, #60 |
+| **Channels & airlock** | inbound content is untrusted until mapped | channel-adapter interface; trust-mapping framework; injection-screening standard | specific adapters (Telegram today); dispatch/routing | — |
+| **Event-driven work** | — | EventTrigger envelope schema; ephemeral-worker lifecycle contract; maker≠checker gate semantics | the event-driven example agents | #64 |
+| **Observability / liveness** | loud failure over silent degradation | meta-alarm / page-semantics standard; loud-failure pattern library | GH Actions watcher (already being converted to an importable pattern) | #49, #77 |
+| **Scaling** | budgets enforced broker-side | scale-trigger policy shape; queue semantics (once decided) | any concrete autoscaler wiring | #62, #63 |
+| **Secrets** | agent holds no connector credentials | inventory + rotation standard; naming conventions | Secrets Manager provisioning pattern | #55, #136 |
+| **Registry & governance** | envelope hash pins what was approved | manifest schema (`AgentManifest`); catalog lifecycle states | catalog index; cost rollup | #56, #57, #58 |
+| **Lifecycle / pipeline** | complete teardown must exist | `consumer-image-contract.md`; manifest-driven provisioning obligations | the pipeline + CDK stacks | #69 |
 
 Blank floor cells mean the part has no non-negotiable slice of its own — its obligations come from
 the contracts it participates in.
@@ -71,23 +71,23 @@ An issue is well-scoped under this doctrine when it answers four questions:
    (`VaultSource`, the sandbox-provider verbs, the channel adapter). Instance bindings (a table
    name, a model id, a Fargate schedule) appear *only* on the reference side of that seam.
 4. **What does the "Do NOT" guard?** The strongest guard is the seam itself: "do NOT let the
-   contract reference the binding" (e.g. sa#69's "the schema is a data contract, not a file
+   contract reference the binding" (e.g. the memory record schema's "the schema is a data contract, not a file
    format" is the genre done right).
 
-The practical payoff is the SDK (#106): the installable package is, almost by definition, *the
+The practical payoff is the SDK: the installable package is, almost by definition, *the
 floor + the contracts + whichever reference implementations a consumer opts into*. Anything that
 can't say which tier it's in doesn't know whether it ships in the package, ships as an example, or
 doesn't ship at all.
 
 ## Repo topology — when the tiers become repos
 
-Decided 2026-07-08 (recorded on sa#106 and sa#3). The tiers eventually become the org layout:
+Decided 2026-07-08. The tiers eventually become the org layout:
 this repo stays the core — floor + contracts + conformance harness + **the** broker (which never
 moves out, per the exception above) — and reference implementations live in sibling repos that
 depend on the published SDK and pass its conformance suite, each doubling as the worked example
 of a compliant implementation.
 
-**The split is gated on the SDK (#106), not before.** Three reasons a split today costs instead
+**The split is gated on the SDK, not before.** Three reasons a split today costs instead
 of pays: there is no installable artifact yet, so a satellite would have to vendor the base or
 path-depend on a sibling checkout — violating the decoupling discipline the split exists to
 enforce; the contracts are pre-1.0 and actively churning, and a monorepo makes a schema change one
@@ -111,4 +111,4 @@ today); a live consumer agent already models the consumer-repo side.
   envelope knob decides its strictness.
 - `consumer-image-contract.md`, `core/RUNNER-CONTRACT.md` — the in-repo exemplars of the genre.
 - `broker/TAINT.md` — the floor standard referenced by the sweep.
-- sa#106 (installable SDK) — the packaging boundary this taxonomy feeds.
+- The installable SDK — the packaging boundary this taxonomy feeds.

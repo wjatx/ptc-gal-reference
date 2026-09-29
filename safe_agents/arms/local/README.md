@@ -1,6 +1,6 @@
-# Local / Mac arm (sa#39) — confined agent + broker box + DynamoDB Local
+# Local / Mac arm — confined agent + broker box + DynamoDB Local
 
-A working prototype of the **local/edge arm** in the **#98 separate-broker topology**, realized
+A working prototype of the **local/edge arm** in the **separate-broker topology**, realized
 locally as Podman containers on a private network, with the broker backed by **DynamoDB Local**
 (the same `DynamoStore` code that runs on AWS):
 
@@ -17,13 +17,13 @@ locally as Podman containers on a private network, with the broker backed by **D
 > idempotency dedup are genuinely tested. `STORE=memory` falls back to in-process fakes.
 
 This validates three things at once:
-- **The local arm's confinement (#39).** A container is a netns + fs/pid isolation, so it is the
+- **The local arm's confinement.** A container is a netns + fs/pid isolation, so it is the
   local equivalent of the RHEL/EC2 `agent-ns`. The agent container blackholes its default route
   and keeps only a route to the broker — a clean network boundary (no `host.containers.internal`
   hack), the honest local mirror of "agent box can only reach the broker box."
-- **The #98 separate-broker topology.** Two containers on a private network = two boxes. On AWS
+- **The separate-broker topology.** Two containers on a private network = two boxes. On AWS
   this becomes two EC2 instances with the `brokerRole`/`agentRole` split; here it's two containers
-  in the podman VM. The broker image is the same shape the **Fargate arm (#36)** needs (broker
+  in the podman VM. The broker image is the same shape the **Fargate arm** needs (broker
   sidecar container), so the artifact transfers.
 - **Both broker surfaces.** The confined agent reaches the broker for **model inference** (`:8443`,
   CONNECT proxy) **and** **brokered tool calls** (`:8080`, the `BrokerRuntime`) — the agent asks,
@@ -113,11 +113,11 @@ run; the brokered `github.whoami` returns the real GitHub login, confined agent 
 - **Connector → real**: `GitHubConnector` (`github.whoami` → `GET /user` with the broker-injected
   token); the agent gets only `{login}` and can't reach `api.github.com` directly.
 
-## Deferred (remaining for #39 + #98)
+## Deferred
 
 - **launchd** schedule driver + local SQLite/JSONL run-record fallback (the agent's element-5
   run-record; documented not-tamper-evident gap until an off-device audit sync exists).
 - **Audit-on-connector-failure** + thread-safe sink (see the filed broker-hardening follow-up) — a
   failed real connector call should emit `outcome="failed"` and return a clean deny, not a 500.
 - The **two-box AWS deploy** (brokerRole/agentRole on separate EC2 boxes, real DynamoDB + an
-  S3-Object-Lock audit sink) is the live G9 for #98 — this local arm is its high-fidelity reference.
+  S3-Object-Lock audit sink) is the live target — this local arm is its high-fidelity reference.

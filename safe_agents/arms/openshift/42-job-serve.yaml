@@ -36,7 +36,7 @@ spec:
           env:
             - { name: BROKER_STORE, value: sqlite }
             - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
-            # The #203 split — READ-ONLY here too, and that is free strengthening
+            # The maker/checker split — READ-ONLY here too, and that is free strengthening
             # rather than a requirement of this phase. The serving broker runs
             # BROKER_GRANT_LOAD=read, which is get_grant only and never a write,
             # so it has no business holding write access to the grant space. It
@@ -47,13 +47,13 @@ spec:
             - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
             - { name: BROKER_SECRETS, value: dir }
             - { name: BROKER_SECRETS_DIR, value: /run/connector-secrets }
-            # The #310 split. Its own mount, and this is the ONLY leg that gets
+            # The audit-tape partition. Its own mount, and this is the ONLY leg that gets
             # it read-write — the tape records brokered calls, and this is the
             # only leg that makes any. Note what that does and does not buy:
             # a ceremony leg can no longer forge or erase these records, but the
             # broker itself still can, and the unkeyed chain would re-verify
             # clean afterwards. Defending the tape against its own writer needs
-            # off-device append-only durability, not a mount (#310).
+            # off-device append-only durability, not a mount.
             - { name: BROKER_AUDIT_PATH, value: /var/lib/broker-audit/audit.jsonl }
             - { name: BROKER_GRANT_LOAD, value: read }
             - name: BROKER_HMAC_KEY

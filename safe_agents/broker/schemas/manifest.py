@@ -1,4 +1,4 @@
-"""AgentManifest schema — the broker-facing view of an agents/<name>.yaml (sa#113).
+"""AgentManifest schema — the broker-facing view of an agents/<name>.yaml.
 
 The single typed source of truth for the broker-facing half of the manifest —
 `core/manifest-schema.md`'s "envelope + broker blocks". Living in `broker.schemas`
@@ -47,7 +47,7 @@ class AgentManifest(BaseModel):
     budgets: Optional[Budgets] = None
     connectors: list[str] = []  # connector NAMES only, e.g. ["github"]; resolution is P2
 
-    # -- Consumer-owned ToolOp classifications (#171) -------------------------
+    # -- Consumer-owned ToolOp classifications -------------------------
     # The per-agent tool-operation table: each op's effect/external/reversible/egress_arg
     # classification travels WITH the agent, not in a base global. build_runtime builds a
     # ToolOpTable from this list and the broker resolves every call against it — so a
@@ -57,13 +57,13 @@ class AgentManifest(BaseModel):
     # copy in; it is NEVER consulted at request time. Classifications are code/manifest-
     # resident facts — the model cannot assert its 'send' is really a 'draft'. Duplicate
     # (tool, op) keys are rejected at load (a table with two verdicts for one op is
-    # ambiguous). Defaults empty for back-compat with the pre-#171 blocks above.
+    # ambiguous). Defaults empty for back-compat with the pre-ToolOp-table blocks above.
     tool_ops: list[ToolOp] = []
 
-    # -- Counter period — the time-scale knob (#212) ---------------------------
+    # -- Counter period — the time-scale knob ---------------------------
     # The bucket size every budget cap and evidence counter for this agent is
     # scoped to (enforcement.scoped_counter_key). Default "utc-day" is
-    # byte-for-byte the pre-#212 key format. The period is authority-shaping (it
+    # byte-for-byte the pre-counter-period key format. The period is authority-shaping (it
     # scopes budgets and evidence windows), so it lives HERE — image-baked,
     # never store-mutable, and deliberately OUTSIDE Envelope so declaring the
     # default never churns the envelope hash. Ceremony readers name the same
@@ -71,30 +71,30 @@ class AgentManifest(BaseModel):
     # evidence — failing toward less authority, never a wrong sum.
     counter_period: CounterPeriod = "utc-day"
 
-    # -- Consumer-supplied connector implementations + secret mapping (sa#141) --
+    # -- Consumer-supplied connector implementations + secret mapping --
     # connector_providers: connector name → dotted provider path ("pkg.module:ClassName").
     # Honored ONLY from the image-baked manifest file — never from any store-loaded
     # artifact (the Envelope store loads an Envelope, which has no provider field).
     # connector_secrets: connector name → Secrets Manager secret LEAF, overriding the
     # default leaf == tool-name mapping. Leaf names only — never secret VALUES, and
     # never a full secret id. When the broker runs with BROKER_SECRET_PREFIX set, the
-    # value is still prefixed to ``<prefix>/connectors/<value>`` (sa#164) — so declare
+    # value is still prefixed to ``<prefix>/connectors/<value>`` — so declare
     # a bare leaf (e.g. "track-feed-token"), not a pre-prefixed path. Keeping it a leaf
     # keeps the manifest env-agnostic and inside the ``<prefix>/connectors/*`` IAM grant.
     connector_providers: dict[str, str] = {}
     connector_secrets: dict[str, str] = {}
 
-    # -- Per-connector credential-resolution strategy (#173) -------------------
+    # -- Per-connector credential-resolution strategy (#79) -------------------
     # connector_auth: connector tool name → ConnectorAuth (strategy + params). The
     # broker compiles this into a per-tool CredentialProvider and resolves the LIVE
     # credential at execute time — the agent still never sees it. An absent entry
-    # means `static_secret`, so the empty block is byte-for-byte the pre-#173
+    # means `static_secret`, so the empty block is byte-for-byte the original
     # behavior (fetch the `connector_secrets` leaf and hand it to the connector).
     # The strategy catalog is base-owned and closed (an enum discriminator, not an
     # import path) — nothing store-loaded can inject a resolution strategy.
     connector_auth: dict[str, ConnectorAuth] = {}
 
-    # -- Per-capability IAM scoping (#175) -------------------------------------
+    # -- Per-capability IAM scoping -------------------------------------
     # capability_iam: connector tool name → the minimal IAM (actions + resource ARNs)
     # that capability runs with. Consumed by the DEPLOY (infra/lib/, CDK), which
     # provisions a role scoped to exactly this and trusting the broker identity; the
@@ -105,7 +105,7 @@ class AgentManifest(BaseModel):
     # consumer fills it; nothing store-loaded can inject a role or a scoping.
     capability_iam: dict[str, CapabilityIam] = {}
 
-    # -- MCP tool-registry namespace declarations (#174) -----------------------
+    # -- MCP tool-registry namespace declarations -----------------------
     # mcp_servers: server_id → the image-baked declaration of that server's tool
     # namespace and per-tool structured_output trust. This is the FIRST of the
     # two-key admission: it pre-declares which (server_id, tool_name) pairs a
@@ -165,7 +165,7 @@ class AgentManifest(BaseModel):
 
     @model_validator(mode="after")
     def _capability_iam_pairs_with_assumed_role(self) -> "AgentManifest":
-        """A declared IAM scope must be assumed by an `assumed_role` strategy (#175).
+        """A declared IAM scope must be assumed by an `assumed_role` strategy.
 
         `capability_iam` is inert without the strategy that assumes the provisioned
         role: a scope no credential strategy assumes is dead config, and a silent
@@ -187,7 +187,7 @@ class AgentManifest(BaseModel):
 
     @model_validator(mode="after")
     def _mcp_spawn_wiring_is_coherent(self) -> "AgentManifest":
-        """Enforce the native-construction invariants at load (fail at build, #221).
+        """Enforce the native-construction invariants at load (fail at build).
 
         (a) A constructible server (one declaring `command` OR `url` — spawned
         stdio child or connected streamable-http session, both natively built
@@ -290,7 +290,7 @@ class AgentManifest(BaseModel):
 
     @model_validator(mode="after")
     def _mcp_declarations_are_complete(self) -> "AgentManifest":
-        """Enforce the two manifest-side MCP invariants at load (fail at build, #174).
+        """Enforce the two manifest-side MCP invariants at load (fail at build).
 
         (a) Two-key completeness: every declared `(server_id, tool_name)` must
         have a matching `ToolOp` in `tool_ops` with `tool == server_id`,

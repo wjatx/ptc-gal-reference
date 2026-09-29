@@ -1,13 +1,13 @@
-"""release_cli.py — release ONE held intent from a terminal (#301).
+"""release_cli.py — release ONE held intent from a terminal.
 
-The out-of-band approval seam has existed since sa#176, but every caller of it was
+The out-of-band approval seam has existed since the owner channel, but every caller of it was
 a cloud path: an owner-adapter EventTrigger through a channels drain. On a laptop
 there is no channel, so a held call was held until its TTL expired and the golden
 path dead-ended at the exact moment the control worked. This is the local arm of
 that seam.
 
 **Why this lives base-side.** The same reasoning that put the MCP mouth in the
-broker rather than in the product wrapper [ruling: maintainer, 2026-07-25, #283]:
+broker rather than in the product wrapper [ruling: maintainer, 2026-07-25]:
 releasing a held call is a broker operation on broker state, and a consumer that
 reimplemented it would be a second writer of the thing the broker owns. The
 wrapper contributes the product
@@ -25,7 +25,7 @@ ratifier would be the same person flipping a flag, which GAL §8 already refuses
 call two parties. See POLARITY below, which that ruling requires be stated out loud.
 
 **POLARITY: act-safe.** Choosing a one-command release IS choosing a safe-default
-polarity, and #308 is right that shipping one silently is the failure. The wrapper assumes
+polarity, and shipping one silently is the failure. The wrapper assumes
 the costlier outcome is the BLOCKED call, not the executed one: a developer whose
 tool call is stuck has a broken product, and a coding agent sits far closer to
 act-safe than the trading agent the doctrine was sharpened on. A ceremony here

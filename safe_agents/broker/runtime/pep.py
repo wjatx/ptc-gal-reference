@@ -96,13 +96,13 @@ from .doer import ConnectorExecutionError, Doer
 
 logger = logging.getLogger(__name__)
 
-# sa#137 — the query-egress-byte counter is a pure per-period accumulator; the budget
+# The query-egress-byte counter is a pure per-period accumulator; the budget
 # is enforced at the PIP read-gate (read_counter >= query_egress_budget → deny the next
 # read), not by this counter's cap. An effectively-unbounded finite cap keeps
 # try_increment_counter atomic (and DynamoDB-Number-representable) without ever refusing.
 _QUERY_BYTES_COUNTER_CAP = 1e18
 
-# #184 — the error-budget accumulator (Σ error_prob × blast_radius) is a pure
+# The error-budget accumulator (Σ error_prob × blast_radius) is a pure
 # per-period meter; the BINDING bound is the PDP's tolerance comparison
 # (read_counter >= error_budget_tolerance → the next write escalates/denies), not this
 # counter's cap. An effectively-unbounded finite cap keeps try_increment_counter atomic
@@ -110,13 +110,13 @@ _QUERY_BYTES_COUNTER_CAP = 1e18
 # _QUERY_BYTES_COUNTER_CAP.
 _ERROR_BUDGET_COUNTER_CAP = 1e18
 
-# #193 — the reject CAS-win sentinel, imported from approval.engine (its source of
+# The reject CAS-win sentinel, imported from approval.engine (its source of
 # truth): REJECTED_BY_OWNER_REASON is the ONLY reason reject() returns when this
 # caller won the compare-and-set; every not-found / expired / not-pending / foreign
 # path returns a distinct string.
 _REJECT_CAS_WIN_REASON = REJECTED_BY_OWNER_REASON
 
-# #193 Phase 6c — the flag ceremony's success sentinel and idempotency marker.
+# The flag ceremony's success sentinel and idempotency marker.
 # flag_intent never executes, so like reject_intent it always returns executed=False;
 # FLAGGED_BY_OWNER_REASON is the reason string on a clean flag (a marker-claim win),
 # distinct from every unknown / foreign / non-executed / already-flagged refusal.
@@ -137,7 +137,7 @@ _FLAG_MARKER_CAP = 1.0
 
 
 def _utc_bucket_of(ts: str, period: CounterPeriod = "utc-day") -> str:
-    """Render an ISO-8601 timestamp as the UTC period-bucket key segment (#212).
+    """Render an ISO-8601 timestamp as the UTC period-bucket key segment.
 
     Used by flag_intent to back-write false_action on the ORIGINAL op's period
     (from the stored intent's executed/creation ts) rather than the period the
@@ -168,14 +168,14 @@ class AgentRequest:
     tool: str
     op: str
     args: Any
-    # #184 — the RAW confidence artifact the agent attached to this proposed action:
+    # The RAW confidence artifact the agent attached to this proposed action:
     # a dict off the HTTP body, or an already-typed ConfidenceArtifact in tests.
     # Validated by handle_request (never trusted as-shaped); a malformed artifact is
     # a loud deny, not a silent "no artifact". None = the agent supplied none.
     confidence: Any = None
     # Caller-supplied deduplication key ONLY. Replay with the same key returns the
-    # stored outcome without re-executing. Pass None to skip deduplication. Since
-    # sa#136 this does NOT influence turn identity — the broker owns the turn
+    # stored outcome without re-executing. Pass None to skip deduplication. This
+    # does NOT influence turn identity — the broker owns the turn
     # boundary (see BrokerRuntime._session_turn), so an agent cannot vary this key
     # to shed accumulated taint.
     idempotency_key: str | None = None
@@ -239,7 +239,7 @@ class BrokerRuntime:
         the safe-default polarity is per-agent config, not a base invariant.
     envelope_hash:
         The real content-hash (``sha256:...``) of the risk envelope in force for
-        this principal — ``compute_envelope_hash(manifest.envelope)`` (sa#122).
+        this principal — ``compute_envelope_hash(manifest.envelope)``.
         Required (no default): a runtime must know which envelope it is deciding
         under. Stamped into every AuditRecord so each record is attributable to a
         specific envelope, and compared against each grant's ``envelopeHash`` at
@@ -247,14 +247,14 @@ class BrokerRuntime:
     counter_cap:
         Hard budget cap applied by enforce() when decrementing the counter.
     trusted_read_sources:
-        The consumer's ``Envelope.trusted_read_sources`` (sa#137) — source ids
+        The consumer's ``Envelope.trusted_read_sources`` — source ids
         (``connector:{tool}.{op}``) whose external reads are trusted. Consulted
         HERE for the taint-skip half: a trusted external read does NOT self-taint
         the turn. The PIP consults the SAME list for the read rung-gate half; both
         derive from one envelope list, so there is no second source of truth.
         Defaults to empty — every external read untrusted (the safe default).
     confidence_knob:
-        The consumer's ``Envelope.confidence`` (#184), extracted at build time (the
+        The consumer's ``Envelope.confidence``, extracted at build time (the
         ``approval_queue`` precedent). None = OFF: no below-bar gate, no error-budget
         metering, an attached artifact accepted-but-ignored. When set, its
         ``error_budget_tolerance`` drives the per-op per-UTC-day error-budget draw
@@ -265,9 +265,9 @@ class BrokerRuntime:
         structured breach line still fires). A raising callback never fails the
         request (the broker's own decision already stands).
     counter_period:
-        The manifest-named counter period (#212) every scoped_counter_key this
+        The manifest-named counter period every scoped_counter_key this
         runtime derives buckets at — caps, egress, error budget, evidence labels,
-        flood keys. Default "utc-day" is byte-for-byte the pre-#212 key format.
+        flood keys. Default "utc-day" is byte-for-byte the original key format.
         Authority-shaping: comes from the image-baked AgentManifest only, never
         a store.
     """
@@ -295,7 +295,7 @@ class BrokerRuntime:
     ) -> None:
         self._principal = principal
         self._grants = grants
-        # #171 — the per-agent ToolOp table, compiled from the consumer manifest by
+        # The per-agent ToolOp table, compiled from the consumer manifest by
         # build_runtime. The PEP resolves every (tool, op) against THIS table, never a
         # base global: a consumer-defined op gates identically regardless of its name.
         self._optable = optable
@@ -313,21 +313,21 @@ class BrokerRuntime:
         # ever read from a call.
         self._sub_grant_store = sub_grant_store
         self._trusted_read_sources = trusted_read_sources or []
-        # sa#160 approval-queue de-amplification knob. None = OFF (byte-identical
+        # Approval-queue de-amplification knob. None = OFF (byte-identical
         # to the pre-knob hold path — no dedup, no flood cap).
         self._approval_queue = approval_queue
-        # #184 calibrated-uncertainty knob — envelope.confidence extracted at build
+        # Calibrated-uncertainty knob — envelope.confidence extracted at build
         # time (the _approval_queue precedent). None = OFF: no below-bar gate, no
         # error-budget metering, an attached artifact is accepted-but-ignored (a
         # byte-identical no-op path). The signal seam is where the Phase-3 evaluator
         # subscribes to breach emissions; default None is log-only.
         self._confidence_knob = confidence_knob
         self._on_demotion_signal = on_demotion_signal
-        # #212 — the manifest-named counter period. Every scoped_counter_key this
+        # The manifest-named counter period. Every scoped_counter_key this
         # PEP derives (caps, egress, error budget, evidence labels, flood keys)
-        # buckets at THIS period; default "utc-day" is byte-for-byte pre-#212.
+        # buckets at THIS period; default "utc-day" is byte-for-byte the original.
         self._counter_period: CounterPeriod = counter_period
-        # sa#136 — the broker-held turn boundary. One TurnContext per principal,
+        # The broker-held turn boundary. One TurnContext per principal,
         # threaded across every /call, lazily created by _session_turn(). The agent
         # supplies neither its id nor its rollover signal (see new_turn()).
         self._current_turn: TurnContext | None = None
@@ -379,7 +379,7 @@ class BrokerRuntime:
 
     def new_turn(self) -> None:
         """Roll the broker-held turn boundary — discard accumulated taint so the
-        NEXT request starts a fresh turn (sa#136).
+        NEXT request starts a fresh turn.
 
         Broker/harness-owned control: it is deliberately wired to NO agent-facing
         HTTP route (broker_server.py serves only /registry and /call), so the agent
@@ -400,7 +400,7 @@ class BrokerRuntime:
         The channels drain worker (channels/DRAIN.md) uses it to feed an
         accepted envelope's provenance chain into the SAME turn the receiver
         will act on (``ingest_chain`` before the first ``handle_request``), so
-        ingest and action share one broker-owned turn (sa#136).
+        ingest and action share one broker-owned turn.
         """
         return self._session_turn()
 
@@ -426,12 +426,12 @@ class BrokerRuntime:
 
     def _session_turn(self) -> TurnContext:
         """Return the broker-held TurnContext for this principal, lazily creating
-        one with a broker-minted turn id (sa#136).
+        one with a broker-minted turn id.
 
         The load-bearing change: across separate /call requests the runtime threads
         ONE TurnContext (taint accumulates), and its turn id is minted HERE — never
         derived from the agent-supplied idempotency_key. A successful external read
-        in one /call self-taints this shared context (the sa#134 hook in _executor),
+        in one /call self-taints this shared context (the taint self-ingestion hook in _executor),
         so a tainted external write in a LATER /call escalates to require_approval.
         The turn rolls over only via new_turn() (broker/harness-owned), never on
         anything the agent controls.
@@ -453,9 +453,9 @@ class BrokerRuntime:
         return self._current_turn
 
     def _surface_quarantined_intent(self, exc: QuarantinedIntentError, op: str) -> None:
-        """Loud, recorded surfacing of a tampered intent row (#349).
+        """Loud, recorded surfacing of a tampered intent row.
 
-        Mirrors the sa#124 grant-quarantine surfacing: one ERROR log + one
+        Mirrors the loud grant-quarantine surfacing: one ERROR log + one
         tamper-evident audit record, then the caller refuses. The tampered
         bytes were never parsed, so there are no trusted stored coordinates —
         the record carries the runtime's own principal, the seam that hit the
@@ -514,7 +514,7 @@ class BrokerRuntime:
     def _quarantined_intent_result(
         self, exc: QuarantinedIntentError, op: str
     ) -> ExecutionResult:
-        """Surface a quarantined intent and return the refusal (#349) — the
+        """Surface a quarantined intent and return the refusal — the
         action does NOT run; never silently dropped, never auto-repaired."""
         self._surface_quarantined_intent(exc, op)
         return ExecutionResult(
@@ -524,7 +524,7 @@ class BrokerRuntime:
         )
 
     def _reject_foreign_intent(self, intent_id: str) -> ExecutionResult | None:
-        """Guard an out-of-band action against a DIFFERENT principal's intent (sa#176).
+        """Guard an out-of-band action against a DIFFERENT principal's intent.
 
         The intent store is not principal-partitioned (store.py keys only on
         INTENT#{intent_id}), and the owner types an arbitrary intent_id. Without
@@ -555,7 +555,7 @@ class BrokerRuntime:
         return intent.materializedRequest.principal == self._principal
 
     def _foreign_intent_result(self, intent, intent_id: str) -> ExecutionResult | None:
-        """Pure foreign-principal check over an already-fetched intent (sa#176).
+        """Pure foreign-principal check over an already-fetched intent.
 
         Split from _reject_foreign_intent so reject_intent can fetch the intent ONCE
         (it also needs the stored coordinates to label its evidence counters) and reuse
@@ -570,7 +570,7 @@ class BrokerRuntime:
         return None
 
     def describe_intent(self, intent_id: str) -> IntentView | None:
-        """Describe a held Intent so a human can SEE it before releasing it (#301).
+        """Describe a held Intent so a human can SEE it before releasing it.
 
         WYSIWYE has two halves and only the execution half was reachable: approve()
         runs the stored bytes, but nothing let an approval surface READ them, so
@@ -587,7 +587,7 @@ class BrokerRuntime:
         executes nothing and transitions nothing — calling it on a pending intent
         leaves it pending.
 
-        A tampered row (#349) surfaces loudly and returns None — the tampered
+        A tampered row surfaces loudly and returns None — the tampered
         bytes are never parsed, so there is nothing trustworthy to show an
         approver, and rendering them would set up exactly the tampered release
         the HMAC exists to refuse.
@@ -616,7 +616,7 @@ class BrokerRuntime:
         )
 
     def approve_intent(self, intent_id: str, approved_by: str) -> ExecutionResult:
-        """Release a held Intent after an authenticated owner approves it out-of-band (sa#176).
+        """Release a held Intent after an authenticated owner approves it out-of-band.
 
         The sanctioned out-of-band-approval seam: the channels drain worker calls
         this instead of reaching into the runtime's privates, so the boundary
@@ -656,7 +656,7 @@ class BrokerRuntime:
         ExecutionResult
             executed=True on success; executed=False with a rejection_reason when
             the intent is missing, expired, already actioned, frozen for a
-            different principal, quarantined (#349: the stored bytes failed
+            different principal, quarantined (the stored bytes failed
             HMAC verification — a store rewrite between hold and release
             refuses instead of executing; the Doer is never reached), or when
             release-time revalidation refused ("release refused: …", #9).
@@ -712,17 +712,17 @@ class BrokerRuntime:
 
             On allow the connector runs and the audit footprint mirrors the inline
             _executor's (outcome "executed" on success, "failed" before re-raising a
-            ConnectorExecutionError) plus the #198 receipts: intentId +
+            ConnectorExecutionError) plus the approval receipts: intentId +
             storedCallDigest bind the release to the frozen intent, and approvedBy is
             stamped here (SCHEMAS.md §4 always claimed it was "copied into
-            AuditRecord.approvedBy at execution time"; before #198 this path never
+            AuditRecord.approvedBy at execution time"; before approval receipts this path never
             passed it — a latent gap-A sub-bug).
 
             On anything stricter the release is REFUSED: a deny/abstain audit record
             names the reason beside the approver and the intent, and
             ReleaseRefusedError tells approve() to land the intent in "refused".
             """
-            # #198 — recomputed INDEPENDENTLY from the stored bytes (never copied off
+            # Recomputed INDEPENDENTLY from the stored bytes (never copied off
             # the hold record): hold-side == release-side proves executed==approved.
             stored_digest = hash_stored_call(stored_call)
 
@@ -731,7 +731,7 @@ class BrokerRuntime:
                 try:
                     doer_result = self._doer.execute(call, effective)
                 except ConnectorExecutionError as exc:
-                    # #198 — a failed attempt still carries its approval binding (no
+                    # A failed attempt still carries its approval binding (no
                     # result_digest: there is no result). An auditor must see WHICH
                     # approval led to a failed attempt.
                     emit(
@@ -761,10 +761,10 @@ class BrokerRuntime:
                     approved_by=approved_by,
                     intent_id=intent_id,
                     stored_call_digest=stored_digest,
-                    # #198 effect receipt — broker-written digest of what the world returned
+                    # Effect receipt — broker-written digest of what the world returned
                     result_digest=hash_args(doer_result.result),
                 )
-                # #193 — observations, approve-release path. An in-loop principal's acting
+                # Observations, approve-release path. An in-loop principal's acting
                 # ops route require_approval → this release, and the inline executor's
                 # observations meter never sees them; without this increment such a
                 # principal could never accumulate the evidence that promotes it. Uses the
@@ -854,11 +854,11 @@ class BrokerRuntime:
             return approve(intent_id, approved_by, self._intent_store, executor=_exec)
         except QuarantinedIntentError as exc:
             # A rewrite that lands BETWEEN the foreign-check read and the
-            # engine's own verify-then-parse read still refuses here (#349).
+            # engine's own verify-then-parse read still refuses here.
             return self._quarantined_intent_result(exc, op="approve")
 
     def reject_intent(self, intent_id: str, rejected_by: str) -> ExecutionResult:
-        """Reject a held Intent on an authenticated owner's "no" — executes NOTHING (sa#176).
+        """Reject a held Intent on an authenticated owner's "no" — executes NOTHING.
 
         The sibling of approve_intent for the /approve <id> no path. It delegates to
         the engine's reject(), which transitions the intent to the terminal
@@ -876,7 +876,7 @@ class BrokerRuntime:
                 return foreign
             result = reject(intent_id, rejected_by, self._intent_store)
         except QuarantinedIntentError as exc:
-            # #349 — a tampered row is not transitioned, not labeled, not
+            # A tampered row is not transitioned, not labeled, not
             # parsed: refuse loudly and leave the evidence in place.
             return self._quarantined_intent_result(exc, op="reject")
         # Label the evidence counters ONLY when this call actually won the reject CAS
@@ -889,7 +889,7 @@ class BrokerRuntime:
             # coordinates (the intent exists, terminally rejected, materializedRequest
             # intact); an unlabeled real owner "no" would drop evidence and fail toward
             # MORE authority. Only skip labeling if the re-fetch is somehow still None
-            # — or quarantined (#349: the rejection stands, but a tampered row's
+            # — or quarantined (the rejection stands, but a tampered row's
             # coordinates must not label anything; surface and skip).
             try:
                 labeled = intent or self._intent_store.get_intent(intent_id)
@@ -939,7 +939,7 @@ class BrokerRuntime:
         return result
 
     def flag_intent(self, intent_id: str, flagged_by: str) -> ExecutionResult:
-        """Flag an already-EXECUTED intent as reviewed-wrong — writes false_action (#193 Phase 6c).
+        """Flag an already-EXECUTED intent as reviewed-wrong — writes false_action.
 
         The owner's third out-of-band verb (beside approve/reject): "/flag <intent_id>"
         on an op that already ran but, on review, should not have. It is the FIRST writer
@@ -948,7 +948,7 @@ class BrokerRuntime:
         flagged op makes the acting grant HARDER to promote (easier to be demoted than to
         overcome the safeguards).
 
-        Unlike the #193 observations/human_override label writes — which guard an execution
+        Unlike the observations/human_override label writes — which guard an execution
         or rejection path and so must log-never-gate — the counter write HERE is the PRIMARY
         effect. A failed write therefore returns a failed result and is NOT swallowed. It
         never touches observations (the op was counted when it executed) and never decrements
@@ -987,7 +987,7 @@ class BrokerRuntime:
         try:
             intent = self._intent_store.get_intent(intent_id)
         except QuarantinedIntentError as exc:
-            # #349 — tampered coordinates must not key a false_action write.
+            # Tampered coordinates must not key a false_action write.
             return self._quarantined_intent_result(exc, op="flag")
         foreign = self._foreign_intent_result(intent, intent_id)
         if foreign is not None:
@@ -1059,11 +1059,11 @@ class BrokerRuntime:
                 rejection_reason=f"flag counter write failed: {exc}",
             )
 
-        # PII-safe attribution (the sa#153 / drain log discipline): the authenticated
+        # PII-safe attribution (the log-metric / drain log discipline): the authenticated
         # flagger is NOT persisted on the intent (a flag writes evidence, not state), so
         # a structured log is the only record of WHO flagged. flagged_by is digested — an
         # owner identity is an email/handle — never emitted in clear; the bucket key
-        # locates the evidence write. A full AuditRecord for the reject/flag side is #200.
+        # locates the evidence write. A full AuditRecord for the reject/flag side is #82.
         logger.info(
             json.dumps(
                 {
@@ -1084,7 +1084,7 @@ class BrokerRuntime:
     def _emit_demotion_signal(
         self, call: BrokeredCall, spent: float, tolerance: float
     ) -> None:
-        """Emit the error-budget-breach DemotionSignal (#184).
+        """Emit the error-budget-breach DemotionSignal.
 
         Fires once when a write's draw steps the per-op per-UTC-day error budget
         across its tolerance. The base only EMITS — it never applies a demotion; the
@@ -1103,7 +1103,7 @@ class BrokerRuntime:
             ),
             ts=datetime.datetime.now(datetime.UTC).isoformat(),
         )
-        # sa#153 structured, PII-safe log-metric surface — the approval_queue_flood
+        # Structured, PII-safe log-metric surface — the approval_queue_flood
         # precedent: principal id + action class + period + a numeric cause, never args
         # or payload content.
         logger.error(
@@ -1141,7 +1141,7 @@ class BrokerRuntime:
             Optional explicit TurnContext. When not supplied (the production /call
             path) the runtime threads its own broker-held session turn — see
             _session_turn — so taint accumulates across every /call and the turn id
-            is broker-minted, never derived from the request (sa#136). Supply an
+            is broker-minted, never derived from the request. Supply an
             explicit context to drive one turn deterministically (tests); when
             supplied it wins over the session turn.
         ingested_sources:
@@ -1153,7 +1153,7 @@ class BrokerRuntime:
         BrokerResponse
             The broker's reply. Contains no credential value.
         """
-        # sa#136 — broker-owned turn identity. Production (/call) passes no
+        # Broker-owned turn identity. Production (/call) passes no
         # turn_context, so the runtime threads its OWN broker-held session context
         # across every /call for this principal — taint accumulates, and the turn id
         # is broker-minted (in _session_turn), decoupled from the agent-supplied
@@ -1173,9 +1173,9 @@ class BrokerRuntime:
         # Step 2 — manifest lookup: reject ops absent from the manifest immediately.
         entry = self._optable.entry(request.tool, request.op)
         if entry is None:
-            # #281 — RECORD it. This return precedes the PDP, and before the
+            # RECORD it. This return precedes the PDP, and before the
             # gateway landed it wrote nothing at all: a refusal with no line on
-            # the tape. That is the worse half of #281 and it correlates with the
+            # the tape. That is the worse half of the refusal-audit gap and it correlates with the
             # SAFEST configuration, because the missileer archetype keeps a
             # dangerous op out of the manifest entirely rather than denying it —
             # so the hardened manifest was the one whose refusals were invisible.
@@ -1198,10 +1198,10 @@ class BrokerRuntime:
             )
             return BrokerResponse(decision_kind="deny", reason=reason)
 
-        # #184 — validate the raw confidence artifact BEFORE it can reach the PDP or
+        # Validate the raw confidence artifact BEFORE it can reach the PDP or
         # the error-budget meter. The broker never trusts the agent-supplied shape.
         # Read via getattr: the duck-typed request contract consumers write against
-        # (channels/DRAIN.md receivers) predates #184 and does not carry the
+        # (channels/DRAIN.md receivers) predates the confidence artifact and does not carry the
         # attribute — an absent `confidence` is the same declaration as None.
         artifact: ConfidenceArtifact | None = None
         request_confidence = getattr(request, "confidence", None)
@@ -1240,12 +1240,12 @@ class BrokerRuntime:
         # Step 4 — initial PDP decision (pure, no I/O).
         initial_facts = self._pip(call)
 
-        # sa#124/#122 — a quarantined grant is treated as absent for the decision,
+        # A quarantined grant is treated as absent for the decision,
         # but the event must be LOUD: a silent fall-through to a normal deny would
         # be indistinguishable from an un-provisioned capability. Two distinct causes
         # flow through this single point, each carrying its own quarantine_reason:
-        #   - HMAC mismatch (sa#124): tampering, mis-seeded key, or key-rotation drift.
-        #   - envelope-hash mismatch (sa#122): the grant was issued under a different
+        #   - HMAC mismatch: tampering, mis-seeded key, or key-rotation drift.
+        #   - envelope-hash mismatch: the grant was issued under a different
         #     risk envelope than the one now in force.
         # Surface it HERE, exactly once, at the single initial read — NOT in
         # enforce()/fresh_facts, whose premise-revalidation re-read must stay silent
@@ -1267,7 +1267,7 @@ class BrokerRuntime:
                 args=call.args,
                 decision="deny",
                 outcome="denied",
-                envelope_hash=self._envelope_hash,  # real in-force envelope hash (sa#122)
+                envelope_hash=self._envelope_hash,  # real in-force envelope hash
                 reason=f"grant quarantined: {initial_facts.quarantine_reason}",
             )
 
@@ -1304,7 +1304,7 @@ class BrokerRuntime:
             try:
                 doer_result = self._doer.execute(brokered_call, effective)
             except ConnectorExecutionError as exc:
-                # #281 — a connector-side control that REFUSED is not a failure.
+                # A connector-side control that REFUSED is not a failure.
                 # `decision` stays as the PDP returned it (it did allow; saying
                 # otherwise would misreport the policy engine), and the outcome
                 # carries the distinction. `decision=allow, outcome=refused` is
@@ -1332,26 +1332,26 @@ class BrokerRuntime:
                 decision=effective.kind,
                 outcome="executed",
                 envelope_hash=self._envelope_hash,
-                # #198 effect receipt — broker-written digest of what the world returned
+                # Effect receipt — broker-written digest of what the world returned
                 result_digest=hash_args(doer_result.result),
             )
-            # sa#134 — broker-side taint self-ingestion. An external read pulls untrusted
+            # Broker-side taint self-ingestion. An external read pulls untrusted
             # content across a trust boundary; ingest a synthetic connector source into the
             # shared TurnContext so the NEXT op in this turn re-materializes taint at its own
             # handle_request entry (this call's decision is already made — no re-order). Scoped
             # to successful external reads; blanket-untrusted via the base trust_map (connector:
             # is not an internal: prefix, so it always taints). Fail-safe: over-tainting only
             # adds approvals. Cross-/call propagation is inert until broker-owned turn identity
-            # (sa#136) — each HTTP /call still gets a fresh ctx.
+            # — each HTTP /call still gets a fresh ctx.
             if brokered_call.manifest.external and brokered_call.manifest.effect == "read":
                 source_id = f"connector:{brokered_call.tool}.{brokered_call.op}"
-                # sa#137 — a read from a consumer-declared trusted source does NOT taint
+                # A read from a consumer-declared trusted source does NOT taint
                 # the turn: skip the self-ingest for it. Untrusted reads still taint
-                # (sa#134/136 preserved). Same envelope list the PIP's rung-gate reads —
+                # (self-ingest preserved). Same envelope list the PIP's rung-gate reads —
                 # one trusted_read_sources set consulted in both halves.
                 if source_id not in self._trusted_read_sources:
                     ctx.ingest_source(source_id, self._trust_map)
-                # sa#137 — meter the egress-arg bytes that actually crossed the wire so
+                # Meter the egress-arg bytes that actually crossed the wire so
                 # the PIP's per-period query_egress_budget gate sees cumulative spend on
                 # the NEXT read. Metered regardless of trust (trust gates taint, not
                 # egress). This is the SINGLE metered write for query bytes; the PIP only
@@ -1371,8 +1371,8 @@ class BrokerRuntime:
                             float(len(arg_val.encode("utf-8"))),
                             _QUERY_BYTES_COUNTER_CAP,
                         )
-            # #184 — error-budget metering. The SINGLE metered write for the error
-            # budget (Σ error_prob × blast_radius), placed here beside the sa#137
+            # Error-budget metering. The SINGLE metered write for the error
+            # budget (Σ error_prob × blast_radius), placed here beside the
             # query-bytes meter under the same discipline: the PEP is the sole writer,
             # the PIP only READS this counter for its breach fact. WRITES only — a read
             # carries no blast radius, so it does not draw the budget (the PDP rules are
@@ -1420,12 +1420,12 @@ class BrokerRuntime:
                 # is a caller/scheduler concern, not the evaluator's.
                 if spent >= tolerance and (spent - draw) < tolerance:
                     self._emit_demotion_signal(brokered_call, spent, tolerance)
-            # #193 — observations: one per successfully executed op, reads and writes
-            # both. Placed LAST — after the sa#134 taint self-ingest + sa#137/#184 meters
+            # Observations: one per successfully executed op, reads and writes
+            # both. Placed LAST — after the taint self-ingest + egress/budget meters
             # — so its (guarded) failure can never reorder or skip those side effects.
             # A label write must NEVER fail the execution path it labels (friction
             # doctrine: log, never gate). Unguarded, a counter fault here would turn an
-            # already-executed op into a reported failure, so enforce()/#148 records no
+            # already-executed op into a reported failure, so enforce() records no
             # idempotency outcome and the agent retries → double-executes an irreversible
             # side effect. The per-op scoped key keeps the count correct; enforce()'s
             # idempotency short-circuit runs BEFORE this executor, so a replay never
@@ -1517,7 +1517,7 @@ class BrokerRuntime:
             assert isinstance(effective, RequireApproval)
             aq = self._approval_queue
 
-            # sa#160 dedup: when on, hold under a CONTENT id so an identical
+            # Dedup: when on, hold under a CONTENT id so an identical
             # re-submission coalesces onto the same pending intent (no second
             # page). None dedup_id = today's ts-based hold, unchanged.
             dedup_id = None
@@ -1530,7 +1530,7 @@ class BrokerRuntime:
                     call, effective, self._intent_store, dedup_id=dedup_id
                 )
             except QuarantinedIntentError as exc:
-                # #349 — a tampered row squatting on the dedup id: never
+                # A tampered row squatting on the dedup id: never
                 # coalesce onto it (its content cannot be trusted equal) and
                 # never overwrite it (a fresh put would re-mint a valid HMAC
                 # over the attacker's slot — an auto-repair). Refuse the hold.
@@ -1549,7 +1549,7 @@ class BrokerRuntime:
                 return self._deny_intent_id_collision(call, exc)
             coalesced = approval.status == "coalesced"
 
-            # sa#160 flood alarm: count NEW holds per principal+op+UTC-day; past
+            # Flood alarm: count NEW holds per principal+op+UTC-day; past
             # the cap, raise an alarm but STILL hold — never shed (shedding under
             # flood is a polarity decision, kept consumer-side). Coalesced holds
             # are already de-amplified, so they do not draw the counter.
@@ -1569,7 +1569,7 @@ class BrokerRuntime:
                     flood_key, 1, float(aq.max_pending_per_op_day)
                 )
                 if is_flood(within_cap):
-                    # Structured, PII-safe alarm line (the sa#153 log-metric
+                    # Structured, PII-safe alarm line (the log-metric
                     # surface). No args, only principal id + op + cap.
                     logger.error(
                         json.dumps(
@@ -1595,11 +1595,11 @@ class BrokerRuntime:
                 # coalesced hold that IS the reason this record exists — the
                 # original hold's record carries the PDP's reason and the shared
                 # intentId joins them. A fresh hold now carries that reason instead
-                # of null, so the tape says what held the call (#300).
+                # of null, so the tape says what held the call.
                 reason=(
                     "approval-queue-coalesced" if coalesced else effective.reason
                 ),
-                # #198 approval binding: intentId always joins this hold to its
+                # Approval binding: intentId always joins this hold to its
                 # release; storedCallDigest only on a FRESH hold — a coalesced
                 # hold's frozen call is the EARLIER hold's, so its binding lives on
                 # that record and the shared intentId is the join.
@@ -1614,7 +1614,7 @@ class BrokerRuntime:
 
         # deny / abstain — no connector call; emit audit + return.
         reason = getattr(effective, "reason", None)
-        # #184 — put the confidence artifact on the tamper-evident tape when an abstain
+        # Put the confidence artifact on the tamper-evident tape when an abstain
         # carried one (the audited-artifact DoD clause). PII-safe: the numbers + the
         # method name only, never annotations or payload content.
         if effective.kind == "abstain" and call.confidence is not None:

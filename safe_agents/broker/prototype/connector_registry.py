@@ -1,4 +1,4 @@
-"""connector_registry.py — the by-name connector seam (broker-debaking P2, sa#113).
+"""connector_registry.py — the by-name connector seam (broker-debaking P2).
 
 The manifest carries connector NAMES only (`connectors: [github, alpaca, ...]`);
 this module is where a name resolves to a base connector implementation. Before
@@ -6,7 +6,7 @@ P2 the connectors were a hardcoded ``connectors = {...}`` dict inside
 ``build_runtime``; moving the map here is the "de-bake" — the runtime no longer
 holds the wiring, it asks the registry.
 
-**This is the ONE sanctioned injection seam (sa#141).** A manifest may supply its
+**This is the ONE sanctioned injection seam.** A manifest may supply its
 own connector implementation via ``connector_providers`` — a name → dotted provider
 path (``"pkg.module:ClassName"``) mapping consumed here through the ``providers``
 argument. Provider paths are honored ONLY from the image-baked manifest file: the
@@ -40,7 +40,7 @@ from safe_agents.connectors import (  # shared, from the SDK
 # manifest vocabulary (``connectors:`` list); the classes are the base
 # implementations. All are domain-invariant: github (a harmless already-proven
 # live capability), notify/ledger/search (shared connectors), and peer
-# (peer.publish — our own A2A transport to our own airlock, #172). Domain
+# (peer.publish — our own A2A transport to our own airlock). Domain
 # connectors like alpaca are NOT base — they are consumer-injected via
 # ``connector_providers`` (a consumer agent's broker image carries AlpacaConnector).
 _BASE_CONNECTORS: dict[str, Callable[[], Connector]] = {

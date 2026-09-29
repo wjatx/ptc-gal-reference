@@ -1,4 +1,4 @@
-"""sa#156 — live A2A smoke: the peer.publish SENDER path against the deployed airlock.
+"""Live A2A smoke: the peer.publish SENDER path against the deployed airlock.
 
 Opt-in: set PEER_PUBLISH_LIVE_SMOKE=1 with AWS credentials for the development
 account. Reuses the deployed `webhook-peer` airlock (already wired on the dev
@@ -8,16 +8,16 @@ resolution as `test_airlock_live.py`, so it needs no redeploy and no per-run wir
 What this proves that the inbound smoke does not: the OUTBOUND half. A signal
 built by `stamp_outbound` (broker-stamped provenance) and transported by the
 reference `PeerConnector` (pure transport) produces an envelope the LIVE airlock
-verifies, maps, and accepts as a peer sender — the real binding of the #156
+verifies, maps, and accepts as a peer sender — the real binding of the peer.publish
 sender path.
 
-Observability note (2026-07-09): since the drain worker went live (sa#155) it is
+Observability note (2026-07-09): since the drain worker went live it is
 the accepted queue's ESM consumer, so a test can no longer read the queue — the
 Lambda wins the race. The airlock's structured `channel_accepted` log event
 (keyed by event_id) is the observable that proves accept+enqueue. Full drain
 observation is out of scope here anyway: the live drain is wired with missileer's
 receiver (principal `missileer-watch`), so it correctly terminal-drops an
-`example-agent` envelope — a cross-consumer wiring fact, not a #156 concern. The
+`example-agent` envelope — a cross-consumer wiring fact, not a peer.publish concern. The
 taint derivation and the one-way rule are exhaustively proven offline
 (`test_publish.py`); live, a tainted publish is likewise accepted (taint is
 derived at ingestion, never a drop reason).

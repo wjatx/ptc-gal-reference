@@ -1,6 +1,6 @@
 """local_search_connector.py — an offline connector for the embedding example.
 
-Reached through the ``connector_providers`` injection seam (sa#141), exactly like
+Reached through the ``connector_providers`` injection seam, exactly like
 ``examples/missileer/trackfeed_connector.py``: the manifest names the connector
 ``search`` and supplies THIS implementation, which overrides the base
 ``SearchConnector`` for this consumer only.

@@ -1,4 +1,4 @@
-"""SDK-free half of the MCP host conformance suite (#174, #219 Leg-1 rider).
+"""SDK-free half of the MCP host conformance suite.
 
 MCP-HOST.md's conformance suite splits across two files. This module
 holds the clauses with ZERO `mcp`-SDK dependency — the schema, registry,
@@ -234,14 +234,14 @@ def _taint_runtime(sink, *, trusted_read_sources=None):
 
 
 # ---------------------------------------------------------------------------
-# M1 — hash covers every advertised field (#223).
+# M1 — hash covers every advertised field.
 # ---------------------------------------------------------------------------
 
 
 def test_m1_every_advertised_metadata_field_affects_the_hash():
-    """M1 (#223): the signed set is every ADVERTISED field. Populating any
+    """M1: the signed set is every ADVERTISED field. Populating any
     metadata field — including the server's own danger claim in `annotations`,
-    which pre-#223 was carried but NOT signed — must change the digest, so a
+    which originally was carried but NOT signed — must change the digest, so a
     metadata change (an annotation flip, a rewritten output schema) is drift
     and fails closed like a schema or description change."""
     bare = _mcp_tool_def()
@@ -262,11 +262,11 @@ def test_m1_every_advertised_metadata_field_affects_the_hash():
 
 
 def test_m1_hash_covers_exactly_the_advertised_fields():
-    """M1 (#223): the discovery-hash is sha256 over canonical JSON (sorted
+    """M1: the discovery-hash is sha256 over canonical JSON (sorted
     keys, compact separators, ASCII) of every advertised field — a None
     (not-advertised) field contributes NOTHING to the preimage. Consequences,
     both deliberate: a definition advertising no metadata hashes byte-identically
-    to the pre-#223 four-field basis (the far-jump falls only where new signed
+    to the original four-field basis (the far-jump falls only where new signed
     material exists), and future additive `McpToolDef` growth moves no hash
     until a server advertises the new field — while a field APPEARING is
     itself drift."""
@@ -335,7 +335,7 @@ def test_m6_quarantined_row_never_auto_overwritten():
         admitted_at=_ADMITTED_AT,
     )
     registry.admit_tool(row)
-    # Tamper the item-level rowHash (#246) -> the item reads back quarantined.
+    # Tamper the item-level rowHash -> the item reads back quarantined.
     registry._rows[(_SERVER_ID, _CEREMONY_TOOL)]["rowHash"] = "tampered"
     tampered_before = dict(registry._rows[(_SERVER_ID, _CEREMONY_TOOL)])
 
@@ -592,7 +592,7 @@ def test_m13_quarantined_read_is_uncallable_through_pure_gate():
 
 
 # ---------------------------------------------------------------------------
-# M14-M16 — native construction + spawn-time env (#221)
+# M14-M16 — native construction + spawn-time env
 # ---------------------------------------------------------------------------
 
 
@@ -702,7 +702,7 @@ def test_m15_construction_is_lazy_and_fetches_no_secret_at_build(monkeypatch):
 
 
 def test_m15_namespace_only_manifest_builds_nothing(monkeypatch):
-    """A namespace-only declaration (no command) is not native — pre-#221 shape."""
+    """A namespace-only declaration (no command) is not native — the original shape."""
     monkeypatch.delenv("MCP_REGISTRY_TABLE_NAME", raising=False)
     manifest = AgentManifest.model_validate(
         _spawnable_manifest_dict(
@@ -792,7 +792,7 @@ def test_m16_empty_env_map_resolves_no_credential():
 
 
 # ---------------------------------------------------------------------------
-# M25 / C10 — per-connect header injection for a remote server (#237)
+# M25 / C10 — per-connect header injection for a remote server
 # ---------------------------------------------------------------------------
 
 
@@ -865,7 +865,7 @@ def test_m25_empty_header_map_renders_nothing():
 
 
 # ---------------------------------------------------------------------------
-# M21 — native construction of remote (streamable-http) declarations (#221 P4)
+# M21 — native construction of remote (streamable-http) declarations
 # ---------------------------------------------------------------------------
 
 _REMOTE_URL = "https://mcp.example.com/mcp"
@@ -945,7 +945,7 @@ def test_m25_url_decl_with_header_map_connects_with_the_rendered_headers(monkeyp
     reaches the transport as RENDERED headers, resolved on the connector's own
     loop at connect. This is the clause the pure `compose_headers` tests cannot
     cover — a correct renderer wired to nothing delivers no credential, and the
-    #221 drill's lesson is that a seam is proven per transport. SDK-free: the
+    MCP-brokerage drill's lesson is that a seam is proven per transport. SDK-free: the
     fake `client.connect_streamable_http` records the connect args then dies."""
     monkeypatch.setenv("MCP_REGISTRY_TABLE_NAME", "test-mcp-registry")
     manifest = AgentManifest.model_validate(
@@ -1042,7 +1042,7 @@ def test_m21_belt_env_map_on_url_decl_refuses_at_build(monkeypatch):
 
 def test_wire_result_marshals_typed_and_plain_results():
     """The MCP connector returns a pydantic-typed result (CallToolResult); the
-    /call HTTP surface must marshal it to plain JSON — found live in the #221
+    /call HTTP surface must marshal it to plain JSON — found live in the MCP-brokerage
     floor drill (the local proof drove handle_request in-process, so the wire
     had never carried an MCP result). SDK-free duck-typing: any model_dump-
     bearing result dumps; plain JSON values pass through unchanged."""

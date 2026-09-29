@@ -1,9 +1,9 @@
-"""test_mcp_render.py — `mcp/render.py` (#221 Phase 5 prerequisite, item 3 of 4).
+"""test_mcp_render.py — `mcp/render.py`.
 
 Pure unit tests of the classification + rendering logic that backs `show`/
 `diff`: no store, no CLI, no subprocess. Covers all four drift classes, the
 contract-vs-steering rendering split, and the signed-metadata delta rendering
-(#223 — the metadata fields ride the signed set and diff as real changes).
+(the metadata fields ride the signed set and diff as real changes).
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def _tool_def(**overrides) -> McpToolDef:
 
 
 def _registered(**overrides) -> RegisteredTool:
-    """#246: the row NESTS the ratified definition. `_from_def` supplies it
+    """The row NESTS the ratified definition. `_from_def` supplies it
     whole; otherwise tool-def-level overrides (tool_name, etc.) build one."""
     tool_def = overrides.pop("_from_def", None)
     def_hash = overrides.pop("def_hash", "deadbeef")
@@ -263,7 +263,7 @@ class TestClassifyAndRenderTool:
         assert old_def.description in result.rendered
 
     def test_metadata_drift_renders_as_signed_delta(self) -> None:
-        """Against a pre-#223 row (metadata never stored -> admitted None), a
+        """Against a pre-widening row (metadata never stored -> admitted None), a
         live annotation renders as an honest absent -> present signed delta."""
         old_def = _tool_def()
         stored = _registered(def_hash="oldhash", _from_def=old_def)
@@ -292,7 +292,7 @@ class TestClassifyAndRenderTool:
 
 
 class TestDisclosureEscalation:
-    """#232: `render_tool_diff` is transport-aware for CONTRACT changes. A
+    """`render_tool_diff` is transport-aware for CONTRACT changes. A
     newly-required input field on a REMOTE (`streamable-http`) server renders
     as a disclosure escalation naming the destination; the identical delta on
     a stdio server renders exactly as before, and a non-required addition
@@ -460,7 +460,7 @@ class TestRenderRegisteredTool:
         assert row.tool_def.description in rendered
 
     def test_quarantined_row_is_labeled(self) -> None:
-        # #246: a quarantined read carries tool=None (tampered bytes are never
+        # A quarantined read carries tool=None (tampered bytes are never
         # parsed); the rendering labels the quarantine and shows no row content.
         rendered = render_registered_tool(
             "ledger",

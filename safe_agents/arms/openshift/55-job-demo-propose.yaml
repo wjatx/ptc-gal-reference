@@ -1,5 +1,5 @@
 # The maker half of the Phase 5 admission: a SECOND tool through the ceremony, under
-# the same two credentials (#250 Phase 5). Its pair is 56-job-demo-ratify.yaml, split
+# the same two credentials. Its pair is 56-job-demo-ratify.yaml, split
 # so the driver can order them strictly.
 #
 # The broker Deployment is scaled to ZERO while these run. That is the same
@@ -32,7 +32,7 @@ spec:
             - { name: BROKER_CEREMONY_IDENTITY, value: serviceaccount }
             - { name: BROKER_STORE, value: sqlite }
             - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
-            # Read-only here, exactly as in the Phase 3 propose leg (#203): the maker
+            # Read-only here, exactly as in the Phase 3 propose leg: the maker
             # proposes, it does not write the grant key space.
             - { name: BROKER_SQLITE_GRANTS_PATH, value: /var/lib/broker-grants/grants.db }
             - { name: BROKER_SQLITE_GRANTS_READONLY, value: "1" }

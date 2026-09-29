@@ -396,7 +396,7 @@ class AWSInterface(abc.ABC):
         """
 
     # -------------------------------------------------------------------------
-    # IAM — per-agent role creation (Fargate arm; sa#36)
+    # IAM — per-agent role creation (Fargate arm)
     # -------------------------------------------------------------------------
     #
     # The Fargate arm is the first arm that CREATES per-agent IAM roles (task
@@ -433,7 +433,7 @@ class AWSInterface(abc.ABC):
         """
 
     # -------------------------------------------------------------------------
-    # ECS / Fargate (sa#36)
+    # ECS / Fargate
     # -------------------------------------------------------------------------
 
     @abc.abstractmethod
@@ -526,7 +526,7 @@ class AWSInterface(abc.ABC):
         """
 
     # -------------------------------------------------------------------------
-    # EventBridge Scheduler (sa#36)
+    # EventBridge Scheduler
     # -------------------------------------------------------------------------
 
     @abc.abstractmethod
@@ -992,7 +992,7 @@ class LiveAWS(AWSInterface):
 
         LIVE-SHAPE: The imagebuilder API rejects '*' in filter values
         (allowed pattern: ^[0-9a-zA-Z./_ :,{}"-]{1,1024}$). Do not pass wildcard
-        filters — fetch all and filter by prefix in Python (see issue #89).
+        filters — fetch all and filter by prefix in Python.
         """
         ib = self._ib_client()
         try:
@@ -1022,7 +1022,7 @@ class LiveAWS(AWSInterface):
         """Return image version ARNs owned by this account whose name starts with name_prefix.
 
         LIVE-SHAPE: Wildcard is not allowed in imagebuilder filter values; fetch all
-        owner=Self images and filter by prefix in Python (see issue #89).
+        owner=Self images and filter by prefix in Python.
         """
         ib = self._ib_client()
         try:
@@ -1065,7 +1065,7 @@ class LiveAWS(AWSInterface):
         """Return image recipe ARNs whose name starts with name_prefix.
 
         LIVE-SHAPE: Wildcard is not allowed in imagebuilder filter values; fetch all
-        owner=Self recipes and filter by prefix in Python (see issue #89).
+        owner=Self recipes and filter by prefix in Python.
         """
         ib = self._ib_client()
         try:
@@ -1095,7 +1095,7 @@ class LiveAWS(AWSInterface):
         """Return infrastructure configuration ARNs whose name starts with name_prefix.
 
         LIVE-SHAPE: Wildcard is not allowed in imagebuilder filter values; fetch all
-        infra configs and filter by prefix in Python (see issue #89).
+        infra configs and filter by prefix in Python.
         """
         ib = self._ib_client()
         try:
@@ -1125,7 +1125,7 @@ class LiveAWS(AWSInterface):
         """Return distribution configuration ARNs whose name starts with name_prefix.
 
         LIVE-SHAPE: Wildcard is not allowed in imagebuilder filter values; fetch all
-        dist configs and filter by prefix in Python (see issue #89).
+        dist configs and filter by prefix in Python.
         """
         ib = self._ib_client()
         try:
@@ -1155,7 +1155,7 @@ class LiveAWS(AWSInterface):
         """Return component VERSION ARNs owned by this account whose name starts with name_prefix.
 
         LIVE-SHAPE: Wildcard is not allowed in imagebuilder filter values; fetch all
-        owner=Self components and filter by prefix in Python (see issue #89).
+        owner=Self components and filter by prefix in Python.
         """
         ib = self._ib_client()
         try:
@@ -1321,7 +1321,7 @@ class LiveAWS(AWSInterface):
             return False
 
     # -------------------------------------------------------------------------
-    # IAM — per-agent role creation (Fargate arm; sa#36)
+    # IAM — per-agent role creation (Fargate arm)
     # -------------------------------------------------------------------------
 
     def create_role(
@@ -1371,7 +1371,7 @@ class LiveAWS(AWSInterface):
                 raise
 
     # -------------------------------------------------------------------------
-    # ECS / Fargate (sa#36)
+    # ECS / Fargate
     # -------------------------------------------------------------------------
 
     def _ecs_client(self):
@@ -1506,7 +1506,7 @@ class LiveAWS(AWSInterface):
         return {"last_status": task.get("lastStatus"), "exit_code": exit_code}
 
     # -------------------------------------------------------------------------
-    # EventBridge Scheduler (sa#36)
+    # EventBridge Scheduler
     # -------------------------------------------------------------------------
 
     def _scheduler_client(self):
@@ -2184,7 +2184,7 @@ class FakeAWS(AWSInterface):
         return False
 
     # -------------------------------------------------------------------------
-    # IAM — per-agent role creation (Fargate arm; sa#36)
+    # IAM — per-agent role creation (Fargate arm)
     # -------------------------------------------------------------------------
 
     def create_role(
@@ -2217,7 +2217,7 @@ class FakeAWS(AWSInterface):
             role["attached_policies"].append(policy_arn)
 
     # -------------------------------------------------------------------------
-    # ECS / Fargate (sa#36)
+    # ECS / Fargate
     # -------------------------------------------------------------------------
 
     def register_task_definition(
@@ -2308,7 +2308,7 @@ class FakeAWS(AWSInterface):
         return {"last_status": task["last_status"], "exit_code": task["exit_code"]}
 
     # -------------------------------------------------------------------------
-    # EventBridge Scheduler (sa#36)
+    # EventBridge Scheduler
     # -------------------------------------------------------------------------
 
     def create_schedule(

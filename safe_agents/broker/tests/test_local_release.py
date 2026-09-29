@@ -1,6 +1,6 @@
-"""Tests for the LOCAL release of a held intent (#301).
+"""Tests for the LOCAL release of a held intent.
 
-sa#176 built the out-of-band approval seam and every caller of it was a cloud path
+The owner-channel work built the out-of-band approval seam and every caller of it was a cloud path
 (an owner-adapter EventTrigger through a channels drain). On a laptop there is no
 channel, so a held call was held until its TTL expired — the golden path dead-ended
 at the exact moment the control worked. These cover the local arm:

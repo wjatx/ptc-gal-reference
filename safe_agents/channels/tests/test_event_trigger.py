@@ -1,8 +1,8 @@
-"""sa#74 exit predicate — the EventTrigger conformance suite.
+"""The EventTrigger conformance suite.
 
 Each test proves one contract clause from channels/SCHEMAS.md §"Contract
 clauses"; the mapping table lives there. test_driving_use_case_fixture_roundtrips
-is the sa#8 fixture (email-agent → example-agent trade signal).
+is the agent-to-agent fixture (email-agent → example-agent trade signal).
 """
 
 import json
@@ -209,7 +209,7 @@ def test_provenance_sources_feed_turn_ingestion():
 
 
 def test_driving_use_case_fixture_roundtrips():
-    """sa#8: email-agent publishes a trade signal EventTrigger to example-agent."""
+    """Email-agent publishes a trade signal EventTrigger to example-agent."""
     envelope = EventTrigger(
         event_id="CONF-88317",
         principal="example-agent",

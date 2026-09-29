@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# broker-entrypoint.sh — runs the broker's two surfaces in one container (local/Mac arm, #98).
-#   :8443  model-inference forward proxy (the sa#97-fixed stub)
+# broker-entrypoint.sh — runs the broker's two surfaces in one container (local/Mac arm).
+#   :8443  model-inference forward proxy (the stub with netns forwarding fixed)
 #   :8080  brokered tool-call API (safe_agents.broker.prototype.broker_server)
 # Both bind 0.0.0.0 so the confined agent container can reach them over the private network.
 set -uo pipefail

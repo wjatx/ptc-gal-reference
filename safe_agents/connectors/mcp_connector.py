@@ -1,4 +1,4 @@
-"""mcp_connector.py — the base connector that binds an ``McpHost`` (#174).
+"""mcp_connector.py — the base connector that binds an ``McpHost``.
 
 An MCP server is a connector; this is the base-connector-shaped wrapper a consumer
 names in ``connector_providers`` for one MCP server. It satisfies the ``Connector``
@@ -8,7 +8,7 @@ gate is enforced at execute time.
 
 The coordinate mapping is the load-bearing detail: for an MCP connector the
 BrokeredCall's ``tool`` IS the ``server_id`` and its ``op`` IS the ``tool_name``.
-That is what makes the response taint correctly with ZERO PEP changes — the sa#134
+That is what makes the response taint correctly with ZERO PEP changes — the taint
 self-ingestion hook stamps a successful ``external=True, effect="read"`` op as
 ``connector:<tool>.<op>``, which for this connector is exactly
 ``connector:<server_id>.<tool_name>`` (MCP-HOST.md M9). Admission is the host's
@@ -53,7 +53,7 @@ class McpHostLike(Protocol):
     """What the connector needs from a host: a name and an async call gate.
 
     Satisfied by ``McpHost`` (fakes/tests) and by the supervised lifecycle
-    wrapper ``SupervisedStdioHost`` (#221 P3) — the connector never cares which;
+    wrapper ``SupervisedStdioHost`` — the connector never cares which;
     admission and lifecycle both live behind ``call``. A host MAY additionally
     expose ``aclose()``; if it does, ``close()`` drives it on the loop BEFORE
     the loop is torn down, so children are reaped while their cancel scopes can
@@ -104,7 +104,7 @@ class McpConnector:
     #: authenticated, and a remote host resolves its own credential per CONNECT
     #: (M25). The Doer reads this to skip resolution entirely. It is not an
     #: optimisation: against a vendor issuing one-time-use refresh tokens, a
-    #: resolution here spends the grant the connect then needs (#238).
+    #: resolution here spends the grant the connect then needs.
     uses_credential = False
 
     def execute(self, tool: str, op: str, args: Any, credential: Credential) -> Any:

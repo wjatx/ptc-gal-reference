@@ -11,7 +11,7 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 
 | Schema | Purpose |
 |---|---|
-| **Grant** | Per (principal × action-class): level, envelope, promotedBy, evidence, lastSafeLevel, demotionTriggers, ownerId (integrity HMAC lives at the store's item level, #246). |
+| **Grant** | Per (principal × action-class): level, envelope, promotedBy, evidence, lastSafeLevel, demotionTriggers, ownerId (integrity HMAC lives at the store's item level). |
 | **BrokeredCall** | The typed request the PDP decides on. |
 | **Decision** | The five verbs under default-deny. |
 | **Intent** | Durable "draft and hold" record: materializedRequest, renderedForHuman, status, expiry, approvedBy. |
@@ -26,7 +26,7 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 > Envelope is per-agent config that *fills* the seven base schemas above — not an eighth base contract.
 > See `core/manifest-schema.md` for the field-by-field prose.
 >
-> **Read-gating knobs (sa#137), consumer-configurable.** Three Envelope fields tune how external
+> **Read-gating knobs, consumer-configurable.** Three Envelope fields tune how external
 > reads are gated; all are safe-by-default (an unset knob adds no bound):
 > - `trusted_read_sources: string[]` (default `[]`) — source ids (`connector:{tool}.{op}`) whose
 >   external reads are trusted. Consulted in BOTH halves of the read seam from one list: the PIP's
@@ -38,7 +38,7 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   same egress arg; once cumulative spend reaches it, the next such read is denied. The PEP meters
 >   spend after each successful read; the PIP only reads the counter.
 >
-> **Availability / liveness knob (sa#160), consumer-configurable.** One Envelope field, the typed
+> **Availability / liveness knob, consumer-configurable.** One Envelope field, the typed
 > dead-man's-switch, safe-by-default (unset = OFF):
 > - `liveness: {expected_op: string, deadline_seconds: int>0} | null` (default `null`) — the typed
 >   liveness contract. `expected_op` is the `tool.op` whose successful audit/ledger append counts
@@ -52,14 +52,14 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   approval-queue de-amplification knob. `dedup` coalesces truly-identical pending intents (same
 >   principal+tool+op+args) so an injection-driven flood of identical `require_approval` holds pages
 >   the human once, not N times. `max_pending_per_op_day` raises an `approval_queue_flood` alarm
->   (the sa#153 log-metric surface) past that many NEW held intents per principal+op+UTC-day — but
+>   (the log-metric alarm surface) past that many NEW held intents per principal+op+UTC-day — but
 >   the broker **still holds the intent**; it never sheds (shedding under flood is the
 >   forced-abstention harm under act-safe polarity, kept consumer-side). Unset = OFF: the hold path
 >   is byte-identical to today's. Mechanism only; no polarity in the base.
 >
 > **AgentManifest (`safe_agents/broker/schemas/manifest.py`)** is the typed broker-facing
 > deployment-manifest block `build_runtime(manifest)` consumes: `envelope` (required) plus
-> `principal`, `grant_classes`, `budgets`, `connectors`, and — sa#141 — two consumer-connector
+> `principal`, `grant_classes`, `budgets`, `connectors`, and two consumer-connector
 > fields:
 > - `connector_providers: {name: "pkg.module:ClassName"}` (default `{}`) — consumer-supplied
 >   connector implementations, resolved provider-first through the registry's one sanctioned
@@ -71,9 +71,9 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 > - `connector_secrets: {name: secret_leaf}` (default `{}`) — overrides the default
 >   leaf == tool-name mapping the Doer uses at execute time. Bare **leaves** only, never
 >   values and never a pre-prefixed path: when the broker runs with a secret prefix the
->   value is resolved under `<prefix>/connectors/<leaf>` (sa#164), so a pre-prefixed value
+>   value is resolved under `<prefix>/connectors/<leaf>`, so a pre-prefixed value
 >   would double the prefix and miss the IAM grant.
-> - `tool_ops: list[ToolOp]` (default `[]`, #171) — the consumer-owned ToolOp table. Each op's
+> - `tool_ops: list[ToolOp]` (default `[]`) — the consumer-owned ToolOp table. Each op's
 >   `effect/external/reversible/egress_arg` classification travels WITH the agent here, not in a
 >   base global; `build_runtime` compiles it into the runtime's `ToolOpTable` and the broker
 >   resolves every `(tool, op)` against it — so a consumer-defined op gates identically regardless
@@ -84,8 +84,8 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   **never** consulted at request time. `tool_ops` rides inside `AgentManifest` — it is not an
 >   eighth base schema.
 > - Later phases added further manifest blocks documented in their own contracts:
->   `connector_auth` + `capability_iam` (#173/#175, `broker/CONNECTOR-AUTH.md`), `counter_period`
->   (#212, §Budgets note below), and `mcp_servers` (#174, `broker/MCP-HOST.md`) — the image-baked
+>   `connector_auth` + `capability_iam` (#79, `broker/CONNECTOR-AUTH.md`), `counter_period`
+>   (§Budgets note below), and `mcp_servers` (`broker/MCP-HOST.md`) — the image-baked
 >   half of two-key MCP admission: the declared `(server_id, tool_name)` namespace +
 >   per-tool `structured_output` trust eligibility, validated at load against `tool_ops` and
 >   `envelope.trusted_read_sources`.
@@ -113,9 +113,9 @@ interface Grant {
   demotionReason: null | "failing" | "pending-evidence"  // why currently demoted; null if at full level
   labelLatency: string             // how long until an action of this class yields ground truth (caps re-promotion speed)
   ownerId:     string              // the NAMED human owner accountable for this grant
-  certifiedUntil?: string | null   // the certification TERM (#255): an explicit UTC instant; null/absent = no term
+  certifiedUntil?: string | null   // the certification TERM: an explicit UTC instant; null/absent = no term
 }
-// Integrity lives at the STORE's item level, not on the schema (#246): the grant
+// Integrity lives at the STORE's item level, not on the schema: the grant
 // is serialized once in the CANONICAL form (below), the stored bytes are the HMAC
 // basis (grantHash beside the data attribute), and reads verify the stored bytes
 // verbatim before parsing — so additive Grant schema growth can never read an
@@ -139,7 +139,7 @@ type DemotionTrigger = "stale_confidence" | "corroboration_failure" | "budget_br
 > verifying (the basis is the stored bytes), so the migration normalizes rather than recovers, and
 > `re-seed` is not the command for it. See `docs/grant-canonicalization-runbook.md`.
 
-> **DemotionTrigger is emitted as a typed `DemotionSignal` (#184).** The evidence
+> **DemotionTrigger is emitted as a typed `DemotionSignal`.** The evidence
 > machinery emits a `DemotionSignal { trigger, principal, action_class, period,
 > detail, ts }` at breach detection; the Phase-3 evaluator maps signals to the
 > tripped-trigger set. The base emits, never applies. See §"Evidence contract" below.
@@ -169,12 +169,12 @@ Per-field notes:
 - **labelLatency** — re-promotion closes a control loop whose deadtime equals this. Long latency
   caps how fast you can re-promote, and therefore how much autonomy you can responsibly hold.
 - **ownerId** — every grant has a named owner (pre-deployment checklist).
-- **certifiedUntil** — the term of the current certification (GAL §6.7.6, #255). Once
+- **certifiedUntil** — the term of the current certification (GAL §6.7.6). Once
   `now >= certifiedUntil`, per-call enforcement treats the grant as being at `lastSafeLevel` (never
   higher than its stored level), and the demotion runner records a `lapse` (§7). `null` means no
   term and never lapses; terms **ship unset**. It must be an explicit UTC instant (`Z` or `+00:00`;
   naive and non-UTC values are refused) and is stored verbatim. **Omitted from the canonical payload
-  when null**, so every pre-#255 grant keeps byte-identical canonical bytes; when set it is inside
+  when null**, so every grant predating terms keeps byte-identical canonical bytes; when set it is inside
   the HMAC'd payload. Set only by a ratified promotion; no other write may lengthen or drop it
   (`grants/store.py::refuse_term_extension`). Whether a term has passed is judged against an
   explicit evaluation instant, never a record's `ts` (`grants/term.py`).
@@ -184,8 +184,8 @@ Per-field notes:
 ## 2. BrokeredCall
 
 The typed envelope the PEP materializes from a tool call. **The PDP never sees free text.**
-`manifest` is looked up from the agent's `ToolOpTable` (compiled from `AgentManifest.tool_ops`,
-#171) — a classified, code/manifest-resident fact, never model-supplied. **Pillar 1.**
+`manifest` is looked up from the agent's `ToolOpTable` (compiled from `AgentManifest.tool_ops`)
+— a classified, code/manifest-resident fact, never model-supplied. **Pillar 1.**
 
 ```ts
 // STUB — illustrative, not an implementation
@@ -201,7 +201,7 @@ interface BrokeredCall {
 }
 
 // ToolOpTable — classifies each operation once; entries travel in AgentManifest.tool_ops
-// (#171), never a base global. Illustrative consumer classifications:
+//, never a base global. Illustrative consumer classifications:
 //   { tool:"email",    op:"send",         effect:"write", external:true,  reversible:false }
 //   { tool:"email",    op:"draft",        effect:"write", external:false, reversible:true  }
 //   { tool:"calendar", op:"create_event", effect:"write", external:false, reversible:true  }
@@ -212,7 +212,7 @@ interface ToolOp {
   effect: "read" | "write"         // default-deny applies to write
   external: boolean                // does it cross a trust boundary to an external party
   reversible?: boolean             // can a wrong action be undone (deletes a bad event) vs not (a wire)
-  egress_arg?: string              // sa#137: name of the arg that egresses to the provider (e.g. "query")
+  egress_arg?: string              // read-gating: name of the arg that egresses to the provider (e.g. "query")
 }
 ```
 
@@ -221,7 +221,7 @@ Per-field notes:
 - **principal.tier** — coarse trust tier (A–D) used by capability-scoping and policy; a recruiter
   (Tier C) is served only resume-screening read tools.
 - **manifest.effect/external/reversible** — the three static facts that drive most policy. They are
-  classified in the consumer's `AgentManifest.tool_ops` (#171), not model-supplied, so the model
+  classified in the consumer's `AgentManifest.tool_ops`, not model-supplied, so the model
   can't assert its `send` is really a `draft`. `effect:"write"` is
   default-deny; `external && !reversible` is the high-blast/irreversible boundary where the heavy
   machinery belongs.
@@ -229,7 +229,7 @@ Per-field notes:
   never judges maliciousness. The PDP keys an external write in a tainted turn to
   `require_approval`/`deny`.
 - **session.ingestedSources** — what untrusted sources this turn touched; feeds taint and audit.
-- **manifest.egress_arg** (sa#137) — the name of the single arg whose value egresses to an external
+- **manifest.egress_arg** — the name of the single arg whose value egresses to an external
   provider (the covert-exfil channel; `"query"` for `search.query`). Code-resident, never
   model-supplied. When set, the PIP bounds that arg's UTF-8 byte length against
   `Envelope.max_query_bytes` (per call) and its cumulative spend against `Envelope.query_egress_budget`
@@ -267,9 +267,9 @@ Per-field notes:
 
   **Specified and not yet built:** `ptc-gal-standards/PTC-SPEC.md` §PTC-25 requires `transform` to produce a
   substituted operation *plus* clamped arguments, and carries the implementation-status marker
-  saying the argument half is unbuilt here (tracking **#358**). So this is a design requirement the
+  saying the argument half is unbuilt here (tracking **#16**). So this is a design requirement the
   code has not reached, not a verb that was never meant to clamp — the spec states the blueprint and
-  marks what is unbuilt, while this document describes what exists. Do not cite #228 as the tracker:
+  marks what is unbuilt, while this document describes what exists. Do not cite #93 as the tracker:
   it owns magnitude bounds through accumulating counters, which is what a clamp would clamp *to*,
   not the per-call narrowing itself.
 - **require_approval.renderedIntent** — the **materialized** bytes that will execute, persisted as an
@@ -279,7 +279,7 @@ Per-field notes:
 - **require_approval.reason** — WHY the call was held, as the PDP rule that fired phrased it, copied
   onto the `AuditRecord.reason` of the hold. `deny` and `abstain` always carried a reason and
   `require_approval` did not, so a held record read `reason: null`: the tape could show that a call
-  was held and never say what held it (#300). Optional because the field post-dates the verb —
+  was held and never say what held it. Optional because the field post-dates the verb —
   a record written before it exists is not missing anything, and omitting it keeps those records
   hashing byte-for-byte.
 - **abstain.escalate** — escalation spends the **attention/escalation budget** (Budgets §5), so
@@ -289,7 +289,7 @@ Per-field notes:
   *constructed* confidence (self-consistency / ensemble / conformal / stale — high-stakes tier
   only). Confidence is computed deterministically, never read off a raw model logprob. The
   constructed value is packaged as a typed `ConfidenceArtifact` and gated by the deterministic
-  `meets_bar` predicate against the `Envelope.confidence` knob (#184); a below-bar call routes to
+  `meets_bar` predicate against the `Envelope.confidence` knob; a below-bar call routes to
   the per-agent safe response through the polarity seam (the base ships the wiring, never the
   polarity). See §"Evidence contract" below.
 
@@ -358,9 +358,9 @@ interface AuditRecord {
   outcome: "executed" | "denied" | "held" | "failed"
   error?: string
   seed?: string                    // committed randomization seed, where allocation was randomized (auditable randomness)
-  intentId?: string                // #198 — held + release records: joins a hold to its release across the intent TTL
-  storedCallDigest?: string        // #198 — digest of the frozen materializedRequest; hold-side == release-side ⇒ executed==approved is byte-provable post-TTL
-  resultDigest?: string            // #198 — broker-written digest of the connector response (the effect receipt)
+  intentId?: string                // approval receipt — held + release records: joins a hold to its release across the intent TTL
+  storedCallDigest?: string        // approval receipt — digest of the frozen materializedRequest; hold-side == release-side ⇒ executed==approved is byte-provable post-TTL
+  resultDigest?: string            // approval receipt — broker-written digest of the connector response (the effect receipt)
   prevHash: string                 // chains to the previous record
   hash: string                     // hash over this record incl. prevHash -> tamper-evident
 }
@@ -375,7 +375,7 @@ Per-field notes:
 - **seed** — when scarcity allocation was randomized (high-stakes tier), the committed seed is logged
   (commit-reveal / VRF): unpredictable in advance, fully reconstructable after. "Why not engage that
   one?" has an answer in the log.
-- **intentId / storedCallDigest / resultDigest** — the #198 receipts: broker-stamped at the moment
+- **intentId / storedCallDigest / resultDigest** — the approval receipts: broker-stamped at the moment
   of effect, agent-unforgeable; digests only, never raw content (the `argsDigest` discipline).
   OPTIONAL — absent == a pre-receipts record, and receipt fields are hash-covered only when
   present, so existing chains verify unchanged while stripping a present receipt breaks the chain.
@@ -403,7 +403,7 @@ Per-field notes:
 
 - **error** — bounded cumulative tolerable error per period (alpha-spending / SRE error budget),
   drawn down by each decision as `error_prob × blast_radius` (the typed draw is
-  `evidence.error_budget_draw`, #184; `blast_radius` is the consumer-declared weight per blast
+  `evidence.error_budget_draw`; `blast_radius` is the consumer-declared weight per blast
   class). Decision *volume* inflates aggregate error, so scaling volume forces higher per-decision
   confidence to hold the bound fixed.
 - **attention** — the human's finite quality-decisions per period, drawn by each escalation's
@@ -445,7 +445,7 @@ interface PromotionRecord {
   triggeredBy: string[]            // demotion-typed only: the DemotionTrigger values that fired
   demotionReason: "failing" | "pending-evidence" | null      // demotion-typed; "pending-evidence" on lapse
   ts:          string
-  certifiedUntil?: string | null   // promotion-typed only (#255): the certification term the checker RATIFIED
+  certifiedUntil?: string | null   // promotion-typed only: the certification term the checker RATIFIED
 }
 ```
 
@@ -458,7 +458,7 @@ one-rung-up, level ordering — is the state machine's job, `grant-lifecycle.md`
 | `demotion` | automatic deterministic demotion | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` non-empty; `demotionReason` set; `predicate` null |
 | `bootstrap` | the sanctioned seed record — first creation of a grant outside the ceremony (`seed_grants` retires to bootstrap-only, Phase 4) | `fromLevel` null; maker ≠ checker NOT enforced (single-operator seed is sanctioned); `predicate` null; `triggeredBy` empty; `demotionReason` null |
 | `tightening` | voluntary any-level → in-loop move (always permitted, no ceremony, no trigger — `docs/GAL.md` §4) | `toLevel` = `"in-loop"`; maker ≠ checker NOT enforced; `predicate` null; `triggeredBy` empty; `demotionReason` null |
-| `lapse` | a certification term expired (GAL §6.7.6, #255; `grant-lifecycle.md` §Lapse) | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` EMPTY (a lapse is an absence, not a fired condition); `demotionReason` = `"pending-evidence"`; `predicate` null; `fromLevel` non-null; `toLevel` = the grant's `lastSafeLevel` (never `"out-of-loop"`); `evidence` names the expired term |
+| `lapse` | a certification term expired (GAL §6.7.6; `grant-lifecycle.md` §Lapse) | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` EMPTY (a lapse is an absence, not a fired condition); `demotionReason` = `"pending-evidence"`; `predicate` null; `fromLevel` non-null; `toLevel` = the grant's `lastSafeLevel` (never `"out-of-loop"`); `evidence` names the expired term |
 
 Per-field notes:
 
@@ -475,7 +475,7 @@ Per-field notes:
 - **proposedBy / ratifiedBy** — maker ≠ checker on the promotion path. Widening autonomy requires
   recorded human approval; narrowing (demotion) requires none — it is ratified by
   `system:demotion-evaluator` and recorded, not approved.
-- **certifiedUntil** — promotion-typed only (#255, GAL §6.7.6): the term the checker ratified,
+- **certifiedUntil** — promotion-typed only (GAL §6.7.6): the term the checker ratified,
   written by the ceremony onto both this record and the raised `Grant.certifiedUntil`. Same format
   and parser as the Grant field (explicit UTC instant, stored verbatim). Every other record type
   refuses a non-null value. **Omitted from the canonical, stored and signed bytes when null**, so
@@ -513,7 +513,7 @@ bytes the DSSE signature's subject digest binds, verified verbatim on read.
 
 ---
 
-## Evidence contract (#184)
+## Evidence contract
 
 Pillar 4's constructed confidence, packaged as base contract surface. It is **not an eighth base
 schema** — the same rule as the Envelope: the artifact and signal *fill* the seven above (a
@@ -540,14 +540,14 @@ interface ConfidenceArtifact {
                | { method: "conformal"; coverage: number; threshold: number; calibration_size: number }
   stale:       boolean           // label-free drift flag; voids the conformal threshold — a stale artifact never meets a bar
   computed_at: string            // ISO-8601 UTC
-  annotations: string[]          // attach-only (e.g. the #58 reviewer); NEVER read by any gate
+  annotations: string[]          // attach-only (e.g. the evidence reviewer); NEVER read by any gate
 }
 
 interface DemotionSignal {       // emitted at breach; consumed by the Phase-3 evaluator (base emits, never applies)
   trigger:      DemotionTrigger  // §1's vocabulary — "stale_confidence" | "corroboration_failure" | "budget_breach"
   principal:    Principal
   action_class: string           // the (principal, action-class) grant coordinate
-  period:       string           // the counter-period bucket — "YYYYMMDD" (utc-day) or "YYYYMMDDTHH" (utc-hour, #212)
+  period:       string           // the counter-period bucket — "YYYYMMDD" (utc-day) or "YYYYMMDDTHH" (utc-hour)
   detail:       string           // audit-safe cause, no payload content
   ts:           string           // ISO-8601 UTC
 }
@@ -570,13 +570,13 @@ per-class `blast_radius` weight, **required** when a budget is set — the base 
 weight), and `high_blast` (the tighten-only override list). An empty knob is rejected: a control that
 looks enabled but gates nothing violates the friction doctrine.
 
-> **Caps rename (#163).** `caps.actions_per_run` is renamed `caps.actions_per_utc_day` — the field
+> **Caps rename.** `caps.actions_per_run` is renamed `caps.actions_per_utc_day` — the field
 > has been a per-op per-UTC-day budget since the 2026-07-08 scoping fix
 > (`enforcement.scoped_counter_key`), and the name now says so. The old spelling is still accepted on
 > load (a validation alias, so no `agents/*.yaml` churns); the canonical dumped key is the new one.
 >
-> **Counter period (#212).** The bucket every cap and evidence counter scopes to is the
-> manifest-named `AgentManifest.counter_period` — default `utc-day` (byte-for-byte the pre-#212 key),
+> **Counter period.** The bucket every cap and evidence counter scopes to is the
+> manifest-named `AgentManifest.counter_period` — default `utc-day` (byte-for-byte the original key),
 > `utc-hour` for development-speed lifecycle runs. It is authority-shaping, so it lives on the
 > image-baked manifest and deliberately OUTSIDE `Envelope` (declaring it never churns the envelope
 > hash; nothing store-loaded can change it). Under a non-day period, `caps.actions_per_period` is the
@@ -588,6 +588,6 @@ looks enabled but gates nothing violates the friction doctrine.
 > granularity; period-relative *effects* run at any bucket size).
 >
 > **Deployment consequence.** Retiring `abstention_thresholds` and renaming the cap churns every
-> envelope hash, and a pre-#184 stored envelope dump (carrying `"abstention_thresholds": null`) fails
+> envelope hash, and an older stored envelope dump (carrying `"abstention_thresholds": null`) fails
 > validation loudly at boot — the intended fail-closed path, cured by re-running
 > seed_envelope → seed_grants (the consumer's own broker-image cutover runbook). No compat shim.

@@ -1,5 +1,5 @@
 """
-Pipeline tests — acceptance criteria for sa#32.
+Pipeline tests — deploy-pipeline acceptance criteria.
 
 All tests are AWS-free: AWS calls are isolated behind FakeAWS.
 The smoke phase is tested with both the injected fake harness_fn and the real
@@ -495,7 +495,7 @@ class TestSmokePhase:
 
 
 # ---------------------------------------------------------------------------
-# Agent-package resolution: no monorepo-sibling assumption (sa#106 Phase 3)
+# Agent-package resolution: no monorepo-sibling assumption
 # ---------------------------------------------------------------------------
 
 class TestAgentPackageResolution:
@@ -638,7 +638,7 @@ class TestFullPipeline:
     def test_smoke_only_with_real_harness(self, fake_aws: FakeAWS) -> None:
         """
         End-to-end: provision+deploy in dry-run, smoke with real harness against
-        agents/test-stub. Proves the smoke step wiring to #31 works.
+        agents/test-stub. Proves the smoke step wiring to the conformance harness works.
         """
         from safe_agents.contract.harness import run_harness  # noqa: PLC0415
 

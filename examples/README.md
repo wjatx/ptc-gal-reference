@@ -44,7 +44,7 @@ at two levels of generality rather than two independent calls.
 
 | Example | Proof obligation |
 |---|---|
-| [`embedded_agent/`](embedded_agent/) | The broker as a **library** — a plain Python program embeds it through the public `safe_agents.broker.api` surface (#266). Every other example configures the broker *as a service*; this one imports it, which is the demonstrable half of "agents you build can use the broker directly". |
+| [`embedded_agent/`](embedded_agent/) | The broker as a **library** — a plain Python program embeds it through the public `safe_agents.broker.api` surface. Every other example configures the broker *as a service*; this one imports it, which is the demonstrable half of "agents you build can use the broker directly". |
 | [`oauth_api/`](oauth_api/) | `OAuthRefresh` credential strategy — the broker mints a short-lived access token from a broker-held refresh token; the agent sees neither. |
 | [`oauth_remote_mcp/`](oauth_remote_mcp/) | The same credential, delivered to a **vendor-hosted** MCP server as a per-connect header (`header_map`, the remote dual of `env_map`). Resolution per *connect* is the point: an expired token dies as a transport failure, so the reconnect is the re-auth path. |
 | [`scoped_s3/`](scoped_s3/) | `assumed_role` + `capability_iam` — an out-of-scope action is denied **by IAM, not by the broker**, so blast radius survives a fully compromised broker decision. |
@@ -69,7 +69,7 @@ polarity is what actually varies the design. Concretely:
 
 - **trading** is the one domain with *real* consumers, and they are not in this directory —
   a consumer agent in its own repo (live), [`alpaca_paper_drill/`](alpaca_paper_drill/), and the
-  brokerage work under #221. No fictional archetype here stands in for them.
+  MCP brokerage work. No fictional archetype here stands in for them.
 - **communications** and **operations** are domains whose polarity interest is already
   discharged by the archetypes above (per-action and act-safe respectively).
 - **build-fixer** has no polarity archetype **on purpose** — its distinctive contribution is

@@ -27,7 +27,7 @@ def hash_args(args: object) -> str:
 
 
 def hash_stored_call(call) -> str:
-    """Digest of a frozen BrokeredCall (#198 storedCallDigest).
+    """Digest of a frozen BrokeredCall (approval-receipt storedCallDigest).
 
     Canonical over model_dump(mode="json") so the digest is stable across the
     intent store's JSON round trip (model_dump_json -> model_validate_json).

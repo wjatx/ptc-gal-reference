@@ -1,4 +1,4 @@
-"""#205 — unit tests for the config-assert comparison/refusal core.
+"""Unit tests for the config-assert comparison/refusal core.
 
 The live binding (``test_airlock_config_live.py``) stays opt-in; these prove the
 pure logic: refuse-on-unnamed-expectation, actual-vs-expected mismatch reporting,

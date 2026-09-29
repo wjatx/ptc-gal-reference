@@ -10,7 +10,7 @@ Exports:
     Credential            — the value a connector receives: a static string OR a
                             richer, broker-resolved credential (an assumed-role bundle).
     AssumedRoleCredential — the STS-assumed-role bundle a scoped connector runs with
-                            (#175); the credential is an identity, not a static secret.
+                           ; the credential is an identity, not a static secret.
     ConnectorCall         — Record of one call made to a StubConnector (test inspection).
     StubConnector         — Deterministic fake for tests; no network, no real credentials.
 """
@@ -23,7 +23,7 @@ from typing import Any, Protocol, Union, runtime_checkable
 
 @dataclass(frozen=True)
 class AssumedRoleCredential:
-    """Short-lived STS credentials from a per-capability assumed role (#175).
+    """Short-lived STS credentials from a per-capability assumed role.
 
     The ``assumed_role`` strategy (``credentials.AssumedRole``) resolves this
     broker-side by assuming a role the deploy scoped to exactly the capability's
@@ -57,8 +57,8 @@ class AssumedRoleCredential:
 
 
 # What a connector's ``execute`` receives. The default (static secret / OAuth access
-# token) is a plain ``str`` — unchanged since before #173. A per-capability scoped
-# connector (#175) instead receives an ``AssumedRoleCredential`` bundle. A connector
+# token) is a plain ``str`` — unchanged since before credential strategies. A per-capability scoped
+# connector instead receives an ``AssumedRoleCredential`` bundle. A connector
 # handles only the credential shape its own auth strategy produces.
 Credential = Union[str, AssumedRoleCredential]
 
@@ -70,7 +70,7 @@ class Connector(Protocol):
     The Doer calls execute(tool, op, args, credential) with the broker-resolved
     credential. The credential never reaches the agent; the Connector is never
     exposed outside the Doer. ``credential`` is a plain ``str`` for the static/OAuth
-    strategies and an ``AssumedRoleCredential`` for the ``assumed_role`` strategy (#175).
+    strategies and an ``AssumedRoleCredential`` for the ``assumed_role`` strategy.
     """
 
     def execute(self, tool: str, op: str, args: Any, credential: Credential) -> Any:

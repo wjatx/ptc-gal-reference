@@ -1,6 +1,6 @@
 #!/bin/bash
 # install-openshell.sh — OpenShell sandbox runtime for RHEL 9.
-# LIVE-VERIFIED (#93): this exact sequence was verified end-to-end on a live
+# LIVE-VERIFIED: this exact sequence was verified end-to-end on a live
 # RHEL 9.8 box (gateway Connected, sandbox create/exec/delete working).
 #
 # Three load-bearing details that must NOT be changed without re-verifying:
@@ -20,7 +20,7 @@
 #   3. DO NOT PIN A VERSION: pinning (e.g. OPENSHELL_VERSION=0.0.71) caused a
 #      release-asset 404 the moment upstream churned to 0.0.72. OpenShell moves
 #      fast and prunes/retags assets. The native installer takes the current latest.
-#      (sa#86: pin + mirror assets once OpenShell stabilizes.)
+#      (#65: pin + mirror assets once OpenShell stabilizes.)
 #
 # Caller (bootstrap.sh) already runs as the 'dev' user with NOPASSWD sudo.
 set -euo pipefail

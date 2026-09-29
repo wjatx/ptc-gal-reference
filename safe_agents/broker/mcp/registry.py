@@ -1,4 +1,4 @@
-"""Admitted-tool registry store: the HMAC row + the append-only admission ledger (#174).
+"""Admitted-tool registry store: the HMAC row + the append-only admission ledger.
 
 The reference store binding MCP-HOST.md defers to (§"Tier split"). It MIRRORS
 ``grants/store.py`` one-for-one — the same HMAC-over-canonical-fields,
@@ -14,7 +14,7 @@ Load-bearing invariants:
   write grants"). The admission ceremony (``mcp/commands.py``) is the only writer.
   Drift → QUARANTINED status is COMPUTED at discovery time by ``mcp/discovery.py``,
   not here.
-- **Store-integrity HMAC (M13), stored-bytes basis (#246).** The row is
+- **Store-integrity HMAC (M13), stored-bytes basis.** The row is
   serialized ONCE (``canonical_row_payload``), that exact string is stored as
   the item's ``data`` AND HMAC'd into the item-level ``rowHash`` attribute —
   exactly like ``compute_grant_hash``/``canonical_grant_payload``. On read the
@@ -81,20 +81,20 @@ class ToolRowConflictError(Exception):
     found a row created concurrently, or a re-vet found the row changed
     underfoot (concurrent write, or a data/HMAC tamper landing between the
     guarded re-read and the write). Mirrors GrantUpdateConflictError /
-    GrantAlreadyExistsError (#190): each write is conditional and fails toward
+    GrantAlreadyExistsError: each write is conditional and fails toward
     LESS authority; the caller must re-read and re-vet, never overwrite blind.
     """
 
 
 # ---------------------------------------------------------------------------
-# Store-integrity HMAC (M13) — stored-bytes basis (#246, the grants/store.py idiom)
+# Store-integrity HMAC (M13) — stored-bytes basis (the grants/store.py idiom)
 # ---------------------------------------------------------------------------
 
 
 def canonical_row_payload(row: RegisteredTool) -> str:
     """The ONE serialization of a row — what gets stored AND what gets HMAC'd.
 
-    Storage and the integrity basis must be the same bytes (#246 re-shape A,
+    Storage and the integrity basis must be the same bytes (stored-bytes re-shape A,
     the mcp/proposals.py idiom). When they diverge, verification has to
     re-serialize the parsed model, which silently re-derives the basis from
     whatever the model class looks like *today* — so any additive schema
@@ -105,7 +105,7 @@ def canonical_row_payload(row: RegisteredTool) -> str:
     So: serialize once, store this exact string, HMAC this exact string, and
     on read HMAC the stored bytes verbatim without ever re-serializing. The
     integrity slot (the item-level ``rowHash`` attribute) is deliberately
-    OUTSIDE the payload — the pre-#246 in-payload ``hash`` slot, and the #223
+    OUTSIDE the payload — the old in-payload ``hash`` slot, and the discovery-hash
     ``exclude_none`` patch that existed only to keep the parse-then-
     re-serialize basis stable under additive widening, are both retired:
     nesting + stored-bytes make them unnecessary.
@@ -155,7 +155,7 @@ def _read_result_from_item(
     The stored bytes are HMAC'd VERBATIM against the item-level rowHash
     before any parse; a mismatch — or a missing/non-string half — quarantines
     with tool=None (the bytes are untrusted input and never parsed). Mirrors
-    grants/store.py's helper of the same name (#246).
+    grants/store.py's helper of the same name.
     """
     if not isinstance(data, str) or not isinstance(stored_hash, str):
         return ToolReadResult(
@@ -210,7 +210,7 @@ class ToolRegistryStore(Protocol):
         QUARANTINED, HMAC intact) IS overwritten: that is the re-vet resolving
         it. Stamps a fresh HMAC on the written row.
 
-        The write is CONDITIONAL (#190): ``expected`` is the caller's guarded
+        The write is CONDITIONAL: ``expected`` is the caller's guarded
         re-read of this coordinate (its ToolReadResult). A first admission
         (``expected.tool is None``, or unset on an empty coordinate) conditions
         on ``attribute_not_exists``; a re-vet conditions on the stored row still
@@ -239,11 +239,11 @@ class ToolRegistryStore(Protocol):
         """Append the admission record AND write the row as ONE atomic unit.
 
         The transactional form of ``put_record`` + ``admit_tool`` — closes the
-        record-without-row gap structurally (#221 Phase 6's orphan-``TOOLREC#``):
+        record-without-row gap structurally (the orphan-``TOOLREC#``):
         either BOTH legs commit or NOTHING is written. Each leg keeps its own
         condition — the record leg stays append-only (``attribute_not_exists``),
         the row leg carries the full ``admit_tool`` conditional semantics
-        (``expected`` is the caller's #190 guarded-re-read baseline; first
+        (``expected`` is the caller's guarded-re-read baseline; first
         admission vs. re-vet exactly as documented on ``admit_tool``).
 
         Error mapping — every failure lands on the LESS-authority side, meaning
@@ -273,7 +273,7 @@ class ToolRegistryStore(Protocol):
 
 class MemoryToolRegistry:
     """Fake registry backed by plain dicts, ITEM-SHAPED to mirror the DynamoDB
-    semantics byte-for-byte (#246): each row entry is {"data": <canonical
+    semantics byte-for-byte: each row entry is {"data": <canonical
     payload str>, "rowHash": <hmac str>} — so stored-bytes tamper tests
     exercise the same verify-then-parse path as production. Thread-unsafe;
     unit tests only."""
@@ -291,7 +291,7 @@ class MemoryToolRegistry:
         return _read_result_from_item(item.get("data"), item.get("rowHash"), self._hmac_key)
 
     def _build_item(self, row: RegisteredTool) -> dict:
-        """Serialize once; the stored data string IS the HMAC basis (#246)."""
+        """Serialize once; the stored data string IS the HMAC basis."""
         payload = canonical_row_payload(row)
         return {"data": payload, "rowHash": _hmac_payload(payload, self._hmac_key)}
 
@@ -309,9 +309,9 @@ class MemoryToolRegistry:
                 "root-cause the tamper before re-admitting (M6)"
             )
         baseline = expected if expected is not None else current
-        # Conditional write (#190 mirror): the stored row must still be exactly
+        # Conditional write: the stored row must still be exactly
         # what `baseline` saw — its item-level rowHash AND its stored bytes
-        # (#246: the baseline is the guarded re-read's stored_hash/raw_data,
+        # (the baseline is the guarded re-read's stored_hash/raw_data,
         # never a field of the parsed row). In DynamoDB this is a
         # ConditionExpression evaluated atomically; here it is the same check
         # against the current dict state.
@@ -346,7 +346,7 @@ class MemoryToolRegistry:
     @staticmethod
     def _record_item(record: McpAdmissionRecord, signature: dict | None) -> dict:
         return {
-            # Canonical payload — the same bytes the DSSE signature binds (#246 C)
+            # Canonical payload — the same bytes the DSSE signature binds (re-shape C)
             "data": canonical_record_payload(record),
             "signature": json.dumps(signature, sort_keys=True, ensure_ascii=True)
             if signature is not None
@@ -415,10 +415,10 @@ class DynamoToolRegistry:
         row     pk="TOOLDEF#<server_id>#<tool_name>"  sk="ROW"
         record  pk="TOOLREC#<server_id>#<tool_name>"  sk="<ts>"
     'data' holds the canonical row payload — the stored bytes ARE the integrity
-    basis (#246); rowHash (the HMAC over those exact bytes) lives at item level
+    basis; rowHash (the HMAC over those exact bytes) lives at item level
     ONLY, the sole integrity slot. BOTH
     writes go through update_item under a ConditionExpression — rows condition on
-    attribute_not_exists (first admission) or rowHash+data (re-vet, the #190
+    attribute_not_exists (first admission) or rowHash+data (re-vet, the
     guarded-re-read mirror); records condition on attribute_not_exists
     (append-only), like the PromotionRecord ledger. Because neither write uses
     put_item, the store needs only UpdateItem on the table (UpdateItem authorizes
@@ -459,7 +459,7 @@ class DynamoToolRegistry:
     def _prepare_row_write(
         self, row: RegisteredTool, expected: ToolReadResult | None
     ) -> tuple[str, dict, dict]:
-        """M6 pre-flight + the #190 conditional-write pieces for the row leg.
+        """M6 pre-flight + the conditional-write pieces for the row leg.
 
         Returns (ConditionExpression, ExpressionAttributeNames,
         ExpressionAttributeValues) with PLAIN string values — the resource-level
@@ -475,17 +475,17 @@ class DynamoToolRegistry:
                 "root-cause the tamper before re-admitting (M6)"
             )
         baseline = expected if expected is not None else current
-        # Serialize once; the stored data string IS the HMAC basis (#246).
+        # Serialize once; the stored data string IS the HMAC basis.
         payload = canonical_row_payload(row)
 
         # The write is conditioned on the stored row still being the one the
-        # caller evaluated (#190). A first admission conditions on
+        # caller evaluated. A first admission conditions on
         # attribute_not_exists; a re-vet conditions on rowHash AND the data
         # string (a tamper of data alone — rowHash untouched — landing between
         # the guarded re-read and this write would pass a rowHash-only condition
         # and be silently overwritten, destroying the tamper evidence, exactly
         # the update_grant data clause), with values from the guarded re-read's
-        # item-level stored_hash/raw_data (#246). DynamoDB evaluates the
+        # item-level stored_hash/raw_data. DynamoDB evaluates the
         # condition atomically against CURRENT state, so it also closes the
         # get_tool→write gap above. 'data' is a DynamoDB reserved word → #data.
         names = {"#data": "data"}
@@ -509,7 +509,7 @@ class DynamoToolRegistry:
 
         The stored data is the CANONICAL record payload — the same bytes the
         DSSE signature binds, so verification digests the stored string
-        verbatim (#246 re-shape C).
+        verbatim (stored-bytes re-shape C).
         """
         update_expression = "SET #data = :data"
         names = {"#data": "data"}
@@ -592,7 +592,7 @@ class DynamoToolRegistry:
         # Both legs' expressions come from the SAME builders the single-item
         # writes use, so this path cannot drift from admit_tool/put_record
         # semantics. Update-only TransactWriteItems: the store still needs only
-        # dynamodb:UpdateItem (no IAM change — the #221 close-out claim, now
+        # dynamodb:UpdateItem (no IAM change — the MCP host close-out claim, now
         # exercised).
         row_condition, row_names, row_values = self._prepare_row_write(row, expected)
         rec_update, rec_names, rec_values = self._prepare_record_write(record, signature)

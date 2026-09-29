@@ -1,4 +1,4 @@
-"""Tests for the envelope store + seed + read seam (sa#136, Phase 3 Slice A).
+"""Tests for the envelope store + seed + read seam (Phase 3 Slice A).
 
 Coverage:
 - InMemoryEnvelopeStore round-trip: put/get preserves all fields.
@@ -12,7 +12,7 @@ Coverage:
   malformed (non-mapping) envelope: block.
 - DynamoDBEnvelopeStore round-trips via a mocked boto3 session, co-located in
   the same table shape (pk/sk) grants use, with the "ENVELOPE#" prefix.
-- _resolve_seed_principal (#197): the store-key principal comes from the SAME
+- _resolve_seed_principal: the store-key principal comes from the SAME
   manifest the envelope is read from; a BROKER_MANIFEST naming a different
   principal is a split-brain refusal; no principal anywhere refuses — the seed
   never falls back to a default principal.
@@ -252,7 +252,7 @@ def test_dynamo_put_propagates_access_denied():
 
 # ---------------------------------------------------------------------------
 # _resolve_seed_principal — the store-key principal comes from the SAME
-# manifest the envelope is read from (#197), never a default
+# manifest the envelope is read from, never a default
 # ---------------------------------------------------------------------------
 
 _ENVELOPE_YAML_BLOCK = """\
@@ -280,7 +280,7 @@ def _write_manifest(tmp_path: Path, name: str, agent_id: str | None) -> Path:
 
 
 def test_seed_principal_derives_from_envelope_manifest(monkeypatch, tmp_path):
-    """The #197 bare-invocation regression: BROKER_MANIFEST unset, the envelope
+    """The bare-invocation regression: BROKER_MANIFEST unset, the envelope
     manifest names its own principal — that principal keys the store write,
     never the broker_server default (example-advisor)."""
     from safe_agents.broker.prototype.seed_envelope import _resolve_seed_principal

@@ -1,9 +1,9 @@
 """
-RHEL arm — broker-centric, OS-isolated agent compute (sa#87, sa#92, sa#94).
+RHEL arm — broker-centric, OS-isolated agent compute (#66).
 
 The arm has two profiles (SA_PROFILE). The default **autonomous** profile confines
 the agent with a netns whose only outbound route is the broker, which is also the
-model-inference proxy (docs/model-egress.md, sa#35) — OpenShell is NOT installed.
+model-inference proxy (docs/model-egress.md) — OpenShell is NOT installed.
 The **interactive** dev-box profile runs each agent in an isolated OpenShell sandbox
 whose default-deny network policy whitelists only the co-placed broker endpoint +
 api.anthropic.com:443.

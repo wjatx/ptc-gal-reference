@@ -6,7 +6,7 @@ when the sub-agent presents it on a BrokeredCall.
 
 Two implementations:
   InMemorySubGrantStore  — no AWS, no creds; for tests and local development
-  (DynamoDB production implementation is a future concern — tracked by #56)
+  (DynamoDB production implementation is a future concern — not yet tracked here)
 """
 
 from __future__ import annotations

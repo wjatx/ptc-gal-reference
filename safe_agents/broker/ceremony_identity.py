@@ -1,4 +1,4 @@
-"""ceremony_identity.py — the ONE resolver for a ceremony operator's identity (#226).
+"""ceremony_identity.py — the ONE resolver for a ceremony operator's identity.
 
 Both ceremony command surfaces — the grant ceremony
 (``safe_agents.broker.grants.commands``) and the MCP admission ceremony
@@ -12,13 +12,13 @@ A solo developer on a Mac has no STS. Before this module the derivation died at
 persist a ceremony's output while no ceremony could be run to produce it — the
 product-wrapper Phase-1 wall.
 
-What this module adds is a LOCAL identity arm, deliberately shaped like #205's
+What this module adds is a LOCAL identity arm, deliberately shaped like the named-config-or-refuse
 ``resolve_hmac_key`` fallback:
 
 * **Explicit opt-in.** ``BROKER_LOCAL_IDENTITY`` must be NAMED. Absent AWS
   credentials never silently select it: an unset var with no ambient
   credentials REFUSES with a pointer, because silently substituting the
-  identity a record is stamped with is exactly the #197/#199 wrong-authority
+  identity a record is stamped with is exactly the wrong-authority-mint
   shape.
 * **A closed catalog, never a free string.** The var selects a ROLE from
   :data:`LOCAL_ROLES`; the operator cannot assert an arbitrary identity. The
@@ -29,7 +29,7 @@ What this module adds is a LOCAL identity arm, deliberately shaped like #205's
   grants/registry tables. NB the gate is dynamo-vs-not, deliberately NOT
   ``is_durable_arm``: sqlite is precisely the local floor this exists for.
 
-A cluster has a third answer, and it is a REAL one (#250 Phase 3). Self-managed
+A cluster has a third answer, and it is a REAL one (the OpenShift arm). Self-managed
 OpenShift has no IRSA, but every pod carries a projected ServiceAccount token —
 audience-bound, short-lived, and not mintable by the workload that holds it. So
 ``BROKER_CEREMONY_IDENTITY=serviceaccount`` derives the identity the same way the
@@ -40,7 +40,7 @@ consequently REFUSED wherever such a token exists, the sibling of the dynamo
 gate below.
 
 What the serviceaccount arm does NOT buy on its own is store-write exclusion —
-that is the write split's job, and since #203 (closed 2026-07-28) it is
+that is the write split's job, and since the maker/checker split (2026-07-28) it is
 PREVENTION on both substrates: on the cloud floor MakerRole's ``UpdateItem`` is
 LeadingKeys-confined to ``PROPOSAL#*`` (``infra/lib/identity-stack.ts``) and the
 maker cannot READ THE ISSUER KEY (zero secretsmanager statements), so it can
@@ -59,7 +59,7 @@ marker DERIVED from that string — never asserted separately, so the two can
 never disagree.
 
 The invariant that survives intact is the one that matters: **the proposer
-cannot ratify in ONE action** (ruling: GAL §8, locked 2026-07-14 via #202).
+cannot ratify in ONE action** (ruling: GAL §8, locked 2026-07-14).
 Two invocations, with a deliberate identity switch between them, remain
 required — see :func:`is_same_operator`.
 """
@@ -76,7 +76,7 @@ from safe_agents.broker.prototype.boot_config import BrokerConfigError
 LOCAL_IDENTITY_ENV = "BROKER_LOCAL_IDENTITY"
 
 # The env var that NAMES which identity arm is in force, over a CLOSED catalog
-# (#250 Phase 3). Unset keeps the pre-Phase-3 two-way dispatch byte-for-byte.
+# (the OpenShift arm). Unset keeps the pre-OpenShift two-way dispatch byte-for-byte.
 #
 # A third arm is the point at which the old implicit fall-through stops carrying
 # its meaning: "BROKER_LOCAL_IDENTITY set ? local : STS" was readable while there
@@ -94,12 +94,12 @@ SA_TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"  # noqa: S
 SA_CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 
 # The CLOSED catalog of local ceremony roles. Config SELECTS from this set; it
-# can never name an identity (docs/config-provenance.md, #186). Two entries is
+# can never name an identity (docs/config-provenance.md). Two entries is
 # the whole point: maker and checker are the two halves of the ceremony.
 LOCAL_ROLES = ("maker", "checker")
 
 # The role stamped into `approvedBy` when a held intent is RELEASED on the local
-# floor (#301). Deliberately outside LOCAL_ROLES: releasing a held call is not a
+# floor. Deliberately outside LOCAL_ROLES: releasing a held call is not a
 # ceremony half. Per the 2026-07-29 ruling the local release is one command under
 # one identity, so there is no maker/checker pair to name here — and widening the
 # ceremony catalog to hold it would smuggle a third ceremony role into a closed set
@@ -178,7 +178,7 @@ def _local_identity(role: str) -> str:
             "name an identity. Identity is derived (OS user + host), never "
             "asserted — there is no --as, on any arm."
         )
-    # The sibling of the dynamo gate, for the same reason (#250 Phase 3): a
+    # The sibling of the dynamo gate, for the same reason (OpenShift arm): a
     # solo-attested record must never be written where a REAL identity was
     # available and declined. On a cluster the projected token is that real
     # identity — audience-bound, short-lived, and not mintable by the workload —
@@ -217,7 +217,7 @@ def _local_identity(role: str) -> str:
 
 
 def local_release_identity() -> str:
-    """The identity that RELEASES a held intent on the local floor (#301).
+    """The identity that RELEASES a held intent on the local floor.
 
     ``approve_intent`` documents ``approved_by`` as "the authenticated human
     identity from the approval channel (never sourced from the agent)". On a
@@ -321,7 +321,7 @@ def _serviceaccount_identity() -> str:
 
     Every failure REFUSES. There is no degradation to the solo arm and no
     fallback to a parsed claim: a ceremony that cannot establish who is running
-    it must write nothing, which is the #197/#199 shape.
+    it must write nothing, which is the wrong-authority-mint shape.
     """
     token = _projected_token()
     if token is None:
@@ -381,7 +381,7 @@ def _sts_identity(session: object = None) -> str:
     actual human/pipeline behind the role — derived, never asserted (no --as).
 
     An AWS-free machine is REFUSED with a pointer at the local arm rather than
-    a botocore traceback: this is the wall #226 measured, and the fix is a
+    a botocore traceback: this is the wall the local arm measured, and the fix is a
     named opt-in, never an automatic fallback.
     """
     try:
@@ -418,7 +418,7 @@ def _no_aws_guidance(detail: str) -> str:
 def resolve_ceremony_arm() -> str:
     """Which identity arm is in force — the ONE resolution point.
 
-    Unset keeps the pre-#250 two-way dispatch BYTE-FOR-BYTE, so every existing
+    Unset keeps the pre-OpenShift two-way dispatch BYTE-FOR-BYTE, so every existing
     caller (the Mac drills, the container drill, both floors' operator roles) is
     unchanged and no record's attribution moves:
 
@@ -426,7 +426,7 @@ def resolve_ceremony_arm() -> str:
         otherwise                 -> 'sts'
 
     An unrecognized value REFUSES rather than falling through to that default,
-    on the #248 reasoning: a typo must not boot the operator into an arm they
+    on the directory-secrets-backend reasoning: a typo must not boot the operator into an arm they
     did not name while they believe another is in force.
     """
     named = os.environ.get(CEREMONY_IDENTITY_ENV, "").strip()
@@ -474,7 +474,7 @@ def attestation_for(identity: str) -> str | None:
     """The ledger record's ``attestation`` marker, DERIVED from the identity.
 
     ``None`` on the STS arm (two IAM-backed credential ARNs — the field is
-    absent from every record written before #226, and stays absent for them).
+    absent from every record written before the local arm, and stays absent for them).
     :data:`SOLO_ATTESTATION` when the identity came from the local arm.
 
     Deriving it means the marker cannot disagree with the identity it

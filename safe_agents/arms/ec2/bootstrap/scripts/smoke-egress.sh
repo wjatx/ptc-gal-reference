@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smoke-egress.sh — prove the netns egress confinement, don't trust it (safe-agents sa#35).
+# smoke-egress.sh — prove the netns egress confinement, don't trust it (two-box model).
 #
 # Run on the box (e.g. over SSM). Executes four assertions FROM INSIDE the agent netns,
 # converged onto the TWO-BOX broker model (Option A): the netns forwards to the external

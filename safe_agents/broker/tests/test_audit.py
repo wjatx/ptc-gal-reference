@@ -2,7 +2,7 @@
 
 All tests run against InMemorySink. No AWS credentials, no moto, no live S3.
 
-Acceptance criteria (from sa#24 #49):
+Acceptance criteria:
 - Ten emissions form a valid chain (each prevHash == prior record's hash).
 - Mutating any field breaks the chain (ChainError from verify_chain).
 - Deleting a record creates a seq gap (ChainError from verify_chain).
@@ -80,7 +80,7 @@ def test_ten_emissions_valid_chain():
 # 2. Mutation of any field breaks the chain
 # ---------------------------------------------------------------------------
 
-# #198 receipt kwargs — used wherever a test needs records that HAVE receipts set.
+# Approval-receipt kwargs — used wherever a test needs records that HAVE receipts set.
 RECEIPT_EMIT = dict(
     intent_id="intent-golden-1",
     stored_call_digest="sha256:" + "5" * 64,
@@ -95,7 +95,7 @@ RECEIPT_EMIT = dict(
     ("argsDigest", "sha256:" + "a" * 64),
     ("envelopeHash", "sha256:" + "b" * 64),
     ("outcome", "denied"),
-    # #198 — mutating a PRESENT receipt field breaks the chain like any other field
+    # Receipts — mutating a PRESENT receipt field breaks the chain like any other field
     ("intentId", "intent-swapped"),
     ("storedCallDigest", "sha256:" + "e" * 64),
     ("resultDigest", "sha256:" + "f" * 64),
@@ -281,11 +281,11 @@ def test_args_digest_is_deterministic():
 
 
 # ---------------------------------------------------------------------------
-# 10. #198 receipts — back-compat + tamper evidence
+# 10. Approval receipts — back-compat + tamper evidence
 # ---------------------------------------------------------------------------
 
 def test_golden_prereceipts_chain_verifies():
-    """Byte-for-byte back-compat: a chain hashed by PRE-#198 emit() still verifies.
+    """Byte-for-byte back-compat: a chain hashed by PRE-receipts emit() still verifies.
 
     The fixture's hashes were computed before the receipt fields existed; absent
     (None) receipt fields must be omitted from the recomputed hash, so every

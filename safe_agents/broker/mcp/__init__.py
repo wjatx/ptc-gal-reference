@@ -1,4 +1,4 @@
-"""Reference MCP host: two-key discovery gate + thin SDK client (#174).
+"""Reference MCP host: two-key discovery gate + thin SDK client.
 
 The admitted-tool registry store + admission ceremony (this package's `registry`,
 `proposals`, `signing`, and `commands` modules) are the reference binding

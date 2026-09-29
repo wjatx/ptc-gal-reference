@@ -1,4 +1,4 @@
-"""Tests for SearchConnector — the search.query shared read connector (sa#133).
+"""Tests for SearchConnector — the search.query shared read connector.
 
 Unlike test_telegram_connector.py (live API, skipped without credentials), the
 offline tests here monkeypatch ``urllib.request.urlopen`` so the REAL connector

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# container-arc-run.sh — host-side driver for the #249 container drill.
+# container-arc-run.sh — host-side driver for the container drill.
 #
 #   ./safe_agents/arms/local/container-arc-run.sh          # build + run
 #   SKIP_BUILD=1 ./safe_agents/arms/local/container-arc-run.sh   # reuse images
@@ -47,7 +47,7 @@ if [ -z "${SKIP_BUILD:-}" ]; then
     --build-arg BASE_IMAGE="$BASE_TAG" .
 fi
 
-# Secrets as a mounted DIRECTORY, one file per leaf (#248). Mode 0644 deliberately:
+# Secrets as a mounted DIRECTORY, one file per leaf. Mode 0644 deliberately:
 # that is what a projected Kubernetes Secret volume defaults to, so the drill
 # exercises the real thing rather than a mode the platform will not produce.
 SECRETS_DIR="$(mktemp -d)/secrets"

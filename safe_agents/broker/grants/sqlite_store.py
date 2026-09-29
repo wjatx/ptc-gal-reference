@@ -2,19 +2,19 @@
 
 The durable LOCAL backend behind the grants store contract — the third backend
 after InMemoryGrantStore and DynamoDBGrantStore, filling the same GrantStore
-Protocol with the same error vocabulary, the same #246 stored-bytes integrity
-basis, and the same #190 conditional-write discipline. Durability comes from
+Protocol with the same error vocabulary, the same stored-bytes integrity
+basis, and the same conditional-write discipline. Durability comes from
 ``sqlite_substrate`` (one ``broker.db``, WAL, item-shaped rows keyed exactly like
 the DynamoDB single-table items so ``example-wrapper migrate`` stays a row pump — sqlite
 row → Dynamo item, attribute map verbatim).
 
-Integrity is the STORED BYTES (#246): the grant is serialized ONCE
+Integrity is the STORED BYTES: the grant is serialized ONCE
 (``canonical_grant_payload``), that exact string is stored as the item's
 ``data`` AND HMAC'd into the item-level ``grantHash`` attribute; on read the
 stored bytes are verified VERBATIM before parsing (the shared
 ``_read_result_from_item`` helper, so all three backends quarantine
 identically). Records store the canonical record payload — the same bytes a
-DSSE signature binds (#246 re-shape C) — with the signature envelope beside
+DSSE signature binds (stored-bytes re-shape C) — with the signature envelope beside
 the blob, never inside it.
 
 Conditional writes have no ConditionExpression here: every write runs inside
@@ -23,14 +23,14 @@ writer lock from BEGIN — a read-check-write inside the transaction is
 serialized against every other writer, so the in-transaction check IS the
 condition, evaluated atomically against current state. There is no REPLACE
 anywhere: creates are guarded INSERTs, updates are guarded UPDATEs on a row
-the same transaction just evaluated. ``write_record_and_grant`` (#244) is a
+the same transaction just evaluated. ``write_record_and_grant`` is a
 NATIVE transaction: both legs' checks and both legs' writes inside one BEGIN
 IMMEDIATE — any failure rolls back to nothing written, with the same
 less-authority error mapping as the other backends.
 
 The ``session`` parameters exist for Protocol parity and are ignored — there
 is no boto3 here; identity on the local arm is the solo-ceremony resolver's
-concern (#226), not the store's.
+concern, not the store's.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
         pk = "GRANT#<agentId>#<skill>#<user>#<tier>"
         sk = "CLASS#<actionClass>"
         attrs {"data": <canonical grant payload>, "grantHash": <hmac over
-        those exact bytes — the #246 stored-bytes basis>}
+        those exact bytes — the stored-bytes basis>}
 
     Like both twins, this store never raises QuarantinedGrantError itself:
     get_grant RETURNS the quarantine (grant=None + raw bytes as evidence) and
@@ -91,7 +91,7 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
     def _build_attrs(self, grant: Grant) -> dict:
         """The stored item attrs shared by every grant write.
 
-        Serialize once; the stored data string IS the HMAC basis (#246).
+        Serialize once; the stored data string IS the HMAC basis.
         """
         payload = canonical_grant_payload(grant)
         return {"data": payload, "grantHash": _hmac_payload(payload, self._hmac_key)}
@@ -100,7 +100,7 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
         attrs = substrate.get_item(self._connection(), *self._item_key(principal, action_class))
         if attrs is None:
             return GrantReadResult(grant=None)
-        # Verify-then-parse over the STORED bytes (#246) — the shared helper,
+        # Verify-then-parse over the STORED bytes — the shared helper,
         # so all three backends quarantine identically.
         return _read_result_from_item(attrs.get("data"), attrs.get("grantHash"), self._hmac_key)
 
@@ -151,7 +151,7 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
         The in-transaction re-read is the ConditionExpression: the stored item
         must still be the one the caller evaluated — grantHash equals
         expected_hash AND the stored data bytes equal prev_raw_data (both from
-        the guarded re-read). prev_raw_data is REQUIRED (#246; the legacy-item
+        the guarded re-read). prev_raw_data is REQUIRED (the legacy-item
         fallback is retired) — supplying None is a ValueError, failing toward
         writing nothing.
         """
@@ -204,7 +204,7 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
         signature: dict | None = None,
         expected: GrantReadResult | None = None,
     ) -> None:
-        """Atomic record+grant write (#244): ONE native BEGIN IMMEDIATE.
+        """Atomic record+grant write: ONE native BEGIN IMMEDIATE.
 
         Both legs' checks, then both legs' writes, inside a single transaction
         — any raise rolls back to NOTHING written. The record leg is written
@@ -275,11 +275,11 @@ class SqlitePromotionRecordStore(substrate.SqliteStoreBase):
     mirroring DynamoDBPromotionRecordStore key-for-key:
         pk = "RECORD#<agentId>#<skill>#<user>#<tier>#<actionClass>"
         sk = "<ts>#<recordType>"      (ts first → chronological partition scan)
-        attrs {"data": <canonical record payload — the #246 re-shape C basis,
+        attrs {"data": <canonical record payload — the stored-bytes re-shape C basis,
         the same bytes a DSSE signature binds>[, "signature": <DSSE JSON>]}
 
     Like the memory twin (and unlike Dynamo, which does not carry the read
-    surface yet — #245), the stored signature and stored bytes are readable
+    surface yet — #99), the stored signature and stored bytes are readable
     back via signature_for / stored_data_for.
     """
 
@@ -293,10 +293,10 @@ class SqlitePromotionRecordStore(substrate.SqliteStoreBase):
     @staticmethod
     def _record_attrs(record: PromotionRecord, signature: dict | None) -> dict:
         """The record item's attrs — the stored data is the CANONICAL record
-        payload (the DSSE signing basis, #246 re-shape C), the signature JSON
+        payload (the DSSE signing basis, stored-bytes re-shape C), the signature JSON
         beside it, byte-matching DynamoDBPromotionRecordStore._prepare_record_write.
         Shared with SqliteGrantStore.write_record_and_grant so the transact
-        path cannot drift from single-write semantics (#244)."""
+        path cannot drift from single-write semantics."""
         from safe_agents.broker.grants.record_signing import canonical_record_payload
 
         attrs = {"data": canonical_record_payload(record)}
@@ -357,6 +357,6 @@ class SqlitePromotionRecordStore(substrate.SqliteStoreBase):
         return json.loads(attrs["signature"])
 
     def stored_data_for(self, record: PromotionRecord) -> str | None:
-        """The exact stored serialization — the verify basis (#246; audit/test seam)."""
+        """The exact stored serialization — the verify basis (audit/test seam)."""
         attrs = substrate.get_item(self._connection(), *self._item_key(record))
         return attrs["data"] if attrs is not None else None

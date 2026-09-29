@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# drain.sh — the on-wake SQS drain loop for the ec2-woken box (sa#98).
+# drain.sh — the on-wake SQS drain loop for the ec2-woken box.
 #
 # The lifecycle: the airlock Lambda wakes the box (ec2:StartInstances) → systemd starts
 # responsive-agent-ready.service → this drain runs → the box self-stops (sleeps) when idle.

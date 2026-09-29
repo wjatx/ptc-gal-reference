@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cluster-propose.sh — the MAKER half of the ceremony (#250 Phase 3).
+# cluster-propose.sh — the MAKER half of the ceremony (Phase 3).
 #
 # Runs under ServiceAccount `safe-agents-maker`. Its identity is DERIVED by
 # round-trip to the API server (SelfSubjectReview), not read off the token it
@@ -18,7 +18,7 @@ SERVER_ID="${DRILL_SERVER_ID:-ledger}"
 ADMIT_TOOL="${DRILL_ADMIT_TOOL:-get_entry}"
 SA_TOKEN=/var/run/secrets/kubernetes.io/serviceaccount/token
 
-# The shared negative-proof helper (#312). This leg's step 4 is the incident that
+# The shared negative-proof helper. This leg's step 4 is the incident that
 # motivated it — a refusal grepped for "REFUSED" and labelled M8 as M7.
 # shellcheck source=negative-proof.sh
 source "$(dirname "$0")/negative-proof.sh"

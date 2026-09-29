@@ -2,7 +2,7 @@
 
 The broker IAM identity holds s3:PutObject + s3:GetObject on the objects and
 s3:ListBucket on the bucket, and no delete of any kind. GetObject/ListBucket are
-REQUIRED to resume the chain across a restart (sa#132/sa#104) — see resuming() below;
+REQUIRED to resume the chain across a restart — see resuming() below;
 the broker reading back records it wrote itself is not an exfiltration channel
 (`infra/lib/identity-stack.ts:162-182`).
 
@@ -56,7 +56,7 @@ class S3ObjectLockSink:
 
     Constructor arguments:
         bucket_name: the S3 bucket name (ImportValue from the StateStack CDK output
-                     in sa#11 once that stack is deployed).
+                     once that stack is deployed).
         key_prefix:  prefix for all record keys (default "audit/").
         initial_seq: the seq to assign to the first record this process emits.
                      In production, the startup read (performed by a separate role
@@ -87,7 +87,7 @@ class S3ObjectLockSink:
     def resuming(cls, bucket_name: str, *, key_prefix: str = "audit/") -> S3ObjectLockSink:
         """Build a sink that continues an existing bucket's audit chain.
 
-        The S3 analog of ``FileAuditSink.resuming(path)`` (sa#104). A long-lived broker
+        The S3 analog of ``FileAuditSink.resuming(path)``. A long-lived broker
         that restarts must NOT reset ``seq`` to 0 — the fresh ``PutObject`` would collide
         with the existing ``{prefix}{seq:010d}.json`` object (Object Lock blocks the
         overwrite; versioning would otherwise mask it) and, worse, would restart the hash

@@ -1,6 +1,6 @@
-"""channels.webhook — the signed-webhook inbound adapter (sa#152, reference-tier).
+"""channels.webhook — the signed-webhook inbound adapter (reference-tier).
 
-The first concrete `InboundAdapter` (channels/adapters.py), shaped for the sa#8
+The first concrete `InboundAdapter` (channels/adapters.py), shaped for the
 A2A wire: a peer zone POSTs an `EventTrigger` envelope as a JSON body, proving
 transport authenticity with a shared secret-token header. Reference-tier per
 docs/contract-vs-reference.md — it binds the contract-tier interfaces to the

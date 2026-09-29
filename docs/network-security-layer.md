@@ -1,7 +1,7 @@
 # Network-security layer — the topological half of invariant #2
 
 **Status: proven, then deliberately shelved (2026-07-07).** The full VPC topology described here was
-built (sa#13, sa#83), deployed to `development` and `production`, and verified by the conformance
+built, deployed to `development` and `production`, and verified by the conformance
 gate. It is now flag-gated behind `secureNetwork` and **ships OFF** for this platform's current
 experiment floor. This document is the durable reference for the design so that turning it back on is
 a deploy, not a rediscovery — and so the trade we accepted by turning it off is written down rather
@@ -99,11 +99,11 @@ Three security groups express the egress shape:
 Three details in `network-stack.ts` cost real debugging and are the kind of thing that gets
 re-broken the moment someone rebuilds the topology from memory.
 
-**Gateway-endpoint traffic still hits security-group egress (the sa#83 bug).** It is tempting to
+**Gateway-endpoint traffic still hits security-group egress.** It is tempting to
 believe a gateway endpoint's route-table injection is the whole story. It is not: packets matching the
 gateway prefix-list route are *also* evaluated against the agent SG's egress rules, and with
 `allowAllOutbound: false` they are dropped before reaching the endpoint unless there is an explicit
-egress rule to the managed prefix list. That was the live bug behind sa#83. The fix is the two
+egress rule to the managed prefix list. That was a live bug in this stack. The fix is the two
 `CfnSecurityGroupEgress` rules granting the agent SG TCP 443 to the S3 and DynamoDB prefix lists. The
 prefix-list IDs are AWS-owned and region-specific; the stack maps them by region in a static table
 (`GATEWAY_PREFIX_LISTS`) rather than resolving at deploy time, because `AWS::EC2::VPCEndpoint` exposes

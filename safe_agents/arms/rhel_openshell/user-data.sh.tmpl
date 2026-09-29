@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cloud-init thin launcher — RHEL+OpenShell arm (arm=rhel-openshell), sa#91.
+# cloud-init thin launcher — RHEL+OpenShell arm (arm=rhel-openshell).
 #
 # Rendered by safe_agents/arms/rhel_openshell/provision.py from this template before
 # RunInstances. Template parameters (replaced at render time — never hardcoded here):
@@ -7,7 +7,7 @@
 #   {{arm}}               arm identifier (always "rhel-openshell" for this template)
 #   {{oauth_token}}       Secrets Manager secret id for the Claude Code OAuth token
 #   {{environment}}       deployment environment: development|staging|production
-#   {{broker_dns}}        the broker SERVICE DNS (broker.safe-agents.local), sa#35
+#   {{broker_dns}}        the broker SERVICE DNS (broker.safe-agents.local)
 #   {{agent_runs_table}}  the agent-runs DynamoDB table name (run records)
 #   {{region}}            deployment region (for the runtime AWS clients)
 #
@@ -31,7 +31,7 @@
 #   The heavy install moved to bootstrap/ so this file stays well under the 25,600-byte
 #   cloud-init user-data limit (already gzip-encoded; provision.py compresses before upload).
 #
-# Two-identity split (arms.md + sa#33):
+# Two-identity split (arms.md):
 #   Agent process  — agentRole instance profile; zero connector authority.
 #   Broker sidecar — brokerRole credentials injected separately; holds connector creds.
 #
@@ -99,7 +99,7 @@ chmod 440 /etc/sudoers.d/90-dev
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] dev user created (NOPASSWD sudo)"
 
 # ── Step 4: AWS CLI v2 ────────────────────────────────────────────────────────
-# The prebuilt safe-agents RHEL AMI (sa#109) bakes the CLI into /usr/local/bin,
+# The prebuilt safe-agents RHEL AMI bakes the CLI into /usr/local/bin,
 # which is NOT on cloud-init's root PATH — export it BEFORE the guard. Only the
 # marketplace-AMI fallback installs from upstream; that needs egress, and this box
 # sits in the isolated no-NAT subnet, so an unconditional install would trip the

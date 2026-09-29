@@ -1,4 +1,4 @@
-"""MCP tool-registry schemas — the two-key admission of a discovered MCP tool (#174).
+"""MCP tool-registry schemas — the two-key admission of a discovered MCP tool.
 
 An MCP server's tool set is discovered at runtime, so its definitions are NOT
 image-baked and cannot be trusted on sight (a compromised or swapped server can
@@ -112,7 +112,7 @@ class McpServerDecl(BaseModel):
     `structured_output` wins?), so fail at load.
 
     A declaration MAY additionally carry stdio spawn config (`command`, `args`,
-    `env`, `cwd`) — the #221 native-construction block. With `command` set, the
+    `env`, `cwd`) — the native-construction block. With `command` set, the
     broker's `build_runtime` composes the MCP connector itself (child process,
     host factory, admitted-tool registry) with no `connector_providers` class in
     between. The block names code to run, so it sits in the SAME power class as
@@ -125,7 +125,7 @@ class McpServerDecl(BaseModel):
     and the two halves may not overlap (enforced at manifest load).
 
     A declaration MAY instead carry a remote `url` with `transport=
-    "streamable-http"` (MCP-HOST.md M21, #221 Phase 4) — a server the broker
+    "streamable-http"` (MCP-HOST.md M21) — a server the broker
     connects to over HTTP rather than spawns. The URL names where calls (and,
     later, credentials) go, so it sits in the SAME image-baked-only power class
     as `command`, for the same structural reason: the store-loaded `Envelope`
@@ -137,14 +137,14 @@ class McpServerDecl(BaseModel):
 
     Without `command` or `url` the declaration is a pure namespace declaration
     (key #1 of two-key admission) and construction is the consumer's concern —
-    byte-for-byte the pre-#221 shape.
+    byte-for-byte the pre-native-construction shape.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     tools: list[McpToolDecl] = []
 
-    # -- transport + construction config (#221) — image-baked-only power class
+    # -- transport + construction config — image-baked-only power class
     transport: Literal["stdio", "streamable-http"] = "stdio"
 
     # -- stdio spawn config --
@@ -153,10 +153,10 @@ class McpServerDecl(BaseModel):
     env: dict[str, str] = {}
     cwd: Optional[str] = None
 
-    # -- streamable-http remote config (#221 Phase 4, MCP-HOST.md M21) --
+    # -- streamable-http remote config (MCP-HOST.md M21) --
     url: Optional[str] = None
 
-    # Respawn-after-death policy (#221 Phase 3, MCP-HOST.md M19). Optional and
+    # Respawn-after-death policy (MCP-HOST.md M19). Optional and
     # OFF by default; same image-baked-only power class as the spawn/remote
     # config it governs (the envelope store cannot set or loosen it —
     # `Envelope` has no `mcp_servers` field). Legal with `command` OR `url`.
@@ -238,7 +238,7 @@ class McpServerDecl(BaseModel):
 
         `transport="streamable-http"` requires `url` and forbids `command`;
         `transport="stdio"` forbids `url` (a stdio decl may still be
-        namespace-only, with neither `command` nor `url` set — the pre-#221
+        namespace-only, with neither `command` nor `url` set — the original
         shape, unchanged).
         """
         if self.command is not None and self.url is not None:
@@ -311,7 +311,7 @@ class McpToolDef(BaseModel):
     Materialized from a live MCP `tools/list` response. Its `def_hash`
     (`compute_tool_def_hash`) is what a signed store row commits to; a match
     against a re-derived hash at admission is what ACTIVATES the pre-declared
-    tool (two-key admission, #174).
+    tool (two-key admission).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -321,7 +321,7 @@ class McpToolDef(BaseModel):
     input_schema: dict
     description: str
 
-    # Advertised metadata (#221 field-carry; SIGNED since #223 — every
+    # Advertised metadata (field-carry; SIGNED since the hash widened — every
     # advertised field rides `compute_tool_def_hash`). Each defaults to `None`,
     # NEVER to an empty container: `None` honestly means "the server didn't
     # advertise this." A `None` field contributes nothing to the signed set
@@ -338,7 +338,7 @@ class McpToolDef(BaseModel):
 def compute_tool_def_hash(tool_def: McpToolDef) -> str:
     """Hex sha256 over the canonical JSON of the tool's SIGNED SET.
 
-    The signed set is EVERY ADVERTISED FIELD of the definition (#223): the four
+    The signed set is EVERY ADVERTISED FIELD of the definition: the four
     always-present core fields `(server_id, tool_name, input_schema,
     description)` plus each metadata field the server actually advertised
     (`title`/`output_schema`/`icons`/`annotations`/`meta`/`execution`). A
@@ -346,7 +346,7 @@ def compute_tool_def_hash(tool_def: McpToolDef) -> str:
     as null — deliberately, for two properties:
 
     - **A definition advertising no metadata hashes byte-identically to the
-      pre-#223 four-field basis.** The far-jump falls only where new signed
+      original four-field basis.** The far-jump falls only where new signed
       material actually exists; a row whose live server advertises nothing new
       is not forced through an empty-delta re-vet (a drift with nothing to
       show teaches operators to dismiss the alarm that matters).
@@ -361,7 +361,7 @@ def compute_tool_def_hash(tool_def: McpToolDef) -> str:
     advertised"), so neither can the hash. `description` is included
     DELIBERATELY — it is model-facing injection surface (a swapped server can
     rewrite it to steer the agent), so a description change must break the
-    hash and fail admission just as a schema change does; since #223 the same
+    hash and fail admission just as a schema change does; since the hash widened the same
     holds for a flipped annotation hint or a rewritten output schema.
 
     Canonicalization matches `safe_agents/channels/signing.py`: `json.dumps`
@@ -469,7 +469,7 @@ class RegistryStatus(str, Enum):
     later definition whose hash differs from the admitted one is treated as
     quarantined by the reader), never PERSISTED — the stored row stays ACTIVE and
     the mismatch is derived on each read, mirroring the grant-HMAC
-    loud-quarantine posture (sa#124). The arm is retained both so a reader can
+    loud-quarantine posture. The arm is retained both so a reader can
     represent that computed state and for a future explicit quarantine ceremony
     (a sanctioned writer that parks a row without deleting it). It is NOT removed:
     a store that round-trips only ACTIVE must still validate the full closed
@@ -481,12 +481,12 @@ class RegistryStatus(str, Enum):
 
 
 class RegisteredTool(BaseModel):
-    """A registry store row activating one declared MCP tool (#174; #246 re-shape A).
+    """A registry store row activating one declared MCP tool (stored-bytes re-shape A).
 
     The row NESTS the ratified definition as `tool_def` — the exact `McpToolDef`
     the ceremony admitted — instead of mirroring its fields flat. "The row pins
     what was ratified" is thereby structural: there is no per-field mirror to
-    drift out of sync when `McpToolDef` grows (the #223 field-carry bug class
+    drift out of sync when `McpToolDef` grows (the field-carry bug class
     dies here). Alongside it ride the `def_hash` the admission committed to,
     the closed `status`, and the admitting identity/time.
 
@@ -494,12 +494,12 @@ class RegisteredTool(BaseModel):
     level only (`rowHash` beside the stored `data` bytes), and its basis is the
     stored bytes themselves (`registry.canonical_row_payload`) — never a
     re-serialization of this model, so additive schema growth can never make an
-    intact old row read as tampered (#246: integrity indicts tampering, never
+    intact old row read as tampered (integrity indicts tampering, never
     evolution).
 
-    A pre-#246 flat row does NOT parse under this model (its definition fields
+    A pre-stored-bytes flat row does NOT parse under this model (its definition fields
     sit at top level, not under `tool_def`). That is deliberate: the migration
-    is the dev-floor re-vet (5 rows, per #246) — the ceremony re-mints the rows
+    is the dev-floor re-vet (5 rows) — the ceremony re-mints the rows
     it disturbs rather than this model carrying a dual-shape compat parse.
 
     `admitted_at` is an ISO-8601 string (tz-aware UTC), matching the string
@@ -525,7 +525,7 @@ class RegisteredTool(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Snapshot artifact — a captured live tool set, pre-admission (#221 Phase 5)
+# Snapshot artifact — a captured live tool set, pre-admission
 # ---------------------------------------------------------------------------
 
 
@@ -534,7 +534,7 @@ class McpSnapshotEntry(BaseModel):
     pre-computed drift-detection hash over its signed set.
 
     `def_hash` is carried alongside `tool_def` rather than recomputed by every
-    consumer so `show`/`diff` (#221 items 3/4) never need to re-derive it (and
+    consumer so `show`/`diff` never need to re-derive it (and
     a tampered snapshot file re-hashes to a different value than the one on
     disk, which is exactly the drift `diff` will report).
     """
@@ -550,8 +550,8 @@ class McpServerSnapshot(BaseModel):
 
     Produced by `python -m safe_agents.broker.mcp.commands snapshot` — pure
     discovery, no registry read or write. This is the typed input `show`/
-    `diff` (#221 item 3) and `admit-propose --from-snapshot` (item 4) consume,
-    and is also the mechanical core of the #231 vendor intake probe: capture
+    `diff` and `admit-propose --from-snapshot` consume,
+    and is also the mechanical core of the vendor intake probe (#137): capture
     once, inspect/diff/propose off the same file rather than re-querying a
     live (and possibly since-changed) server.
 

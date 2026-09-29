@@ -1,5 +1,5 @@
 # webhook-peer/channels-manifest-screened.yaml — the ENABLED variant of the sibling
-# channels-manifest.yaml (still a FICTIONAL example consumer, sa#8 A2A peer).
+# channels-manifest.yaml (still a FICTIONAL example consumer, A2A peer).
 #
 # Same trust map, zone, and adapter as channels-manifest.yaml — the ONLY difference is
 # that the injection screen (gate 7) and its observability valve are turned ON. Enabling

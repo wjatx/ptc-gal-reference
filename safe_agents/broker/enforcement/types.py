@@ -90,7 +90,7 @@ class IdempotencyRecord:
     double-execution window it exists to close. ``ts`` is the CLAIM time, so the
     age of a stuck claim is readable straight off the row.
 
-    Only EXECUTED outcomes (allow/transform) survive as records (#148): the
+    Only EXECUTED outcomes (allow/transform) survive as records: the
     record's purpose is exactly-once side effects, and a
     deny/abstain/require_approval executed nothing, so ``enforce()`` deletes the
     claim on those outcomes. Non-executed outcomes are time-dependent and must

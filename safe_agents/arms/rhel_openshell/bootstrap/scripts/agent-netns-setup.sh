@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agent-netns-setup.sh — create the confined agent network namespace (safe-agents sa#35).
+# agent-netns-setup.sh — create the confined agent network namespace (two-box model).
 #
 # Process-isolation confinement for the RHEL+OpenShell AUTONOMOUS arm, converged onto the
 # TWO-BOX broker model (Option A). The netns is kept as a defense-in-depth PROCESS-isolation
@@ -37,7 +37,7 @@
 # (copied there by bootstrap.sh) so the system service can exec it without tripping SELinux
 # init_t/203-EXEC (docs/rhel-host-gotchas.md).
 #
-# Scope: NETWORK namespace + forwarding only. Filesystem isolation is sa#95.
+# Scope: NETWORK namespace + forwarding only. Filesystem isolation is #67.
 #
 # Usage:  agent-netns-setup.sh [up|down]   (default: up)
 set -euo pipefail

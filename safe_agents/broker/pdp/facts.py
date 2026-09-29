@@ -46,14 +46,14 @@ class Facts:
 
     # The principal's grant read back QUARANTINED (HMAC mismatch — tampering, a
     # mis-seeded key, or key-rotation drift). The PIP sets this so the PEP can
-    # surface the tamper event LOUDLY at a single point (sa#124), rather than the
+    # surface the tamper event LOUDLY at a single point, rather than the
     # deny being indistinguishable from an un-provisioned capability. Orthogonal to
     # grant_present: a quarantined grant is treated as absent for the decision
     # (grant_present=False) but is NOT the same event as never-granted.
     quarantined: bool = False
     quarantine_reason: str | None = None
 
-    # sa#137 — read rung-gating + query-exfil bound. All three are resolved by the
+    # Read rung-gating + query-exfil bound. All three are resolved by the
     # PIP and consumed by the read-path rules in engine.py; defaulted so existing
     # Facts(...) call-sites (writes, older tests) stay valid without change.
     #
@@ -71,6 +71,6 @@ class Facts:
     # (Envelope.query_egress_budget)? Bounds the query string as an exfil channel.
     query_egress_breached: bool = False
 
-    # #184: the constructed-confidence artifact failed the Envelope.confidence bar
+    # The constructed-confidence artifact failed the Envelope.confidence bar
     # (meets_bar returned False). False when the knob/bar is unset — no bar, no gate.
     confidence_below_bar: bool = False

@@ -55,7 +55,7 @@ class AuditSink(Protocol):
         all emit() ever requires of it, and how WIDE the section must be is the
         implementation's business: an in-process lock suffices for a sink with one
         writer, while FileAuditSink's tape is shared by separate processes and needs
-        a cross-process one that also re-reads the tail (#301). Narrowing this to
+        a cross-process one that also re-reads the tail. Narrowing this to
         threading.Lock would forbid the correct implementation.
         """
         ...

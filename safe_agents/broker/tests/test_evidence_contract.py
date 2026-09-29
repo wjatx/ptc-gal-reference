@@ -1,4 +1,4 @@
-"""Conformance suite for the evidence contract (#184) — clauses E1–E10.
+"""Conformance suite for the evidence contract — clauses E1–E10.
 
 Contract-tier surface requires a conformance suite (`docs/contract-vs-reference.md`);
 this is it, mirroring `broker/EVIDENCE.md`'s clause table (and the C6–C8 style of
@@ -14,9 +14,9 @@ clause, no AWS/network/model.
 | **E5** | `effective_blast_class` is tighten-only — an override forces high; nothing lowers a derived class. |
 | **E6** | `meets_bar`: stale → False, method-not-accepted → False, no-artifact-with-bar → False, at/above bar → True. |
 | **E7** | `error_budget_draw` = error_prob × weight; a missing weight raises loudly (ValueError). |
-| **E8** | Caps `actions_per_run` rename (#163): both spellings load to one field; canonical dump; both-at-once rejected; no extra-key leak; hash equal. |
+| **E8** | Caps `actions_per_run` rename: both spellings load to one field; canonical dump; both-at-once rejected; no extra-key leak; hash equal. |
 | **E9** | `DemotionSignal` round-trips; trigger vocabulary is exactly the four `DemotionTrigger` values; extra keys rejected. |
-| **E15** | `CorroborationRecord` (#192) round-trips; incoherent counts rejected; `failed` ⇔ `agreeing < k`. |
+| **E15** | `CorroborationRecord` round-trips; incoherent counts rejected; `failed` ⇔ `agreeing < k`. |
 | **E10** | Loud legacy rejection: a retired `abstention_thresholds` key fails validation; an incoherent `Confidence` knob is rejected. |
 """
 
@@ -271,7 +271,7 @@ class TestE7BudgetDraw:
 
 
 # ---------------------------------------------------------------------------
-# E8 — caps rename (#163)
+# E8 — caps rename
 # ---------------------------------------------------------------------------
 
 
@@ -303,7 +303,7 @@ class TestE8CapsRename:
         assert compute_envelope_hash(old) == compute_envelope_hash(new)
 
     def test_period_spelling_loads_dumps_canonically_and_hash_equal(self) -> None:
-        """#212: `actions_per_period` is the honest spelling under a non-day
+        """Counter period: `actions_per_period` is the honest spelling under a non-day
         counter_period — same field, canonical dump key, same envelope hash."""
         from safe_agents.broker.schemas.envelope import Caps
 
@@ -374,7 +374,7 @@ class TestE9DemotionSignal:
 
 class TestE10LoudLegacyRejection:
     def test_retired_abstention_thresholds_key_rejected(self) -> None:
-        # A pre-#184 stored dump carries "abstention_thresholds": null. extra="forbid"
+        # A pre-error-budget stored dump carries "abstention_thresholds": null. extra="forbid"
         # rejects it loudly (the intended fail-closed path — re-seed cures it),
         # rather than silently coercing.
         with pytest.raises(ValidationError):
@@ -403,7 +403,7 @@ class TestE10LoudLegacyRejection:
 
 
 # ---------------------------------------------------------------------------
-# E15 — corroboration record (#192): the corroboration_failure typed input
+# E15 — corroboration record: the corroboration_failure typed input
 # ---------------------------------------------------------------------------
 
 

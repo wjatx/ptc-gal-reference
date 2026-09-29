@@ -9,7 +9,7 @@ Phase re-derivations (reference: PORTING.md):
     deploy     ← deploy-agent + seed-agent: three-way secret split, idempotent clone/pull
     smoke      ← smoke-agent: runs conformance harness against the deployed agent dir
 
-No arm adapter is implemented here (#33/#34/#36). The pipeline drives adapters;
+No arm adapter is implemented here. The pipeline drives adapters;
 adapters are separate concerns.
 """
 from __future__ import annotations
@@ -344,7 +344,7 @@ def smoke_phase(
     Smoke test the deployed agent against the runner-contract conformance harness.
 
     Re-derives smoke-agent: in this pipeline the smoke step is wired to the
-    conformance harness (safe_agents/contract/harness.py — the #31 deliverable) so the
+    conformance harness (safe_agents/contract/harness.py) so the
     machine-checkable "does this agent pass the runner contract" gate runs here,
     not just in CI.
 
@@ -745,7 +745,7 @@ def validate_phase(
     offline: bool = True,
 ) -> PhaseResult:
     """
-    Pre-flight manifest validation (sa#41).
+    Pre-flight manifest validation (#53).
 
     Runs extended structural checks before any AWS calls are made.
     Runs in both dry-run and live mode — these are pure file/schema checks.

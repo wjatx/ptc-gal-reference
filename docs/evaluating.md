@@ -63,7 +63,7 @@ grant load mode.
 
 That banner reads `grant load mode: seed`. Seed mode is the default local path, and it is the one
 described under "What we would most like challenged" in `docs/lf-reference-implementation.md`: it
-writes grants from inside the broker process, with a hardcoded reviewer attribution (#372). You
+writes grants from inside the broker process, with a hardcoded reviewer attribution (#27). You
 are looking at the configuration whose weakest leg that document names.
 
 To keep the audit tape rather than hold it in memory, name a file for it:

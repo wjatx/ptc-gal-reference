@@ -1,4 +1,4 @@
-"""Conformance guard (sa#213, class C): no naive-datetime construction
+"""Conformance guard (class C): no naive-datetime construction
 anywhere in base source.
 
 An AST walk over every non-test .py file under safe_agents/, forbidding the

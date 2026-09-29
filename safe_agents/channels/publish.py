@@ -1,4 +1,4 @@
-"""channels.publish — the outbound A2A seam (`peer.publish`, sa#156).
+"""channels.publish — the outbound A2A seam (`peer.publish`).
 
 See channels/PUBLISH.md for the normative contract; this module is the typed
 encoding of the one clause that cannot live in a connector: **the outbound
@@ -53,7 +53,7 @@ def stamp_outbound(
     supplies ``turn_tainted`` from the broker-held ``TurnContext.tainted``, never
     from anything the agent authored.
 
-    Lineage, not just a taint bit (#168, PTC §8). A fresh origination that read
+    Lineage, not just a taint bit (PTC §8). A fresh origination that read
     from an untrusted connector (e.g. ``connector:mcp-news``) would otherwise
     compress those real sources into a single taint boolean on the sending-zone
     hop — the receiver would see only ``peer:<agent>`` and could never apply its
@@ -135,9 +135,9 @@ def stamp_outbound(
     # anti-replay identity. Inbound signatures are NOT carried onward: a relay
     # re-packages a fresh payload/event_id/principal, so an upstream broker's
     # signature (over its own envelope) can never verify against this one. The
-    # upstream *hops* still ride (lineage the receiver re-derives taint from,
-    # #168); attributing each intermediate signer across a relay needs nested
-    # per-hop attestations and is deferred to the normative spec (#178). Unsigned
+    # upstream *hops* still ride (lineage the receiver re-derives taint from);
+    # attributing each intermediate signer across a relay needs nested
+    # per-hop attestations and is deferred to the normative spec. Unsigned
     # when no signer is configured.
     chain_signatures: list = []
     if signer is not None:

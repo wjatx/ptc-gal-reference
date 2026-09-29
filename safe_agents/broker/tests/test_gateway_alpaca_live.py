@@ -1,4 +1,4 @@
-"""Opt-in LIVE proof: the broker's MCP gateway in front of a REAL vendor server (#283).
+"""Opt-in LIVE proof: the broker's MCP gateway in front of a REAL vendor server.
 
 `test_gateway_stdio.py` proves the mouth's wiring in process, against a hand-written
 manifest and an in-memory sink. This is the other side of both: a **spawned**
@@ -21,7 +21,7 @@ solo-identity ceremony, and a local issuer key. So this drill also happens to be
 first time the gateway, the local trust substrate and a real vendor server are all
 in the same run — with **no AWS credentials anywhere**.
 
-Every #205 refusal is therefore in force (sqlite is a durable arm): the manifest, the
+Every named-config-or-refuse refusal is therefore in force (sqlite is a durable arm): the manifest, the
 HMAC key, the store path and real secrets are all NAMED here, and `BROKER_GRANT_LOAD`
 must be `read` because F5 refuses seed-at-boot on sqlite. Grants come from the
 ceremony, exactly as they would on a floor.
@@ -32,10 +32,10 @@ ceremony, exactly as they would on a floor.
 — the missileer posture keeps a dangerous op out of the manifest rather than denying
 it. When this drill first ran, that refusal wrote **no audit record at all**, while
 the in-process proof's refusal (of a tool `embedded_agent` CLASSIFIES without
-granting) was recorded. Two correct refusals, one word for both in the #283 DoD, and
+granting) was recorded. Two correct refusals, one word for both in the gateway DoD, and
 the safer posture was the one that left no trace.
 
-That was #281, and it is now fixed (MCP-HOST.md **M26**): the refusal below is on the
+That was the host-refusal audit gap, and it is now fixed (MCP-HOST.md **M26**): the refusal below is on the
 tape as `deny`/`denied`. The assertion is kept pointed at the coordinate rather than
 at a count, so it keeps meaning the same thing as the chain grows.
 
@@ -101,7 +101,7 @@ def _provision(tmp_path: Path) -> dict[str, str]:
     secrets_file.write_text(
         json.dumps(
             {
-                # The sa#164 leaf convention: the leaf VALUE is a flat JSON string
+                # The bare-leaf convention: the leaf VALUE is a flat JSON string
                 # map, renamed to the server's variables by the manifest's env_map.
                 # Values flow shell env -> file -> broker and are never printed.
                 "alpaca-mcp-paper": json.dumps(
@@ -295,7 +295,7 @@ def test_gateway_serves_ceremony_admitted_alpaca_tools_over_stdio(tmp_path, caps
 
     decisions = [(r.tool, r.op, r.decision, r.outcome) for r in records]
     assert ("alpaca", "get_clock", "allow", "executed") in decisions
-    # #281 (M26): the unclassified coordinate's refusal IS on the tape now. This
+    # M26: the unclassified coordinate's refusal IS on the tape now. This
     # assertion was the exact inverse when the drill first ran, which is how the
     # gap was found — see the module docstring.
     assert ("alpaca", "place_stock_order", "deny", "denied") in decisions

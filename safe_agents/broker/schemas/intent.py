@@ -46,5 +46,5 @@ class Intent(BaseModel):
     # executed transition. The after-the-fact /flag meters false_action on the day the
     # op TOOK EFFECT, not the day it was held: near a UTC-midnight hold→release span the
     # two differ, so flag_intent derives the op's day-key from executedAt when present,
-    # falling back to ts (a pre-#193 intent, or one flagged before this field existed).
+    # falling back to ts (a pre-evidence-labeling intent, or one flagged before this field existed).
     executedAt: str | None = None

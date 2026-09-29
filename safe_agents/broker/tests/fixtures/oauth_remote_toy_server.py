@@ -1,5 +1,5 @@
 """oauth_remote_toy_server — a test-only REMOTE MCP server that REQUIRES bearer
-auth, plus the OAuth token endpoint that issues the bearer (#237).
+auth, plus the OAuth token endpoint that issues the bearer.
 
 The toy the remote-credential-delivery slice is built against, per this lane's
 build-toy-first discipline (the Phase 4 toy suite caught the parked-caller M17

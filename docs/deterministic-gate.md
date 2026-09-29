@@ -1,7 +1,7 @@
 # The deterministic-gate invariant — the model only suspects; the gate decides
 
-> **Status: standard, describing code on `main` today** (the memory-layer half is deferred to #75).
-> The cross-cutting invariant behind sa#44. Floor tier (`docs/contract-vs-reference.md`): removing it
+> **Status: standard, describing code on `main` today** (the memory-layer half is deferred).
+> The cross-cutting invariant. Floor tier (`docs/contract-vs-reference.md`): removing it
 > breaks "a fully compromised agent can still only ask." Traces to `auto-agents/PILLARS.md`
 > §"Deterministic Enforcement" and `book/ch50` ("assume the model itself is the adversary").
 
@@ -117,12 +117,12 @@ pairs. The space decomposes as **24 call points × 3,072 fact points = 73,728**,
 
 It exists for two jobs:
 
-- **The reproducible basis for the #177 decision.** Keeping the custom pure PDP over Cedar and
+- **The reproducible basis for the policy-language decision.** Keeping the custom pure PDP over Cedar and
   OPA/Rego was settled by a differential spike that ran ported rule tables against exactly this
   corpus (Cedar A 71.27%, Cedar B 100.00%, Rego 100.00%). That spike was treated as disposable and
   never committed, so for a while the published evidence had no runnable artifact behind it. This
   is that artifact. A reviewer who wants to check the claim can now run it.
-- **The conformance seed for #178.** An alternative gate implementation that claims to be our gate
+- **The conformance seed for the normative spec.** An alternative gate implementation that claims to be our gate
   must reproduce `GOLDEN_CORPUS_DIGEST` over the same enumeration. In the other direction, a
   behaviour change to `engine.py` moves the digest — so a policy change surfaces as a deliberate
   re-mint with a reviewed diff, never as silent drift.
@@ -154,7 +154,7 @@ model.
 - `channels/SCREENING.md` — gate 7, the one model-judged gate, and the reference instantiation of
   this invariant (refuse-or-pass-never-bless).
 - `broker/TAINT.md` — the taint floor: source-based, path-recorded, non-strippable; §8 is the deferred
-  memory-layer half (#75).
+  memory-layer half.
 - `docs/friction-doctrine.md` — the gate-vs-log rule for any new control; `docs/contract-vs-reference.md`
   — the tiering this doc's Floor status comes from.
 - `auto-agents/PILLARS.md` §"Deterministic Enforcement", `book/ch50` (assume the model is the

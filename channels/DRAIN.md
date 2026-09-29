@@ -1,4 +1,4 @@
-# DRAIN — the accepted-queue drain worker contract (sa#155)
+# DRAIN — the accepted-queue drain worker contract
 
 > **Status: contract (2026-07-09), with one named reference component.** Contract-tier per
 > `docs/contract-vs-reference.md`: this document is the normative words and
@@ -12,14 +12,14 @@
 
 ## What the drain is
 
-The airlock (sa#152) ends at gate 9: exactly one stamped `EventTrigger` per deduplicated inbound
+The airlock ends at gate 9: exactly one stamped `EventTrigger` per deduplicated inbound
 message, enqueued for the worker side. The drain is that worker side — the bridge
 `channels/ADAPTERS.md` §"Gate ordering" left reference-tier ("the stamped envelope must reach the
 turn"). Per message it opens an **ephemeral, in-process brokered turn**: build the receiving
 principal's `BrokerRuntime` from the image-baked `AgentManifest`, feed the envelope's provenance
 chain into that runtime's broker-held session turn (`ingest_chain`, closing `channels/SCHEMAS.md`
 C5), and only then hand the envelope to the consumer's Receiver — which acts **through that same
-runtime**, so every action it takes is decided under the taint the chain carried in (sa#136: one
+runtime**, so every action it takes is decided under the taint the chain carried in (one
 turn spans ingest and action; the receiver cannot act on a cleaner turn than it ingested).
 
 The drain adds **no second trust surface**. Screening, trust-mapping, dedupe, and stamping happened
@@ -45,9 +45,9 @@ interface Receiver {
   brokered-call facade exposing ONLY `handle_request`, never connectors, credentials, or the
   runtime's turn surface (`new_turn()`/`session_turn()`): a receiver handed the raw
   `BrokerRuntime` could roll the ingested taint away before acting, which D2 forbids. A receiver
-  that needs its own connector classes injects them the sa#141 way, through the manifest's
+  that needs its own connector classes injects them the connector-injection way, through the manifest's
   `connector_providers`.
-- **Injection mirrors sa#141 exactly.** The receiver class is named by an image-baked dotted
+- **Injection mirrors the connector-injection seam exactly.** The receiver class is named by an image-baked dotted
   provider path (`"pkg.module:ClassName"`), importlib-loaded, zero-arg instantiated, and
   protocol-checked — fail-closed with a typed `ReceiverProviderError` on any failure.
 
@@ -58,7 +58,7 @@ interface Receiver {
   Receiver's action hook runs. No drain path reaches `receive` with an un-ingested chain.
 - **D2 — one turn, and the receiver cannot roll it.** Ingestion and the Receiver's actions share
   the **same** broker-owned session turn of the **same** runtime, per message and fresh per
-  message. The receiver neither supplies nor rolls the turn (sa#136) — enforced structurally: the
+  message. The receiver neither supplies nor rolls the turn — enforced structurally: the
   object handed to `receive` is a facade exposing only `handle_request`, with no
   `new_turn()`/`session_turn()` reachable. A tainted chain therefore escalates the receiver's
   external writes exactly as `broker/TAINT.md` §5 requires.
@@ -88,7 +88,7 @@ interface Receiver {
   logged with a structured `drain_terminal_drop` event (machine `reason` field) and treated as
   handled, NOT reported for redelivery. The queue deliberately has no DLQ, so redelivering them
   would poison-loop for the retention period and then vanish silently; the structured log is the
-  observable surface (alarm-able the sa#153 way). **Transient** failures — a receiver exception,
+  observable surface (alarm-able via the log-metric alarm surface). **Transient** failures — a receiver exception,
   a runtime build failure — are reported for redelivery (`reportBatchItemFailures` semantics).
   Config failures (D6) are the deliberate exception: the whole invocation errors.
 - **D8 — PII-safe observability.** Structured log lines carry machine fields only — event ids,
@@ -118,7 +118,7 @@ interface Receiver {
 
 Everything here is **reference-tier** — named here and only here:
 
-- **Transport:** the sa#152 accepted queue (`safe-agents-{env}-channel-accepted`, SQS) triggering
+- **Transport:** the channels-airlock accepted queue (`safe-agents-{env}-channel-accepted`, SQS) triggering
   the container-image Lambda `safe_agents/channels/drain/handler.py` (entrypoint
   `safe_agents.channels.drain.handler.handler`) with `batchSize: 1` and
   `reportBatchItemFailures` enabled — D7 is implemented batch-correctly regardless.
@@ -139,13 +139,13 @@ Everything here is **reference-tier** — named here and only here:
 
 ## Relationships
 
-- `channels/SCHEMAS.md` (sa#74) — the envelope; C5 ("the chain feeds the receiving turn") is
+- `channels/SCHEMAS.md` — the envelope; C5 ("the chain feeds the receiving turn") is
   closed at this seam; the "ephemeral worker" of §"What the EventTrigger is" is this worker.
-- `channels/ADAPTERS.md` (sa#80) — the gate ordering that produced the stamped envelope; its
+- `channels/ADAPTERS.md` — the gate ordering that produced the stamped envelope; its
   "stamped envelope must reach the turn" clause is D1/D2 made contract.
-- `channels/TRUST-MAPPING.md` (sa#81) — the label floor `ingest_chain` enforces; the two-maps
+- `channels/TRUST-MAPPING.md` — the label floor `ingest_chain` enforces; the two-maps
   distinction the Receiver's `input_trust_map()` lives on.
 - `broker/TAINT.md` — the floor: source-based, path-recorded, non-strippable; §5 is what D2 buys.
-- `docs/turn-identity.md` (sa#136) — why the turn is broker-owned and per-message here.
+- `docs/turn-identity.md` — why the turn is broker-owned and per-message here.
 - `docs/contract-vs-reference.md` — the packaging rule this doc follows: contract = base,
   worker = reference, receiver = consumer.

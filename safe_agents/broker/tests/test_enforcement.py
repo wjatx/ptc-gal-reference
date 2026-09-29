@@ -4,7 +4,7 @@ All tests use InMemoryStore — no AWS credentials, no moto, no network.
 The atomicity logic (compare-and-set) is exercised against the in-memory fake,
 which uses threading.Lock to enforce the same CAS semantics as DynamoDB.
 
-Acceptance criteria from #45:
+Acceptance criteria:
   - Concurrent cap test: two calls vs an exhausted cap → exactly one succeeds.
   - Idempotency replay: same idempotency key → stored outcome returned, executor
     not called a second time.
@@ -271,7 +271,7 @@ class TestIdempotency:
 
     def test_replay_returns_cached_result_executor_called_once(self) -> None:
         """Replay returns the SAME connector result (not None) and the executor
-        runs exactly once — the sa#108 regression (replay handed back None)."""
+        runs exactly once — the cached-result regression (replay handed back None)."""
         store = InMemoryStore()
         call = _make_allow_call()
         initial = decide(call, _facts())
@@ -302,7 +302,7 @@ class TestIdempotency:
         assert len(calls) == 1, "executor must run exactly once, not on replay"
 
     def test_deny_is_not_recorded_retry_reevaluates(self) -> None:
-        """A deny is NOT idempotency-recorded (#148): the record's purpose is
+        """A deny is NOT idempotency-recorded: the record's purpose is
         exactly-once side effects and a deny executed nothing. A same-key retry
         re-enters premise revalidation instead of replaying the stale refusal."""
         store = InMemoryStore()
@@ -334,7 +334,7 @@ class TestIdempotency:
         assert r2.result is None
 
     def test_transient_deny_then_retry_executes(self) -> None:
-        """The ta#13 cutover regression (#148): a transient deny (cap exhausted)
+        """The digest-cutover regression: a transient deny (cap exhausted)
         must not poison the key forever. Once the cause clears — here the UTC-day
         counter rollover, modeled as a fresh scoped counter key — a retry with the
         SAME idempotency key executes and records the executed outcome."""
@@ -385,11 +385,11 @@ class TestIdempotency:
         assert executed == [1], "replay must not re-execute"
 
     def test_stale_stored_deny_self_heals_on_read(self) -> None:
-        """A PRE-#148 stored deny record (written by older broker code) must not
+        """A LEGACY stored deny record (written by older broker code) must not
         replay: Step 1 ignores it, deletes it so the key becomes recordable
         again, and the retry's executed outcome is recorded normally."""
         store = InMemoryStore()
-        # Seed a legacy deny record directly, as pre-#148 Step 6 would have.
+        # Seed a legacy deny record directly, as the old Step 6 would have.
         store.put_idempotency_if_absent(
             IdempotencyRecord(
                 key="idem-legacy-deny",
@@ -427,10 +427,10 @@ class TestIdempotency:
         executor.assert_called_once()
 
     def test_require_approval_is_not_recorded_retry_reevaluates(self) -> None:
-        """A require_approval is NOT idempotency-recorded (#148): it executed
+        """A require_approval is NOT idempotency-recorded: it executed
         nothing, and after the world changes (grant promoted, human approves) a
         retry must re-evaluate. Duplicate holds are the approval-queue dedup
-        knob's concern (sa#160), not this record's."""
+        knob's concern, not this record's."""
         store = InMemoryStore()
         call = _make_allow_call()
         # in-loop + human reachable → require_approval from the PDP.

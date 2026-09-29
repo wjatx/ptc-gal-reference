@@ -127,7 +127,7 @@ class MemoryBackend:
         self.proposals = MemoryAdmissionProposalStore(hmac_key=HMAC_KEY)
 
     def tamper_row(self, server_id: str, tool_name: str) -> None:
-        # #246: rows are item-shaped ({"data": str, "rowHash": str}); tamper
+        # Rows are item-shaped ({"data": str, "rowHash": str}); tamper
         # the stored data STRING, like the other backends.
         item = self.registry._rows[(server_id, tool_name)]
         item["data"] = item["data"].replace(BASE_DESCRIPTION, "tampered")
@@ -565,7 +565,7 @@ class TestSqliteCrossConnectionVisibility:
         a = SqliteToolRegistry(HMAC_KEY, db)
         b = SqliteToolRegistry(HMAC_KEY, db)
         # Both evaluated an empty coordinate; A wins the write, B's conditional
-        # write must CONFLICT (not silently overwrite) — the #190 property
+        # write must CONFLICT (not silently overwrite) — the conditional-write property
         # across two real connections.
         empty = ToolReadResult(tool=None)
         a.admit_tool(make_row(), expected=empty)
@@ -574,9 +574,9 @@ class TestSqliteCrossConnectionVisibility:
 
 
 # ===========================================================================
-# The stored bytes ARE the signature's basis (#246), on EVERY backend
+# The stored bytes ARE the signature's basis, on EVERY backend
 #
-# Found live by the #226 no-AWS ceremony drill: the sqlite arm stored records
+# Found live by the local (solo) no-AWS ceremony drill: the sqlite arm stored records
 # via pydantic's model_dump_json (DECLARATION order) while the DSSE subject
 # digest binds canonical_record_payload (SORTED keys), so every signed
 # admission record written on that arm was unverifiable — the Dynamo arm had
@@ -587,7 +587,7 @@ class TestSqliteCrossConnectionVisibility:
 # RE-SERIALIZATION of the parsed record, which is correct by construction no
 # matter what the store actually wrote. Verifying a re-serialization cannot
 # detect a store that writes different bytes; only reading the stored bytes
-# back can. That is the whole point of #246's stored-bytes basis, so the pin
+# back can. That is the whole point of the stored-bytes basis, so the pin
 # reads them.
 # ===========================================================================
 
@@ -651,7 +651,7 @@ class TestStoredRecordBytesAreCanonical:
         ).ok
 
     def test_the_attestation_marker_rides_the_stored_bytes(self, backend):
-        """#226: a solo-attested record's marker is inside the signed basis, so
+        """A solo-attested record's marker is inside the signed basis, so
         stripping it breaks the signature rather than quietly upgrading the
         record's apparent provenance."""
         from safe_agents.broker.mcp.signing import canonical_record_payload

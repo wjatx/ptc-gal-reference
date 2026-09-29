@@ -1,4 +1,4 @@
-"""Tests for the out-of-band demotion runner (sa#59).
+"""Tests for the out-of-band demotion runner.
 
 Coverage:
 - metrics_from_signals: matching signal → tripped; mismatched principal (any
@@ -9,7 +9,7 @@ Coverage:
 - run_demotion outcome matrix: no-grant / quarantined / no-breach / deduped /
   demoted / conflict (lost write race AND duplicate ledger key) — every path a
   typed RunnerOutcome, no silent None
-- record-only same-day dedupe (#191): a repeat breach already recorded today
+- record-only same-day dedupe: a repeat breach already recorded today
   returns "deduped" with ZERO writes; a new UTC day, a level-changing
   demotion, or a same-day record for a different trigger/level all still write
 - determinism: same inputs twice → equal outcomes
@@ -241,7 +241,7 @@ def test_untouched_counter_reads_zero_and_no_breach():
 
 
 # ---------------------------------------------------------------------------
-# derive_false_action — the #193 owner-flag re-derivation (ships OFF at the grant)
+# derive_false_action — the owner-flag re-derivation (ships OFF at the grant)
 # ---------------------------------------------------------------------------
 
 
@@ -337,7 +337,7 @@ def test_false_action_flag_on_prior_day_triggers_on_run_day():
 
 
 # ---------------------------------------------------------------------------
-# derive_stale_confidence / derive_corroboration_failure — the #192 typed-evidence
+# derive_stale_confidence / derive_corroboration_failure — the typed-evidence
 # input paths (detector/producer stays consumer-side; these consume as given)
 # ---------------------------------------------------------------------------
 
@@ -519,7 +519,7 @@ def test_run_demotion_quarantined_grant_not_demoted():
     grant = make_grant()
     store = store_with_grant(grant)
     # Tamper with the stored raw dict without recomputing the hash — the store
-    # quarantines it on read (HMAC mismatch), exactly the sa#124 path.
+    # quarantines it on read (HMAC mismatch), exactly the loud-quarantine path.
     key = store._record_key(PRINCIPAL, ACTION_CLASS)
     store._store[key]["data"] = store._store[key]["data"].replace(
         '"ownerId":"', '"ownerId":"mallory-', 1
@@ -684,7 +684,7 @@ def test_run_demotion_duplicate_ledger_key_is_typed_conflict():
     "conflict" outcome (nonzero exit — operator attention), never an unhandled
     exception. Shape: two level-CHANGING passes stamped with the same ts (the
     grant reset in between) — the second record's key collides. A record-only
-    repeat breach no longer reaches the collision: the same-day dedupe (#191)
+    repeat breach no longer reaches the collision: the same-day dedupe
     returns "deduped" first.
 
     Since the ledger clock (#37) a sequential writer never collides with its
@@ -726,14 +726,14 @@ def test_run_demotion_duplicate_ledger_key_is_typed_conflict():
     assert second.triggered_by == ("budget_breach",)
     assert second.updated_grant is None
     # the ledger kept exactly the first record; the second unit wrote NOTHING
-    # (#244 both-or-nothing), so the reset grant stands unchanged
+    # (atomic record+grant, both-or-nothing), so the reset grant stands unchanged
     assert len(record_store.records) == 1
     persisted = store.get_grant(PRINCIPAL, ACTION_CLASS)
     assert persisted.grant is not None and persisted.grant.level is AutonomyLevel.out_of_loop
 
 
 # ---------------------------------------------------------------------------
-# run_demotion — record-only same-day dedupe (#191)
+# run_demotion — record-only same-day dedupe
 # ---------------------------------------------------------------------------
 
 
@@ -1076,7 +1076,7 @@ def test_parse_args_false_action_window_periods_default_and_override():
            "--false-action-window-periods", "3"]
     )
     assert overridden.false_action_window_periods == 3
-    # The pre-#212 spelling still parses into the same dest.
+    # The pre-counter-period spelling still parses into the same dest.
     legacy = _parse_args(
         REQUIRED_ARGS
         + ["--check-false-action", "--tool", "payments", "--op", "transfer",

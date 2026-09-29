@@ -1,4 +1,4 @@
-"""sa#43 exit predicate — the injection-screen conformance suite.
+"""The injection-screen conformance suite.
 
 Each test proves one clause from channels/SCREENING.md §Conformance; the
 mapping table lives there.
@@ -294,7 +294,7 @@ def test_drop_record_detail_is_validated():
 
 
 # ---------------------------------------------------------------------------
-# sa#161 Phase A1 — evidence-of-check fields on ScreenRecord
+# Evidence-of-check fields on ScreenRecord
 # ---------------------------------------------------------------------------
 
 

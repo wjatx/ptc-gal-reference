@@ -1,4 +1,4 @@
-"""sa#152 — SignedWebhookAdapter conformance.
+"""SignedWebhookAdapter conformance.
 
 The webhook adapter is the concrete edge exercised by dispatch's gates 1-3:
 constant-time token verification (gate 1), normalized identity extraction (gate

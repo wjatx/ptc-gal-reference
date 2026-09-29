@@ -1,7 +1,7 @@
 """admit_tool_with_record — the atomic record+row write (product-wrapper Phase 1, work item 1).
 
 The transactional form of ``put_record`` + ``admit_tool``: either BOTH legs
-commit or NOTHING is written, closing #221 Phase 6's orphan-``TOOLREC#`` gap
+commit or NOTHING is written, closing the admission ceremony's orphan-``TOOLREC#`` gap
 structurally. Failure injection runs on BOTH backends — MemoryToolRegistry
 (check-then-commit) and the real DynamoToolRegistry against moto's DynamoDB,
 whose expression evaluator enforces ``TransactWriteItems`` conditions and
@@ -138,7 +138,7 @@ class TestMemoryAtomicAdmit:
     def test_quarantined_row_writes_nothing(self):
         store = MemoryToolRegistry()
         store.admit_tool(make_row())
-        # Tamper the stored data STRING (#246: rows are item-shaped).
+        # Tamper the stored data STRING (rows are item-shaped).
         item = store._rows[(SERVER_ID, TOOL_NAME)]
         item["data"] = item["data"].replace("return a quote", "tampered")
         with pytest.raises(QuarantinedToolRowError):

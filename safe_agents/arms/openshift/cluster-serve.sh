@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cluster-serve.sh — the DURABILITY leg: a third pod, the same PVC (#250 Phase 3).
+# cluster-serve.sh — the DURABILITY leg: a third pod, the same PVC (Phase 3).
 #
 # This is the half of the exit predicate a manifest cannot assert. A
 # PersistentVolumeClaim in a YAML file is not evidence that anything survived;
@@ -83,12 +83,12 @@ say "2. what was already on the PVC before this pod started"
 # ceremony's own attribution fields rather than hard-coding pk/sk conventions
 # that are the store's business and not this drill's.
 #
-# It has to walk NESTED serialized JSON, not just top-level keys. Under #246 the
+# It has to walk NESTED serialized JSON, not just top-level keys. Under stored-bytes integrity the
 # stored-bytes basis means a record item is `{"data": "<canonical record JSON>",
 # "signature": ...}` — the attribution is inside that string, because the exact
 # bytes are what the signature covers. A flat scan finds nothing and reports a
 # perfectly durable store as empty.
-# BOTH halves of the #203 split. The attribution the durability claim rests on
+# BOTH halves of the write split. The attribution the durability claim rests on
 # (RECORD#/TOOLREC#) is checker-writable key space and lives in the grant store;
 # scanning only the working store would find no attribution at all and report a
 # durable, completed ceremony as an empty volume.
@@ -162,7 +162,7 @@ PY
 ok "the PVC carries a ceremony run by credentials this pod does not hold"
 
 say "3. a fresh broker process serves the already-ratified grant"
-# No seed. BROKER_GRANT_LOAD=read means boot cannot mint a grant, and #205's F5
+# No seed. BROKER_GRANT_LOAD=read means boot cannot mint a grant, and named-config-or-refuse
 # refuses BROKER_GRANT_LOAD=seed on the sqlite arm outright — so "it re-seeded
 # quietly" is not an available explanation for what follows.
 printf '   BROKER_GRANT_LOAD=%s\n' "${BROKER_GRANT_LOAD:-<unset>}"

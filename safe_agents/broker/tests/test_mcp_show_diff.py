@@ -1,4 +1,4 @@
-"""test_mcp_show_diff.py — `show`/`diff` CLI commands (#221 Phase 5 item 3 of 4).
+"""test_mcp_show_diff.py — `show`/`diff` CLI commands.
 
 Unit-level with MemoryToolRegistry — no live AWS. `show_command`/
 `diff_command` are called directly with an injected store, mirroring how
@@ -83,7 +83,7 @@ def _seed_row(store: MemoryToolRegistry, tool_def: McpToolDef, def_hash: str | N
         admitted_by="arn:aws:sts::111111111111:assumed-role/CheckerRole/checker-session",
         admitted_at="2026-07-17T00:00:00+00:00",
     )
-    # #246 item shape: stored bytes + item-level rowHash.
+    # Stored-bytes item shape: stored bytes + item-level rowHash.
     payload = canonical_row_payload(row)
     store._rows[(row.server_id, row.tool_name)] = {
         "data": payload,
@@ -287,7 +287,7 @@ class TestDiffCommand:
         assert new_def.description in out
 
     def test_metadata_drift_renders_as_signed_delta(self, tmp_path, capsys) -> None:
-        """Since #223 the metadata fields are SIGNED: against a pre-widening
+        """Since the signed-set widening the metadata fields are SIGNED: against a pre-widening
         row (which never stored them) a live annotation renders honestly as
         not-advertised -> present, and the annotation flip itself — the drift
         class the widening exists to catch — appears verbatim."""
@@ -331,7 +331,7 @@ class TestDiffCommand:
         old_def = _tool_def("get_entry")
         _seed_row(store, old_def)
         # Tamper the stored data STRING directly (bypassing admit_tool) so the
-        # verbatim-bytes HMAC no longer matches -> quarantined=True (#246).
+        # verbatim-bytes HMAC no longer matches -> quarantined=True.
         item = store._rows[(SERVER_ID, "get_entry")]
         item["data"] = item["data"].replace('"description": "d"', '"description": "TAMPERED"')
 

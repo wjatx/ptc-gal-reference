@@ -1,4 +1,4 @@
-"""Boundary-carry unit tests over the two base time mechanisms (sa#213):
+"""Boundary-carry unit tests over the two base time mechanisms:
 
   - ``period_bucket_of`` (safe_agents/broker/enforcement/store.py) — the one
     derivation of a period-bucket key from an aware datetime.

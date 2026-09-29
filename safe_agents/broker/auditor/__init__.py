@@ -14,7 +14,7 @@ production implementations:
     AuditTapeReader         — protocol for reading the tape (injected into chain verifier).
     EgressPolicySource      — protocol for supplying committed + live rules (injected into watchdog).
 
-    FileTapeReader          — the local floor's JSON-lines tape (#300).
+    FileTapeReader          — the local floor's JSON-lines tape.
     InMemoryTapeReader      — list-backed fake for tests.
     S3TapeReader            — lazy-boto3 S3 production reader.
 
@@ -25,7 +25,7 @@ Findings:
 
     ChainIntegrityFinding  — intact: bool, error: str | None, broken_seq: int | None.
     EgressDriftFinding     — drifted: bool, severity: str, items, extra_live, extra_committed.
-                             severity is per-category (ok|warning|critical, sa#52); the
+                             severity is per-category (ok|warning|critical); the
                              watchdog covers both the SG layer and the netns/proxy layer.
 """
 

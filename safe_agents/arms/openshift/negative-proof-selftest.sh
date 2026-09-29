@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# negative-proof-selftest.sh — does the helper actually FAIL when it should? (#312)
+# negative-proof-selftest.sh — does the helper actually FAIL when it should?
 #
 #   ./safe_agents/arms/openshift/negative-proof-selftest.sh
 #
@@ -60,7 +60,7 @@ expect 1 "an attempt that SUCCEEDS is a failure" '
   np_refuse "echo" "Read-only file system" -- echo hi
   np_summary "B"'
 
-# The omission that recurs, per #312's own comment: refusals with nothing proving the
+# The omission that recurs, per the original finding: refusals with nothing proving the
 # subject was capable of anything.
 expect 1 "refusals with NO positive control is a failure" '
   np_refuse "cat a missing file" "No such file" -- cat /nope/nothing
@@ -72,7 +72,7 @@ expect 1 "a FAILING positive control is a failure" '
   np_refuse "cat a missing file" "No such file" -- cat /nope/nothing
   np_summary "E"'
 
-# A precondition asserts the state the attempt runs against — the #310 lesson that a
+# A precondition asserts the state the attempt runs against — the tape-partition lesson that a
 # tamper attempt against an EMPTY target refuses identically and claims far more.
 expect 1 "a FAILING precondition is a failure" '
   np_control "c" -- true

@@ -1,5 +1,5 @@
 """
-Manifest extended validation — envelope + policy checks (sa#41, sa#135).
+Manifest extended validation — envelope + policy checks (#53).
 
 Structural checks implementable without the broker registry:
   - envelope parses against the typed Envelope schema (broker/schemas/envelope.py),
@@ -11,7 +11,7 @@ Structural checks implementable without the broker registry:
   - agent_egress section of the policy file contains no direct IPv4 addresses.
 
 Broker-dependent checks (action-class resolution against registry) are gated on
-sa#12 and are not implemented here. --offline skips them when they are added.
+the broker registry and are not implemented here. --offline skips them when they are added.
 """
 from __future__ import annotations
 import re
@@ -101,7 +101,7 @@ def validate_manifest_extended(
         its content is checked. When None, the policy file check is skipped.
     offline:
         If True (default), broker-dependent checks (action-class resolution)
-        are skipped. Set to False once sa#12 broker registry lands.
+        are skipped. Set to False once the broker registry lands.
     """
     errors: list[str] = []
     envelope_raw = manifest.envelope or {}
@@ -171,7 +171,7 @@ def validate_manifest_extended(
                                 "all connector traffic must route through the broker"
                             )
 
-    # offline=True: skip broker-dependent checks (sa#12 not yet landed)
+    # offline=True: skip broker-dependent checks (broker registry not yet landed)
     # offline=False: (future) resolve action classes against the broker registry
 
     return errors

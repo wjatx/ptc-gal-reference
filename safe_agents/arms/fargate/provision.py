@@ -1,5 +1,5 @@
 """
-Fargate arm provisioner and teardown — Arm 3 (scheduled Fargate task, sa#36 C2b).
+Fargate arm provisioner and teardown — Arm 3 (scheduled Fargate task).
 
 Re-derives the agent-host provisioning for the serverless Fargate substrate,
 generalized for any agent via manifest parameters. Mirrors the EC2 arm
@@ -8,7 +8,7 @@ generalized for any agent via manifest parameters. Mirrors the EC2 arm
 ONLY the agent's own model-token read + run-record write, deterministic resource
 naming for stateless teardown discovery, and the standard arm tag set.
 
-How it plugs into the pipeline (sa#32):
+How it plugs into the pipeline:
     provision_phase() in safe_agents/pipeline/phases.py calls fargate_provision() for
     arm=fargate; teardown_phase() calls fargate_teardown(). All AWS calls go
     through the injected AWSInterface — FakeAWS for unit tests, LiveAWS for real
@@ -23,7 +23,7 @@ Topology — two confined tasks, not a sidecar:
     analogue of the RHEL arm's netns. The agent holds no connector credentials;
     its only outbound path is the broker.
 
-Two-identity split (mirrors EC2 sa#33, re-derived for Fargate's role model):
+Two-identity split (mirrors the EC2 arm, re-derived for Fargate's role model):
     Fargate is the first arm that CREATES per-agent roles (rather than reusing
     the IdentityStack base agentRole via an instance profile):
       taskRole       — the in-container identity. Carries ONLY the arm
@@ -444,7 +444,7 @@ def fargate_provision(
     state:                  Initial EventBridge Scheduler state. Defaults to DISABLED —
                             deliberately different from create_schedule's own ENABLED
                             default — because a provision should never enable a production
-                            schedule before its first manual proof (sa#115); the schedule
+                            schedule before its first manual proof; the schedule
                             fires once immediately on creation even if disabled seconds
                             later, so the only correct fix is provisioning DISABLED.
 

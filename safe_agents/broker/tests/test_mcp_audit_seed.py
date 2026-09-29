@@ -1,7 +1,7 @@
-"""MCP registry integrity audit — seed rules (#235).
+"""MCP registry integrity audit — seed rules (#96).
 
 Every rule is exercised in BOTH directions: a clean dataset passes, and a
-deliberately damaged one flips it RED. That is the #201 discipline — a rule that
+deliberately damaged one flips it RED. That is the standing discipline — a rule that
 has never fired is not a proven rule, and the seed's whole value is that its
 checks are known to detect something.
 
@@ -57,7 +57,7 @@ def keypair():
 
 
 def _row_item(def_hash: str = DEF_HASH, *, tamper: bool = False) -> dict:
-    # #246: nested row, canonical stored bytes, item-level rowHash over those
+    # Stored-bytes shape: nested row, canonical stored bytes, item-level rowHash over those
     # exact bytes; a tamper mutates the stored data STRING out-of-band.
     row = RegisteredTool(
         tool_def=McpToolDef(
@@ -182,7 +182,7 @@ class TestOrphanRules:
         assert ORPHAN_ROW in [v.rule for v in report.violations]
 
     def test_a_record_with_no_row_is_caught(self, keypair) -> None:
-        """#235 blind spot 2 — the ceremony leaves this on a conditional-write
+        """#96 blind spot 2 — the ceremony leaves this on a conditional-write
         conflict. NOTE: adopting per-coordinate atomicity makes this
         unreachable, at which point the rule should be deleted, not kept green."""
         sk, keys = keypair

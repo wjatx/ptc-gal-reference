@@ -1,7 +1,7 @@
 """
 Pytest conformance tests for the runner-contract harness.
 
-Acceptance criteria (sa#31):
+Acceptance criteria:
   1. The reference test-stub (agents/test-stub/) passes all 8 checks.
   2. A deliberately broken stub triggers a named violation and the harness
      exits non-zero — demonstrated for multiple elements.
@@ -186,7 +186,7 @@ class TestNamedFailures:
     # --- Element 3 ----------------------------------------------------------
 
     def test_missing_run_sh_fails_element_3_without_crashing(self, tmp_path):
-        """sa#130: element 3 EXECUTES run.sh — a missing script must produce a
+        """Element 3 EXECUTES run.sh — a missing script must produce a
         failed ELEMENT_3_PREFLIGHT_GATE check, not an unhandled FileNotFoundError
         that kills the whole harness (and the pipeline smoke phase with it)."""
         stub = self._copy_stub(tmp_path)

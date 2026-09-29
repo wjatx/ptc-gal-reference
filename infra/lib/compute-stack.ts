@@ -51,12 +51,12 @@ function lookupNetworkId(
 }
 
 /**
- * ComputeStack — the AWS Fargate arm (sa#36 Phase B): the ECS substrate plus the persistent broker
+ * ComputeStack — the AWS Fargate arm: the ECS substrate plus the persistent broker
  * ECS service. The broker holds the keys and is the sole egress path (invariants #1/#3); this stack
  * gives it a durable home on Fargate, discoverable by agents at `broker.safe-agents.local`.
  *
- * It owns NO state, NO identities, and NO network topology — those live in State (#14),
- * Identity (#15), and Network (#13). Everything is imported by the cross-stack export keys those
+ * It owns NO state, NO identities, and NO network topology — those live in State,
+ * Identity, and Network. Everything is imported by the cross-stack export keys those
  * stacks publish (`naming.ts` convention), so this stack adds no wildcards and re-derives nothing.
  *
  * Gates on Network + State + Identity (dependency wired in the entrypoint):
@@ -106,10 +106,10 @@ export class ComputeStack extends Stack {
     // broker image, COPYs its manifests in, and points the broker at one here). Required for the
     // broker to START: this task runs BROKER_STORE=dynamo, and on the dynamo arm an unset
     // BROKER_MANIFEST refuses at boot rather than falling back to the checked-in example manifest
-    // (boot_config.resolve_manifest_path, #197/#205). The task exits, the service never reaches
+    // (boot_config.resolve_manifest_path). The task exits, the service never reaches
     // steady state, and the deployment circuit breaker rolls the rollout back. Synth does not
     // throw on its absence, because a brokerDesiredCount=0 bringup legitimately deploys before any
-    // consumer image exists. Never bake a consumer path in here (base stays agent-agnostic, sa#139).
+    // consumer image exists. Never bake a consumer path in here (base stays agent-agnostic).
     const brokerManifestPath = this.node.tryGetContext('brokerManifestPath') as
       | string
       | undefined;
@@ -117,7 +117,7 @@ export class ComputeStack extends Stack {
     // Optional context: -c capabilityRoles='[{"tool":"s3.read","roleName":"...","actions":[...],
     // "resources":[...]}]' — a JSON array of CapabilitySpec (either a JSON string, as CLI context
     // arrives, or an already-parsed array when passed programmatically). Each entry provisions one
-    // per-capability IAM role (sa#175, the deploy half of the #173 `assumed_role` CredentialProvider
+    // per-capability IAM role (the deploy half of the #79 `assumed_role` CredentialProvider
     // strategy): assumable ONLY by brokerRole, scoped to EXACTLY that entry's actions+resources.
     // Unset/empty = no roles created (this stack's default synth output is unchanged).
     const capabilityRolesCtx = this.node.tryGetContext('capabilityRoles') as
@@ -185,20 +185,20 @@ export class ComputeStack extends Stack {
 
     // ── Import Identity ───────────────────────────────────────────────────────────────────────────
     // The task role IS the broker's separate IAM identity (brokerRole). Its baseline authority is
-    // still defined once in IdentityStack (#15) — this stack never touches that.
+    // still defined once in IdentityStack — this stack never touches that.
     //
     // Mutability is CONDITIONAL on capabilities being declared. With mutable:true, CDK doesn't only
-    // let us attach the #175 sts:AssumeRole grant — it ALSO attaches the ECS service's managed
+    // let us attach the capability-role sts:AssumeRole grant — it ALSO attaches the ECS service's managed
     // logs/ssmmessages task-role policy it silently DROPS on an immutable imported role. So flipping
     // unconditionally would broaden the broker role even with no capabilityRoles context. Gating on
     // `capabilities.length > 0` keeps the default path importing the role immutable — byte-for-byte
-    // the pre-#175 synth (no BrokerRolePolicy at all) — and only opts into mutability (and the
+    // the pre-capability-role synth (no BrokerRolePolicy at all) — and only opts into mutability (and the
     // benign ECS exec/logging perms that ride along) when a consumer actually declares scoped roles.
     const brokerRole = Role.fromRoleArn(this, 'BrokerRole', importValue(env, 'broker-role-arn'), {
       mutable: capabilities.length > 0,
     });
 
-    // ── Per-capability IAM roles (sa#175) ─────────────────────────────────────────────────────────
+    // ── Per-capability IAM roles ─────────────────────────────────────────────────────────
     // No-op when `capabilityRoles` context is unset (the default) — creates nothing and leaves
     // brokerRole's policy untouched. When set, each capability gets its own scoped role (trust side,
     // in the construct); the broker also needs the identity-side half of the assume-role grant,
@@ -234,7 +234,7 @@ export class ComputeStack extends Stack {
         });
 
     // ── ECR repository (agent image) ──────────────────────────────────────────────────────────────
-    // The confined agent image (safe_agents/arms/fargate/Containerfile.agent, sa#36 C2a) is pushed here and
+    // The confined agent image (safe_agents/arms/fargate/Containerfile.agent) is pushed here and
     // run as a task in the PRIVATE_ISOLATED subnet — same lifecycle/removal pattern as the broker repo.
     // emptyOnDelete cleans up in dev; only used for ephemeral (development) environments.
     const agentRepo = reuseArtifacts
@@ -271,7 +271,7 @@ export class ComputeStack extends Stack {
         });
 
     // ── Task definition (arm64) ───────────────────────────────────────────────────────────────────
-    // arm64 matches the local broker image (sa#36); cpu 256 / mem 512 is the smallest Fargate size
+    // arm64 matches the local broker image; cpu 256 / mem 512 is the smallest Fargate size
     // and is ample for the broker's decision-and-proxy workload. Execution role is left to CDK: it
     // auto-creates one with AmazonECSTaskExecutionRolePolicy and grants ECR pull, log writes, and
     // GetSecretValue on the HMAC secret below — that is the standard ECS execution identity.
@@ -308,7 +308,7 @@ export class ComputeStack extends Stack {
         // Flush stdout to CloudWatch line-by-line; Python block-buffers when piped, which would
         // otherwise hide the broker's startup backend lines + per-decision logs behind the buffer.
         PYTHONUNBUFFERED: '1',
-        // brokerRole has READ-ONLY access to the grants table (IdentityStack #15), so the broker
+        // brokerRole has READ-ONLY access to the grants table (IdentityStack), so the broker
         // READS pre-seeded grants rather than writing its own (the local arm's 'seed' mode). The
         // seed step (`python -m broker.prototype.seed_grants`, run out-of-band with write creds —
         // the promotion path's stand-in) MUST have populated the grants table first; a class whose
@@ -316,7 +316,7 @@ export class ComputeStack extends Stack {
         BROKER_GRANT_LOAD: 'read',
         // The in-force risk envelope is LOADED from the DynamoDB envelope store (co-located in
         // the grants table), not the manifest — so a live envelope change is a store re-seed, not
-        // an image rebuild (sa#136 Slice B). The envelope MUST be seeded out-of-band first
+        // an image rebuild. The envelope MUST be seeded out-of-band first
         // (`python -m broker.prototype.seed_envelope`, run BEFORE seed_grants so grants stamp the
         // matching envelope hash); a missing envelope fails the broker's boot fast, fail-closed —
         // the same posture BROKER_GRANT_LOAD='read' takes on a missing grant.
@@ -325,7 +325,7 @@ export class ComputeStack extends Stack {
         // BROKER_GRANT_CLASSES). Used by development bringups so the arm capstones' brokered
         // calls (e.g. github.whoami) are actually served; unset (the default, and always in
         // durable environments) = the broker's built-in principal defaults. Seed grants with the
-        // SAME override or the extra classes quarantine-omit on read. Interim until sa#113 gives
+        // SAME override or the extra classes quarantine-omit on read. Interim until the AgentManifest gives
         // the broker a real connector/grant injection path.
         ...(grantClassesOverride ? { BROKER_GRANT_CLASSES: grantClassesOverride } : {}),
         // The consumer's AgentManifest path inside the (consumer-layered) image — see the
@@ -406,7 +406,7 @@ export class ComputeStack extends Stack {
     // `--call TOOL.OP JSON_ARGS` pairs; the default command sends nothing and prints the registry.
     //
     // Its identity is the AGENT's, not the broker's. The task role is agentRole, which holds zero
-    // authority (IdentityStack #15), imported immutable so CDK can attach nothing to it; there are no
+    // authority (IdentityStack), imported immutable so CDK can attach nothing to it; there are no
     // secrets; and the execution role is its own, so it can pull the image and write its log stream
     // and nothing else. If the client could reach a credential, the demonstration would be of a
     // broker that decides for a caller who could have acted without it.

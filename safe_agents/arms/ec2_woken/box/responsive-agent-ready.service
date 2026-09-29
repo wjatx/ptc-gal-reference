@@ -1,4 +1,4 @@
-# responsive-agent-ready.service — box-side drain loop for the ec2-woken arm (sa#34 seam, sa#98 loop).
+# responsive-agent-ready.service — box-side drain loop for the ec2-woken arm (airlock wake seam, drain loop).
 #
 # A systemd unit installed on the EC2 agent box. The box is booted by the airlock Lambda's
 # ec2:StartInstances; on boot this unit signals readiness (emit-runner-ready.sh) and then runs
@@ -11,7 +11,7 @@
 # supplied by the EnvironmentFile the box provision writes at /etc/safe-agents/agent.env. Nothing
 # about any specific agent or channel is baked into this unit.
 #
-# Install (done by box_provision.py user-data, sa#98):
+# Install (done by box_provision.py user-data):
 #   install -m0755 emit-runner-ready.sh run-brokered.sh drain.sh   /opt/safe-agents/bin/
 #   install -m0644 drain_logic.py                                  /opt/safe-agents/bin/
 #   cp responsive-agent-ready.service                              /etc/systemd/system/

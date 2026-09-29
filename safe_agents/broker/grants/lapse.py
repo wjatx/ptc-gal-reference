@@ -1,4 +1,4 @@
-"""grants.lapse — write the lapse of an expired certification term (#255).
+"""grants.lapse — write the lapse of an expired certification term.
 
 GAL §6.7.6 / GAL-34. When a grant's term (``certifiedUntil``) passes, the grant
 falls to ``lastSafeLevel`` with ``demotionReason = "pending-evidence"`` and a
@@ -36,7 +36,7 @@ Also by design:
   * The evaluation instant ``now`` is an explicit input (see ``grants.term``);
     only ``main`` in ``grants.runner`` reads the wall clock.
 
-Record and grant commit as ONE atomic unit (``write_record_and_grant``, #244),
+Record and grant commit as ONE atomic unit (``write_record_and_grant``),
 conditioned on the guarded re-read: both land or neither does, so there is no
 ordering in which the grant is lowered without its record or the record exists
 without the lowered grant.

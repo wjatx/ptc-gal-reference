@@ -1,4 +1,4 @@
-# Containerfile.broker — the restricted-MCP example's CONSUMER broker image (#219).
+# Containerfile.broker — the restricted-MCP example's CONSUMER broker image.
 #
 # The consumer-image-layer pattern (docs/broker-image-cutover.md): the agent-
 # agnostic base broker image + this consumer's files, nothing else. What this
@@ -11,7 +11,7 @@
 #   * the example package itself: the missileer server (server.py, spawned as a
 #     stdio CHILD of the broker task — no new external service) and the
 #     manifest, whose mcp_servers.ledger spawn config is what build_runtime
-#     constructs the connector from natively (#221 — no provider class).
+#     constructs the connector from natively (no provider class).
 #
 # Build from the safe-agents REPO ROOT with the base image tag as BASE_IMAGE
 # (mirror a consumer's build-broker-image.sh; no default — a build without it
@@ -23,7 +23,7 @@
 # No ENTRYPOINT/CMD override — the base broker server entrypoint is inherited.
 # No baked BROKER_MANIFEST — the task definition injects
 # BROKER_MANIFEST=/app/examples/restricted_mcp_server/manifest.yaml (an unset one
-# fails loudly at boot, #205).
+# fails loudly at boot).
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
@@ -39,7 +39,7 @@ USER root
 # in a leg whose actual subject was the audit tape. Nothing in the repo had
 # changed; the internet had.
 #
-# Floor from #237 (remote transport), ceiling until server.py is migrated to the
+# Floor from the remote-transport work, ceiling until server.py is migrated to the
 # 2.x API. Kept identical to pyproject's `mcp` extra deliberately: they drifted
 # (1.9 here, 1.25 there) precisely because a comment claimed they matched.
 RUN pip install --no-cache-dir 'mcp>=1.25,<2'

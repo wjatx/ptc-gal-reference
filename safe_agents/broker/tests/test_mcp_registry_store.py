@@ -1,4 +1,4 @@
-"""MCP admitted-tool registry store + admission ceremony (#174).
+"""MCP admitted-tool registry store + admission ceremony.
 
 Mirrors the grants store/ceremony conformance suites (test_grants_store.py,
 test_grants_commands.py): unit-level with the Memory stores and a monkeypatched
@@ -16,7 +16,7 @@ Coverage:
 - a tampered stored proposal → ProposalIntegrityError refusal.
 - a re-vet against a NEW definition updates the row def_hash and appends a 2nd record.
 - admit-ratify with no issuer signer refuses (M8); issuer_keys refuses a
-  half-configured signing environment (#201).
+  half-configured signing environment.
 """
 
 from __future__ import annotations
@@ -198,7 +198,7 @@ def test_admit_tool_round_trip_reads_unquarantined(store):
     assert result.tool is not None
     assert result.tool.status is RegistryStatus.ACTIVE
     assert result.tool.def_hash == compute_tool_def_hash(make_tool_def())
-    # #246 stored-bytes basis: the item-level rowHash is the HMAC over the
+    # Stored-bytes basis: the item-level rowHash is the HMAC over the
     # stored data string, which IS the canonical row payload.
     assert result.raw_data == canonical_row_payload(row)
     assert result.stored_hash == compute_row_hmac(row, store._hmac_key)
@@ -210,7 +210,7 @@ def test_tampered_row_surfaces_quarantine_flag(store):
     result = store.get_tool(SERVER_ID, TOOL_NAME)
     assert result.quarantined is True
     assert result.quarantine_reason is not None
-    # #246: tampered bytes are evidence, never parsed — tool is None and the
+    # Tampered bytes are evidence, never parsed — tool is None and the
     # raw bytes ride along for audit.
     assert result.tool is None
     assert result.raw_data is not None
@@ -224,7 +224,7 @@ def test_write_over_quarantined_row_refused(store):
 
 
 # ---------------------------------------------------------------------------
-# Conditional row write — #190 mirror (Finding A): the write binds to the
+# Conditional row write — conditional-write mirror (Finding A): the write binds to the
 # guarded re-read, so a row changed underfoot is refused, never overwritten
 # ---------------------------------------------------------------------------
 
@@ -308,7 +308,7 @@ def test_dynamo_admit_tool_first_admission_conditions_on_absence(monkeypatch):
     assert kwargs["ConditionExpression"] == "attribute_not_exists(pk)"
     assert kwargs["UpdateExpression"] == "SET #data = :data, rowHash = :new_hash"
     assert kwargs["ExpressionAttributeNames"] == {"#data": "data"}
-    # #246: the written data IS the canonical payload and :new_hash is the
+    # The written data IS the canonical payload and :new_hash is the
     # HMAC over those exact bytes (the item-level slot is the only one).
     assert kwargs["ExpressionAttributeValues"][":data"] == canonical_row_payload(row)
     assert kwargs["ExpressionAttributeValues"][":new_hash"] == compute_row_hmac(row, b"k")
@@ -316,7 +316,7 @@ def test_dynamo_admit_tool_first_admission_conditions_on_absence(monkeypatch):
 
 def test_dynamo_admit_tool_revet_conditions_on_rowhash_and_data(monkeypatch):
     existing = make_row()
-    # The guarded re-read's baseline: stored bytes + item-level hash (#246).
+    # The guarded re-read's baseline: stored bytes + item-level hash.
     snap = ToolReadResult(
         tool=existing,
         raw_data=canonical_row_payload(existing),
@@ -490,7 +490,7 @@ def test_revet_updates_row_hash_and_appends_second_record(
 
 
 # ---------------------------------------------------------------------------
-# M8 — admission demands an issuer signature; half-config refuses (#201)
+# M8 — admission demands an issuer signature; half-config refuses
 # ---------------------------------------------------------------------------
 
 
@@ -520,7 +520,7 @@ def test_half_configured_issuer_signing_refuses(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Ceremony named-config-or-refuse (#205): the real table write must NAME its
+# Ceremony named-config-or-refuse: the real table write must NAME its
 # HMAC key and its table — never a dev fallback (Findings B, C)
 # ---------------------------------------------------------------------------
 
@@ -586,7 +586,7 @@ def test_build_stores_sqlite_arm_still_requires_hmac_key(monkeypatch, tmp_path):
 
 
 def test_main_missing_table_name_exits_2_not_keyerror(monkeypatch, capsys):
-    """main() surfaces the missing-table refusal as a clean exit 2 (the #205
+    """main() surfaces the missing-table refusal as a clean exit 2 (the refuse-loudly
     idiom), not an uncaught KeyError traceback (Finding C)."""
     monkeypatch.setenv("BROKER_HMAC_KEY", "k")
     monkeypatch.delenv("MCP_REGISTRY_TABLE_NAME", raising=False)
@@ -604,7 +604,7 @@ def test_main_missing_table_name_exits_2_not_keyerror(monkeypatch, capsys):
 
 
 # ===========================================================================
-# admit-reject (#236) — a bad proposal has an exit other than expiry
+# admit-reject — a bad proposal has an exit other than expiry
 #
 # Before this, `consume_proposal` accepted a "rejected" status but no CLI wired
 # it, so a maker's mistake could only be left to time out. "It expired" and "a

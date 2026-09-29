@@ -1,4 +1,4 @@
-"""tape_cli.py — read and verify an audit tape from a terminal (#300, #42).
+"""tape_cli.py — read and verify an audit tape from a terminal (#42).
 
 The tape is the payoff of the whole architecture: "a fully compromised agent can
 still only ask", demonstrated rather than asserted. It was reachable only by

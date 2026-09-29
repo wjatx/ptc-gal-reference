@@ -1,4 +1,4 @@
-"""Certification term and lapse (#255; GAL §6.7.6, GAL-34, §4.3 lapse row, §5.1).
+"""Certification term and lapse (GAL §6.7.6, GAL-34, §4.3 lapse row, §5.1).
 
 What this file pins, in order:
 
@@ -13,7 +13,7 @@ What this file pins, in order:
 - No-term grants never lapse.
 - Terms are ceremony-only: every non-promotion write that would lengthen or
   drop a term is refused before anything is written, on all three backends.
-- Integrity: a grant serialized by the pre-#255 code (a pinned literal)
+- Integrity: a grant serialized by the pre-certification-term code (a pinned literal)
   verifies and re-serializes byte-identically; a term at rest is HMAC-bound.
 - Audit: lapse records are legitimate transitions, a signed one verifies, a
   malformed one (triggeredBy set) is a finding, and an unrecorded drop is a
@@ -658,7 +658,7 @@ def _reproposal(**overrides):
 # Integrity — evolution never indicts, tampering always does
 # ---------------------------------------------------------------------------
 
-# Produced by the PRE-#255 code (main @ 94f88c0: canonical_grant_payload and
+# Produced by the PRE-certification-term code (main @ 94f88c0: canonical_grant_payload and
 # _hmac_payload, key b"legacy-fixture-key"). Pinned as literals so this test
 # fails if the current code ever stops reproducing or verifying those bytes.
 _LEGACY_PAYLOAD = (
@@ -936,7 +936,7 @@ def test_runner_main_runs_the_lapse_pass_before_demotion(monkeypatch, capsys):
 
 def test_proposal_codec_carries_the_term_and_leaves_no_term_bytes_unchanged():
     """The term is proposal CONTENT (inside the proposal HMAC) when set, and
-    absent from the bytes when not, so every pre-#255 proposal still loads."""
+    absent from the bytes when not, so every pre-term proposal still loads."""
     from safe_agents.broker.grants.proposals import proposal_from_json, proposal_to_json
 
     no_term = _reproposal()
@@ -952,7 +952,7 @@ def test_proposal_codec_carries_the_term_and_leaves_no_term_bytes_unchanged():
 # PromotionRecord.certifiedUntil — the ratified term on the signed record
 # ---------------------------------------------------------------------------
 
-# Produced by the PRE-#255 code (main @ 94f88c0): canonical_record_payload and
+# Produced by the PRE-certification-term code (main @ 94f88c0): canonical_record_payload and
 # RecordSigner.sign_record, with the deterministic Ed25519 test key derived from
 # bytes(range(32)) below. Ed25519 signing is deterministic, so the current code
 # must reproduce these exact bytes AND this exact signature.

@@ -1,5 +1,5 @@
 # oauth_remote_mcp/manifest.yaml — FICTIONAL example consumer for REMOTE MCP
-# credential delivery (#237, MCP-HOST.md M25 / CONNECTOR-AUTH C10).
+# credential delivery (MCP-HOST.md M25 / CONNECTOR-AUTH C10).
 #
 # The remote sibling of examples/oauth_api (which proves the oauth_refresh
 # strategy itself) and of examples/alpaca_paper_drill (which proves spawn-time
@@ -40,12 +40,12 @@ connectors:
 
 # connector_secrets names the secret LEAF holding the long-lived REFRESH token
 # (never a value, never a full id — a bare leaf under <prefix>/connectors/,
-# sa#164). It is also the default leaf oauth_refresh would read; named
+# per the bare-leaf rule). It is also the default leaf oauth_refresh would read; named
 # explicitly in params below for clarity.
 connector_secrets:
   vendor_mcp: "vendor-mcp-refresh-token"
 
-# ── MCP server declaration — key #1 of two-key admission (#174) ───────────────
+# ── MCP server declaration — key #1 of two-key admission ───────────────
 # Remote transport: `url` instead of a spawn block. Same image-baked-only power
 # class as `command` — the envelope store loads an Envelope, which has no
 # mcp_servers field, so nothing store-loaded can point this at another host.
@@ -69,7 +69,7 @@ mcp_servers:
       max_attempts: 2
       backoff_seconds: 1.0
 
-# ── Credential resolution + delivery (#173 strategy, #237 delivery) ───────────
+# ── Credential resolution + delivery (resolution strategy, header delivery) ───
 # strategy: how the credential is OBTAINED. The broker reads the refresh token
 # from the named leaf and mints a short-lived access token via the refresh grant;
 # the refresh token never leaves the broker (doctrine 1). `client_secret_leaf` is
@@ -91,7 +91,7 @@ connector_auth:
     header_map:
       Authorization: {scheme: Bearer}
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 # Every declared MCP tool MUST carry an external ToolOp or the manifest refuses:
 # the base classifies an MCP call by code-resident facts, never by anything the
 # server asserts at discovery time. `external: true` is structural for a remote

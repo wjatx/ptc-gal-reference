@@ -5,7 +5,7 @@ This module exists because the repo contradicted itself. `docs/consuming-the-sdk
 §3 named `build_runtime(manifest)` the consumer pattern's centerpiece, and the
 consumer-boundary guard permitted `broker.schemas` alone — while `build_runtime`
 sat in a directory named `prototype/`. The published contract and the enforced
-guard disagreed (#266).
+guard disagreed.
 
 ## The ruling [maintainer, 2026-07-26]
 

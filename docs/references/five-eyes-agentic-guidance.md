@@ -69,11 +69,11 @@ Legend: **=** implemented at or above the clause · **~** implemented weaker or 
 
 | Guidance clause | safe-agents | |
 |---|---|---|
-| Construct each agent as a "distinct principal", cryptographically anchored identity with its own keys | Principal model throughout; Ed25519 workload identity for chain signing (`channels/SIGNING.md`, #181); broker signing key resolves from Secrets Manager at cold start, never in the agent image | ~ |
+| Construct each agent as a "distinct principal", cryptographically anchored identity with its own keys | Principal model throughout; Ed25519 workload identity for chain signing (`channels/SIGNING.md`); broker signing key resolves from Secrets Manager at cold start, never in the agent image | ~ |
 | Maintain a trusted registry; bind identities to roles; **periodically reconcile against the live set of agents** | Registries exist (MCP two-key admission, grant store); **no reconciliation against running principals** | ~ |
 | Deny access for any agent or key not in the trusted registry | MCP: a tool is callable only with both an image-baked namespace declaration and an HMAC'd registry row at a matching discovery hash (`broker/MCP-HOST.md` M1–M13) | = |
-| Least privilege; narrowest possible scope; fine-grained control | `Envelope` + per-capability IAM roles (#175): out-of-scope actions denied by IAM, not the broker; proven live on `development` | = |
-| Just-in-time credentials for high-impact actions | `CredentialProvider` seam (#173) with `StaticSecret` / `OAuthRefresh` / `assumed_role`; agent never holds the credential | = |
+| Least privilege; narrowest possible scope; fine-grained control | `Envelope` + per-capability IAM roles: out-of-scope actions denied by IAM, not the broker; proven live on `development` | = |
+| Just-in-time credentials for high-impact actions | `CredentialProvider` seam (#79) with `StaticSecret` / `OAuthRefresh` / `assumed_role`; agent never holds the credential | = |
 | Authenticate agents with fresh cryptographic proofs before every privileged call | Per-call broker decision, but authentication is transport/IAM-level, not a fresh per-call cryptographic proof | ~ |
 | Authenticate all inter-agent and agent-to-service API calls using **mutual TLS** for non-repudiation | DSSE-signed provenance chain gives message-level non-repudiation; **no transport peer authentication** | ~ |
 | Agents must perform **cryptographic attestation** that they run expected, unmodified code | Envelope-hash enforcement attests **config**, not code; mismatch → loud quarantine | ~ |
@@ -94,13 +94,13 @@ Legend: **=** implemented at or above the clause · **~** implemented weaker or 
 
 | Guidance clause | safe-agents | |
 |---|---|---|
-| Prevent agents from autonomously executing high-impact actions without prior human approval | `require_approval` verb → stored Intent → owner `/approve`; release recomputes the digest independently (#198) | = |
+| Prevent agents from autonomously executing high-impact actions without prior human approval | `require_approval` verb → stored Intent → owner `/approve`; release recomputes the digest independently | = |
 | Human-in-the-loop for high-cost, hard-to-reverse actions | Same, keyed on the unforgeable gate-8 `sender_class` | = |
 | **Quarantine requests to delete logs or audit records** pending human review | Structurally stronger: the agent has no log-write path at all — audit is written by the broker under a separate identity | = |
 | Isolate agents into enclaves with **no write access to logs** | Same invariant, stated identically | = |
 | Graduated autonomy; continuous evaluation to expand scope **or roll back** | GAL: three rungs, evidence-gated promotion ceremony, deterministic demotion runner (`docs/GAL.md`, `broker/grant-lifecycle.md`) | = |
 | Trigger-action protocols that automatically restrict permissions on unexpected behaviour | Four `DemotionTrigger`s — `budget_breach`, `false_action`, `stale_confidence`, `corroboration_failure` — all fired live | = |
-| Multi-agent consensus for moderate stakes; human-in-loop **in addition to** consensus for high stakes | `CorroborationRecord` k-of-n quorum (#192); GAL's high-blast always-human-ratification lock | = |
+| Multi-agent consensus for moderate stakes; human-in-loop **in addition to** consensus for high stakes | `CorroborationRecord` k-of-n quorum; GAL's high-blast always-human-ratification lock | = |
 | Codify separation of duties with roles and delegation expiry | Operator identity plane: Maker/Checker/Promotion/Demotion/Auditor/Watcher roles (`docs/operator-identities.md`). Proposals expire; **grants do not** | ~ |
 | Deploy a **secondary agent** to validate new tasks against policy before execution | Deliberately divergent — our LLM reviewer attaches findings and never gates (§6.1) | ~ |
 
@@ -110,8 +110,8 @@ Legend: **=** implemented at or above the clause · **~** implemented weaker or 
 |---|---|---|
 | Restrict tool use to an approved allow list of tools **and versions**, regularly re-verified | MCP admission ceremony + `diff` / `bulk-propose` / `bulk-ratify` re-vet | = |
 | Tool/agent **squatting** by similar names | A duplicate advertised name is uncallable regardless of hash match | = |
-| Two-way tool integration lets tools return arbitrary instructions to the LLM | Response taint: a successful external read taints its turn (sa#134) | = |
-| Misleading tool descriptions cause unreliable selection; "persuasive descriptions chosen more often" | Description is inside the signed `def_hash` basis (#223) — a description-only change **is** drift; deltas render verbatim and in full with a per-tool acknowledgment `--yes` cannot supply | = (see §5.6) |
+| Two-way tool integration lets tools return arbitrary instructions to the LLM | Response taint: a successful external read taints its turn | = |
+| Misleading tool descriptions cause unreliable selection; "persuasive descriptions chosen more often" | Description is inside the signed `def_hash` basis — a description-only change **is** drift; deltas render verbatim and in full with a per-tool acknowledgment `--yes` cannot supply | = (see §5.6) |
 | Standardise tool descriptions to avoid persuasive language | Not done — we detect description change, we do not normalise description style | ✗ |
 | Maintain a trusted registry of third-party components; SBOM | Tool-level registry yes; no SBOM practice | ~ |
 
@@ -121,7 +121,7 @@ Legend: **=** implemented at or above the clause · **~** implemented weaker or 
 |---|---|---|
 | Unified audit logs for all inter-agent interactions | Hash-chained append-only `AuditRecord` under a separate identity | = |
 | Log every agent action, not just failures or high-impact events | Every decision lands on the chain | = |
-| Comprehensive artefacts documenting actions and decision process | `AuditRecord` carries the deciding rule's reason string, plus `intentId` / `storedCallDigest` / `resultDigest` receipts (#198) | = |
+| Comprehensive artefacts documenting actions and decision process | `AuditRecord` carries the deciding rule's reason string, plus `intentId` / `storedCallDigest` / `resultDigest` receipts | = |
 | Monitor identity and privilege changes; audit for drift, impersonation, misconfiguration | 19-rule grant-integrity audit, keyed and keyless, green on both floors | = |
 | Cross-validate agent reports against system logs with independent monitoring | Executed-vs-approved is byte-provable from the chain alone, after the intent TTL expires | = |
 | Storage-efficient logging to manage volume | Not addressed | ✗ |
@@ -132,8 +132,8 @@ Legend: **=** implemented at or above the clause · **~** implemented weaker or 
 | Guidance clause | safe-agents | |
 |---|---|---|
 | Fail-safe defaults; agents stop and escalate under uncertainty | Implemented but **deliberately not as a base default** (§6.2) | ~ |
-| Limit blast radius; containment mechanisms | Per-capability IAM (#175), proven live: out-of-scope calls AccessDenied by IAM | = |
-| Versioning and rollback to known-good behaviour | Grant tightening + re-seed re-attestation path (#206) | = |
+| Limit blast radius; containment mechanisms | Per-capability IAM, proven live: out-of-scope calls AccessDenied by IAM | = |
+| Versioning and rollback to known-good behaviour | Grant tightening + re-seed re-attestation path | = |
 | Denial-of-service and **sponge attacks** exhausting compute/memory/API calls | Caps are per-op **daily** budgets; a burst inside the cap is unmetered | ✗ |
 | Rate-limit components; interrupt long-running tasks | No rate limiter in the base. The campaign watchdog's throttle is **recommend-only** | ✗ |
 | Graceful degradation | Not a base concern; MCP respawn policy is the nearest thing | ~ |
@@ -143,16 +143,15 @@ Legend: **=** implemented at or above the clause · **~** implemented weaker or 
 | Guidance clause | safe-agents | |
 |---|---|---|
 | Threat modelling with agentic taxonomies (OWASP GenAI, MITRE ATLAS) before deployment | Doctrine-driven review; no formal taxonomy pass | ~ |
-| Red teaming; sandbox before production | Trigger range (sa#213) fires controls deliberately; drills run on real floors | ~ |
+| Red teaming; sandbox before production | Trigger range fires controls deliberately; drills run on real floors | ~ |
 | **Assess agents' ability to evade** guardrails, monitors, human-in-loop and input filters | Absent — we test that controls fire, never that an agent can route around them | ✗ |
-| Agent-specific evaluations; benchmark datasets | Conformance suites per contract; #177's 73,728-input differential corpus is the nearest benchmark | ~ |
+| Agent-specific evaluations; benchmark datasets | Conformance suites per contract; the policy-language decision's 73,728-input differential corpus is the nearest benchmark | ~ |
 | System-theoretic analysis (STPA / STPA-Sec) | Not used | ✗ |
 
 ## 4. Gap A — where we are weaker than the guidance
 
-Ordered by how much a competent reviewer would hold them against us. All nine are filed:
-FE-1 #255 · FE-2 #256 · FE-3 #257 · FE-4 #258 · FE-5 #259 · FE-6 #260 · FE-7 #261 · FE-8 #262 ·
-FE-9 #263.
+Ordered by how much a competent reviewer would hold them against us. All nine were filed; those
+still open are tracked here as FE-2 #14 · FE-3 #100 · FE-4 #139 · FE-5 #101 · FE-7 #102 · FE-9 #103.
 
 **Spec status (2026-07-25).** Three of these now have normative answers in the spec tier ahead of
 the implementation, which is the honest place for them to be while the code catches up: FE-1 is
@@ -163,8 +162,8 @@ claiming otherwise is the exact conformance-map dishonesty §7 warns about.
 
 Working the specs also surfaced two places where **spec text had fallen behind shipped contracts**,
 both found only because the mapping forced a clause-level read: PTC-SPEC pinned the admitted
-tool-definition hash to "exactly four fields" after #223 widened it to every advertised field, and
-GAL-SPEC still listed a `hash` field on `Grant` that #246 removed when it moved the integrity basis
+tool-definition hash to "exactly four fields" after the full-definition discovery hash widened it to every advertised field, and
+GAL-SPEC still listed a `hash` field on `Grant` that the stored-bytes integrity change removed when it moved the integrity basis
 to the stored bytes. Both are corrected. The lesson generalizes past this document: a spec derived
 from contracts needs a periodic re-derivation, because nothing fails when it drifts.
 
@@ -190,7 +189,7 @@ equivalent and a scheduled comparison.
 under structural risk and recommends rate-limiting components and interrupting long-running tasks. Our
 budget counters are per-principal, per-op, per-UTC-day. An agent with an 80/day cap can burn all 80
 calls in ten seconds, and nothing interrupts a long-running tool call. The campaign watchdog computes
-a `throttle_eligible` flag but is recommend-only — the enforced throttle seam is unbuilt (#220). This
+a `throttle_eligible` flag but is recommend-only — the enforced throttle seam is unbuilt (#88). This
 is the availability gap in its most mundane form, and it sits oddly next to how much work we have put
 into the sophisticated availability story.
 
@@ -244,7 +243,7 @@ assumes **abstain-is-safe** polarity. For an agent whose job is to act on demand
 alerting system, a safety interlock — a forced abstention causes the exact harm the agent exists to
 prevent, so "tainted → stop" is not a safe default, it is the attack. An adversary who cannot make an
 agent do the wrong thing can still make it do nothing, and the guidance's own recommended control is
-the lever. Our position (`docs/friction-doctrine.md` §Availability, sa#159): polarity must be
+the lever. Our position (`docs/friction-doctrine.md` §Availability): polarity must be
 re-derived per agent and never baked into a platform, and the floor's answer is a deterministic
 dead-man's-switch that observes *that* an agent went silent and never judges *why* — a timestamp
 comparison cannot be prompt-injected. Mechanism ships as an Envelope knob that is OFF unless set; the
@@ -272,10 +271,10 @@ recommendation (§6.1).
 **5.4 · "Operators decide when approval is required, not the agent" needs a config-provenance lattice
 to be enforceable.** The guidance states this principle well and gives no mechanism for *where
 configuration lives*. An agent that can write the file naming its own approval thresholds has been
-delegated the decision regardless of what policy says. Our lattice (`docs/config-provenance.md`, #186):
+delegated the decision regardless of what policy says. Our lattice (`docs/config-provenance.md`):
 anything that can name code to run is honored only from the image-baked manifest; store-loaded config
 may only select or tighten, never mint; mutation is ceremony-gated; secrets are bare leaves. We learned
-this the hard way — #197/#199 was a wrong-authority mint from an implicit fallback manifest that left a
+this the hard way — an earlier incident was a wrong-authority mint from an implicit fallback manifest that left a
 promoted grant quarantine-dead for an hour. Worth contributing as the *implementation requirement*
 behind their principle.
 
@@ -292,7 +291,7 @@ tools drift, a reviewer approving a batch will skim. So description deltas — t
 vector — render verbatim and in full and require a per-tool acknowledgment that a blanket `--yes`
 cannot supply, while schema deltas are machine-summarised and cosmetic churn is a count. Proven live: a
 poisoned description was refused under `--yes` alone with the row unmoved. The related finding
-(#232/TL11a) is that a newly-required field on a **remote** tool is a disclosure escalation, because an
+(TL11a) is that a newly-required field on a **remote** tool is a disclosure escalation, because an
 input schema is an exfiltration-channel spec enumerating what the vendor receives per call.
 
 **5.7 · Maker≠checker guarantees two credentials, not two humans.** The guidance recommends separation
@@ -309,14 +308,14 @@ exercised it. Ceremony success is not evidence the authority works.
 **5.9 · Empirical policy-language data for the "centralised policy decision point".** The guidance
 recommends a centralised PDP evaluated per request and names no candidate. We ported our 14-rule table
 to Cedar and Rego and ran all **73,728** reachable inputs against each and against the real engine
-(#177). A direct Cedar port preserves first-match ordering on **71.27%** of inputs; exactness requires
+. A direct Cedar port preserves first-match ordering on **71.27%** of inputs; exactness requires
 hand-flattening to mutually exclusive guards at 7.3× the policy terms, which Cedar's own validator does
 not check. A two-verb permit/forbid alphabet cannot express a value-producing outcome, and there is no
 quantifier, so provenance-chain reasoning is unreachable. Rego matched exactly in 81 lines with all
 five verbs native. This is the kind of measurement a standards body cannot easily produce and would
 plausibly want.
 
-**5.10 · Authenticity is not count-trust.** From the sa#161 watchdog work: a signed sender identity
+**5.10 · Authenticity is not count-trust.** From the campaign-watchdog work: a signed sender identity
 tells you *who* sent a message, not *how many times* — unless the dedupe key is bound into the
 signature. We bind the canonicalised channel identity into the signed context (SIGNING.md S1b) so
 mutating either half of the dedupe key breaks the signature. Otherwise a correlation control built on
@@ -327,7 +326,7 @@ nowhere in the attribution.
 **5.11 · Integrity must indict tampering, never evolution.** The guidance recommends cryptographic
 integrity checks on task definitions and constraints. Naive implementation — hash a parsed structure,
 re-serialise to verify — cries tamper on legitimate schema growth, which teaches operators to stop
-evolving the schema and calls the freeze prudence. Our rule (#246): the **stored bytes** are the
+evolving the schema and calls the freeze prudence. Our rule: the **stored bytes** are the
 integrity basis — serialise once, bind the hash to that string, verify verbatim, verify-then-parse. We
 found this by shipping the bug: widening a type moved an HMAC basis and every pre-widening proposal
 failed as a tamper.
@@ -345,7 +344,7 @@ Distinct from §5: these are places we do something *different*, where the guida
 defensible and ours needs an argument.
 
 **6.1 · The secondary validator does not gate.** The guidance recommends deploying a secondary agent to
-validate new tasks against policy before execution. We built that reviewer (#58) and deliberately made
+validate new tasks against policy before execution. We built that reviewer and deliberately made
 it **findings-attach-never-gate**: any reviewer failure degrades to a recorded `reviewer_error`, never
 a gate flip in either direction, and it ships OFF. The reasoning is 5.3 — a probabilistic classifier on
 the safety path is a new thing for the attacker to fool, and a validator that can be talked into

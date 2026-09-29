@@ -1,4 +1,4 @@
-"""sa#58 — the reference Bedrock evidence reviewer + its ceremony/commands wiring.
+"""The reference Bedrock evidence reviewer + its ceremony/commands wiring.
 
 The reviewer is reference-tier (docs/contract-vs-reference.md); the normative
 seam is CheckerProtocol in grants/ceremony.py (findings-attach-NEVER-gate).
@@ -55,7 +55,7 @@ from safe_agents.broker.tests.test_grants_ceremony import (
     _seed_grant,
 )
 
-# The maker's family and a reviewer from a DIFFERENT family (sa#58 rule).
+# The maker's family and a reviewer from a DIFFERENT family (the evidence-reviewer rule).
 _MAKER_FAMILY = "anthropic"
 _REVIEWER_MODEL_ID = "us.amazon.nova-pro-v1:0"
 # A distinctive string placed in evidence/tool input; no exception, record, or
@@ -143,7 +143,7 @@ def test_build_invalid_params_block_raises_validation_error(params):
     ids=["bare", "region-prefixed", "case-insensitive"],
 )
 def test_same_model_family_is_structurally_unbuildable(model_id, maker_family):
-    """The reviewer must come from a DIFFERENT family than the maker (sa#58):
+    """The reviewer must come from a DIFFERENT family than the maker:
     a same-family pair raises ReviewerConfigError at construction."""
     with pytest.raises(ReviewerConfigError, match="family"):
         build({"model_id": model_id, "maker_model_family": maker_family})
@@ -431,7 +431,7 @@ def test_resolve_reviewer_unknown_kind_names_the_closed_catalog(monkeypatch):
         ("not json{", "not valid JSON"),
         ('["a-list"]', "JSON object"),
         ("{}", "invalid for kind"),  # valid JSON object, invalid params
-        (  # same family as the maker: the sa#58 conformance rule at wiring level
+        (  # same family as the maker: the evidence-reviewer conformance rule at wiring level
             json.dumps(
                 {"model_id": "us.anthropic.claude-x-v1:0", "maker_model_family": "anthropic"}
             ),

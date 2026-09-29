@@ -100,7 +100,7 @@ class InMemoryTapeReader:
 
 
 # ---------------------------------------------------------------------------
-# File reader — the local floor's tape (#300)
+# File reader — the local floor's tape
 # ---------------------------------------------------------------------------
 
 class FileTapeReader:
@@ -109,7 +109,7 @@ class FileTapeReader:
     The shipped readers were in-memory and S3, so the one tape the local floor
     ACTUALLY writes had no reader at all: verifying it meant hand-rolling code
     around ``FileAuditSink(path).records()``. That is a strange gap to leave in a
-    product whose payoff is "look at what the broker recorded" (#300).
+    product whose payoff is "look at what the broker recorded".
 
     Parsing, torn-write tolerance and locking are deliberately NOT reimplemented
     here — they are the sink's, and a second parser is a second set of rules about

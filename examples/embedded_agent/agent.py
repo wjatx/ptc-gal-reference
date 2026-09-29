@@ -1,4 +1,4 @@
-"""agent.py — a plain Python agent that EMBEDS the broker (#266).
+"""agent.py — a plain Python agent that EMBEDS the broker.
 
 Run it:
 

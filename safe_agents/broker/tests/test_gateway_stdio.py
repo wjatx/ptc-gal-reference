@@ -1,4 +1,4 @@
-"""Conformance for the broker's MCP mouth — the SDK-bound half (#283).
+"""Conformance for the broker's MCP mouth — the SDK-bound half.
 
 `test_gateway_surface.py` proves the decisions; this proves the WIRING. It drives a
 real SDK `Server` — the same object `serve_stdio` runs — through the SDK's
@@ -8,7 +8,7 @@ and `tools/call` against the gateway.
 In-memory rather than a spawned stdio child on purpose. The session's bar is a
 refusal driven in-process; a child process would prove the same handlers plus
 `anyio`'s stdio plumbing, at the cost of a process to reap. The stdio path itself
-is four lines in `serve_stdio` and is what the #284 live wrap exercises.
+is four lines in `serve_stdio` and is what the live wrap exercises.
 
 "A seam is proven per transport" is the standing warning against assuming
 otherwise, and it is why the marshal these handlers rely on is homed once in
@@ -106,7 +106,7 @@ def test_granted_call_executes_over_the_wire(gateway) -> None:
 
 
 def test_unadmitted_tool_is_refused_over_the_wire_with_its_audit_line(gateway) -> None:
-    """The #283 definition of done, in process.
+    """The gateway's definition of done, in process.
 
     A real MCP client asks for a tool the gateway never advertised. It comes back
     an error carrying the broker's own reason, and the refusal is on the tape —

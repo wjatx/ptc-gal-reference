@@ -1,4 +1,4 @@
-"""The exhaustive differential corpus over the deterministic policy gate (#177, #178).
+"""The exhaustive differential corpus over the deterministic policy gate.
 
 `test_pdp.py` is the hand-picked case table — it says *what the rules mean*. This file
 is its complement: it says *what the gate does everywhere*. It enumerates the ENTIRE
@@ -6,14 +6,14 @@ reachable input space of ``decide()`` — every combination of every field any r
 predicate reads — runs each one through the real engine, canonicalizes the
 ``(input, decision)`` pairs, and pins a single SHA-256 over the whole corpus.
 
-**Why it exists.** #177 (closed 2026-07-20) decided to keep the custom pure PDP rather
+**Why it exists.** The policy-language decision (2026-07-20) was to keep the custom pure PDP rather
 than adopt Cedar or OPA/Rego. That decision was settled by a differential spike that ran
 ported rule tables against this same exhaustive corpus (Cedar A 71.27%, Cedar B 100.00%,
 Rego 100.00% — `docs/PTC.md` §5). The spike was treated as disposable and never
 committed, so the evidence `docs/lf-standards-brief.md` cites had no runnable artifact
 behind it. This is that artifact, rebuilt and committed.
 
-**What the golden digest buys.** It is the conformance seed for #178: any alternative
+**What the golden digest buys.** It is a conformance seed: any alternative
 gate implementation that claims to be our gate must reproduce ``GOLDEN_CORPUS_DIGEST``
 over the same enumeration. And in the other direction, a behaviour change to
 ``engine.py`` moves the digest — so a policy change surfaces as a deliberate re-mint
@@ -72,7 +72,7 @@ from safe_agents.broker.schemas.common import AutonomyLevel
 # ---------------------------------------------------------------------------
 
 # SHA-256 over the sorted, newline-joined canonical "<input> => <decision>" lines of
-# the FULL corpus. This is the conformance target for an alternative gate (#178).
+# the FULL corpus. This is the conformance target for an alternative gate.
 #
 # If this moves, the gate's behaviour changed. That is a POLICY change, not a test
 # update: re-mint it only alongside the rule-table diff that caused it, and say in the
@@ -82,7 +82,7 @@ from safe_agents.broker.schemas.common import AutonomyLevel
 # Re-mint history — each entry says what moved and how that was ESTABLISHED, because
 # "the digest changed and I looked at it" is not evidence:
 #
-#   e974d0f9… -> b6b788df…  (#300, 2026-07-29)  REPRESENTATION ONLY, no decision moved.
+#   e974d0f9… -> b6b788df…  (2026-07-29)  REPRESENTATION ONLY, no decision moved.
 #     RequireApproval gained an optional `reason`, so the 800 require_approval lines
 #     serialize one extra key. Verified by recomputing the corpus with that key
 #     stripped from every decision: the result reproduces e974d0f9… exactly, and the
@@ -102,7 +102,7 @@ from safe_agents.broker.schemas.common import AutonomyLevel
 #     transform 192). The rule table was not touched.
 GOLDEN_CORPUS_DIGEST = "edec2f9e6f350a6bdb4020530e9cbba6aa818433f0d567fa7097219143ddb8bc"
 
-# The historical figure from the #177 spike, published in docs/PTC.md §5,
+# The historical figure from the policy-language spike, published in docs/PTC.md §5,
 # docs/lf-standards-brief.md and spec/PTC-SPEC.md. Asserted here so the cited number
 # and the running artifact cannot drift apart silently.
 EXPECTED_CORPUS_SIZE = 73_728
@@ -165,11 +165,11 @@ _FACT_AXES: dict[str, tuple[Any, ...]] = {
 #   BrokeredCall.ts ........... same — _intent_id only.
 #   BrokeredCall.tool / .op ... same — _intent_id and the rendered string only.
 #   taint.sources ............. the predicates read the derived `tainted` flag only.
-#   Facts.quarantined ......... consumed by the PEP for loud surfacing (sa#124); no
+#   Facts.quarantined ......... consumed by the PEP for loud surfacing; no
 #   Facts.quarantine_reason ... predicate reads either (a quarantined grant arrives as
 #                               grant_present=False, which IS swept).
 #   ConfidenceArtifact ........ never reaches the PDP; the PIP reduces it to the swept
-#                               boolean Facts.confidence_below_bar (#184).
+#                               boolean Facts.confidence_below_bar.
 #
 # Freezing the _intent_id inputs is what makes the digest stable; they are varied
 # nowhere here on purpose, and their effect on the ID is pinned in test_pdp.py.

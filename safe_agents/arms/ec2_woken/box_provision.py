@@ -1,5 +1,5 @@
 """
-ec2-woken BOX provisioner + teardown — the confined, SQS-woken EC2 agent box (sa#98, sa#34 G9).
+ec2-woken BOX provisioner + teardown — the confined, SQS-woken EC2 agent box.
 
 Companion to provision.py (which deploys the inbound *airlock* — the wake path). This module
 provisions the BOX the airlock wakes: a confined EC2 instance that, on wake, drains its SQS
@@ -56,7 +56,7 @@ BROKER_CONNECTOR_KEYS_RESOURCE_PATTERN = "*/connectors/*"
 # Default instance type for the woken box (arm64, small — the box sleeps most of the time).
 DEFAULT_INSTANCE_TYPE = "t4g.small"
 
-# Base AMI tag lookup (same prebuilt-AMI bakery as the EC2 arm, sa#84).
+# Base AMI tag lookup (same prebuilt-AMI bakery as the EC2 arm).
 _BASE_AMI_TAG_KEY = "safe-agents:ami"
 _BASE_AMI_TAG_VALUE = "base"
 _BASE_AMI_VERSION_TAG_KEY = "safe-agents:ami-version"
@@ -69,10 +69,10 @@ _IAM_RACE_BACKOFF_BASE_S = 2
 # The box-side files delivered to the box. Bin files land in /opt/safe-agents/bin; the systemd
 # unit lands in /etc/systemd/system. They are staged in the deploy bucket and copied down at boot
 # via the isolated subnet's S3 gateway endpoint — NOT embedded in user-data, which has a 16 KB
-# base64 cap the embedded assets overflow (sa#98 live-provision fix).
+# base64 cap the embedded assets overflow (a live-provision fix).
 _BOX_DIR = Path(__file__).parent / "box"
 # self-stop-on-timeout.sh is the box-side lifetime cap (belt-and-suspenders): a systemd timer
-# stops the box 3h after boot if the drain loop's own idle self-stop never fired (sa#98).
+# stops the box 3h after boot if the drain loop's own idle self-stop never fired.
 _BOX_EXECUTABLES = (
     "emit-runner-ready.sh",
     "run-brokered.sh",
@@ -251,7 +251,7 @@ def render_box_user_data(
     lifetime-cap timer/service) are staged in the deploy bucket by the provision and copied down
     here via the isolated subnet's S3 gateway
     endpoint — NOT embedded, because base64(gzip(embedded)) overflows EC2's 16 KB user-data cap
-    (sa#98 live-provision fix). Explicit per-object `aws s3 cp` (not `--recursive`) keeps the box
+    (a live-provision fix). Explicit per-object `aws s3 cp` (not `--recursive`) keeps the box
     role to `s3:GetObject` only — no `s3:ListBucket`. User-data then writes the env contract
     (oauth token by SECRET ID, never plaintext) and enables the drain service, so
     wake -> drain -> run -> sleep runs.

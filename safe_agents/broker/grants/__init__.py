@@ -3,7 +3,7 @@ demotion evaluator, and rung state machine.
 
 Public surfaces:
 
-  audit     — the read-only grant-integrity auditor (#62). Pure rules over a
+  audit     — the read-only grant-integrity auditor. Pure rules over a
               loaded AuditDataset → typed AuditReport; the only AWS call in
               the module is load_dataset's paginated Scan. Keyless mode (no
               HMAC key — the CI identity) skips HMAC rules LOUDLY.
@@ -12,33 +12,33 @@ Public surfaces:
               tests + DynamoDB implementation for production. Callers supply
               the boto3 Session; this package does NOT manage role assumption.
 
-  proposals — the durable promotion-proposal store (#123). propose and ratify
+  proposals — the durable promotion-proposal store. propose and ratify
               are separate invocations by different identities (maker ≠
               checker is structural), so the PromotionProposal persists
               between them; conditional single-shot consumption kills the
               double-ratify race.
 
-  predicate — the deterministic promotion predicate (sa#57). Pure function;
+  predicate — the deterministic promotion predicate. Pure function;
               no I/O, no LLM. Takes pre-fetched metrics, returns a
               PredicateResult with eligible bool + reason string.
 
-  ceremony  — the maker-checker promotion ceremony (#123). The only path by
+  ceremony  — the maker-checker promotion ceremony. The only path by
               which a Grant's level increases. Wires together the predicate
               and the grant store write under a deterministic acceptance
-              gate; the optional checker seam (the sa#58 evidence reviewer,
+              gate; the optional checker seam (the evidence reviewer,
               ships OFF) attaches findings but never gates.
 
-  rung      — the autonomy rung state machine (sa#60). Validates and
+  rung      — the autonomy rung state machine. Validates and
               orchestrates all level transitions; enforces hysteresis. Pure
               validation functions + RungStateMachine coordinator. No DynamoDB
               dependency.
 
-  term / lapse — the certification term (#255, GAL §6.7.6). ``term`` is pure:
+  term / lapse — the certification term (GAL §6.7.6). ``term`` is pure:
               whether a term has passed at an EXPLICIT instant, and the
               effective level enforcement acts on. ``lapse`` writes the
               lapse-typed record under the system evaluator identity.
 
-  record_signing — DSSE signing of the PromotionRecord ledger (the #181
+  record_signing — DSSE signing of the PromotionRecord ledger (the Layer A signing
               machinery's second statement type). The ISSUER's key, never the
               broker's; the envelope is stored beside the ledger blob, never
               on the schema. Pure and key-injected.
@@ -233,7 +233,7 @@ __all__ = [
     "compute_grant_hash",
     "refuse_term_extension",
     "validate_record_ts",
-    # certification term + lapse (#255)
+    # certification term + lapse
     "effective_level",
     "extends_term",
     "lapse_pending",

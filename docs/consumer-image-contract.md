@@ -1,4 +1,4 @@
-# Consumer image contract — Fargate arm (sa#116)
+# Consumer image contract — Fargate arm (#68)
 
 This is the contract between the Fargate arm's **task definition** (registered by
 `safe_agents/arms/fargate/provision.py::fargate_provision`) and **any consumer-built agent
@@ -106,9 +106,9 @@ labels them (a)–(f).
   cpu `256` / memory `512` by default. Build (or cross-build) the image for arm64.
 - **Push target.** The environment's agent ECR repo (`ecr-agent-repo-uri` infra export); the
   task definition images **`:latest`** from that repo.
-- **Known limitation (sa#116b).** The agent ECR repo is currently shared per environment — a
+- **Known limitation.** The agent ECR repo is currently shared per environment — a
   second consumer pushing `:latest` clobbers the first. Per-agent tags/repos are an open
-  question tracked in sa#116 / `docs/environments.md`; until it resolves, one consumer image
+  question tracked in #68 / `docs/environments.md`; until it resolves, one consumer image
   per environment.
 
 ## Decoupling

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run-local.sh — the local/Mac arm: confined agent + broker box + DynamoDB Local, on a private
-# network (the #98 separate-broker topology, realized locally; start of the #39 arm).
+# network (the separate-broker topology, realized locally; the start of this arm).
 #
 #   dynamodb-local           — DynamoDB Local: the broker's real store backend (same code as AWS)
 #   broker box  (sa-broker)  — container: :8443 model-proxy + :8080 tool-call API; stores -> DynamoDB
@@ -27,7 +27,7 @@ podman image exists "$AGENT_IMG" 2>/dev/null || \
 
 # Required, with no default: this is BASE source, and a default naming a real
 # consumer secret is both a boundary leak and a disclosure of that account's
-# layout (#302). Region is left to the AWS CLI's own resolution unless AWS_REGION
+# layout. Region is left to the AWS CLI's own resolution unless AWS_REGION
 # says otherwise — a literal us-east-1 silently pointed every other region's
 # operator at the wrong one.
 # NB no apostrophe in the :? message — bash quote-processes the word in
@@ -76,7 +76,7 @@ AUDIT_DIR="$(mktemp -d)"
 # the secrets file + audit dir are mounted into the broker box for the real connector + tape.
 BROKER_ENV=(
   -e BROKER_STORE="$STORE"
-  # #205: on the dynamo arm the broker refuses every defaulted authority-shaping
+  # Named-config-or-refuse: on the dynamo arm the broker refuses every defaulted authority-shaping
   # value, so this harness NAMES them all explicitly — the manifest (the checked-in
   # example, at its baked-in-image path), the HMAC key (the dev key VALUE, named
   # here rather than silently defaulted broker-side), the audit tape, the secrets

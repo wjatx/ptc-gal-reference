@@ -1,4 +1,4 @@
-"""channels.screens.bedrock_classifier — a reference injection screen (sa#152 Slice B).
+"""channels.screens.bedrock_classifier — a reference injection screen.
 
 **Reference-tier** per docs/contract-vs-reference.md: the normative words are
 channels/SCREENING.md, `channels.screening` is the typed seam, and this is one

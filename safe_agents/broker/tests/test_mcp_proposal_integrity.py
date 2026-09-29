@@ -1,6 +1,6 @@
 """The admission proposal's integrity basis is the STORED BYTES.
 
-Regression suite for a defect found on the dev floor (2026-07-20). #221's
+Regression suite for a defect found on the dev floor (2026-07-20). The
 field-carry (`3b55e93`) widened `McpToolDef` from four fields to ten. That
 commit was careful: it pinned `compute_tool_def_hash` byte-identical with a
 golden fixture and a conformance row. But `compute_proposal_hmac` embeds the

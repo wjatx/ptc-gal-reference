@@ -1,5 +1,5 @@
 """
-Tests for the campaign correlation engine (sa#161).
+Tests for the campaign correlation engine.
 
 Covers:
   1. DEDUPE_CAPPED_REASONS (screen_refused) with a verified chain group under

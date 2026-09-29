@@ -1,4 +1,4 @@
-"""streamable_http_toy_server — a test-only MCP server over streamable-HTTP (#221 P4).
+"""streamable_http_toy_server — a test-only MCP server over streamable-HTTP.
 
 Spawned as a REAL subprocess by the M21 suite (test_mcp_streamable_http.py) so
 the streamable-HTTP transport path is exercised against a genuine remote peer:

@@ -1,4 +1,4 @@
-"""Tests for the AgentManifest broker-facing manifest schema (broker-debaking P1, sa#113).
+"""Tests for the AgentManifest broker-facing manifest schema (broker-debaking P1).
 
 Covers:
   1. Round-trip: a dict with every block survives model_validate → model_dump(json).
@@ -84,13 +84,13 @@ def test_envelope_only_validates() -> None:
 
 
 def test_tool_ops_defaults_empty() -> None:
-    """tool_ops (#171) defaults to an empty list when omitted."""
+    """tool_ops defaults to an empty list when omitted."""
     manifest = AgentManifest.model_validate({"envelope": {"polarity": "abstain"}})
     assert manifest.tool_ops == []
 
 
 def test_counter_period_defaults_to_utc_day() -> None:
-    """counter_period (#212) defaults to utc-day — byte-for-byte the pre-#212
+    """counter_period defaults to utc-day — byte-for-byte the pre-counter-period
     counter coordinate; declaring it never churns the envelope hash (it lives
     OUTSIDE Envelope)."""
     manifest = AgentManifest.model_validate({"envelope": {"polarity": "abstain"}})

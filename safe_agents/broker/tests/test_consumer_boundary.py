@@ -5,7 +5,7 @@ the base/consumer boundary a gate, not a convention. Three things are asserted h
 
 1. **No example reaches into broker INTERNALS.** A consumer stands on the base's public
    surface — ``safe_agents.broker.schemas`` (what it FILLS) and ``safe_agents.broker.api``
-   (what it RUNS), the TWO allowed broker subpackages [#266] — and supplies a manifest;
+   (what it RUNS), the TWO allowed broker subpackages  — and supplies a manifest;
    ANY other ``safe_agents.broker.<X>`` import is a reach into internals. The check is an ALLOWLIST (not an enumerated
    denylist), so it catches both import forms and stays correct as internal modules are
    added — see the detector below. Any ``.py`` under ``examples/`` is scanned — the
@@ -51,7 +51,7 @@ _BROKER_SERVER_SRC = Path(broker_server.__file__)
 
 _BROKER_PKG = "safe_agents.broker"
 # The TWO broker subpackages that are the public consumer surface [ruling: maintainer,
-# 2026-07-26, #266]: **a consumer may import what it FILLS and what it RUNS,
+# 2026-07-26]: **a consumer may import what it FILLS and what it RUNS,
 # never what DECIDES.**
 #
 #   schemas — what it FILLS: the seven contract types, AgentManifest, Envelope.
@@ -64,10 +64,10 @@ _BROKER_PKG = "safe_agents.broker"
 # to, which is precisely what "the broker is the one deliberately non-swappable
 # implementation" forbids. So a consumer gets the runtime, never its parts.
 #
-# History worth keeping, since this set has moved twice: the #219 widening to
+# History worth keeping, since this set has moved twice: the MCP-stdio widening to
 # `{schemas, mcp}` existed solely so a consumer provider class could compose
-# stdio_host_factory + a ToolRegistryStore by hand; #221's native construction
-# retired that pattern and the widening was reverted. The #266 addition of `api`
+# stdio_host_factory + a ToolRegistryStore by hand; the MCP host's native construction
+# retired that pattern and the widening was reverted. The 2026-07-26 addition of `api`
 # is the opposite kind of change — not a mechanism a consumer composes by hand,
 # but the one entry point two published docs already promised while this guard
 # forbade it.
@@ -152,8 +152,8 @@ class TestBoundaryGuardHasTeeth:
         "from safe_agents.broker.delegation import x",
         "from safe_agents.broker.chaos import x",
         "from safe_agents.broker import (\n    pep,\n    schemas,\n)",  # multi-line parenthesized
-        # The MCP-host tier is internal again since #221 (native construction
-        # retired the consumer-composed provider pattern; the #219 widening was
+        # The MCP-host tier is internal again since native construction landed (it
+        # retired the consumer-composed provider pattern; the MCP-stdio widening was
         # explicitly flagged reversible).
         "from safe_agents.broker.mcp import stdio_host_factory",
         "from safe_agents.broker.mcp.factory import stdio_host_factory",
@@ -174,7 +174,7 @@ class TestBoundaryGuardHasTeeth:
         "from safe_agents.broker import schemas",
         "from safe_agents.broker.schemas.envelope import Envelope",
         "import safe_agents.broker.schemas",
-        # Tier 2: what a consumer RUNS (#266).
+        # Tier 2: what a consumer RUNS.
         "from safe_agents.broker.api import build_runtime",
         "from safe_agents.broker.api import build_runtime, BrokerRuntime",
         "from safe_agents.broker import api",
@@ -285,7 +285,7 @@ class TestExampleConsumersBuildRuntime:
 
 
 # ---------------------------------------------------------------------------
-# 5. The sa#141 injection seam has a worked example consumer (missileer)
+# 5. The connector-injection seam has a worked example consumer (missileer)
 # ---------------------------------------------------------------------------
 
 class TestExampleProviderConnector:
@@ -303,7 +303,7 @@ class TestExampleProviderConnector:
         assert manifest.connector_providers == {
             "search": "examples.missileer.trackfeed_connector:TrackFeedConnector"
         }
-        # Leaves only, never values — the mapped Secrets Manager LEAF (sa#164).
+        # Leaves only, never values — the mapped Secrets Manager LEAF.
         assert manifest.connector_secrets == {"search": "track-feed-token"}
 
     def test_build_runtime_wires_the_consumer_connector(self) -> None:
@@ -321,7 +321,7 @@ class TestExampleProviderConnector:
         assert doer._secret_name_for("ledger") == "ledger"
 
     def test_provider_module_passes_the_boundary_guard(self) -> None:
-        # Redundant with the rglob sweep above, but pins the sa#141 example by
+        # Redundant with the rglob sweep above, but pins the connector-injection example by
         # name: the consumer connector imports only public surfaces.
         src = (_EXAMPLES_DIR / "missileer" / "trackfeed_connector.py").read_text(encoding="utf-8")
         assert _internal_import_hits(src) == []

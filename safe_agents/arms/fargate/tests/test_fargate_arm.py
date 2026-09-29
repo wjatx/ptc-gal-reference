@@ -1,5 +1,5 @@
 """
-Fargate arm tests — acceptance criteria for sa#36 (C2b).
+Fargate arm tests — acceptance criteria for the Fargate arm provisioner.
 
 All tests are AWS-free: AWS calls go through FakeAWS (no live boto3 needed).
 Mirrors safe_agents/arms/ec2/tests/test_ec2_arm.py.
@@ -218,7 +218,7 @@ class TestProvisionCreatesResources:
         assert sched["timezone"] == "America/New_York"
 
     def test_schedule_defaults_to_disabled(self, fake_aws_fargate, manifest) -> None:
-        """sa#115: with no state kwarg, fargate_provision's own default (DISABLED)
+        """With no state kwarg, fargate_provision's own default (DISABLED)
         applies — a provision must never enable a production schedule before its
         first manual proof."""
         summary = fargate_provision(manifest, fake_aws_fargate, environment=ENV)
@@ -504,7 +504,7 @@ class TestPhaseLayerWiring:
         assert result.success, result.error
 
     def test_provision_phase_reads_manifest_schedule(self, fake_aws_fargate, manifest) -> None:
-        """sa#115: provision_phase forwards manifest.schedule's expression/timezone/state
+        """provision_phase forwards manifest.schedule's expression/timezone/state
         through to fargate_provision (and on to aws.create_schedule)."""
         scheduled_manifest = dataclasses.replace(
             manifest,
@@ -527,7 +527,7 @@ class TestPhaseLayerWiring:
     def test_provision_phase_defaults_disabled_when_manifest_has_no_schedule(
         self, fake_aws_fargate, manifest
     ) -> None:
-        """sa#115: when manifest.schedule is None entirely, fargate_provision's own
+        """When manifest.schedule is None entirely, fargate_provision's own
         DISABLED default kicks in — DISABLED is the floor no matter what the manifest says."""
         assert manifest.schedule is None  # smoke-fargate.yaml declares no schedule block
         result = provision_phase(

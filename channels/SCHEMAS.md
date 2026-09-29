@@ -1,9 +1,9 @@
-# SCHEMAS — the EventTrigger envelope (sa#74)
+# SCHEMAS — the EventTrigger envelope
 
 > **Status: contract (2026-07-08).** Contract-tier per `docs/contract-vs-reference.md`: this
 > document is the normative words, `safe_agents/channels/schemas/event_trigger.py` is the typed
 > encoding, and `safe_agents/channels/tests/test_event_trigger.py` is the conformance suite. The
-> driving use case is recorded on sa#8 (email-agent → a consumer agent's trade signals, 2026-07-08); the
+> driving use case is the A2A agreement (email-agent → a consumer agent's trade signals, 2026-07-08); the
 > contract is designed against that case, not against a running instance. **The contract names no
 > transport** — SQS/EventBridge and every other wire binding are reference-tier
 > (`channels/ADAPTERS.md` §"Reference bindings").
@@ -25,8 +25,8 @@ raw message into an EventTrigger whose provenance chain starts at that airlock. 
 "internal" record type — cross-zone taint transit works because the same chain rides the same record
 end to end.
 
-**Supersessions (2026-07-08).** The original sa#74 sketch carried `trigger_source: webhook |
-schedule | queue` and `taint: boolean`. Both are superseded by the sa#8 A2A decision: the source
+**Supersessions (2026-07-08).** The original EventTrigger sketch carried `trigger_source: webhook |
+schedule | queue` and `taint: boolean`. Both are superseded by the A2A decision: the source
 enum named transports, so it is replaced by the open `sender.channel_type` vocabulary; the boolean
 is replaced by the derived label over the provenance chain (§"Taint").
 
@@ -44,7 +44,7 @@ interface EventTrigger {
   payload_ref?: string             // opaque pointer to the stored raw original (binding is reference-tier)
   provenance: ProvenanceEntry[]    // append-only chain, min length 1 — taint derives from this
   chain_signatures: ChainSignature[]   // per-hop signatures over the chain prefix each broker committed to (channels/SIGNING.md); [] on an unsigned chain
-  sender_class?: "owner" | "peer-agent" | "external"   // RECEIVER-owned (#81); null on the wire
+  sender_class?: "owner" | "peer-agent" | "external"   // RECEIVER-owned; null on the wire
   ts: string                       // ISO-8601 UTC, creation
   expiry: string                   // hard TTL; expired envelopes drop before any budget-spending gate
 }
@@ -76,8 +76,8 @@ Per-field notes:
 
 - **event_id** — the dedupe key. Scope is `(sender.channel_identity, event_id)`: the receiving
   airlock produces **exactly one** stamped EventTrigger per deduplicated inbound message; replays
-  are no-ops. It is also the cross-chain audit join key (sa#8 decision 4): both zones' AuditRecords
-  reference it, so the off-substrate verifier (#26/#67) can replay end-to-end from register entry
+  are no-ops. It is also the cross-chain audit join key (A2A decision 4): both zones' AuditRecords
+  reference it, so the off-substrate verifier (#50) can replay end-to-end from register entry
   back to the originating email.
 - **principal** — the receiver MUST verify the target names a principal it serves; a mismatch is a
   drop, not a re-route. The broker session the worker opens runs under this principal
@@ -97,7 +97,7 @@ Per-field notes:
   Each commits to the chain prefix as it left the signing broker's zone (`covers`); empty on an
   unsigned chain. Receiver verification is a knob shipping OFF, and it authenticates *who asserted a
   hop* — it never replaces the derived taint, which is still recomputed from the chain regardless.
-- **sender_class** — the *output* of the receiver's trust-map gate (#81), never a sender claim.
+- **sender_class** — the *output* of the receiver's trust-map gate, never a sender claim.
   It is absent on the wire; the trust-map gate sets it from the receiver's own map, unconditionally
   overwriting any inbound value (enforced at the gate — `channels/TRUST-MAPPING.md`).
 - **expiry** — hard TTL, checked with caller-supplied time (deterministic, testable). An expired
@@ -126,7 +126,7 @@ derived property: *tainted iff any provenance entry carries `label: "untrusted"`
    anywhere on the path.
 
 Authenticity and content trust stay separate by construction: `dkim:pass` lives in `evidence`
-(what the receiver may *do* — #81's axis); `untrusted` lives in `label` (what the content *is*).
+(what the receiver may *do* — the identity → authorization axis); `untrusted` lives in `label` (what the content *is*).
 Verified authenticity never cleans a payload's taint.
 
 ## Contract clauses
@@ -153,26 +153,26 @@ A third-party implementation of the envelope (any language) must pass the equiva
 
 | Clause | Test (`test_event_trigger.py`) |
 |---|---|
-| C1 | `test_dedupe_key_is_stable_and_sender_scoped` — replay no-op behavior lands with the #80 dispatch suite |
+| C1 | `test_dedupe_key_is_stable_and_sender_scoped` — replay no-op behavior lands with the dispatch suite |
 | C2 | `test_payload_over_cap_is_rejected` · `test_payload_ref_requires_digest` · `test_digest_format_is_sha256_hex` |
 | C3 | `test_no_writable_taint_field` · `test_taint_derives_from_chain` · `test_stamped_appends_and_originals_are_frozen` · `test_empty_provenance_is_rejected` |
-| C4 | `test_sender_class_defaults_none_on_the_wire` — overwrite enforcement lands with #81's `stamp_inbound` suite |
+| C4 | `test_sender_class_defaults_none_on_the_wire` — overwrite enforcement lands with the `stamp_inbound` suite |
 | C5 | `test_provenance_sources_feed_turn_ingestion` (bridges to the live `TurnContext`) |
 | C6 | `test_expired_envelope_is_detected_deterministically` |
-| C7 | documented here; executable with the off-substrate verifier (#26/#67) |
+| C7 | documented here; executable with the off-substrate verifier (#50) |
 | C8 | `test_provenance_source_must_be_namespaced`; the absence of any transport enum is the contract text itself |
-| fixtures | `test_driving_use_case_fixture_roundtrips` — the sa#8 trade-signal envelope, JSON round-trip |
+| fixtures | `test_driving_use_case_fixture_roundtrips` — the A2A trade-signal envelope, JSON round-trip |
 
 ## Relationships
 
 - `broker/TAINT.md` — the floor this contract extends across zones; §2 is the ingestion hook.
-- `channels/PUBLISH.md` (sa#156) — the outbound seam that *constructs* this envelope (`peer.publish`);
+- `channels/PUBLISH.md` — the outbound seam that *constructs* this envelope (`peer.publish`);
   `stamp_outbound` is the sender-side mirror of the airlock's `stamp_inbound`.
-- `channels/TRUST-MAPPING.md` (#81) — consumes the envelope; owns `sender_class` derivation and the
+- `channels/TRUST-MAPPING.md` — consumes the envelope; owns `sender_class` derivation and the
   one-way rule (receiver and sender sides).
-- `channels/ADAPTERS.md` (#80) — the gate ordering that produces a stamped envelope; reference
+- `channels/ADAPTERS.md` — the gate ordering that produces a stamped envelope; reference
   bindings live there.
-- `channels/SCREENING.md` (sa#43) — the injection-screening standard; the screen is a gate over
+- `channels/SCREENING.md` — the injection-screening standard; the screen is a gate over
   this envelope, not a field in it.
 - `broker/SCHEMAS.md` — the eight broker schemas this record feeds (`BrokeredCall.taint` via the
   turn; `AuditRecord` via `event_id`).

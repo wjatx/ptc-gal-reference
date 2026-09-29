@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-brokered.sh — the confined + brokered turn for the always-on EC2 arm (sa#35, Option A).
+# run-brokered.sh — the confined + brokered turn for the always-on EC2 arm (Option A).
 #
 # Converges the always-on EC2 box onto the TWO-BOX broker model: a real brokered round-trip
 # against the broker SERVICE at broker.safe-agents.local — exactly like the proven ec2-woken box

@@ -1,9 +1,9 @@
-"""Envelope schema — the typed per-agent risk-configuration artifact (sa#135).
+"""Envelope schema — the typed per-agent risk-configuration artifact.
 
 Bridges the manifest-side untyped `envelope:` dict (agents/<name>.yaml) into a
 validated Pydantic model, and provides a canonical content-hash over it. This is
 the artifact + hash + pipeline-side validation ONLY: the running broker does not
-yet load or consume this type at decision time — that is sa#122, which will use
+yet load or consume this type at decision time — that is follow-on work, which will use
 `compute_envelope_hash` below to verify a Grant/AuditRecord's `envelopeHash`
 against the envelope actually in force.
 
@@ -15,11 +15,11 @@ yet exercised by any real manifest (`reversibility_classes`, `fallback_budgets`,
 permissive optional dicts — present so the schema is the complete single source of
 truth, without over-committing to sub-shapes no manifest has exercised yet. Later
 phases firm these up: `input_trust_map` firms into taint types in the follow-on
-taint-completeness epic (sa#137); sa#134's broker-side self-ingestion has landed
+taint-completeness epic; broker-side taint self-ingestion has landed
 but reads the base trust map, not this field yet. `autonomy_rungs`/
 `promotion_predicates` firm up alongside the Grant lifecycle. The former
 `abstention_thresholds` placeholder dict has ALREADY firmed up — into the typed
-`Confidence` knob (#184) below — per the friction doctrine's "make it real or
+`Confidence` knob below — per the friction doctrine's "make it real or
 delete it".
 """
 
@@ -35,7 +35,7 @@ from .evidence import BlastClass, ConfidenceMethod
 
 
 class Liveness(BaseModel):
-    """Typed liveness contract — the deterministic dead-man's-switch (sa#160).
+    """Typed liveness contract — the deterministic dead-man's-switch.
 
     The availability floor. Prompt injection is not only an integrity/exfil
     attack; forcing an agent *silent* is a denial-of-service, and against the
@@ -62,8 +62,8 @@ class Liveness(BaseModel):
     # the broker's AuditRecord is its OWN tamper-evident record, written under a
     # separate identity: the agent cannot forge it, and cannot suppress it
     # without actually failing to act. It is the runtime cousin of
-    # assert-the-artifact (sa#25) and reuses the watcher/liveness.py run-record
-    # signal (sa#38).
+    # assert-the-artifact (#49) and reuses the watcher/liveness.py run-record
+    # signal.
     expected_op: str
     # Max silence, in seconds, before the agent is considered overdue. Must be
     # positive — a zero/negative deadline is a configuration error, not "always
@@ -98,7 +98,7 @@ class Caps(BaseModel):
     pass through so richer/future caps still carry into the hash without a schema
     change.
 
-    Name history (#163): the field was authored as `actions_per_run`, but it has
+    Name history: the field was authored as `actions_per_run`, but it has
     been a per-op per-UTC-day budget since the 2026-07-08 scoping fix
     (`enforcement.scoped_counter_key` keys the counter on principal+op+UTC-day, never
     per-run) — the name now says what it has meant all along. The old spelling is
@@ -107,7 +107,7 @@ class Caps(BaseModel):
     Setting more than one spelling at once is rejected — an ambiguous
     double-declaration.
 
-    Period generalization (#212): under a manifest with `counter_period` other
+    Period generalization: under a manifest with `counter_period` other
     than "utc-day", the cap scopes to that period (the counter key's bucket
     segment), so `actions_per_period` is the honest input spelling there. All
     three spellings name the SAME cap; the canonical dumped key stays
@@ -160,7 +160,7 @@ class Allowlists(BaseModel):
 
 
 class ApprovalQueue(BaseModel):
-    """Approval-queue de-amplification knob (sa#160 sub-item) — ships OFF.
+    """Approval-queue de-amplification knob — ships OFF.
 
     The availability floor's second half. When injection forces abstention, the
     taint floor escalates to `require_approval`; each poisoned call then holds an
@@ -172,7 +172,7 @@ class ApprovalQueue(BaseModel):
       op, and args) into one — killing exact re-submission amplification. It
       never hides a genuinely distinct approval.
     - `max_pending_per_op_day` is a flood-alarm threshold: past it, the broker
-      raises an `approval_queue_flood` alarm (the sa#153 log-metric surface) but
+      raises an `approval_queue_flood` alarm (the log-metric alarm surface) but
       **still holds the intent**. It never denies — shedding under flood is a
       polarity decision (it is the very DoS under act-safe polarity) and stays a
       consumer's call, not a base default.
@@ -193,7 +193,7 @@ class ApprovalQueue(BaseModel):
 
 
 class Confidence(BaseModel):
-    """Typed confidence bar + error budget (#184) — Envelope knob, unset = OFF.
+    """Typed confidence bar + error budget — Envelope knob, unset = OFF.
 
     The calibrated-uncertainty floor. Base ships the MECHANISM — the artifact
     contract (`evidence.ConfidenceArtifact`), the deterministic `meets_bar`
@@ -201,7 +201,7 @@ class Confidence(BaseModel):
     here is consumer-declared. A below-bar call routes to the per-agent safe response
     through the existing polarity seam (the abstain verb + the approval queue under
     an abstain-is-safe polarity); the polarity itself is NEVER base, the same rule
-    `Liveness` (sa#160) and the safe-default polarity obey. Baking a bar or a
+    `Liveness` and the safe-default polarity obey. Baking a bar or a
     polarity default in would be the latent safety bug CLAUDE.md forbids.
 
     This field is the typed firming of the former `abstention_thresholds` placeholder
@@ -281,7 +281,7 @@ class Envelope(BaseModel):
     allowlists: Optional[Allowlists] = None
     high_stakes: bool = False
 
-    # -- Read gating + query-exfil bound (sa#137), consumer-configurable ------
+    # -- Read gating + query-exfil bound, consumer-configurable ------
     # trusted_read_sources: source ids (e.g. "connector:market.bars") whose
     # external reads are trusted — they bypass the in-loop read rung-gate AND do
     # not self-taint the turn. Consulted in BOTH halves (the PIP's rung-gate fact
@@ -294,19 +294,19 @@ class Envelope(BaseModel):
     max_query_bytes: Optional[int] = None
     query_egress_budget: Optional[float] = None
 
-    # -- Availability floor (sa#160), consumer-configurable -------------------
+    # -- Availability floor, consumer-configurable -------------------
     # Typed liveness / dead-man's-switch contract. Unset = OFF (the base ships
     # no polarity default, and an unset field must never read as a false
     # "monitored" claim — see the Liveness docstring). A consumer derives its
     # default from polarity CONSUMER-SIDE (examples/liveness_policy.py).
     liveness: Optional[Liveness] = None
 
-    # Approval-queue de-amplification (sa#160 sub-item). Unset = OFF (dedup off,
+    # Approval-queue de-amplification. Unset = OFF (dedup off,
     # no flood cap) — byte-identical to today's allow-and-audit hold path. Never
     # sheds a distinct decision; see ApprovalQueue.
     approval_queue: Optional[ApprovalQueue] = None
 
-    # -- Calibrated-uncertainty floor (#184), consumer-configurable -----------
+    # -- Calibrated-uncertainty floor, consumer-configurable -----------
     # Typed confidence bar + per-UTC-day error budget. Unset = OFF (no bar, no
     # budget). Supersedes the former permissive `abstention_thresholds` placeholder
     # dict, now firmed up per the friction doctrine's "make it real or delete it".
@@ -317,7 +317,7 @@ class Envelope(BaseModel):
     # -- real manifest; kept permissive until a later phase firms them up. ---
     reversibility_classes: Optional[dict] = None
     fallback_budgets: Optional[dict] = None
-    input_trust_map: Optional[dict] = None  # taint-completeness epic (sa#137) firms this into taint types
+    input_trust_map: Optional[dict] = None  # taint-completeness epic firms this into taint types
     promotion_predicates: Optional[dict] = None  # firms up alongside the Grant lifecycle
     autonomy_rungs: Optional[dict] = None  # firms up alongside the Grant lifecycle
 
@@ -328,7 +328,7 @@ def compute_envelope_hash(envelope: Envelope) -> str:
     Mirrors broker/audit/_hash.py's canonicalization exactly (sorted keys, compact
     separators, `default=str`) so the digest is stable across Python versions and
     field orderings. This is a plain content hash, not an HMAC — no secret key, so
-    anyone holding the same envelope can independently recompute it. sa#122 will use
+    anyone holding the same envelope can independently recompute it. Decision-time checks use
     this to verify a Grant/AuditRecord's `envelopeHash` matches the envelope that was
     actually in force at decision time.
     """

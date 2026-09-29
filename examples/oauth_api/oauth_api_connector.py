@@ -1,4 +1,4 @@
-"""oauth_api_connector.py — the reference OAuth-refresh consumer (#173, PTC Phase 3a).
+"""oauth_api_connector.py — the reference OAuth-refresh consumer (#79, PTC Phase 3a).
 
 This is the worked example of the ``oauth_refresh`` credential strategy
 (``safe_agents.broker.runtime.credentials.OAuthRefresh``). The manifest declares
@@ -8,7 +8,7 @@ connector as ``credential`` — the refresh token itself never reaches this file
 agent, or any log.
 
 Like ``examples/missileer/trackfeed_connector.py``, this is a consumer-owned
-connector reached via the ``connector_providers`` injection seam (sa#141) and
+connector reached via the ``connector_providers`` injection seam and
 written ONLY against the public surface — ``safe_agents.connectors.Connector`` —
 never against broker internals (the consumer-boundary AST guard enforces that).
 
@@ -18,7 +18,7 @@ returns the credential it was given.
 
 Doctrine 2 (no raw command/query passthrough): ``execute`` exposes one narrow,
 classified capability (``api.query``), not a free-form HTTP verb/URL — the ToolOp
-table (#171) classifies the op; a passthrough arg would defeat that classification.
+table classifies the op; a passthrough arg would defeat that classification.
 
 Fictional and deterministic: no real network call, no real OAuth provider.
 """

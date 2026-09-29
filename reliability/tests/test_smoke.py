@@ -1,10 +1,10 @@
-"""Tests for reliability.smoke — forced-failure smoke-test base harness (sa#28).
+"""Tests for reliability.smoke — forced-failure smoke-test base harness (#52).
 
 Acceptance criteria verified here:
   1. Harness runs a set of checks and aggregates results without exiting mid-run.
   2. A forced failure is detected and reported as a failure (not a crash).
   3. A passing check reports pass.
-  4. conclude() follows the meta-alarm exit semantics (sa#29):
+  4. conclude() follows the meta-alarm exit semantics:
        no checks   → exit 1 (meta_alarm)
        all passed  → exit 0 / returns (heartbeat)
        any failed  → exit 0 / returns (content_alarm, notify_fn called)
@@ -230,7 +230,7 @@ def test_report_omits_detail_key_when_not_set():
 
 
 # ---------------------------------------------------------------------------
-# conclude() — meta-alarm exit semantics (sa#29)
+# conclude() — meta-alarm exit semantics
 # ---------------------------------------------------------------------------
 
 def test_conclude_meta_alarm_when_no_checks(capsys):

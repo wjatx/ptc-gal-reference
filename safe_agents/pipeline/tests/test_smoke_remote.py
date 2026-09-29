@@ -1,5 +1,5 @@
 """
-Remote smoke + agent-dir resolution tests — acceptance criteria for sa#1 gaps 2 + 3.
+Remote smoke + agent-dir resolution tests.
 
 Gap 2 (remote smoke):
     - Remote mode issues SSM SendCommand to the deployed instance and passes when
@@ -83,7 +83,7 @@ def fake_aws_with_instance() -> FakeAWS:
         "arn:aws:kms:us-east-1:123456789012:key/abcd-1234-cmk",
     )
     aws.seed_ssm_param(f"/safe-agents/{ENV}/broker-service-dns", "broker.safe-agents.local")
-    # sa#85: prebuilt base AMI replaces the public AL2023 SSM parameter lookup.
+    # Prebuilt base AMI replaces the public AL2023 SSM parameter lookup.
     aws.seed_image(
         "ami-0fakebaseami001",
         {"safe-agents:ami": "base", "safe-agents:ami-version": "20241201-01"},

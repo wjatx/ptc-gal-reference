@@ -3,7 +3,7 @@
 Before the grants-sqlite slice, ``BROKER_STORE=sqlite`` served the ceremony
 CLI's MCP stores only and ``build_runtime`` refused it outright: falling
 through to the memory branch would have booted dev-fallback grant/intent
-stores under an operator who NAMED a durable arm (the #197/#199 shape). Now
+stores under an operator who NAMED a durable arm (the wrong-authority-mint shape). Now
 the arm constructs real sqlite counters/intents/grants (and the store-mode
 envelope) on one named ``broker.db``, so the refusal is gone and these tests pin
 what replaced it:
@@ -16,7 +16,7 @@ what replaced it:
     created (fail toward touching nothing);
   - grants written by a ceremony-shaped writer survive a process restart and
     are served read-only — the durability property the whole arm exists for;
-  - the boot sweep deletes expired intents (bounded-lag privacy, sa#213) and
+  - the boot sweep deletes expired intents (bounded-lag privacy) and
     a sweep failure never blocks the boot.
 
 AWS-free by construction: no boto3 call, no credentials, one tmp_path db.

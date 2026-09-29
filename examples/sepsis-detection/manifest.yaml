@@ -28,7 +28,7 @@ connectors:
   - ledger
   - notify
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 # The broker resolves each granted (tool, op) against THIS table; the base names no
 # op. Copied from the base copyable CATALOG (safe_agents.broker.manifest.CATALOG).
 tool_ops:

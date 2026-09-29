@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cluster-tamper.sh — the audit-tape tamper attempt (#250 Phase 3, #310).
+# cluster-tamper.sh — the audit-tape tamper attempt (Phase 3; the audit-tape partition).
 #
 # Runs under ServiceAccount `safe-agents-maker`, in a pod scheduled after the
 # broker's has completed, against a tape holding records the broker wrote. It
@@ -18,7 +18,7 @@
 # edit by someone who could not rewrite the REST of the file; read-only mounts
 # are what put the other legs in that position. Defending the tape against its
 # own writer takes off-device append-only durability (S3 Object Lock on the cloud
-# floor), which #310 deliberately did not take here.
+# floor), which the partition deliberately did not take here.
 #
 # Attempted, never asserted. A split declared only in YAML is indistinguishable
 # from a typo'd subPath that silently co-located the tape with the working half —
@@ -29,7 +29,7 @@ TAPE="${BROKER_AUDIT_PATH:?BROKER_AUDIT_PATH must be set by the pod spec}"
 AUDIT_DIR="$(dirname "$TAPE")"
 WORK_DIR="${STORE_DIR:-/var/lib/broker}"
 
-# The shared negative-proof helper (#312), extracted from this leg, cluster-propose
+# The shared negative-proof helper, extracted from this leg, cluster-propose
 # and cluster-agent once all three worked. `say`/`ok`/`die` keep their local names so
 # the body below reads unchanged.
 # shellcheck source=negative-proof.sh
@@ -70,7 +70,7 @@ ok "the working mount is writable by this pod; the audit mount is the variable u
 say "1. what is on the tape, and who put it there"
 # The precondition is part of the proof, not setup. Attempting these four verbs
 # against an EMPTY tape would refuse identically while the heading claimed "cannot
-# erase another leg's records" — right verb, vacuous target (#310, #312).
+# erase another leg's records" — right verb, vacuous target.
 np_precondition "the tape exists and is non-empty" -- test -s "$TAPE"
 [ -f "$TAPE" ] || die "no audit tape at $TAPE — the broker leg wrote nothing, or the subPath drifted"
 BEFORE=$(sha "$TAPE")
@@ -104,7 +104,7 @@ say "2. NEGATIVE PROOF — every way to erase or forge, attempted"
 # append and replace are the forge paths.
 #
 # Each names the mechanism it expects. The local `attempt()` this replaced checked
-# rc alone, which is why #310 shipped with the gap #312 then filed: a read-only ROOT
+# rc alone, which is why the partition shipped with the gap later filed: a read-only ROOT
 # filesystem, a bad SCC or a mistyped subPath refuse all four exactly as loudly, and
 # every one of them would have printed PASS four times over. "Read-only file system"
 # is EROFS from the kernel — the claim this leg actually makes — and nothing else

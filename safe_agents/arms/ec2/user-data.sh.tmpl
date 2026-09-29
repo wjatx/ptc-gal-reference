@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cloud-init bootstrap — always-on EC2 arm (Arm 1), prebuilt-AMI model, TWO-BOX broker (sa#35).
+# cloud-init bootstrap — always-on EC2 arm (Arm 1), prebuilt-AMI model, TWO-BOX broker.
 #
 # Rendered by safe_agents/arms/ec2/provision.py from this template before RunInstances.
 # Template parameters (replaced at render time — never hardcoded here):
@@ -19,7 +19,7 @@
 # blackholing to a local stub (agent-netns-setup.sh). The per-turn work — oauth fetch + run record
 # on the HOST, `claude -p` + brokered `github.whoami` inside the NETNS — is run-brokered.sh.
 #
-# Bootstrap model (prebuilt-AMI, sa#85): all tooling is baked into the base AMI. This script is
+# Bootstrap model (prebuilt-AMI): all tooling is baked into the base AMI. This script is
 # config-only — it pulls bundles from S3 via the gateway endpoint (no internet), writes the env
 # contract, wires the netns + agent units, and enables the timer. No package managers, no git.
 #
@@ -39,7 +39,7 @@ LOG_FILE="/var/log/agent-bootstrap-${AGENT_NAME}.log"
 FAIL_MARKER="/var/log/agent-bootstrap-${AGENT_NAME}.FAILED"
 
 # The EC2 arm is ALWAYS autonomous — there is no OpenShell interactive path here (that lives on
-# the rhel-openshell arm). The netns process-isolation layer (sa#35) is therefore wired
+# the rhel-openshell arm). The netns process-isolation layer is therefore wired
 # unconditionally. SA_PROFILE is kept as an escape hatch: set SA_PROFILE=direct to skip the
 # namespace (break-glass/debug only) and run the brokered turn in the host root netns.
 SA_PROFILE="${SA_PROFILE:-autonomous}"
@@ -53,12 +53,12 @@ AGENT_RUN_USER="ec2-user"
 SA_MODEL_PROXY_PORT="8443"
 SA_TOOL_API_PORT="8080"
 
-# S3 deploy bucket and bundle keys follow the platform naming convention (sa#85):
+# S3 deploy bucket and bundle keys follow the platform naming convention:
 #   bucket: safe-agents-<env>-deploy
 #   key:    agents/<name>/current/bundle.tar.gz
 S3_BUCKET="safe-agents-${ENVIRONMENT}-deploy"
 S3_KEY="agents/${AGENT_NAME}/current/bundle.tar.gz"
-# Platform ec2-bootstrap bundle (sa#35): the netns-setup + smoke + run-brokered scripts, delivered
+# Platform ec2-bootstrap bundle: the netns-setup + smoke + run-brokered scripts, delivered
 # via S3 at boot (mirrors the platform/contract bundle). Stable key (== EC2_BOOTSTRAP_KEY, bundle.py).
 EC2_BOOTSTRAP_KEY="platform/ec2-bootstrap/bundle.tar.gz"
 
@@ -80,7 +80,7 @@ trap '_bootstrap_err' ERR
 
 # ── Pull agent code bundle from S3 ────────────────────────────────────────────
 # The aws CLI is pre-installed in the base AMI. Traffic routes via the S3 gateway VPC endpoint —
-# no internet route required. The bakery (sa#84) writes the bundle.
+# no internet route required. The bakery writes the bundle.
 mkdir -p "${AGENT_DIR}"
 aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}" /tmp/agent-bundle.tar.gz
 tar -xzf /tmp/agent-bundle.tar.gz -C "${AGENT_DIR}" --strip-components=1
@@ -99,7 +99,7 @@ rm -f /tmp/platform-contract.tar.gz
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Platform contract unpacked to /opt/safe-agents/core/contract"
 
-# ── netns process-isolation + broker-service wiring (sa#35) ───────────────────
+# ── netns process-isolation + broker-service wiring ───────────────────
 # AUTONOMOUS profile only. The agent runs inside a network namespace whose default route forwards
 # through the host to the external broker SERVICE (broker.safe-agents.local). The host is confined
 # by the agent SG/subnet (broker only), so the netns egress is bounded by the same SG. The
@@ -165,14 +165,14 @@ fi
 
 # ── ── HARNESS-COUPLING BLOCK START ───────────────────────────────────────────
 # This block is ONE OF ONLY TWO places safe-agents couples to Claude Code specifically (the other
-# is the memory SessionStart loader, #71). In the converged two-box model the actual harness call
+# is the memory SessionStart loader). In the converged two-box model the actual harness call
 # — `claude -p "<task>"` through the broker model proxy — lives in run-brokered.sh (the S3-delivered
 # box runner), NOT in this template. To swap harnesses: replace ONLY that call plus this note.
 #
 # The model OAuth token is NOT fetched at bootstrap time here. run-brokered.sh resolves it at RUN
 # time from the secret id OAUTH_TOKEN_SECRET (${OAUTH_TOKEN_SECRET}) using the box's own
 # GetSecretValue grant — on the HOST, before entering the netns (Secrets Manager is unreachable from
-# the confined namespace). The claude-code binary is pre-installed in the base AMI (sa#84).
+# the confined namespace). The claude-code binary is pre-installed in the base AMI.
 # ── HARNESS-COUPLING BLOCK END ────────────────────────────────────────────────
 
 # ── Systemd service + timer ────────────────────────────────────────────────────

@@ -1,12 +1,12 @@
-# Turn identity — why the broker owns the turn boundary (sa#136)
+# Turn identity — why the broker owns the turn boundary
 
 **Status: decided and built.** This records the design fork resolved for taint-completeness Phase 1
-(sa#136) and the mechanism that landed, so the next reader understands *why* turn identity is
+ and the mechanism that landed, so the next reader understands *why* turn identity is
 broker-owned rather than agent- or request-derived.
 
 ## The problem it fixes
 
-sa#134 made a successful `external` + `effect=read` connector call taint its own `TurnContext` (the
+Taint self-ingestion made a successful `external` + `effect=read` connector call taint its own `TurnContext` (the
 self-ingest hook in `runtime/pep.py::_executor`), so a subsequent tainted external write in the same
 turn escalates to `require_approval`. But that guarantee was **production-inert across `/call`**: the
 PEP minted a fresh `TurnContext` per request, keyed to `turn_id = request.idempotency_key or uuid`.
@@ -47,7 +47,7 @@ serves many principals over one channel.
 
 Decoupling was explicit: **turn identity** is now broker-minted (`turn:<uuid>` in `_session_turn`);
 **`idempotency_key`** stays exactly what it was — the `enforce()` dedup/replay key — and no longer
-influences turn identity anywhere. Identity and dedup were conflated in one field; sa#136 splits them.
+influences turn identity anywhere. Identity and dedup were conflated in one field; broker-owned turn identity splits them.
 
 ## What landed
 

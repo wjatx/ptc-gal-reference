@@ -1,4 +1,4 @@
-"""sa#155 — the worked example consumer Receiver (examples/missileer).
+"""The worked example consumer Receiver (examples/missileer).
 
 The drain conformance suite (test_drain_handler.py) proves the worker's side of
 the contract; this suite proves a CONSUMER can actually stand on the seam:

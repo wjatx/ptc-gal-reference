@@ -1,4 +1,4 @@
-# Containerfile.agent — the confined agent for the AWS Fargate arm (sa#36 C2a).
+# Containerfile.agent — the confined agent for the AWS Fargate arm.
 #
 # Unlike the local/Mac arm (where a Podman container IS the netns egress boundary and the runner
 # blackholes its own default route), on Fargate the agent is confined by NETWORK TOPOLOGY, not by

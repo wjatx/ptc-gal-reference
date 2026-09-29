@@ -8,7 +8,7 @@
 
 zone: channels
 
-# The owner adapter (sa#176): the human owner proves authenticity with a shared secret
+# The owner adapter: the human owner proves authenticity with a shared secret
 # token in this header (the token itself lives in Secrets Manager, never in the
 # manifest). `kind: owner` selects OwnerInboundAdapter via ADAPTER_REGISTRY.
 adapter:
@@ -37,7 +37,7 @@ trust_map:
   # example must therefore never carry a real address — copying this file with
   # someone else's identity in it grants that person the owner surface. There is
   # no env substitution in the manifest loader today, so this is a literal edit
-  # at deploy time (see #302 for making it a deploy-bound value).
+  # at deploy time (making it a deploy-bound value is an open item).
     channel_identity: "owner@example.com"
     principal: owner-example-agent
     sender_class: owner

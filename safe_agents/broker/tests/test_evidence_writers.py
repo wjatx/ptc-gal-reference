@@ -1,6 +1,6 @@
-"""Tests for the PEP evidence-counter writers — observations + human_override (#193).
+"""Tests for the PEP evidence-counter writers — observations + human_override.
 
-Slice B of #193: the broker PEP is the sole writer of the promotion-evidence counters.
+Slice B of evidence labeling: the broker PEP is the sole writer of the promotion-evidence counters.
 Three write sites, all proven here through the public runtime surface:
 
   1. inline allow/transform execution → one `observations` increment per successfully
@@ -61,7 +61,7 @@ def _override(store, tool: str, op: str) -> float:
 class _EvidenceRaisingStore:
     """Wraps an InMemoryStore but raises on evidence-LABEL increments only.
 
-    Simulates a counters-table fault confined to the #193 label writes (observations,
+    Simulates a counters-table fault confined to the evidence-label writes (observations,
     human_override). Every other operation — the action-cap / query-bytes / error-budget
     meters, idempotency records, WAL — delegates unchanged, so we isolate exactly the
     failure the guards must swallow. Detection is by the key's suffix segment
@@ -295,7 +295,7 @@ def test_reject_survives_raising_evidence_store():
 
 
 # ---------------------------------------------------------------------------
-# 5 — flag path (false_action, first writer; #193 Phase 6c)
+# 5 — flag path (false_action, first writer)
 # ---------------------------------------------------------------------------
 
 
@@ -407,12 +407,12 @@ def test_double_flag_counts_false_action_once():
 def test_flag_ttl_deleted_intent_refuses_with_zero_writes():
     """A /flag against a TTL-deleted intent refuses gracefully and writes NOTHING.
 
-    Executed intents retain only 7 days (sa#213 executed-intent-retention-7d); after
+    Executed intents retain only 7 days (the executed-intent-retention-7d fuse); after
     DynamoDB TTL deletion the point read cannot distinguish TTL-deleted from
     never-existed, so BOTH must take the same path: a not-found refusal BEFORE the
     idempotency-marker claim — no marker, no false_action, no counter of any kind.
     A marker claimed here would poison a later legitimate flow; a false_action would
-    be evidence against an op nobody reviewed (#204 tracks the coordinate form for
+    be evidence against an op nobody reviewed (#83 tracks the coordinate form for
     flagging past the retention window)."""
     store = InMemoryStore()
     runtime, _, _ = _payments_runtime_with_store(store)
@@ -427,7 +427,7 @@ def test_flag_ttl_deleted_intent_refuses_with_zero_writes():
 
 
 # ---------------------------------------------------------------------------
-# #212 — the counter period threads from the manifest into every PEP write
+# The counter period threads from the manifest into every PEP write
 # ---------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""admit-propose --from-snapshot (#221 Phase 5 item 4 of 4, the last).
+"""admit-propose --from-snapshot.
 
 Deletes "Step 0" of re-vetting — hand-writing a byte-exact McpToolDef JSON —
 by letting `admit-propose` resolve its definition from a `snapshot` artifact
@@ -81,7 +81,7 @@ def make_row(tool_def: McpToolDef) -> RegisteredTool:
 
 
 def seed_row(store: MemoryToolRegistry, tool_def: McpToolDef) -> None:
-    # #246 item shape: stored bytes + item-level rowHash.
+    # Stored-bytes item shape: stored bytes + item-level rowHash.
     row = make_row(tool_def)
     store._rows[(row.server_id, row.tool_name)] = {
         "data": canonical_row_payload(row),

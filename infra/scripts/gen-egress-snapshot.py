@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""gen-egress-snapshot.py — machine-generate the committed egress snapshots (sa#52).
+"""gen-egress-snapshot.py — machine-generate the committed egress snapshots.
 
 Writes infra/snapshots/<arm>.json for each autonomous arm. Each snapshot is the
-*committed* (authoritative) egress policy the off-substrate auditor (sa#26) diffs the
+*committed* (authoritative) egress policy the off-substrate auditor (#50) diffs the
 live box against. It captures TWO layers (docs/egress-drift.md, docs/model-egress.md):
 
   layer="sg"          — the box-level security-group rules, parsed from the CDK synth
@@ -33,8 +33,8 @@ SNAPSHOT_DIR = REPO_ROOT / "infra" / "snapshots"
 
 # The arms whose live boxes this snapshot is diffed against. Both autonomous cloud arms
 # share the one Network stack (SG layer). Their netns_proxy layer is extracted from each
-# arm's OWN copy of the bootstrap scripts (sa#97). The two arms diverged with the two-box
-# broker convergence (sa#35/#98):
+# arm's OWN copy of the bootstrap scripts. The two arms diverged with the two-box
+# broker convergence:
 #   - ec2 keeps a CO-LOCATED model-proxy stub, so its sources are the netns setup + the
 #     proxy stub (veth + proxy_listen + proxy_allow).
 #   - rhel-openshell has NO on-box proxy: the netns is a forwarding hop to the external
@@ -268,7 +268,7 @@ def main() -> int:
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
     for arm, sources in ARM_NETNS_SOURCES.items():
         # Each arm extracts its netns_proxy layer from its OWN copy of the bootstrap
-        # scripts (sa#97). ec2 has a co-located proxy source; rhel forwards to the
+        # scripts. ec2 has a co-located proxy source; rhel forwards to the
         # external broker and has none.
         netns_rel = sources["netns"]
         proxy_rel = sources.get("proxy")

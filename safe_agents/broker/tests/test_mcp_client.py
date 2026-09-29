@@ -1,4 +1,4 @@
-"""Tests for the thin reference MCP client (#174) against an in-memory server.
+"""Tests for the thin reference MCP client against an in-memory server.
 
 The `mcp` extra is optional, so the whole module skips cleanly when it is absent
 (`pytest.importorskip`). The fake MCP server is an in-process FastMCP wired to the

@@ -17,7 +17,7 @@ Exports:
     IntentStore         — persistence Protocol (implement for a new backend)
     InMemoryIntentStore — thread-safe in-process fake for tests; no AWS required
     DynamoIntentStore   — production DynamoDB implementation (lazy boto3)
-    QuarantinedIntentError — raised by get_intent on stored-bytes HMAC failure (#349)
+    QuarantinedIntentError — raised by get_intent on stored-bytes HMAC failure
     IntentAlreadyPendingError: raised by put_intent over a pending intent's id (#39)
     ReleaseRefusedError — raised by a release executor whose revalidation refused (#9)
     ApprovalResult      — return type of materialize()

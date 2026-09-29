@@ -11,7 +11,7 @@ import { publish } from './naming';
  * The stack builds one of two topologies, selected by `props.secureNetwork` (sa#… network-flag),
  * and publishes the SAME six outputs either way so ComputeStack consumes it identically:
  *
- *   secure (flag true) — the confined topology and the original sa#13 behaviour, EXACTLY unchanged:
+ *   secure (flag true) — the confined topology and the original behaviour, EXACTLY unchanged:
  *     an isolated agent subnet with no default route, one NAT gateway for the broker's egress, and
  *     interface endpoints for private AWS access. Agent egress is contained at the subnet + SG layer,
  *     independent of any code-level guard.
@@ -168,7 +168,7 @@ export class NetworkStack extends Stack {
     });
 
     if (secure) {
-      // ── Secure-only: SG egress rules + interface endpoints (sa#83) ────────────────────────────
+      // ── Secure-only: SG egress rules + interface endpoints ────────────────────────────
 
       // Agent → broker, standalone rule (same cycle-breaking rationale as BrokerFromAgentIngress).
       new ec2.CfnSecurityGroupEgress(this, 'AgentToBrokerEgress', {
@@ -182,7 +182,7 @@ export class NetworkStack extends Stack {
       // IMPORTANT: gateway-endpoint traffic IS also subject to security-group egress evaluation. The
       // route-table injection alone is not enough — without these rules, packets matching the gateway
       // prefix-list route are dropped by the agent SG before reaching the endpoint (the live bug that
-      // triggered sa#83). Open mode does not need them: the agent SG is allowAllOutbound there.
+      // motivated them). Open mode does not need them: the agent SG is allowAllOutbound there.
       //
       // AWS-managed gateway-endpoint prefix lists (com.amazonaws.<region>.s3 / .dynamodb) are stable,
       // AWS-owned, and region-specific. We map them by region rather than resolving at deploy time:

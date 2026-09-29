@@ -1,4 +1,4 @@
-"""MCP tool-admission ceremony (#174) — the registry's only sanctioned writer.
+"""MCP tool-admission ceremony — the registry's only sanctioned writer.
 
     python -m safe_agents.broker.mcp.commands {admit-propose,admit-ratify} ...
 
@@ -6,8 +6,8 @@ admit-propose  the maker: hashes the EXACT advertised McpToolDef the operator
                names, and stores a single-shot expiring proposal binding the full
                definition + its def_hash. Nothing is admitted yet. The definition
                comes from EXACTLY ONE of --tool-def-json (hand-authored JSON,
-               the pre-#221-Phase-5 path) or --from-snapshot (a `snapshot`
-               artifact — #221 Phase 5 item 4: deletes "Step 0" of re-vetting,
+               the original path) or --from-snapshot (a `snapshot`
+               artifact, which deletes "Step 0" of re-vetting,
                hand-writing a byte-exact McpToolDef). Either way, the currently
                stored row (if any) is rendered against the proposed definition
                via `mcp/render.py` BEFORE the proposal is written — the review
@@ -17,21 +17,21 @@ admit-ratify   the checker: loads the integrity-verified proposal, enforces
                then appends the issuer-DSSE-signed admission record and writes the
                ACTIVE row at the admitted def_hash. A re-vet after drift is the
                SAME ceremony run against the NEW advertised definition.
-admit-reject   the checker declines (#236): burns a pending proposal as
+admit-reject   the checker declines: burns a pending proposal as
                'rejected', so a bad proposal has an exit other than expiry —
                "it expired" and "a checker said no" are different facts, and
                only one is evidence. Narrowing-only, so NOT maker != checker
                gated and unsigned (it writes no row and no ledger record).
 snapshot       PURE discovery, pre-admission: capture a NAMED server's full live
-               advertised tool set to a file (#221 Phase 5 prerequisite). Touches
+               advertised tool set to a file. Touches
                no registry (no read, no write) and needs neither the HMAC key nor
                a registry table — server config comes from an operator-named
                image-baked AgentManifest, never a store. The artifact feeds
                `show`/`diff` and `admit-propose --from-snapshot` (both later
-               items) and is the mechanical core of the #231 vendor intake probe.
+               items) and is the mechanical core of the vendor intake probe (#137).
 show           READ-ONLY: print one stored registry row, human-readable. Reads
                the registry the same way admit-ratify does (NAMED HMAC key +
-               table, #205); writes nothing.
+               table); writes nothing.
 diff           READ-ONLY: compare a `snapshot` artifact against the stored rows
                for that snapshot's server_id (taken from the artifact itself,
                never a flag) and render NEW/WITHDRAWN/unchanged/DRIFT per tool
@@ -60,7 +60,7 @@ Signing is required, not optional: an admission mints callability, which is
 authority, so — like the grant `acknowledge` ceremony — a missing issuer key
 REFUSES rather than degrading to an unsigned record (M8). A half-configured
 issuer key (key_id without the ARN, or vice versa) also refuses, surfaced by
-issuer_keys.resolve_record_signer (the #201 refuse-on-half-configured discipline).
+issuer_keys.resolve_record_signer (the refuse-on-half-configured discipline).
 
 Store construction is PER-COMMAND (not a shared `main()` prelude): `snapshot` is
 pre-admission discovery and must work before any registry row — or even a
@@ -165,7 +165,7 @@ from safe_agents.broker.schemas.mcp_registry import (
 
 
 def _caller_identity(session: object = None) -> str:
-    """This ceremony's operator identity — the STS Arn, or the local arm (#226).
+    """This ceremony's operator identity — the STS Arn, or the local arm.
 
     A thin delegate to the ONE resolver in ``broker.ceremony_identity``, shared
     with the grant ceremony: extending only one copy would silently leave the
@@ -187,7 +187,7 @@ def _resolve_tool_def_from_snapshot(
     args: argparse.Namespace,
 ) -> tuple[McpToolDef | None, str | None]:
     """Resolve the McpToolDef for (--server-id, --tool-name) from a `snapshot`
-    artifact (#221 Phase 5 item 4) — the alternative to hand-authoring one.
+    artifact — the alternative to hand-authoring one.
 
     Returns (tool_def, None) on success or (None, message) on refusal. Every
     refusal here is an artifact-integrity problem, never a runtime one, so the
@@ -241,7 +241,7 @@ def _active_row_from_proposal(
     proposal: McpAdmissionProposal, caller: str, ts: str
 ) -> RegisteredTool:
     """Build the ACTIVE row a ratification writes, from the proposal's bound
-    definition. The row pins what was ratified STRUCTURALLY since #246: the
+    definition. The row pins what was ratified STRUCTURALLY: the
     proposal's `tool_def` is nested whole — no per-field carry to drift — and
     both ceremony paths (single and bulk) share this one constructor."""
     return RegisteredTool(
@@ -293,8 +293,8 @@ def admit_propose_command(
     """Store a single-shot expiring proposal binding the exact advertised def.
 
     The definition comes from exactly one of --tool-def-json (hand-authored
-    McpToolDef JSON) or --from-snapshot (a `snapshot` artifact, #221 Phase 5
-    item 4); argparse enforces the mutual exclusion. Either way its
+    McpToolDef JSON) or --from-snapshot (a `snapshot` artifact);
+    argparse enforces the mutual exclusion. Either way its
     server_id/tool_name must match the named coordinate (a mismatch is
     refused, never guessed). The def_hash is computed here — the checker
     ratifies exactly these bytes. Before the proposal is written, the
@@ -458,7 +458,7 @@ def admit_ratify_command(
     try:
         # The guarded re-read above is the conditional write's baseline: the row
         # write commits only if the coordinate is still exactly what `existing`
-        # saw (#190). Record + row commit as ONE atomic unit — a conflict on
+        # saw. Record + row commit as ONE atomic unit — a conflict on
         # EITHER leg cancels both writes, so a refusal here provably wrote
         # nothing (the old record-without-row artifact can no longer occur).
         store.admit_tool_with_record(
@@ -480,7 +480,7 @@ def admit_ratify_command(
 
 
 # ---------------------------------------------------------------------------
-# admit-reject — the checker declines (#236)
+# admit-reject — the checker declines
 # ---------------------------------------------------------------------------
 
 
@@ -544,7 +544,7 @@ def admit_reject_command(
 
 
 # ---------------------------------------------------------------------------
-# bulk-propose / bulk-ratify — the batch ceremony (#221 Phase 5, second slice)
+# bulk-propose / bulk-ratify — the batch ceremony
 #
 # The SAME ceremony as admit-propose/admit-ratify, run over a whole server's
 # tool set instead of one coordinate. Two commands, two invocations, two STS
@@ -677,7 +677,7 @@ def bulk_propose_command(
         live_entry = live_by_name.get(name)
         if stored_result.tool is None and live_entry is None:
             continue  # declared but neither admitted nor live — nothing to do
-        # transport/source from the snapshot artifact itself (#232), exactly
+        # transport/source from the snapshot artifact itself, exactly
         # as `diff` passes them: a remote newly-required field must render as
         # a disclosure escalation on the maker's review surface too.
         result = render_tool_diff(
@@ -940,14 +940,14 @@ def bulk_ratify_command(
             )
         )
 
-    # --- THE RENDERING GATE: four buckets, most dangerous first (#223: the
+    # --- THE RENDERING GATE: four buckets, most dangerous first (the
     # metadata fields are signed now, so their deltas are rendered at the
     # gate, not just counted — only first admissions and pure re-hash churn
     # remain count-only) ---
     def _schema_moved(c: _RatifyCandidate) -> bool:
         if c.existing.tool is None:
             return False
-        admitted = c.existing.tool.tool_def  # nested since #246
+        admitted = c.existing.tool.tool_def  # nested since the stored-bytes re-shape
         return admitted.input_schema != c.proposal.tool_def.input_schema or (
             admitted.output_schema != c.proposal.tool_def.output_schema
         )
@@ -955,7 +955,7 @@ def bulk_ratify_command(
     def _metadata_moved(c: _RatifyCandidate) -> list[str]:
         if c.existing.tool is None:
             return []
-        admitted = c.existing.tool.tool_def  # nested since #246
+        admitted = c.existing.tool.tool_def  # nested since the stored-bytes re-shape
         return [
             name
             for name in VERBATIM_METADATA_FIELDS
@@ -977,7 +977,7 @@ def bulk_ratify_command(
     # the ratify gate is their ONE look at what they are ratifying — a
     # candidate with both a schema delta and a metadata delta must show
     # both. The buckets order by danger and route the ack requirement; they
-    # never truncate what is shown. (Found live in the #223 alpaca re-vet:
+    # never truncate what is shown. (Found live in an alpaca re-vet:
     # the fragmented rendering showed the output_schema half and silently
     # dropped the meta delta at the gate.)
     def _print_bucket(candidates_in_bucket: list[_RatifyCandidate]) -> None:
@@ -1022,7 +1022,7 @@ def bulk_ratify_command(
             continue
 
         proposal = candidate.proposal
-        # The guarded re-read is the conditional write's baseline (#190): the
+        # The guarded re-read is the conditional write's baseline: the
         # row must still be exactly what was evaluated above.
         existing = store.get_tool(args.server_id, name)
         try:
@@ -1081,18 +1081,18 @@ def bulk_ratify_command(
 
 
 # ---------------------------------------------------------------------------
-# snapshot — pure pre-admission discovery (#221 Phase 5 prerequisite)
+# snapshot — pure pre-admission discovery
 # ---------------------------------------------------------------------------
 
 
 class _PrefixedLeafSecrets:
-    """Map a secret *leaf* to `<prefix>/connectors/<leaf>` (sa#164).
+    """Map a secret *leaf* to `<prefix>/connectors/<leaf>`.
 
     The command-side twin of `broker_server._PrefixedSecrets` (not imported —
     pulling the server module into an operator CLI drags its whole boot
     surface). `connector_secrets` values are bare LEAVES; without this wrapper
     a snapshot run under `BROKER_SECRET_PREFIX` resolved the bare leaf and
-    ResourceNotFound'd where the broker boot succeeds — found live in the #223
+    ResourceNotFound'd where the broker boot succeeds — found live in an
     re-vet (the alpaca leg's env_map fetch)."""
 
     def __init__(self, inner: SecretsProvider, prefix: str) -> None:
@@ -1110,7 +1110,7 @@ def _resolve_secrets_provider() -> SecretsProvider:
     invocation, not a served runtime — an unresolvable credential should
     refuse loudly, not silently fall back to a dev stub).
 
-    Since #248 the arm comes from `boot_config.resolve_secrets_arm` rather than
+    The arm comes from `boot_config.resolve_secrets_arm` rather than
     from a second independent `== "secretsmanager"` test here: the two sites
     disagreeing about which backend is in force is exactly the failure the
     closed catalog exists to prevent. This site still composes its own wrappers
@@ -1143,7 +1143,7 @@ def _resolve_stdio_env(
 ) -> dict[str, str] | None:
     """The child spawn environment for a stdio snapshot — the SAME two-halves
     seam `mcp_construction.build_mcp_connectors` uses at real spawn time
-    (static `decl.env` + a credential resolved through the #173
+    (static `decl.env` + a credential resolved through the #79
     CredentialProvider catalog and delivered via `connector_auth.env_map`).
     An empty/absent `env_map` resolves NO credential at all (the toy-server
     case costs nothing); `None` return lets `connect_stdio` spawn with the
@@ -1168,7 +1168,7 @@ def _resolve_remote_headers(
 ) -> dict[str, str] | None:
     """The per-connect request headers for a remote snapshot — the SAME two-halves
     seam `mcp_construction.build_mcp_connectors` uses at real connect time
-    (a credential resolved through the #173 CredentialProvider catalog and
+    (a credential resolved through the #79 CredentialProvider catalog and
     delivered via `connector_auth.header_map`, MCP-HOST.md M25 / CONNECTOR-AUTH
     C10). The exact remote mirror of `_resolve_stdio_env`.
 
@@ -1199,7 +1199,7 @@ async def _discover_tool_defs(
     Both transports resolve their credential half through the same two-halves
     seam the runtime uses: a stdio (`command`) decl via `_resolve_stdio_env`
     (spawn env, C9), a remote (`url`) decl via `_resolve_remote_headers`
-    (per-connect headers, C10). Before #237 the remote arm had no credential
+    (per-connect headers, C10). Originally the remote arm had no credential
     delivery at all, which made every operator ceremony command that discovers
     from a remote server — `snapshot`, and through its artifact `diff`,
     `show` and `admit-propose --from-snapshot` — unusable against any
@@ -1224,7 +1224,7 @@ def snapshot_command(args: argparse.Namespace) -> int:
     PURE discovery: no registry read or write, no proposal/HMAC store touched
     at all — this must work before any registry row (or table) exists. Server
     config is resolved from `--manifest`, an operator-NAMED image-baked
-    AgentManifest, never a store (#197/#199, docs/config-provenance.md:
+    AgentManifest, never a store (docs/config-provenance.md:
     `mcp_servers` names code to spawn/connect, so it is image-baked-only power
     class). A server absent from the manifest, or declared namespace-only
     (neither `command` nor `url` — nothing live to connect to), refuses with
@@ -1282,7 +1282,7 @@ def snapshot_command(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# show — read-only, one stored row (#221 Phase 5 item 3)
+# show — read-only, one stored row
 # ---------------------------------------------------------------------------
 
 
@@ -1295,7 +1295,7 @@ def show_command(args: argparse.Namespace, *, store: ToolRegistryStore) -> int:
 
 
 # ---------------------------------------------------------------------------
-# diff — read-only, a snapshot vs. its server's stored rows (#221 Phase 5 item 3)
+# diff — read-only, a snapshot vs. its server's stored rows
 # ---------------------------------------------------------------------------
 
 
@@ -1364,7 +1364,7 @@ def diff_command(args: argparse.Namespace, *, store: ToolRegistryStore) -> int:
             # Declared (layer 1) but never admitted and not currently live —
             # nothing to compare or report; not a WITHDRAWN/NEW/DRIFT case.
             continue
-        # transport/source from the snapshot artifact itself (#232): on a
+        # transport/source from the snapshot artifact itself: on a
         # streamable-http server a newly-required field renders as a
         # disclosure escalation naming the destination URL.
         result = render_tool_diff(
@@ -1607,7 +1607,7 @@ def _resolve_hmac_key() -> bytes:
     resolve_hmac_key, whose fixed dev-key fallback fires whenever BROKER_STORE is
     not 'dynamo'. That fallback would HMAC rows under the dev key while the
     ceremony writes the real table; the broker then quarantines them under its
-    own key and the coordinate is wedged. Refuse instead (#205;
+    own key and the coordinate is wedged. Refuse instead (
     docs/config-provenance.md)."""
     hmac_key = os.environ.get("BROKER_HMAC_KEY", "").encode()
     if not hmac_key:
@@ -1624,7 +1624,7 @@ def _build_stores(
 ) -> tuple[ToolRegistryStore, AdmissionProposalStore]:
     """The row/record registry + the proposal store, both under the NAMED HMAC
     key and NAMED backend — the ceremony writes the real store, so each must be
-    operator-named, never a dev fallback (#205; docs/config-provenance.md).
+    operator-named, never a dev fallback (docs/config-provenance.md).
 
     Backend follows the BROKER_STORE profile seam (product-wrapper Phase 1): on the sqlite
     arm the pair is sqlite-backed at the boot_config-resolved db path (the ONE
@@ -1634,7 +1634,7 @@ def _build_stores(
     key discipline."""
     hmac_key = _resolve_hmac_key()
     if resolve_store_arm() == "sqlite":
-        # The pair straddles the #203 split: the registry owns TOOLDEF#/TOOLREC#
+        # The pair straddles the maker/checker write split: the registry owns TOOLDEF#/TOOLREC#
         # (checker-writable) while the proposal store owns TOOLPROP# (written by
         # BOTH halves — the checker proposes too), so they no longer share a
         # path. Their two writes were never one transaction (consume_proposal
@@ -1653,7 +1653,7 @@ def _build_stores(
 def _build_registry_store(table_name: str | None) -> ToolRegistryStore:
     """The registry store alone (no proposal store) — for the read-only
     `show`/`diff` commands, which never touch a proposal. Same NAMED HMAC key
-    / backend discipline as `_build_stores` (#205): both commands read the real
+    / backend discipline as `_build_stores`: both commands read the real
     registry store, so a missing name/key is a clean refusal, never a dev
     fallback."""
     hmac_key = _resolve_hmac_key()

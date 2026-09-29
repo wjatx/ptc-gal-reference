@@ -1,6 +1,6 @@
 """
 rhel_bake_teardown — remove all artifacts left by a rhel-openshell Image Builder
-bake cycle (sa#109).
+bake cycle.
 
 The teardown ENGINE is shared: it is the same idempotent, deletion-ordered
 ``bake_teardown`` the EC2 arm uses (arms.ec2.ami.teardown), which is fully

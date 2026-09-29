@@ -1,4 +1,4 @@
-# Broker env contract — AWS Fargate arm (sa#36)
+# Broker env contract — AWS Fargate arm
 
 The broker image is **identical** on the local/Mac arm and on AWS Fargate. Which
 backends are live is decided purely by environment variables read in
@@ -19,7 +19,7 @@ Phases B/C (task def + deploy) build against it.
 | `BROKER_INTENTS_TABLE` | `safe-agents-intents` | DynamoDB table for the approval/intent store (`DynamoIntentStore`). |
 | `BROKER_AUDIT_BUCKET` | `safe-agents-audit-prod` | S3 bucket for the WORM audit tape; selects `S3ObjectLockSink`. Object Lock is **GOVERNANCE** mode with a ~7y default retention in durable environments and **no default retention on `development`** — so WORM is a durable-env property, and an admin with `s3:BypassGovernanceRetention` can still delete. See `broker/audit/_s3_sink.py`. |
 | `BROKER_AUDIT_PREFIX` | `audit/` | Key prefix for audit objects. Optional; defaults to `audit/`. |
-| `BROKER_SECRETS` | `secretsmanager` | Selects AWS Secrets Manager (`LazyBotoSecretsProvider`) as the credential backend. CLOSED set since #248: `secretsmanager` \| `dir` (one file per secret leaf under `BROKER_SECRETS_DIR` — the container arm) \| `file` (0600 JSON blob at `BROKER_SECRETS_FILE`) \| `fake`; an unrecognized value **refuses at boot** rather than falling through to the file provider or to fake credentials. Unset keeps the pre-#248 implicit resolution — the path variable selects the arm. |
+| `BROKER_SECRETS` | `secretsmanager` | Selects AWS Secrets Manager (`LazyBotoSecretsProvider`) as the credential backend. CLOSED set since the directory secrets backend was added: `secretsmanager` \| `dir` (one file per secret leaf under `BROKER_SECRETS_DIR` — the container arm) \| `file` (0600 JSON blob at `BROKER_SECRETS_FILE`) \| `fake`; an unrecognized value **refuses at boot** rather than falling through to the file provider or to fake credentials. Unset keeps the original implicit resolution — the path variable selects the arm. |
 | `BROKER_SECRETS_DIR` | _(unset on AWS)_ | Mount root for the `dir` arm: one file per secret leaf, the shape a Kubernetes/OpenShift `Secret`, a CSI Secrets Store volume, Podman `/run/secrets` and systemd credentials all project. Read-through (never cached) so a rotated projection is seen; one trailing newline is stripped. Ignores `BROKER_SECRET_PREFIX` — the mount root plays the prefix's role. |
 | `BROKER_SECRET_PREFIX` | `safe-agents` | Optional. Maps a bare connector name to its secret id: `github` → `<prefix>/connectors/github`, matching the brokerRole IAM grant on `*/connectors/*`. Omit only if secret ids are stored flat (bare connector name). |
 | `BROKER_HMAC_KEY` | _(from Secrets Manager)_ | Key for grant tamper-evidence. MUST be injected from Secrets Manager via the task definition's `secrets:` block — never a literal in the env. The same key must write and read grants. |
@@ -68,7 +68,7 @@ What it does there is set by `BROKER_GRANT_LOAD`:
 
 Also: on a DURABLE arm (`BROKER_STORE=dynamo` or `sqlite`), leaving `BROKER_AUDIT_*` and
 `BROKER_SECRETS` unset would yield an in-memory audit sink + fake credentials (a real
-store that loses its tape on restart and serves a fake connector credential). Since #205
+store that loses its tape on restart and serves a fake connector credential). Since the named-config-or-refuse change
 this **REFUSES at boot** (F3, `boot_config.require_named_real_backends`) — it was a
 warn-and-continue before. The task definition must set all three backends together.
 
@@ -80,7 +80,7 @@ seed-at-boot blind-upserts grants into a durable trust store and sqlite has no I
 backstop confining that to a throwaway local table the way `brokerRole`'s read-only
 grants policy does on AWS.
 
-S3 audit resume IS implemented (sa#104): `S3ObjectLockSink.resuming()` reads the max
+S3 audit resume IS implemented: `S3ObjectLockSink.resuming()` reads the max
 existing `audit/*.json` key + its record hash at startup, so a restarted long-lived
 broker continues the same contiguous `verify_chain`-valid tape instead of resetting
 `seq=0` and colliding with existing objects under Object Lock.

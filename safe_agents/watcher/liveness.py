@@ -1,11 +1,11 @@
 """
 External liveness watcher — daily check that each agent wrote a run record
-within its expected window (sa#38).
+within its expected window.
 
 Off-substrate by design: runs in GitHub Actions, survives any single arm dying.
 Discovers agents by globbing agents/*.yaml; no hardcoded agent names.
 
-Monitoring is opt-in (sa#140): only agents whose manifest declares
+Monitoring is opt-in: only agents whose manifest declares
 `liveness.monitored: true` are checked, scoped to `liveness.environments`
 and, if declared, `liveness.calendar`. Fixture/smoke manifests without a
 `liveness` block are never monitored.
@@ -53,7 +53,7 @@ def register_calendar(name: str, fn: Callable[[str], bool]) -> None:
     CALENDARS[name] = fn
 
 
-# Built-in Mon-Fri calendar (sa#140): a plain base convenience, not a market/
+# Built-in Mon-Fri calendar: a plain base convenience, not a market/
 # holiday calendar. Weekday holidays are still run-days here — a consumer
 # whose agent has its own closed days should write "skipped-closed" itself
 # (a healthy record) rather than needing a holiday table; only weekends
@@ -136,7 +136,7 @@ def monitored_targets(
     nothing — which is a completely different statement from "everything is
     healthy" and used to be indistinguishable from it: `main` printed "Liveness
     OK — all agents have run records" over an empty set and exited 0, daily
-    (found 2026-07-29, sa#38).
+    (found 2026-07-29).
 
     ONE selector, shared with check_liveness, deliberately. Two functions
     deciding independently what counts as monitored is how a watcher ends up
@@ -291,7 +291,7 @@ def make_dynamodb_reader(
             # permissions misconfig is at least visible in the workflow log
             # instead of silently masquerading as a missing-record alarm.
             # Separating the two properly needs a richer reader return
-            # contract (#140).
+            # contract.
             print(
                 f"liveness: reader error for {agent_name}/{env}: {exc}",
                 file=sys.stderr,
@@ -359,7 +359,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     # The workflow cron now fires at 22:00 UTC, after the day's ~20:15 UTC
-    # scheduled run window (#140), so today-UTC is the correct civil date to
+    # scheduled run window, so today-UTC is the correct civil date to
     # check by the time this runs.
     date = args.date or _today_utc()
     agents_dir = Path(args.agents_dir)

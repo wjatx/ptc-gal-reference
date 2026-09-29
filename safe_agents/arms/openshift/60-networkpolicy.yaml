@@ -1,4 +1,4 @@
-# The agent pod's egress, and the broker's ingress (#250 Phase 4).
+# The agent pod's egress, and the broker's ingress (Phase 4).
 #
 # This is the file the posture line points at, so be precise about what it is:
 # NetworkPolicy is a PLATFORM BOUNDARY WE ORCHESTRATE, not a sandbox we implement.
@@ -37,7 +37,7 @@
 # A tighter policy would drop it too, and the agent would then be refused the broker's
 # Secret by the FIREWALL -- a timeout, which proves almost nothing, because a timeout
 # is what a broken mount, a wrong namespace and a typo'd host all look like. This is
-# #312's argument exactly: a negative proof that cannot name which control fired gets
+# the named-mechanism argument exactly: a negative proof that cannot name which control fired gets
 # cited later as evidence for a control that never ran.
 #
 # So the agent is given MORE reach than a production envelope would give it, and is

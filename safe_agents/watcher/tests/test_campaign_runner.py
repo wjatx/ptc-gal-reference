@@ -1,6 +1,6 @@
 """
-Tests for the campaign watchdog reference runner (sa#161 Phase B,
-safe_agents/watcher/campaign_runner.py). Mirrors test_liveness.py's style:
+Tests for the campaign watchdog reference runner
+(safe_agents/watcher/campaign_runner.py). Mirrors test_liveness.py's style:
 fake injected readers, no moto, no network, no live AWS.
 
 Covers:

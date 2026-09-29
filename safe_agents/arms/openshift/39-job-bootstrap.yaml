@@ -4,7 +4,7 @@
 # in the session summaries and issue comments that are this epic's evidence
 # trail; a renumber would silently invalidate every one of those references.
 #
-# Why this leg exists is a consequence of the #203 write split rather than a
+# Why this leg exists is a consequence of the maker/checker write split rather than a
 # convenience. The grant database is mounted READ-ONLY into the maker's pod, and
 # a read-only open cannot create the file it opens — deliberately, because a
 # store that was never created is a deployment error, not an empty store, and
@@ -39,7 +39,7 @@ spec:
             - { name: BROKER_CEREMONY_IDENTITY, value: serviceaccount }
             - { name: BROKER_STORE, value: sqlite }
             - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
-            # The #203 split. Checker-writable key space, its own file, its own
+            # The maker/checker write split. Checker-writable key space, its own file, its own
             # mount — read-write here, read-only in the maker and serve pods.
             - { name: BROKER_SQLITE_GRANTS_PATH, value: /var/lib/broker-grants/grants.db }
             - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
@@ -59,13 +59,13 @@ spec:
             # — a blanket readOnly on /var/lib/broker would break the maker for
             # reasons that have nothing to do with grants.
             #
-            # It used to say the working half "also carries audit.jsonl". #310 moved
+            # It used to say the working half "also carries audit.jsonl". The audit-tape partition moved
             # the tape to its own subPath (below) precisely so it was no longer in
             # the mutually-writable half; this comment described the world before
             # that and was corrected 2026-07-29.
             - { name: store, mountPath: /var/lib/broker, subPath: work }
             - { name: store, mountPath: /var/lib/broker-grants, subPath: grants }
-            # The #310 split. Mounted, and read-only: this leg has no business
+            # The audit-tape partition. Mounted, and read-only: this leg has no business
             # writing the broker's tape, and mounting it read-only rather than
             # not at all is what lets a leg ATTEMPT the write and be refused.
             - { name: store, mountPath: /var/lib/broker-audit, subPath: audit, readOnly: true }
@@ -80,7 +80,7 @@ spec:
         - name: issuer-projected
           secret:
             secretName: safe-agents-issuer
-            # No defaultMode: the mode is not ours to choose (#282).
+            # No defaultMode: the mode is not ours to choose.
         - name: issuer-private
           emptyDir:
             medium: Memory

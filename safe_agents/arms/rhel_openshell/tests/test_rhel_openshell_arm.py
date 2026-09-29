@@ -1,5 +1,5 @@
 """
-RHEL+OpenShell arm tests — acceptance criteria for sa#91.
+RHEL+OpenShell arm tests — acceptance criteria.
 
 All tests are AWS-free: AWS calls go through FakeAWS (no live boto3 needed).
 
@@ -21,7 +21,7 @@ Acceptance criteria:
        - SA_PROFILE gate for interactive-only tools in bootstrap.sh
        - systemd timer written by bootstrap.sh
   4. Two-identity separation: agentRole grants NO connector-keys access.
-  5. Host placed in the ISOLATED agent subnet + agent SG + endpoint SG (sa#35 converged
+  5. Host placed in the ISOLATED agent subnet + agent SG + endpoint SG (converged
      two-box model), NOT the NAT broker subnet — mirrors the EC2 arm placement.
   6. Arm dispatch: phases.py registers rhel-openshell in provision + teardown.
   7. Teardown removes instances + per-host IAM (profile + inline policy).
@@ -69,7 +69,7 @@ INSTALL_PYTHON_ENV_SCRIPT = BOOTSTRAP_DIR / "scripts" / "install-python-env.sh"
 INSTALL_OPENSHELL_SCRIPT = BOOTSTRAP_DIR / "scripts" / "install-openshell.sh"
 SETUP_CLAUDE_SCRIPT = BOOTSTRAP_DIR / "scripts" / "setup-claude.sh"
 BOOTSTRAP_SCRIPT = BOOTSTRAP_DIR / "bootstrap.sh"
-# sa#35 netns + broker-SERVICE egress confinement (autonomous profile, converged two-box model).
+# Netns + broker-SERVICE egress confinement (autonomous profile, converged two-box model).
 AGENT_NETNS_SETUP_SCRIPT = BOOTSTRAP_DIR / "scripts" / "agent-netns-setup.sh"
 SMOKE_EGRESS_SCRIPT = BOOTSTRAP_DIR / "scripts" / "smoke-egress.sh"
 RUN_BROKERED_SCRIPT = BOOTSTRAP_DIR.parent / "box" / "run-brokered.sh"
@@ -83,7 +83,7 @@ _VALID_PARAMS = {
     "arm": "rhel-openshell",
     "oauth_token": "my-agent/claude-oauth-token",
     "environment": "development",
-    # sa#35 converged two-box model: the box env contract carries the broker SERVICE DNS,
+    # Converged two-box model: the box env contract carries the broker SERVICE DNS,
     # the agent-runs table name, and the region (for run-brokered.sh).
     "broker_dns": "broker.safe-agents.local",
     "agent_runs_table": "safe-agents-development-agent-runs",
@@ -120,7 +120,7 @@ def fake_aws() -> FakeAWS:
         f"/safe-agents/{env}/agent-role-arn",
         "arn:aws:iam::123456789012:instance-profile/safe-agents-development-AgentRole",
     )
-    # Converged two-box placement (sa#35): isolated agent subnet + agent SG + endpoint SG,
+    # Converged two-box placement: isolated agent subnet + agent SG + endpoint SG,
     # broker SERVICE DNS, tables CMK — mirrors the EC2 arm's SSM contract.
     aws.seed_ssm_param(f"/safe-agents/{env}/agent-sg-id", "sg-0agent12345")
     aws.seed_ssm_param(f"/safe-agents/{env}/endpoint-sg-id", "sg-0endpoint9999")
@@ -191,9 +191,9 @@ class TestRhelAmiLookup:
     def test_provision_checks_baked_ami_tag_first(
         self, fake_aws: FakeAWS,
     ) -> None:
-        """sa#109: provision must check the prebuilt base-rhel AMI tag before the marketplace.
+        """Provision must check the prebuilt base-rhel AMI tag before the marketplace.
 
-        The whole point of sa#109 is that the RHEL box launches from a prebuilt AMI
+        The whole point of the prebuilt AMI is that the RHEL box launches from a prebuilt AMI
         (tag safe-agents:ami=base-rhel) so it is config-only in the isolated no-NAT
         subnet. Provision resolves that tag first; with no bake seeded it falls back
         to the marketplace lookup (asserted separately).
@@ -324,7 +324,7 @@ class TestUserDataRendering:
         )
 
     def test_openshell_install_in_dev_context(self) -> None:
-        """OpenShell install must be in the dev user's session (LIVE-VERIFIED #93).
+        """OpenShell install must be in the dev user's session (LIVE-VERIFIED).
 
         The thin user-data invokes bootstrap.sh as dev via `sudo -u dev -H bash -lc`.
         Inside install-openshell.sh (already running as dev), XDG_RUNTIME_DIR and
@@ -516,7 +516,7 @@ class TestBootstrapStructure:
         )
 
     def test_openshell_no_hardcoded_version_pin(self) -> None:
-        """install-openshell.sh must NOT pin a specific OpenShell version (LIVE-VERIFIED #93).
+        """install-openshell.sh must NOT pin a specific OpenShell version (LIVE-VERIFIED).
 
         Pinning (e.g. OPENSHELL_VERSION=0.0.71) caused a release-asset 404 when upstream
         churned to 0.0.72. The native installer always installs the current latest.
@@ -588,7 +588,7 @@ class TestBootstrapStructure:
     def test_bootstrap_ends_with_explicit_exit_zero(self) -> None:
         """bootstrap.sh must end with `exit 0` so the autonomous profile exits clean.
 
-        Regression for the sa#35 live capstone: under `set -e`, ending the script on a
+        Regression for the two-box live capstone: under `set -e`, ending the script on a
         bare `[ "${SA_PROFILE}" = "interactive" ] && log …` makes the exit status inherit
         the test result. On the autonomous profile the test is false → exit 1 → cloud-init
         marks user-data failed even though bootstrap fully succeeded. An explicit trailing
@@ -645,7 +645,7 @@ class TestBootstrapStructure:
         """install-openshell.sh must run ONLY inside the SA_PROFILE=interactive block.
 
         Egress confinement on the autonomous profile is the netns + broker-proxy model
-        (docs/model-egress.md, sa#35), NOT OpenShell. The sandbox runtime installs only
+        (docs/model-egress.md), NOT OpenShell. The sandbox runtime installs only
         on the interactive dev-box profile, so its install call must sit after the gate.
         """
         content = BOOTSTRAP_SCRIPT.read_text(encoding="utf-8")
@@ -684,7 +684,7 @@ class TestBootstrapStructure:
     def test_autonomous_run_path_does_not_use_openshell(self) -> None:
         """The autonomous run path (systemd system service) must not route through OpenShell.
 
-        Converged two-box model (sa#35): the system service execs the profile-selected RUN_EXEC —
+        Converged two-box model: the system service execs the profile-selected RUN_EXEC —
         run-brokered.sh on the autonomous profile (under /opt, SELinux-clean). It must NOT invoke
         the OpenShell sandbox launcher (run-agent-sandbox.sh), which is the interactive run path.
         """
@@ -736,7 +736,7 @@ class TestTwoIdentitySeparation:
         )
 
     def test_agent_role_has_tables_cmk_kms_grant(self) -> None:
-        """agentRole extensions must grant KMS on the ONE tables CMK (run-record PutItem, sa#35)."""
+        """agentRole extensions must grant KMS on the ONE tables CMK (run-record PutItem)."""
         stmts = self._extensions()
         kms_stmts = [s for s in stmts if s.get("Sid") == "RunRecordKey"]
         assert kms_stmts, "RunRecordKey (tables-CMK KMS grant) statement not found"
@@ -813,7 +813,7 @@ class TestTwoIdentitySeparation:
 
 # ---------------------------------------------------------------------------
 # Criterion 5: Host placed in the ISOLATED agent subnet + agent SG + endpoint SG
-# (sa#35 converged two-box model; NOT the NAT broker subnet)
+# (converged two-box model; NOT the NAT broker subnet)
 # ---------------------------------------------------------------------------
 
 class TestSubnetPlacement:
@@ -1162,7 +1162,7 @@ class TestRhelBootstrapBundle:
         )
 
     def test_bundle_carries_run_brokered_runner(self) -> None:
-        """The converged run-brokered.sh runner rides the rhel-bootstrap bundle under box/ (sa#35)."""
+        """The converged run-brokered.sh runner rides the rhel-bootstrap bundle under box/."""
         import io as _io
         import tarfile as _tarfile
 
@@ -1177,7 +1177,7 @@ class TestRhelBootstrapBundle:
         )
 
     def test_bundle_excludes_model_proxy_stub(self) -> None:
-        """The co-located model-proxy stub must NOT ride the bundle (two-box model, sa#35)."""
+        """The co-located model-proxy stub must NOT ride the bundle (two-box model)."""
         import io as _io
         import tarfile as _tarfile
 
@@ -1238,7 +1238,7 @@ class TestRhelBootstrapBundle:
 
 
 # ---------------------------------------------------------------------------
-# sa#35: netns + broker-SERVICE egress confinement (autonomous profile, Option A)
+# Netns + broker-SERVICE egress confinement (autonomous profile, Option A)
 # ---------------------------------------------------------------------------
 #
 # Converged TWO-BOX model: the confined agent does a REAL brokered round-trip against the broker
@@ -1577,9 +1577,9 @@ class TestSmokeEgressAssertions:
 class TestOfflineBootGuards:
     """Every internet install in the boot path must be guarded on the binary existing.
 
-    The box sits in the ISOLATED no-NAT agent subnet (sa#35): dnf repos, PyPI, and
+    The box sits in the ISOLATED no-NAT agent subnet: dnf repos, PyPI, and
     upstream installers are all unreachable at boot. provision.py's contract is
-    'config-only on a baked AMI' (sa#109) — so each install must short-circuit via
+    'config-only on a baked AMI' — so each install must short-circuit via
     `command -v` when the tool is already baked in, while a non-baked marketplace
     host (which has egress in that scenario) still installs as before.
     """

@@ -1,4 +1,4 @@
-"""Reference-tier confidence constructors behind the closed catalog (#184).
+"""Reference-tier confidence constructors behind the closed catalog.
 
 One honest instantiation each of the three `ConfidenceMethod` values
 (`broker/EVIDENCE.md`): self-consistency, ensemble, conformal. Each is adoptable
@@ -12,7 +12,7 @@ agreement count, a vote tally, a nonconformity score against a calibrated thresh
 into the typed artifact the deterministic gate keys on. There is no model call and no
 I/O: HOW a consumer samples its model, runs its ensemble, or calibrates its conformal
 predictor is the consumer's own business and stays outside the base (the same
-discipline as `Liveness.overdue`, sa#160 — observe the fact, never manufacture it).
+discipline as `Liveness.overdue` — observe the fact, never manufacture it).
 
 Split-ready (`docs/contract-vs-reference.md` §"Interim discipline"): the module-level
 imports resolve only within `safe_agents.broker.schemas` and the stdlib — no reach
@@ -104,7 +104,7 @@ def construct_conformal(
 
     Requires `0 < coverage < 1` and `calibration_size > 0` (loud `ValueError`
     otherwise). The `evidence` records the calibrated threshold in force at
-    construction; a later drift detector (#65, reference-tier, deferred) is what would
+    construction; a later drift detector (#59, reference-tier, deferred) is what would
     set `stale` to void it — the constructor never claims staleness knowledge.
     """
     if not 0 < coverage < 1:

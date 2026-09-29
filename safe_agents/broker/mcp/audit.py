@@ -1,15 +1,15 @@
-"""MCP registry integrity audit — SEED for #235, not the finished auditor.
+"""MCP registry integrity audit — SEED for #96, not the finished auditor.
 
 ## What this is
 
 The MCP registry has **zero auditor coverage**: the 19-row grant-integrity suite
 (`grants/audit.py`) knows nothing about `TOOLDEF#` / `TOOLREC#` / `TOOLPROP#`, so
-every row and record in the registry is currently unaudited. #235 closes that.
+every row and record in the registry is currently unaudited. #96 closes that.
 
 This module is the *seed*: the six rules below were written and **run live against
 the development registry on 2026-07-20** (9 records, 5 rows — all green) while
 verifying that a proposal deletion had not damaged the ledger. Preserving them here
-means #235 starts from working, floor-proven checks rather than from scratch.
+means #96 starts from working, floor-proven checks rather than from scratch.
 
 It deliberately mirrors `grants/audit.py`: pure rules over a parsed dataset, findings
 as `AuditViolation`, and a loud `skipped_rules` so a rule that could not run is never
@@ -18,8 +18,8 @@ reported green.
 ## What it is NOT
 
 - **Not wired into the audit CI job.** `grants/audit.py` fans out per env; this does not.
-- **Not complete.** #235 item 4 (the dead-tool / `WITHDRAWN` report) is NOT implemented.
-- **Not acknowledgment-aware.** The #196 waiver ceremony (`grants/acknowledgments.py`)
+- **Not complete.** The dead-tool / `WITHDRAWN` report (#96) is NOT implemented.
+- **Not acknowledgment-aware.** The acknowledgment (waiver) ceremony (`grants/acknowledgments.py`)
   is not integrated, so there is no GREEN-with-annotations path yet.
 - **Not runnable on the floor by any deployed identity.** See the IAM gap below.
 
@@ -32,7 +32,7 @@ nowhere else]. **Neither auditor identity holds any grant on the MCP registry ta
 not `Scan`, not `Query`, not even `GetItem`.
 
 So an MCP audit rule written today passes every in-memory test and is `AccessDenied` on
-both floors. #235 must land an IAM change first. This is exactly the failure recorded as
+both floors. #96 must land an IAM change first. This is exactly the failure recorded as
 lessons-ledger entry 49: *a test double implements the interface, not the authority.*
 
 The live run that produced these rules used ambient admin credentials, which is why it
@@ -42,13 +42,13 @@ worked and why it is not evidence that the audit can run.
 
 `ORPHAN_ROW` (a row whose tool no later image declares) is **only** detectable by
 enumerating the table itself. `diff` enumerates from the image-baked manifest and is
-therefore *structurally incapable* of seeing such a row — that is #235's blind spot 3,
+therefore *structurally incapable* of seeing such a row — that is the orphan-row blind spot #96 records,
 and it was hit live while writing this.
 
 That means the audit needs `dynamodb:Scan` on the registry table, which no ceremony role
 has by design and which the auditor role does not have yet. The alternative — enumerate
 from the manifest — cannot ever detect the orphan class. **This fork should be decided
-in #235 before the rules are finalized.** Granting `Scan` to `AuditorRole` (read-only,
+in #96 before the rules are finalized.** Granting `Scan` to `AuditorRole` (read-only,
 already its posture on the grants table) looks right, but it is an authority change and
 belongs to the issue, not to this seed.
 
@@ -59,7 +59,7 @@ Per-coordinate record+row atomicity landed as `ToolRegistryStore.admit_tool_with
 IAM change; both ceremony call sites use it). NEW `ORPHAN_RECORD` findings can therefore
 no longer be produced by the ceremony. The rule STAYS: it still catches historical
 orphans (pre-atomicity artifacts) and out-of-band tamper — same reasoning as
-`LEDGER_COUNTERPART` on the grants side. #235 should treat an `ORPHAN_RECORD` finding
+`LEDGER_COUNTERPART` on the grants side. #96 should treat an `ORPHAN_RECORD` finding
 dated after 2026-07-24 as tamper evidence, not ceremony fallout.
 """
 
@@ -96,7 +96,7 @@ ALL_RULES = (
 class AuditedRow:
     """One parsed `TOOLDEF#<server>#<tool>` row.
 
-    raw_data / stored_hash are the integrity basis itself (#246 stored-bytes):
+    raw_data / stored_hash are the integrity basis itself (the stored-bytes rule):
     ROW_HMAC_INTACT verifies the bytes verbatim, never a re-serialization —
     mirrors grants/audit.py's AuditedGrant.
     """
@@ -153,7 +153,7 @@ def dataset_from_items(items: Iterable[Mapping]) -> McpAuditDataset:
 
     Accepts whatever enumerated the table (Scan today; see the module docstring's
     Scan-vs-manifest fork). Unparseable items are skipped here rather than raising —
-    #235 should add an UNPARSEABLE_ITEM rule mirroring the grants auditor, so a
+    #96 should add an UNPARSEABLE_ITEM rule mirroring the grants auditor, so a
     corrupt item is a finding instead of a silent omission.
     """
     rows: list[AuditedRow] = []
@@ -289,12 +289,12 @@ def check_row_hmac(
     """ROW_HMAC_INTACT — a row edited out-of-band is HMAC-quarantined.
 
     The read-side twin of the store's verify-on-read quarantine: HMAC the
-    STORED BYTES verbatim against the item-level rowHash (#246 — never a
+    STORED BYTES verbatim against the item-level rowHash (never a
     re-serialization, so schema evolution can never fire this rule; mirrors
     grants/audit.py's GRANT_TAMPER). Keyless posture SKIPS loudly. Note the
     recovery tension this surfaces and does not solve: a quarantined row is
     never auto-re-admitted (by design), and there is currently no sanctioned
-    recovery ceremony — that wedge is #236.
+    recovery ceremony — that wedge is an open item.
     """
     if hmac_key is None:
         return [], [ROW_HMAC_INTACT]

@@ -1,4 +1,4 @@
-"""Real-streamable-HTTP-transport suite for the MCP host (#221 P4, M21).
+"""Real-streamable-HTTP-transport suite for the MCP host (M21).
 
 The stdio counterpart (`test_mcp_stdio.py`) proves the supervised lifecycle
 over a spawned child; this file proves the SAME lifecycle clauses over the

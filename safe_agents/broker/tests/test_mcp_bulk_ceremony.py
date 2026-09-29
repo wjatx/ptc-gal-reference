@@ -1,4 +1,4 @@
-"""bulk-propose / bulk-ratify — the batch admission ceremony (#221 Phase 5).
+"""bulk-propose / bulk-ratify — the batch admission ceremony.
 
 The same ceremony as admit-propose/admit-ratify, run over a whole server's
 tool set. Unit-level with MemoryToolRegistry/MemoryAdmissionProposalStore and a
@@ -101,7 +101,7 @@ def tool_def(
 
 
 def seed_row(store: MemoryToolRegistry, definition: McpToolDef, *, tamper: bool = False) -> None:
-    # #246: the row NESTS the ratified definition (no per-field carry), and the
+    # Stored-bytes shape: the row NESTS the ratified definition (no per-field carry), and the
     # item stores the canonical bytes + item-level rowHash.
     row = RegisteredTool(
         tool_def=definition,
@@ -524,7 +524,7 @@ class TestBulkRatifyDescriptionGate:
     def test_output_schema_delta_renders_in_the_contract_bucket(
         self, tmp_path, store, proposal_store, monkeypatch, signer, capsys
     ) -> None:
-        """#223: output_schema is signed and CONTRACT-class — its delta must
+        """output_schema is signed and CONTRACT-class — its delta must
         render at the RATIFY gate (bucket 2), not vanish into the count-only
         bucket. The far-jump re-vet's own shape (absent -> present) is the
         case pinned here."""
@@ -553,7 +553,7 @@ class TestBulkRatifyDescriptionGate:
     def test_metadata_delta_renders_verbatim_at_the_gate(
         self, tmp_path, store, proposal_store, monkeypatch, signer, capsys
     ) -> None:
-        """#223: an annotation flip (readOnlyHint -> destructiveHint) is the
+        """An annotation flip (readOnlyHint -> destructiveHint) is the
         drift class the widening exists to catch — at the ratify gate it must
         be RENDERED (bucket 3), never reduced to a count. It still rides
         --yes: the acknowledgment vocabulary stays description-only."""
@@ -668,7 +668,7 @@ class TestBulkRatifyPerCoordinateIsolation:
         )
 
         # NOW tamper the wedged row's stored bytes -> HMAC quarantine on read
-        # (#246 item shape: mutate the data STRING, rowHash untouched).
+        # (stored-bytes item shape: mutate the data STRING, rowHash untouched).
         raw = store._rows[(SERVER_ID, "wedged_tool")]
         raw["data"] = raw["data"].replace("original", "tampered underneath")
 

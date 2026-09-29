@@ -1,4 +1,4 @@
-"""sa#81 exit predicate — the trust-mapping conformance suite.
+"""The trust-mapping conformance suite.
 
 Each test proves one clause from channels/TRUST-MAPPING.md §"Conformance";
 the mapping table lives there.
@@ -276,7 +276,7 @@ def test_drop_record_digests_identity():
 
 
 # ---------------------------------------------------------------------------
-# sa#161 Phase A1 — evidence-of-check fields on DropRecord
+# Evidence-of-check fields on DropRecord
 # ---------------------------------------------------------------------------
 
 

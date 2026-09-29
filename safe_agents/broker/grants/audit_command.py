@@ -1,12 +1,12 @@
-"""grants.audit_command — the invocation path for the grant-integrity audit (#252).
+"""grants.audit_command — the invocation path for the grant-integrity audit.
 
 ## Why this module exists
 
-``grants/audit.py`` has been complete and correct since #62, and until now
+``grants/audit.py`` has been complete and correct since it landed, and until now
 **nothing in the repo called it outside a test**. The CI dispatch runs
 ``pytest safe_agents/broker/tests/test_grants_audit_live.py``; there was no
 entry point a person or a program could reach. So the auditor was not missing a
-local arm so much as missing a door — and #252 found the local half first only
+local arm so much as missing a door — and the sqlite audit work found the local half first only
 because the sqlite floor made the absence impossible to ignore.
 
 Two surfaces, deliberately layered:
@@ -21,7 +21,7 @@ wrapper's import boundary permits ``safe_agents.broker.schemas`` and nothing els
 so a posture command CANNOT import the auditor. It runs
 this command and parses ``--json``.
 
-That constraint is worth stating plainly because it inverts the shape #252's
+That constraint is worth stating plainly because it inverts the shape the sqlite audit work's
 own scoping comment proposed ("a library entry point with a CLI wrapper, rather
 than a CLI that shells out"). Both halves exist, but the wrapper consumer is on
 the far side of a process boundary either way. What matters is that the thing
@@ -45,7 +45,7 @@ store as a clean one.
 **No ``--env`` flag.** Resolving an environment name to a deployed table via
 CloudFormation exports already has exactly one implementation
 (``test_grants_audit_live.resolve_live``, under the standing ``GRANTS_AUDIT_ENV``
-ruling). Adding a second one here would be the same second-arm defect #252 is
+ruling). Adding a second one here would be the same second-arm defect that work is
 itself an instance of. Locating a deployment is a different job from auditing
 one: this command audits the target it is GIVEN.
 
@@ -60,7 +60,7 @@ absence is reported as an annotation, so it cannot be used to ask for quiet
 either.
 
 **Known gap, reported rather than papered over:** the VERIFY side has no local
-arm, for either role. Signing gained one in #226
+arm, for either role. Signing gained one with the local arm
 (``ISSUER_SIGNING_KEY_FILE``, and now ``EVALUATOR_SIGNING_KEY_FILE``);
 verifying did not, so the verify keys can only come from an SSM parameter. A
 local (sqlite) floor therefore ALWAYS lands RECORD_SIGNATURE_VERIFIES in

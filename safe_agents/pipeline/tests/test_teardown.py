@@ -1,5 +1,5 @@
 """
-Teardown phase tests — acceptance criteria for sa#1 gap (complete teardown automation).
+Teardown phase tests — acceptance criteria for complete teardown automation.
 
 All tests are AWS-free: AWS calls go through FakeAWS.
 
@@ -75,7 +75,7 @@ def fake_aws_provisioned() -> FakeAWS:
         "arn:aws:kms:us-east-1:123456789012:key/abcd-1234-cmk",
     )
     aws.seed_ssm_param(f"/safe-agents/{ENV}/broker-service-dns", "broker.safe-agents.local")
-    # sa#85: prebuilt base AMI replaces the public AL2023 SSM parameter lookup.
+    # Prebuilt base AMI replaces the public AL2023 SSM parameter lookup.
     aws.seed_image(
         "ami-0fakebaseami001",
         {"safe-agents:ami": "base", "safe-agents:ami-version": "20241201-01"},

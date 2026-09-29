@@ -1,10 +1,10 @@
 """
-campaign_runner — reference scheduled runner for the sa#161 input-poisoning
+campaign_runner — reference scheduled runner for the input-poisoning
 campaign watchdog (channels/WATCHDOG.md).
 
 **Reference-tier** (docs/contract-vs-reference.md): one instantiation of the
 pure `safe_agents.watcher.campaign.analyze()` engine (the contract-tier
-piece), mirroring `safe_agents.watcher.liveness`'s idiom (sa#38) — small
+piece), mirroring `safe_agents.watcher.liveness`'s idiom — small
 orchestration functions taking injected reader callables, with boto3
 constructed only inside `main()`/the `make_*` factory helpers, so every other
 function is exercisable with hand-rolled fakes and no AWS.
@@ -20,7 +20,7 @@ both are written from the same `if not passed:` branch), so reading both
 sinks would double-count the identical event under the engine's attribution
 table.
 
-Satisfies the sa#29 meta-alarm standard (`reliability/META-ALARM-STANDARD.md`,
+Satisfies the meta-alarm standard (`reliability/META-ALARM-STANDARD.md`,
 `reliability.meta_alarm`) exactly:
     heartbeat_fn      → emitted once, before any detection work
     any runner-internal failure (an unreachable bucket/log group, a bad
@@ -101,7 +101,7 @@ def parse_drop_record(key: str, body: bytes) -> ObservedEvent:
 
     `source_ref` is set to the S3 key, so a CampaignReport's `corpus_refs`
     point back at the exact record (WATCHDOG.md's PII-safe source_refs).
-    Legacy records written before sa#161 Phase A1 (no `chain_verified`/
+    Legacy records written before evidence-of-check fields existed (no `chain_verified`/
     `signer_key_id`) parse cleanly to the DropRecord/ObservedEvent defaults
     (False/None) — both models declare the same defaults, so no explicit
     back-fill is needed here.
@@ -310,7 +310,7 @@ def execute(
     `emit_meta_alarm` calls `sys.exit(1)` — this function does not return in
     that case. On success (with or without campaigns found) it returns the
     list of `CampaignReport`s (possibly empty) after emitting content alarms
-    and writing output, per the sa#29 standard's exit-code contract.
+    and writing output, per the meta-alarm standard's exit-code contract.
     """
     emit_heartbeat(component=COMPONENT, heartbeat_fn=heartbeat_fn)
 

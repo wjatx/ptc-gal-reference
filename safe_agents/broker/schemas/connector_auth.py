@@ -1,5 +1,5 @@
 """Connector auth-strategy config — the consumer-facing declaration of HOW the
-broker resolves a connector's live credential at execute time (#173).
+broker resolves a connector's live credential at execute time (#79).
 
 Historically a connector's credential was a single static Secrets Manager leaf; the
 Doer fetched the string and handed it to the connector. Real backends need more —
@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 class AuthStrategy(str, Enum):
     """The closed catalog of base-owned credential-resolution strategies.
 
-    ``static_secret`` is the default and is byte-for-byte the pre-#173 behavior
+    ``static_secret`` is the default and is byte-for-byte the original behavior
     (fetch a single secret leaf and hand it to the connector). The non-static
     strategies resolve a *live* credential broker-side at execute time. Only
     ``static_secret`` and ``oauth_refresh`` are implemented today; ``assumed_role``
@@ -66,7 +66,7 @@ _TRANSPORT_OWNED_HEADERS = frozenset(
 
 
 class HeaderSource(BaseModel):
-    """WHERE one resolved credential goes in one outbound HTTP header (#237).
+    """WHERE one resolved credential goes in one outbound HTTP header.
 
     The remote dual of ``env_map``'s value half: it names how a credential is
     *framed*, and never carries one. Two shapes, and a server uses exactly one:
@@ -75,7 +75,7 @@ class HeaderSource(BaseModel):
         access token, a single static API key) and the header value is
         ``"<scheme> <credential>"``, or the credential verbatim when ``scheme``
         is omitted;
-      * ``field`` — the credential is a flat JSON string map (the #221
+      * ``field`` — the credential is a flat JSON string map (the MCP-host
         credential-leaf shape) and this header carries that one field, so a
         multi-key server (``X-API-Key`` + ``X-Client-Id``) needs no consumer
         code. Exactly the ``env_map`` semantics, with a header as the target.
@@ -114,7 +114,7 @@ class ConnectorAuth(BaseModel):
     """How the broker resolves ONE connector tool's credential.
 
     Keyed by connector tool name in ``AgentManifest.connector_auth``. An absent
-    entry means ``static_secret`` — so the empty block preserves the pre-#173
+    entry means ``static_secret`` — so the empty block preserves the original
     behavior exactly.
 
     ``params`` is a strategy-specific string map (never secret VALUES — only leaf
@@ -124,7 +124,7 @@ class ConnectorAuth(BaseModel):
     concern, validated when the broker compiles the strategy (fail at build, not at
     the wire).
 
-    ``env_map`` (#221) declares HOW a resolved credential is DELIVERED to a
+    ``env_map`` declares HOW a resolved credential is DELIVERED to a
     spawned MCP child process: child env var name → field name inside the
     resolved credential (which must be a flat JSON string map). It is the
     mapping-as-data seam — e.g. ``{ALPACA_API_KEY: ALPACA_KEY}`` renames a
@@ -135,7 +135,7 @@ class ConnectorAuth(BaseModel):
     resolution happens at child spawn on the connector's own loop, the merged
     env is never logged, and the agent never sees it (CONNECTOR-AUTH.md).
 
-    ``header_map`` (#237) is the REMOTE dual of ``env_map``: outbound header
+    ``header_map`` is the REMOTE dual of ``env_map``: outbound header
     name → ``HeaderSource``, declaring how a resolved credential reaches a
     streamable-HTTP MCP server that needs bearer auth. Same mapping-as-data
     seam and the same allowlist discipline — a credential field no header

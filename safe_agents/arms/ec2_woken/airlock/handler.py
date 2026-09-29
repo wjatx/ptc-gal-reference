@@ -1,5 +1,5 @@
 """
-Inbound airlock guardrail Lambda (ec2-woken arm, sa#34).
+Inbound airlock guardrail Lambda (ec2-woken arm).
 
 The untrusted-input taint boundary for waking a sleeping EC2 agent box. It carries
 NO connector credentials — it only screens, dedupes, and wakes. A fully compromised
@@ -12,7 +12,7 @@ The airlock is agent-agnostic: it sees ONLY a normalized event shape
 The channel adapter that turns a concrete channel message into this shape lives in a
 consuming agent's manifest inbound: block — it is out of scope here.
 
-Steps, in order (prompt sa#34):
+Steps, in order:
   (a) constant-time verify the shared-token request header      → 401 on mismatch
   (b) parse the normalized JSON body                            → 400 if malformed
   (c) allow-list the owner against OWNER_ALLOW_LIST             → 403 if not listed
@@ -188,7 +188,7 @@ def process_inbound(
 ) -> Response:
     """Run the full guardrail flow. No AWS here — side effects go through `effects`.
 
-    Returns a Response(status_code, outcome, ...). Ordering matches sa#34:
+    Returns a Response(status_code, outcome, ...). Ordering matches the module docstring:
     token → parse → allow-list → dedup → injection → classify → enqueue+wake.
     """
     # (a) shared-token header

@@ -1,4 +1,4 @@
-# Demonstration 1's caller (#250 Phase 5) — the agent again, in its own sandbox.
+# Demonstration 1's caller (Phase 5) — the agent again, in its own sandbox.
 #
 # Same ServiceAccount and same `component: agent` label as the other agent legs, so the
 # Phase 4 NetworkPolicy binds unchanged. That is load-bearing rather than tidy: act 0

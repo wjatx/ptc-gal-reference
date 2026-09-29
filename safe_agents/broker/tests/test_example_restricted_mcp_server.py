@@ -1,4 +1,4 @@
-"""Validation test for the restricted_mcp_server example (#174).
+"""Validation test for the restricted_mcp_server example.
 
 Proves the restrict-by-construction MCP example is HONEST, not decorative: the
 manifest validates as written, and each invariant broker/MCP-HOST.md leans on
@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from safe_agents.broker.schemas import AgentManifest
 
 # Lives here, not beside the manifest: `examples/` is on no pytest path, so a test
-# there never runs (#294). The house convention is example code in `examples/`, its
+# there never runs. The house convention is example code in `examples/`, its
 # test under `safe_agents/*/tests/` reaching across.
 _MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "examples" / "restricted_mcp_server" / "manifest.yaml"

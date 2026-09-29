@@ -33,7 +33,7 @@ from .types import ApprovalResult, ExecutionResult, NotifierEvent
 
 # The rejection_reason reject() returns on a clean CAS win — the ONE signal that
 # an owner rejection actually transitioned the intent (every refusal path returns
-# a distinct reason). The PEP's human_override evidence writer keys on it (#193).
+# a distinct reason). The PEP's human_override evidence writer keys on it.
 REJECTED_BY_OWNER_REASON = "rejected by owner"
 
 # Prefix of the rejection_reason approve() returns when the executor refused the
@@ -139,7 +139,7 @@ def materialize(
         How long before the intent auto-denies (defaults to 3600 s = 1 hour).
         Unactioned intents become expired at this TTL; approve() rejects them.
     dedup_id:
-        Optional content-derived intent id (sa#160 approval-queue dedup). When
+        Optional content-derived intent id (approval-queue dedup). When
         supplied, the Intent is held under THIS id instead of the PDP's ts-based
         id, and — if an equal-id Intent is already pending — this call coalesces
         onto it: no second hold, no second notification, status "coalesced". Pure
@@ -269,7 +269,7 @@ def approve(
     Raises
     ------
     QuarantinedIntentError
-        Propagated from the store's verify-then-parse read (#349) — a tampered
+        Propagated from the store's verify-then-parse read — a tampered
         row must never execute, and this function deliberately does NOT catch
         it: an uncaught quarantine fails loudly toward less authority, and the
         runtime seam (pep.approve_intent) owns the recorded surfacing.
@@ -330,7 +330,7 @@ def approve(
             )
 
     # Stamp the execution timestamp on the executed transition: it extends the item
-    # TTL (executed intents outlive their approval window for the /flag review, #193)
+    # TTL (executed intents outlive their approval window for the /flag review)
     # and pins the op's UTC day for after-the-fact false_action metering.
     store.transition_status(
         intent_id, "approved", "executed", executed_at=_now_iso()

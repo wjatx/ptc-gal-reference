@@ -1,5 +1,5 @@
 # Containerfile.broker — THE BASE BROKER IMAGE, and the local/Mac arm's broker box
-# (#98 two-box topology).
+# (two-box topology).
 #
 # Despite living under arms/local, this is not a local-only prototype: it is the base
 # of the whole consumer-broker image lineage (docs/broker-image-cutover.md). Consumers
@@ -21,7 +21,7 @@
 # that wants only the tool API overrides the command.
 FROM python:3.12-slim
 
-# Install the safe-agents SDK (sa#106) so `safe_agents.broker.*` resolves as an installed
+# Install the safe-agents SDK so `safe_agents.broker.*` resolves as an installed
 # package — a single source of truth for the runtime deps (pydantic, PyYAML) via pyproject,
 # rather than hand-maintained pins. The `aws` extra adds boto3, needed only when the stores are
 # DynamoDB-backed (BROKER_STORE=dynamo); boto3 stays lazy-imported in the broker library.
@@ -34,7 +34,7 @@ RUN pip install --no-cache-dir ".[aws]"
 COPY safe_agents/arms/ec2/bootstrap/scripts/model-proxy-stub.py /app/model-proxy-stub.py
 COPY safe_agents/arms/local/broker-entrypoint.sh /app/broker-entrypoint.sh
 
-# --- Arbitrary-UID ("SCC-safe") hardening (#249) -----------------------------
+# --- Arbitrary-UID ("SCC-safe") hardening -----------------------------
 # OpenShift's default SCC IGNORES `USER` and runs the container as a random high
 # UID from the namespace's range, in GID 0, with no writable $HOME. So "non-root"
 # is not the property that matters — "works as an ARBITRARY UID" is, and this
@@ -47,7 +47,7 @@ COPY safe_agents/arms/local/broker-entrypoint.sh /app/broker-entrypoint.sh
 # `fsGroup=1000850000`, `runAsGroup` unset so the primary gid falls to 0. $HOME
 # was writable, /app stayed read-only, the projected secrets mount was readable,
 # and the ceremony arc ran to an executed brokered call
-# (safe_agents/arms/openshift/, #250 Phase 2). The paragraph above is no longer
+# (safe_agents/arms/openshift/). The paragraph above is no longer
 # a documentation claim.
 #
 # TWO THINGS THE EMULATION GOT WRONG, both discovered by that first real pod:

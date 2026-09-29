@@ -2,7 +2,7 @@
 
 > **Status: the store is built.** The implementation ships at `safe_agents/broker/audit/` (the
 > hash-chained tape with file and S3 sinks); this directory holds the design notes. The audit + closed learning loop spans
-> sa#4 (autonomy & action pipeline) + sa#7 (security & safety); the learning loop draws from
+> the autonomy and action pipeline and security and safety; the learning loop draws from
 > `auto-agents/book/ch48`.
 
 The broker emits an `AuditRecord` at the moment of every side effect. This directory owns two

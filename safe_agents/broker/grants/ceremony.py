@@ -1,4 +1,4 @@
-"""Maker-checker promotion ceremony (#123).
+"""Maker-checker promotion ceremony.
 
 The only path by which a Grant's level increases. Three actors:
   - proposer: submits evidence and proposes the promotion
@@ -18,11 +18,11 @@ Flow:
   3. On accept: consume the stored proposal (if any), append the
      PromotionRecord, then write the Grant via the promotion-role session —
      create_grant for a Recommend-origin proposal, hash-conditioned
-     update_grant from a guarded re-read for an existing grant (#190: never a
+     update_grant from a guarded re-read for an existing grant (never a
      blind put).
   4. On reject: return CeremonyResult(status='rejected'); no write.
 
-The checker seam is where the sa#58 evidence reviewer plugs in later. It ships
+The checker seam is where the evidence reviewer plugs in later. It ships
 OFF (checker=None) and NEVER gates: when present, its findings are RECORDED on
 the CeremonyResult and appended into the PromotionRecord's predicate text — it
 can raise suspicion and attach findings; it cannot license or veto
@@ -119,7 +119,7 @@ def _one_rung_violation(
 
 
 # ---------------------------------------------------------------------------
-# Checker — the OPTIONAL evidence-reviewer seam (sa#58; ships OFF, never gates)
+# Checker — the OPTIONAL evidence-reviewer seam (ships OFF, never gates)
 # ---------------------------------------------------------------------------
 
 
@@ -207,7 +207,7 @@ class InMemoryPromotionRecordStore:
     def __init__(self) -> None:
         # (pk-equivalent, sk-equivalent) -> (data, signature) where data is the
         # CANONICAL record payload string — the same bytes the DynamoDB store
-        # persists and the DSSE signature binds (#246 re-shape C). Dict
+        # persists and the DSSE signature binds (stored-bytes re-shape C). Dict
         # preserves insertion order.
         self._records: dict[tuple[str, str], tuple[str, dict | None]] = {}
 
@@ -267,7 +267,7 @@ class InMemoryPromotionRecordStore:
         return stored[1] if stored is not None else None
 
     def stored_data_for(self, record: PromotionRecord) -> str | None:
-        """The exact stored serialization — the verify basis (#246; audit/test seam)."""
+        """The exact stored serialization — the verify basis (audit/test seam)."""
         stored = self._records.get(self._key(record))
         return stored[0] if stored is not None else None
 
@@ -316,21 +316,21 @@ class PromotionProposal:
     window_n: int
     min_observations: int
     threshold: float
-    # evidence terms threaded to the predicate (sa#57)
+    # evidence terms threaded to the predicate
     artifact: ConfidenceArtifact | None
     covered: bool
     provenance_maturity: ProvenanceMaturity
     blast_class: BlastClass
     error_budget: ErrorBudget | None
-    # Period span the pre-fetched metrics were summed over (#193, periods #212).
+    # Period span the pre-fetched metrics were summed over (evidence labeling, counter periods).
     # Provenance only — ratify never re-reads counters, so this is NOT a
     # predicate input; it rides the proposal so the checker can see whether the
     # sample was earned over a few periods or scraped thin across many, and at
     # WHICH period the evidence was bucketed. Defaults (1, "utc-day") make a
-    # pre-#193/#212 stored proposal still load and ratify.
+    # pre-labeling/pre-period stored proposal still load and ratify.
     window_periods: int = 1
     period: str = "utc-day"
-    # GAL §6.7.6 (#255): the certification term the raised grant will carry,
+    # GAL §6.7.6: the certification term the raised grant will carry,
     # an ISO-8601 UTC instant, or None for no term (the default — terms ship
     # unset). It is part of the proposal content, so it rides the proposal's
     # integrity basis and is what the checker ratifies; the ceremony is the
@@ -378,7 +378,7 @@ class PromotionCeremony:
         predicate=True AND the identity rules hold  ->  accept
         anything else                               ->  reject
 
-    The optional checker (the sa#58 evidence reviewer seam, ships OFF) is
+    The optional checker (the evidence reviewer seam, ships OFF) is
     invoked when configured and its findings are RECORDED — it never gates
     (docs/deterministic-gate.md).
 
@@ -398,7 +398,7 @@ class PromotionCeremony:
         self._record_store = promotion_record_store
         self._checker = checker
         # The issuer RecordSigner (grants/record_signing.py) or None. Signing
-        # is ceremony-side since #244: the record is signed BEFORE the atomic
+        # is ceremony-side since the atomic write: the record is signed BEFORE the atomic
         # record+grant write, and the signature rides the same transact leg —
         # replacing the old SigningPromotionRecordStore put_record wrapper,
         # which the atomic write path cannot route through.
@@ -462,10 +462,10 @@ class PromotionCeremony:
             skipping is never permitted. from_level=None is the Recommend
             rung, whose only valid target is in-loop.
           - label_latency is not a valid nonnegative, calendar-unambiguous
-            ISO-8601 duration (sa#214): the maker is refused here, before any
+            ISO-8601 duration: the maker is refused here, before any
             checker is summoned; the Grant validator backstops the mint path.
           - certified_until is given but is not an explicit UTC ISO-8601
-            instant (#255). Whether it is still in the future is judged at
+            instant. Whether it is still in the future is judged at
             ratify time against the ratification instant, not here.
 
         On success the caller should pass the returned proposal to execute().
@@ -506,7 +506,7 @@ class PromotionCeremony:
             window_n=window_n,
             min_observations=min_observations,
             threshold=threshold,
-            # sa#57 evidence terms — stored verbatim; execute() threads them
+            # Evidence terms — stored verbatim; execute() threads them
             # to evaluate_promotion_predicate
             artifact=artifact,
             covered=covered,
@@ -540,7 +540,7 @@ class PromotionCeremony:
         PROPOSAL# item edited in the table — and propose_promotion may never
         have seen it. A structural violation rejects; no write.
 
-        Persistence is split by origin (#190 — no blind puts on any ceremony
+        Persistence is split by origin (no blind puts on any ceremony
         path). Recommend-origin (from_level=None) CREATES via create_grant (a
         concurrently-minted grant surfaces as GrantAlreadyExistsError, never
         overwritten). An existing grant gets a guarded re-read — quarantine
@@ -550,7 +550,7 @@ class PromotionCeremony:
         GrantUpdateConflictError propagates, never retried silently: that IS
         the demotion-race protection.
 
-        The record and the grant commit as ONE atomic unit (#244,
+        The record and the grant commit as ONE atomic unit (
         write_record_and_grant): either both legs land or nothing is written.
         This supersedes the old record-first ordering — the per-path
         failure-polarity trade-offs (dangling record vs. unaccounted level)
@@ -624,7 +624,7 @@ class PromotionCeremony:
             else effective_now.replace(tzinfo=datetime.timezone.utc)
         )
 
-        # --- certification term (#255): must be a UTC instant still ahead of
+        # --- certification term: must be a UTC instant still ahead of
         # the ratification instant. A term already passed would mint a grant
         # that is lapsed on arrival — refuse rather than write a no-op raise.
         if proposal.certified_until is not None:
@@ -646,7 +646,7 @@ class PromotionCeremony:
         # --- maker != checker (application layer; schema is the backstop) ---
         # is_same_operator, not ==: on the local (solo) arm two identities that
         # share a ROLE are the same half of the ceremony run twice, even when
-        # their derived user@host halves drifted apart (#226).
+        # their derived user@host halves drifted apart.
         if is_same_operator(proposal.proposer_id, ratifier_id):
             return CeremonyResult(
                 status="rejected",
@@ -710,7 +710,7 @@ class PromotionCeremony:
             except Exception as exc:  # noqa: BLE001 — ANY reviewer failure degrades
                 # A raising reviewer must not abort the ceremony: that would be
                 # a de-facto veto, flipping the gate on reviewer availability
-                # (sa#58: never a gate flip in either direction). The failure is
+                # (never a gate flip in either direction). The failure is
                 # itself signal — recorded as a suspicious finding for the human
                 # ratifier. Only the exception TYPE reaches the record: the
                 # predicate text is a trusted, signed surface and an exception
@@ -746,7 +746,7 @@ class PromotionCeremony:
             envelopeHash=proposal.envelope_hash,
             ts=ts,
             attestation=attestation_for(ratifier_id),
-            # The ratified term (#255), on the SIGNED record: what the checker
+            # The ratified term, on the SIGNED record: what the checker
             # ratified is non-repudiable, and the audit holds the grant to it
             # (GRANT_TERM_RATIFIED).
             certifiedUntil=proposal.certified_until,
@@ -767,7 +767,7 @@ class PromotionCeremony:
             demotionReason=None,
             labelLatency=proposal.label_latency,
             ownerId=proposal.owner_id,
-            # The ONE place a term is set (#255): re-promotion carries the
+            # The ONE place a term is set: re-promotion carries the
             # newly ratified term, or none — never the old one.
             certifiedUntil=proposal.certified_until,
         )
@@ -776,7 +776,7 @@ class PromotionCeremony:
             # Recommend-origin: the grant-creating first promotion. The
             # attribute_not_exists condition on the grant leg is the race
             # guard — a concurrently-minted grant surfaces loudly, and the
-            # record leg cancels with it (#244: both or nothing).
+            # record leg cancels with it (both or nothing).
             self._consume_proposal(proposal, proposal_store, session)
             self._grant_store.write_record_and_grant(
                 promotion_record,
@@ -794,7 +794,7 @@ class PromotionCeremony:
                 proposal.principal, proposal.action_class
             )
             if current.quarantined:
-                # Checked FIRST: a quarantined read carries grant=None (#246),
+                # Checked FIRST: a quarantined read carries grant=None,
                 # so the not-found check would otherwise mislabel a tamper as
                 # absence and invite a re-propose over the evidence.
                 raise QuarantinedGrantError(
@@ -809,7 +809,7 @@ class PromotionCeremony:
                     "exists — re-propose from the current state"
                 )
             if lapse_pending(current.grant, term_now):
-                # #255: the stored grant's term has passed but its lapse has
+                # The stored grant's term has passed but its lapse has
                 # not been written. Enforcement already treats it as being at
                 # lastSafeLevel, so promoting from the STORED level would raise
                 # it past its lapsed certification, and promoting from
@@ -839,7 +839,7 @@ class PromotionCeremony:
                     ),
                 )
             self._consume_proposal(proposal, proposal_store, session)
-            # Atomic record+grant (#244), hash-conditioned from the guarded
+            # Atomic record+grant, hash-conditioned from the guarded
             # re-read: a demotion racing in after the re-read surfaces as
             # GrantUpdateConflictError with the record leg canceled — nothing
             # written.

@@ -1,15 +1,15 @@
-"""credentialed_mcp_server — a toy MCP server that genuinely REQUIRES a key (#251, #253).
+"""credentialed_mcp_server — a toy MCP server that genuinely REQUIRES a key.
 
 Every other toy in this repo ignores its environment, which made a whole class of
 claim unprovable. Two of them, specifically:
 
-* **#253 (relocation).** A credential moved out of a harness config into the
+* **Relocation.** A credential moved out of a harness config into the
   product wrapper's store is only relocated if it still ARRIVES. Against a
   server that ignores its environment, a wrap that delivered nothing would pass
   every assertion — the
   manifest would carry an `env_map`, the config would be clean, and the server
   would work exactly as well as if the whole mechanism were a no-op.
-* **#298 (carried config).** The same hole one hop earlier: `McpServerDecl.env`
+* **Carried config.** The same hole one hop earlier: `McpServerDecl.env`
   was proven to the manifest and never to the child.
 
 So this server does two things no other toy here does. It **refuses to start**

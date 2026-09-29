@@ -31,11 +31,11 @@ class DemotionTrigger(str, Enum):
     false_action = "false_action"
 
 
-# The closed catalog of budget/evidence counter periods (#212). A Literal,
+# The closed catalog of budget/evidence counter periods. A Literal,
 # deliberately — the period is authority-shaping (it scopes every cap and every
 # evidence window), so it is manifest-named and image-baked, never store-mutable
 # (docs/config-provenance.md). "utc-day" is the default and is byte-for-byte the
-# pre-#212 key format; "utc-hour" exists so an example agent can run the full
+# pre-counter-period key format; "utc-hour" exists so an example agent can run the full
 # lifecycle at development speed with genuinely elapsed periods. Real time always
 # elapses; only the bucket size is configurable — there is deliberately NO
 # clock-injection seam (the 2026-07-15 triggers-vs-effects doctrine).

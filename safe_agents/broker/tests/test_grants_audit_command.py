@@ -1,4 +1,4 @@
-"""#252 item 2 — the audit's invocation path, and the contract posture parses.
+"""The grants audit's invocation path, and the contract posture parses.
 
 Until this module the auditor had no caller outside a test: CI ran it as a
 pytest invocation and nothing else could reach it. These tests cover the door
@@ -199,9 +199,9 @@ def test_empty_store_reports_zero_examined_rather_than_clean_silence(db_path, ca
 
 
 def test_audit_command_source_names_no_write_api():
-    """`audit.py` has carried this guard since #62 and `audit_command.py` is a
+    """`audit.py` has always carried this guard and `audit_command.py` is a
     new module in the same trust position — a guard whose teeth stop at one
-    file is the #267 shape, which this session already paid for once.
+    file is the missing-second-arm shape (#140), which this session already paid for once.
     """
     source = inspect.getsource(audit_command)
     for forbidden in ("put_item", "update_item", "delete_item", "batch_writer", "put_new_item"):

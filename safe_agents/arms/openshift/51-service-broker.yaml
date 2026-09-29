@@ -1,4 +1,4 @@
-# The agent's ONLY sanctioned egress (#250 Phase 4).
+# The agent's ONLY sanctioned egress (Phase 4).
 #
 # ClusterIP and deliberately not a Route. A Route would publish /call outside the
 # cluster, and the thing this phase is trying to demonstrate is a pod that can reach

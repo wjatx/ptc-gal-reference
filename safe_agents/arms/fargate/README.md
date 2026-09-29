@@ -1,4 +1,4 @@
-# Fargate arm — scheduled, serverless agent compute (Arm 3, sa#36)
+# Fargate arm — scheduled, serverless agent compute (Arm 3)
 
 The Fargate arm runs a confined agent as a **short-lived, scheduled ECS task**.
 It is the cloud-native, serverless sibling of the always-on EC2 arm and the
@@ -70,7 +70,7 @@ the separately-built runner depends on them) plus one injected secret:
   — creates the three roles, registers the arm64 task def (cpu 256 / mem 512)
   from `<ecr-agent-repo-uri>:latest`, and creates the EventBridge Scheduler rule.
   `schedule_expression` + `timezone` are **parameters**, never hardcoded policy.
-  `state` defaults to `DISABLED` (sa#115) — a provision never auto-enables a
+  `state` defaults to `DISABLED` — a provision never auto-enables a
   production schedule before its first manual proof; the caller enables explicitly
   afterward. Returns a summary dict (task-def / role / schedule ARNs, `schedule_state`).
   Idempotent.
@@ -98,7 +98,7 @@ tagged `Project / Environment / Agent / ManagedBy / Name / Arm=fargate`.
 - **No in-task code bundle pull** — the agent image is expected to be self-contained
   (built + pushed to the agent ECR repo). The EC2 arm's S3 bundle path is not used here.
   What a consumer-built image must do is now an explicit contract:
-  `docs/consumer-image-contract.md` (sa#116; the first real consumer lands in its own repo).
+  `docs/consumer-image-contract.md` (#68; the first real consumer lands in its own repo).
 - **Live smoke poll** — `fargate_run_once` launches the task; polling its exit code
   via `aws.describe_task(cluster, task_arn)` to gate the capstone is left to the
   deploy driver (the interface method exists; no automatic wait loop yet).

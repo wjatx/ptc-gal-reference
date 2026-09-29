@@ -1,4 +1,4 @@
-# Leg 4 of 5 — the AUDIT TAMPER attempt, under the MAKER ServiceAccount (#310).
+# Leg 4 of 5 — the AUDIT TAMPER attempt, under the MAKER ServiceAccount.
 #
 # Runs LAST, and the ordering is the whole point. The broker is the only leg that
 # writes the tape, and it runs immediately before this one, so by the time this
@@ -33,7 +33,7 @@ spec:
         app.kubernetes.io/component: tamper
     spec:
       # The MAKER, on purpose: the least-privileged ceremony credential, and the
-      # one whose exclusion from the grant store #203 already established. If it
+      # one whose exclusion from the grant store the write split already established. If it
       # could rewrite the tape, "the maker cannot write a grant row" would be
       # worth much less — it could simply erase the record of trying.
       serviceAccountName: safe-agents-maker

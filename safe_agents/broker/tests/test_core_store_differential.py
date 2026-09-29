@@ -57,7 +57,7 @@ TS2 = "2026-07-25T13:00:00+00:00"
 EXPIRY = "2027-01-01T00:00:00Z"
 EXECUTED_AT = "2026-07-25T12:34:56Z"
 PRINCIPAL = Principal(agentId="differential-agent", skill="core", user="maintainer", tier="B")
-# The broker-held key the intent stores HMAC their stored frozen bytes with (#349).
+# The broker-held key the intent stores HMAC their stored frozen bytes with.
 INTENT_HMAC_KEY = b"test-hmac-key"
 
 
@@ -291,7 +291,7 @@ class IntentBackend:
         self.store = store
         self.db_path = db_path
         # tamper_item(intent_id, mutate) rewrites the stored item attrs
-        # OUT-OF-BAND (bypassing the store API) — the #349 A4 attacker.
+        # OUT-OF-BAND (bypassing the store API) — the intent-tamper A4 attacker.
         self.tamper_item = tamper_item
 
     def raw_expires_at(self, intent_id: str) -> str | None:
@@ -569,7 +569,7 @@ class TestIdempotencyClaimLifecycle:
     def test_delete_clears_a_stranded_claim(self, enforcement_backend):
         """The operator's path out of a claim stranded by a crashed broker, and
         the same call enforce() uses to release a claim on a non-executed
-        outcome (#148). There is deliberately no timeout-based auto-release."""
+        outcome. There is deliberately no timeout-based auto-release."""
         store = enforcement_backend.store
         store.put_idempotency_if_absent(make_claim())
         store.delete_idempotency("claim-1")
@@ -725,7 +725,7 @@ class TestIntentConformance:
         if intent_backend.name == "sqlite":
             # The expires_at COLUMN must move to executedAt + retention — the
             # sqlite mirror of Dynamo's TTL extension, anchored on executed_at
-            # itself (sa#213 pin). Raw SQL, not the store API.
+            # itself (trigger-range pin). Raw SQL, not the store API.
             executed_dt = datetime.fromisoformat(EXECUTED_AT.replace("Z", "+00:00"))
             expected = (
                 executed_dt + timedelta(days=EXECUTED_INTENT_RETENTION_DAYS)
@@ -771,7 +771,7 @@ class TestIntentCreateIsConditional:
 
     A blind put let a second hold under a colliding id replace the first: the
     human approved one call and the broker released the other. Resolved intents
-    stay overwritable, because the dedup path (sa#160) re-holds identical
+    stay overwritable, because the dedup path re-holds identical
     content under its content-derived id once the earlier hold resolved.
     """
 
@@ -816,11 +816,11 @@ class TestIntentCreateIsConditional:
 
 
 def _evil_payload(intent_id: str = "intent-1") -> str:
-    """The A4 attacker's best rewrite (#349): the frozen call's args replaced,
+    """The A4 attacker's best rewrite: the frozen call's args replaced,
     the payload re-serialized in the EXACT canonical form the store uses — every
     unkeyed field recomputed consistently. Only the broker-held HMAC key is out
-    of reach, which is precisely why an unkeyed stored digest (issue #349
-    option 2) would not have refused this row."""
+    of reach, which is precisely why an unkeyed stored digest (the design
+    alternative) would not have refused this row."""
     evil_call = make_call().model_copy(
         update={"args": {"amount": 999999, "to": "acct-attacker"}}
     )
@@ -837,7 +837,7 @@ def _evil_payload(intent_id: str = "intent-1") -> str:
 
 
 class TestIntentTamperEvidence:
-    """#349 — every backend HMACs the stored frozen bytes and verify-then-parses.
+    """Every backend HMACs the stored frozen bytes and verify-then-parses.
 
     Data-driven over the tamper shapes; parametrized over all three backends by
     the fixture, mirroring how the grants backends share _read_result_from_item.

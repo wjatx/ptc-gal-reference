@@ -144,7 +144,7 @@ class SqliteEnforcementStore(substrate.SqliteStoreBase):
     def delete_idempotency(self, key: str) -> None:
         # The substrate deliberately ships no delete helper (the MCP stores
         # never delete), but the EnforcementStore Protocol REQUIRES eviction:
-        # enforce() deletes stale non-executed outcomes (#148) so the key
+        # enforce() deletes stale non-executed outcomes so the key
         # becomes recordable again once a retry actually executes. A direct
         # DELETE here is idempotent like DynamoDB DeleteItem — deleting an
         # absent key succeeds silently.

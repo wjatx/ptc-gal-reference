@@ -1,4 +1,4 @@
-"""Tests for the pure discovery gate (#174, MCP-HOST.md M2–M6).
+"""Tests for the pure discovery gate (MCP-HOST.md M2–M6).
 
 `evaluate_discovery` is a pure function of (manifest declaration, store reads,
 live advertised defs). These tests exercise every verdict path with no I/O, no

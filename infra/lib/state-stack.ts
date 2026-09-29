@@ -12,7 +12,7 @@ import { publish, resourceName } from './naming';
  * broker runs: the four DynamoDB tables (grants / counters / intents / agent-runs), the S3
  * Object Lock (WORM) audit bucket, and the customer-managed KMS keys.
  *
- * Implements sa#14. IdentityStack (#15) depends on this stack's exported ARNs to scope its role
+ * IdentityStack depends on this stack's exported ARNs to scope its role
  * policies; nothing downstream runs until this stack is deployed.
  */
 export class StateStack extends Stack {
@@ -46,7 +46,7 @@ export class StateStack extends Stack {
       removalPolicy: removalPolicyFor(env),
     });
 
-    // The Secrets Manager secret store itself is built in IdentityStack (#15), but its CMK is
+    // The Secrets Manager secret store itself is built in IdentityStack, but its CMK is
     // provisioned here so StateStack owns the full key estate and IdentityStack can import the ARN.
     const secretsKey = new Key(this, 'SecretsKey', {
       description: `safe-agents ${env} - Secrets Manager connector credentials CMK`,
@@ -69,10 +69,10 @@ export class StateStack extends Stack {
     //   agent-runs: PK=agentId, SK=runId — the AGENT's run record (not a broker store), so it
     //               keeps its own domain schema (RUNNER-CONTRACT element 5).
     //   channel-dedupe: pk = dedupe_pk (+ a `ttl` attribute for dedupe-window auto-expiry) — the
-    //               channels airlock's idempotency store (sa#152). A standalone single-key table,
+    //               channels airlock's idempotency store. A standalone single-key table,
     //               not a broker single-table item; owned here as shared substrate, consumed by
     //               ChannelsStack. No sort key: a dedupe claim is a single point read + put.
-    //   mcp-registry: the #174 MCP admitted-tool registry (broker/MCP-HOST.md). Single-table,
+    //   mcp-registry: the MCP admitted-tool registry (broker/MCP-HOST.md). Single-table,
     //               same generic (pk, sk) shape as grants, holding three item-key prefixes:
     //               `TOOLDEF#<server_id>#<tool_name>` (the admitted row, sk="ROW"),
     //               `TOOLREC#<server_id>#<tool_name>` (the append-only admission ledger, sk=ts),
@@ -161,7 +161,7 @@ export class StateStack extends Stack {
     // keeps Object Lock *enabled* (it cannot be turned on after creation) but sets no default
     // retention and auto-deletes objects on teardown, so a dev env is hands-off-redeployable without
     // anything being locked. The IAM constraint ("no agent or broker role can delete audit objects")
-    // is enforced by role boundaries in IdentityStack (#15) regardless of environment.
+    // is enforced by role boundaries in IdentityStack regardless of environment.
 
     const auditBucket = new Bucket(this, 'AuditBucket', {
       bucketName: resourceName(env, 'audit'),
@@ -179,7 +179,7 @@ export class StateStack extends Stack {
 
     // ── S3 Ledger Bucket ─────────────────────────────────────────────────────────────────────────
     // The durable sink for the agent's briefs + ledger deltas via the `ledger.append` connector
-    // (sa#131). Explicitly NO Object Lock, unlike AuditBucket: this is the agent's ledger copy,
+    //. Explicitly NO Object Lock, unlike AuditBucket: this is the agent's ledger copy,
     // not the tamper-evident audit chain — append-only ("never delete a prediction") is enforced
     // via brokerRole IAM in IdentityStack (s3:PutObject only, no Delete*, no overwrite-relevant
     // perms), not WORM. Versioned so even a same-key rewrite preserves the prior object rather
@@ -218,7 +218,7 @@ export class StateStack extends Stack {
 
     // ── Cross-stack outputs ───────────────────────────────────────────────────────────────────────
     // Published as both CloudFormation exports and SSM parameters (naming.ts convention).
-    // IdentityStack (#15) imports the KMS and resource ARNs to scope role policies precisely.
+    // IdentityStack imports the KMS and resource ARNs to scope role policies precisely.
     // Broker and observability stacks consume the table/bucket names at runtime via SSM.
 
     // KMS key ARNs

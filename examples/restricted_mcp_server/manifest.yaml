@@ -1,5 +1,5 @@
 # restricted_mcp_server/manifest.yaml — FICTIONAL example consumer for the
-# restrict-by-construction MCP archetype (#174, broker/MCP-HOST.md).
+# restrict-by-construction MCP archetype (broker/MCP-HOST.md).
 #
 # The "missileer" of MCP hosts: a bespoke server (server.py) exposes ONLY safe,
 # read-only tools, so the dangerous op is ABSENT from the tool set — not merely
@@ -41,13 +41,13 @@ grant_classes:
 
 # ── Connectors (names) ───────────────────────────────────────────────────────
 # `ledger` is constructed NATIVELY by build_runtime from the spawn config in
-# mcp_servers below (#221 — no connector_providers class in between); `peer` is
-# the base builtin transport connector (#172).
+# mcp_servers below (no connector_providers class in between); `peer` is
+# the base builtin transport connector.
 connectors:
   - ledger
   - peer
 
-# ── MCP server namespace + native spawn config (#174 / #221) ──────────────────
+# ── MCP server namespace + native spawn config ──────────────────
 # Key #1 of two-key admission: the image-baked declaration of the ledger
 # server's tool namespace. Both tools return STRUCTURED output, so either may
 # legally be named in envelope.trusted_read_sources (below). Absent here →
@@ -69,7 +69,7 @@ mcp_servers:
       - {tool_name: get_entry, structured_output: true}
       - {tool_name: list_entries, structured_output: true}
 
-# ── Connector secret (sa#164 leaf convention) ─────────────────────────────────
+# ── Connector secret (bare-leaf convention) ───────────────────────────────────
 # The Doer resolves a credential for EVERY connector before dispatch, so even a
 # credential-less local MCP server needs a provisioned leaf (an empty-string
 # placeholder secret is fine). Bare LEAF, never a value or full path: resolved
@@ -80,7 +80,7 @@ connector_secrets:
   # as examples/emailer — provisioned on the floor before the drill's publish leg.
   peer: "peer-mcp-example"
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 # Every declared MCP tool needs its external-read ToolOp: tool == server_id,
 # op == tool_name, external: true. An MCP tool response is an external read that
 # taints the turn (source connector:ledger.<tool_name>) unless trusted below.

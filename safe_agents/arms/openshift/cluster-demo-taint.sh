@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cluster-demo-taint.sh — DEMONSTRATION 2: a read of hostile content escalates a
-# later write (#250 Phase 5).
+# later write (Phase 5).
 #
 # Runs in the AGENT pod, under the agent ServiceAccount, behind the Phase 4
 # NetworkPolicy. It holds no connector credential, no peer token, no mount — its only
@@ -17,12 +17,12 @@
 # they do, taint is decorative.
 #
 # WHY THE ORDER IS FORCED. Taint is monotone: a turn never un-taints, and the
-# broker-held turn is one per principal across every /call (sa#136), rolling over only
+# broker-held turn is one per principal across every /call, rolling over only
 # via new_turn() which is broker/harness-owned. So the CLEAN branch must run first.
 # That is not a convenience — it is the property being demonstrated, since an agent
 # that could roll its own turn could launder taint by declaring a fresh one.
 #
-# WHAT THIS DOES NOT CLAIM (#315). On the /call path the agent supplies args.envelope
+# WHAT THIS DOES NOT CLAIM (#15). On the /call path the agent supplies args.envelope
 # and PeerConnector transports it unmodified. `stamp_outbound` — the seam that derives
 # the outbound hop's label from the broker-held turn's taint — has NO RUNTIME CALLER,
 # so the provenance chain on the published envelope is agent-authored. This
@@ -77,7 +77,7 @@ def envelope(note):
     """The outbound EventTrigger.
 
     Agent-authored, and labelled `untrusted` on purpose. The broker does not stamp
-    this today (#315), so the conservative label is the only honest one an agent can
+    this today (#15), so the conservative label is the only honest one an agent can
     write about its own chain -- and nothing in the verdict below reads it.
     """
     now = datetime.now(timezone.utc)
@@ -118,7 +118,7 @@ if clean_verdict != "allow" or r.get("result") is None:
 
 # -- B. the tainting read ----------------------------------------------------
 # list_entries is NOT in trusted_read_sources, so a successful response self-taints
-# the broker-held turn (the sa#134 hook in the executor). Nothing judges whether the
+# the broker-held turn (the taint self-ingestion hook in the executor). Nothing judges whether the
 # content LOOKS malicious -- taint is source-based, not model-judged, which is the
 # entire point: a persuasive body and a boring one taint identically.
 r = call(server_id, untrusted_read, {"limit": 5}, "demo-untrusted-read")
@@ -135,7 +135,7 @@ print(f"   C.  peer.publish on a TAINTED turn -> {tainted_verdict}")
 print(f"       reason: {reason[:150]}")
 print(f"       intent_id: {r.get('intent_id')}")
 
-# The mechanism, as far as it is observable (#312, #316). The grant is on-loop and a
+# The mechanism, as far as it is observable (#116). The grant is on-loop and a
 # human is reachable, so the polarity seam returns require_approval rather than deny; a
 # DENY here would be a different control firing and must not read as this one.
 #
@@ -144,13 +144,13 @@ print(f"       intent_id: {r.get('intent_id')}")
 # escalating rules produce an indistinguishable record.
 #
 # The reason this is true changed on 2026-07-29 and the old explanation is stale. It used
-# to be "RequireApproval carries no reason field (#316), so it is discarded at the schema
+# to be "RequireApproval carries no reason field (#116), so it is discarded at the schema
 # level and the tape records reason=None too". Both halves of that are now false:
 # RequireApproval.reason EXISTS (broker/schemas/decision.py:77) and the audit tape carries
 # it -- a held peer.publish now records `reason=tainted external write`. What is still
 # missing is only the /call HTTP RESPONSE path, which is what `r.get("reason")` below
-# reads. So #316 is partly satisfied (its item 1 landed via #300), and the remaining gap
-# is transport, not schema. The tripwire below fires the moment that closes.
+# reads. The remaining gap is transport, not schema, and whether to close it at all is the
+# open question in #116. The tripwire below fires the moment that closes.
 #
 # So the mechanism is established by DIFFERENTIAL rather than by name: the same op,
 # the same credential, the same grant, one turn, with exactly one untrusted read

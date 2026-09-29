@@ -1,6 +1,6 @@
-"""durations — the `whenever` seam for ISO-8601 durations (sa#214).
+"""durations — the `whenever` seam for ISO-8601 durations.
 
-Library posture (sa#214, decided 2026-07-16): the stdlib stays for the
+Library posture (decided 2026-07-16): the stdlib stays for the
 UTC-pure core (period buckets, absolute-timedelta window stepping, epoch
 TTLs) — it is correct there and a migration is churn without a bug class.
 `whenever` (Rust-backed) is adopted surgically at the risky edges as we touch

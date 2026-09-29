@@ -1,4 +1,4 @@
-"""gateway — the broker presenting as one MCP server (#283).
+"""gateway — the broker presenting as one MCP server.
 
 The broker's second mouth. The first is the JSON-over-HTTP `/call` handler in
 `prototype/broker_server.py`; this one speaks MCP over stdio so a wrapped agent

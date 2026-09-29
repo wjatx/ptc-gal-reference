@@ -2,9 +2,9 @@
 
 How an autonomous agent reaches its model (`api.anthropic.com`) while **everything else** stays
 broker-only. This closes the mechanic that `ARCHITECTURE.md` invariant #2 names but does not
-specify, and that `core/PORTING.md` §Open-questions #1 and sa#35 assume without resolving.
+specify, and that `core/PORTING.md` §Open-questions #1 assume without resolving.
 
-Status: **design** (decided). Implementation is sa#35 (netns) + the broker build (sa#12).
+Status: **design** (decided). Implementation is the netns model + the broker build.
 
 > **Note (2026-07-07).** The VPC subnet/SG references below assume the `secureNetwork: true`
 > topology, which is now flag-gated and ships OFF for the current experiment floor
@@ -41,7 +41,7 @@ broker as a same-host unit). On that topology:
 
 So "non-broker/non-model egress is blocked for the agent" is **unsatisfiable at the SG layer on a
 co-hosted box**. Separating agent-egress from broker-egress requires **process-level isolation**:
-a network namespace (sa#35) on the agent arms, or the OpenShell sandbox on the dev-box arm. The
+a network namespace on the agent arms, or the OpenShell sandbox on the dev-box arm. The
 box-level SG is *not* the agent-confinement mechanism here — it only governs what the **box** (i.e.
 the broker) may reach. This corrects the "box-SG floor now, netns later" sequencing: on the
 single-box topology there is no meaningful box-SG agent-confinement to lay first; **the netns is
@@ -94,7 +94,7 @@ broker" both hold without exception. A fully compromised agent can reach the bro
 - **The hostname allowlist lives in one place** — the broker's proxy surface — for every arm. No
   per-arm SG hostname-pinning, which is impossible anyway.
 
-## Run-path integration (sa#35 build — implemented on the rhel-openshell autonomous arm)
+## Run-path integration (netns build — implemented on the rhel-openshell autonomous arm)
 
 - `agent-netns-setup.service` — a root **oneshot** system service (`RemainAfterExit`), running
   `/opt/safe-agents/bin/agent-netns-setup.sh` (under `/opt`, satisfying the SELinux
@@ -118,11 +118,11 @@ broker" both hold without exception. A fully compromised agent can reach the bro
   the proxy, so `claude -p` works.
 - `broker-model-proxy.service` — the stub forward proxy (`/opt/broker/model-proxy-stub.py`, stdlib
   CONNECT proxy) in the root netns, allowlisting only `api.anthropic.com:443`. The real proxy
-  surface is the broker build (sa#12); the stub exercises the netns + the conformance smoke.
+  surface is the broker build; the stub exercises the netns + the conformance smoke.
 
 ## Conformance assertion (the smoke that proves it)
 
-From **inside `agent-ns`** (extends the sa#35 / `bin/smoke-agent` acceptance):
+From **inside `agent-ns`** (extends the netns / `bin/smoke-agent` acceptance):
 
 - `curl -m5 <any-connector-host>` → **network error** (unreachable). Connector reached directly =
   smoke fail.
@@ -132,14 +132,14 @@ From **inside `agent-ns`** (extends the sa#35 / `bin/smoke-agent` acceptance):
 
 ## Scope across arms
 
-This is the Phase-1 "unify egress" model (sa#52 egress-drift is its drift standard; the canonical
+This is the Phase-1 "unify egress" model (`docs/egress-drift.md` is its drift standard; the canonical
 SG snapshot covers the **box → connector/model** egress, while agent-confinement is asserted by the
 netns smoke, not by an SG diff). It is identical for every autonomous arm:
 
 - **rhel-openshell (autonomous profile)** — this design; OpenShell is gated to the *interactive*
   profile only.
-- **ec2 / al2023 (sa#35)** — the originating scope; same netns + broker-proxy model.
-- **fargate (sa#36)** — broker as a sidecar container, agent container with no egress but to the
+- **ec2 / al2023** — the originating scope; same netns + broker-proxy model.
+- **fargate** — broker as a sidecar container, agent container with no egress but to the
   broker task; the proxy surface rides the same broker.
 
 The **dev-box / interactive** arm keeps OpenShell with its egress policy allowing only the broker

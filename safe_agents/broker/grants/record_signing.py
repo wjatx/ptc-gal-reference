@@ -2,7 +2,7 @@
 
 Turns a PromotionRecord from *asserted* into *non-repudiable*: who proposed, who
 ratified, over which evidence window, under which in-force envelopeHash. This is
-the SECOND statement type carried by the #181 signing machinery (adopt, don't
+the SECOND statement type carried by the Layer A signing machinery (adopt, don't
 invent) — the same DSSE PAE over an in-toto-style statement that authenticates
 the outbound provenance chain, reused here for the ceremony ledger
 (broker/grant-lifecycle.md, docs/tce-signing-shape.md).
@@ -131,7 +131,7 @@ class RecordVerifyResult:
     ``reason`` is one of the ``RECORD_*`` constants on failure, else None. On
     failure the reader quarantines the ledger item loudly — never treats an
     unverified level change as authoritative (mirrors the grant-HMAC
-    quarantine, sa#124).
+    quarantine).
     """
 
     ok: bool
@@ -260,7 +260,7 @@ def canonical_record_payload(record: PromotionRecord) -> str:
     """The ONE serialization of a record — what gets STORED and what gets signed.
 
     Canonical JSON: sorted keys, no whitespace, ASCII. Storage and the signing
-    basis must be the same bytes (#246): the ledger stores exactly this string
+    basis must be the same bytes: the ledger stores exactly this string
     as the item's data, the signature binds its sha256, and verification
     digests the STORED bytes verbatim — never a re-serialization of the parsed
     record, which would silently re-derive the basis from whatever the model
@@ -268,9 +268,9 @@ def canonical_record_payload(record: PromotionRecord) -> str:
     signature failure.
     """
     payload = record.model_dump(mode="json")
-    # certifiedUntil (#255) is OMITTED when None: every record written before the
+    # certifiedUntil is OMITTED when None: every record written before the
     # field existed, and every record that carries no term, serializes to exactly
-    # the pre-#255 bytes, so its stored bytes and its DSSE subject digest are
+    # the pre-term bytes, so its stored bytes and its DSSE subject digest are
     # unchanged (pinned in test_grant_term_lapse.py). A set term is inside the
     # payload and so inside the signature.
     if payload.get("certifiedUntil") is None:
@@ -291,7 +291,7 @@ def stored_record_digest_hex(stored: str | bytes) -> str:
     """sha256 over the stored record bytes VERBATIM — the verify-side basis.
 
     Verification must digest what is on disk, not what the parsed model
-    re-serializes to (#246: integrity indicts tampering, never evolution).
+    re-serializes to (integrity indicts tampering, never evolution).
     """
     data = stored.encode("utf-8") if isinstance(stored, str) else stored
     return hashlib.sha256(data).hexdigest()
@@ -388,7 +388,7 @@ def verify_record(
 ) -> RecordVerifyResult:
     """Verify the STORED record bytes against their stored DSSE envelope.
 
-    Since #246 the input is the stored serialization itself (the ledger item's
+    Since the stored-bytes re-shape the input is the stored serialization itself (the ledger item's
     data string), never a parsed-and-re-serialized model: the subject digest
     is the sha256 over exactly those bytes, so additive PromotionRecord schema
     growth can never flip a valid signature to INVALID. Sign-side,

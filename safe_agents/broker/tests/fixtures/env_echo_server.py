@@ -1,4 +1,4 @@
-"""env_echo_server — a test-only MCP server reporting SELECTED env vars (#221).
+"""env_echo_server — a test-only MCP server reporting SELECTED env vars.
 
 Spawned by the native-construction stdio tests to prove clause M16/C9 with a
 real child process: the vars the broker composed (the static manifest half plus

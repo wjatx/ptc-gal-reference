@@ -1,4 +1,4 @@
-# alpaca_paper_drill — the #221 Phase-1/2 drill consumer
+# alpaca_paper_drill — the MCP-brokerage drill consumer
 
 The first run of the broker's **native MCP construction + spawn-time env-auth**
 against a REAL third-party server: Alpaca's official `alpaca-mcp-server`

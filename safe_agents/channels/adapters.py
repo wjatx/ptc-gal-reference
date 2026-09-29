@@ -1,4 +1,4 @@
-"""channels.adapters — the channel-adapter interfaces (sa#80).
+"""channels.adapters — the channel-adapter interfaces.
 
 See channels/ADAPTERS.md for the normative contract; this module is the
 canonical typed encoding of `InboundAdapter` and `OutboundAdapter`.

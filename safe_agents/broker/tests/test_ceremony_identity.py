@@ -1,4 +1,4 @@
-"""test_ceremony_identity.py — #226: the solo-identity ceremony resolver.
+"""test_ceremony_identity.py — the solo-identity ceremony resolver.
 
 The wall this closes: on a Mac with no AWS credentials the ceremony's identity
 derivation raised ``NoCredentialsError`` before any store call, so the sqlite
@@ -10,7 +10,7 @@ way to weaken the floor rather than a way to reach it:
   S1  ONE resolver — both ceremony command modules delegate to it, so the two
       ceremonies cannot drift on who may run them.
   S2  Explicit opt-in — no AWS credentials with the var unset REFUSES with a
-      pointer; it NEVER falls back silently (the #197/#199 shape).
+      pointer; it NEVER falls back silently (the wrong-authority-mint shape).
   S3  Closed catalog — the var selects a ROLE from a fixed set; it can never
       name an identity. The `who` half stays derived (no --as, on any arm).
   S4  Structurally unusable against the real floor — the local arm is REFUSED
@@ -56,7 +56,7 @@ def _clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path):
     # Point the projected-token paths at somewhere that does not exist, so a
     # test run INSIDE a pod (the CI container job, a cluster drill) behaves
     # identically to one on a laptop. Without this the local-arm tests would
-    # hit the #250 "a real identity was available" refusal and fail for a
+    # hit the "a real identity was available" refusal and fail for a
     # reason that has nothing to do with what they pin.
     monkeypatch.setattr(ci, "SA_TOKEN_PATH", str(tmp_path / "absent" / "token"))
     monkeypatch.setattr(ci, "SA_CA_PATH", str(tmp_path / "absent" / "ca.crt"))
@@ -176,7 +176,7 @@ def test_local_arm_mints_distinct_prefixed_identities_per_role(monkeypatch):
         "maintainer",
         "MAKER",
         "maker,checker",
-        "safe_agents.evil:Identity",  # an import path, the #186 failure shape
+        "safe_agents.evil:Identity",  # an import path, the config-injection failure shape
     ],
 )
 def test_a_value_outside_the_catalog_is_refused(monkeypatch, value):
@@ -247,7 +247,7 @@ def test_attestation_is_derived_from_the_identity(monkeypatch):
 
 
 def test_records_accept_the_marker_and_default_to_absent():
-    """Additive-optional on BOTH ledger record types: a pre-#226 record parses
+    """Additive-optional on BOTH ledger record types: a pre-solo-arm record parses
     untouched (the field's absence means the IAM-backed STS arm), and the
     vocabulary is closed."""
     base = dict(
@@ -284,7 +284,7 @@ def test_records_accept_the_marker_and_default_to_absent():
 
 
 def test_two_local_roles_satisfy_the_schema_validator_without_relaxing_it():
-    """The maker != checker schema backstop is UNTOUCHED by #226: two distinct
+    """The maker != checker schema backstop is UNTOUCHED by the solo arm: two distinct
     local roles satisfy it natively, so honesty comes from the marker rather
     than from loosening the invariant."""
     record = PromotionRecord(
@@ -358,7 +358,7 @@ def test_sts_arm_resolves_the_caller_arn_unchanged(monkeypatch):
 
 # --------------------------------------------------------------------------
 # S8 — the arm selector is a CLOSED catalog, and unset is byte-for-byte the
-#      pre-#250 two-way dispatch
+#      pre-OpenShift-arm two-way dispatch
 # --------------------------------------------------------------------------
 
 

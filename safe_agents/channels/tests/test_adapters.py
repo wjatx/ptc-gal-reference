@@ -1,4 +1,4 @@
-"""sa#80 exit predicate — the channel-adapter and dispatch conformance suite.
+"""The channel-adapter and dispatch conformance suite.
 
 Each test proves one clause from channels/ADAPTERS.md §"Conformance"; the
 mapping table lives there. `StubInboundAdapter`/`StubOutboundAdapter` are

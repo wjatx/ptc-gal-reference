@@ -1,4 +1,4 @@
-"""Tests for the durable promotion-proposal store (#123).
+"""Tests for the durable promotion-proposal store.
 
 Coverage:
 - Round-trip: put_proposal → get_proposal preserves every field, status starts

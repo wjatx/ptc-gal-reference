@@ -1,23 +1,23 @@
 # channels — inbound airlock and outbound notifier
 
-> **Status: contracts landed (2026-07-08); production binding deployed (sa#152, 2026-07-08).**
+> **Status: contracts landed (2026-07-08); production binding deployed (2026-07-08).**
 > The four channel contracts are normative, each with a typed encoding and a conformance suite
 > under `safe_agents/channels/`:
 >
-> - `SCHEMAS.md` (sa#74) — the **EventTrigger envelope**: one record type at both seams, with an
+> - `SCHEMAS.md` — the **EventTrigger envelope**: one record type at both seams, with an
 >   append-only provenance chain and derived, non-strippable taint.
-> - `TRUST-MAPPING.md` (sa#81) — the **inbound trust-mapping framework**: sender classes
+> - `TRUST-MAPPING.md` — the **inbound trust-mapping framework**: sender classes
 >   (owner / peer-agent / external), authenticity ≠ content trust, the one-way rule.
-> - `ADAPTERS.md` (sa#80) — the **channel-adapter interface** and the fixed airlock gate ordering;
+> - `ADAPTERS.md` — the **channel-adapter interface** and the fixed airlock gate ordering;
 >   wire bindings are reference-tier there.
-> - `SCREENING.md` (sa#43) — the **injection-screening standard**: gate 7's semantics — a typed
+> - `SCREENING.md` — the **injection-screening standard**: gate 7's semantics — a typed
 >   verdict that may refuse or pass, never bless; fails closed; ships OFF.
-> - `DRAIN.md` (sa#155) — the **accepted-queue drain worker**: ingest-before-act on one
+> - `DRAIN.md` — the **accepted-queue drain worker**: ingest-before-act on one
 >   broker-owned turn, trust-the-stamp, consumer Receiver injected image-baked.
-> - `PUBLISH.md` (sa#156) — the **outbound A2A seam** (`peer.publish`): a brokered external write
+> - `PUBLISH.md` — the **outbound A2A seam** (`peer.publish`): a brokered external write
 >   whose provenance is broker-stamped from the turn, so the sender cannot launder taint.
 >
-> The driving use case is A2A (sa#8, 2026-07-08): a peer agent is just another sender at the
+> The driving use case is A2A (2026-07-08): a peer agent is just another sender at the
 > airlock. The binding is the `SafeAgents-Channels` stack (`infra/lib/channels-stack.ts`): the
 > reference dispatcher behind API Gateway + Lambda, every seam wired from a consumer
 > `ChannelsManifest`, none from base source — the clean, agent-agnostic re-derivation of the
@@ -52,7 +52,7 @@ nothing, and turn taint derives from the provenance chain alone at ingestion
 (`TRUST-MAPPING.md` §"The one-way rule", `broker/TAINT.md`) — never from classification. The
 broker still enforces that a tainted turn cannot trigger an autonomous external write.
 
-### The deployed binding (sa#152)
+### The deployed binding
 
 The `SafeAgents-Channels-{env}` stack fronts the reference dispatcher
 (`safe_agents/channels/dispatch.py`, unchanged — it remains the semantic subject) with one
@@ -66,10 +66,10 @@ The `SafeAgents-Channels-{env}` stack fronts the reference dispatcher
 - The **dedupe store** is the State-stack `channel-dedupe` table; **drop records** (and, when the
   valve is on, **verdict records**) land PII-safe on the audit surface under `channels/`.
 - An **accepted envelope** is enqueued (SQS) for the broker path and consumed by the **drain
-  worker** (`DRAIN.md`, sa#155): per message an ephemeral in-process `BrokerRuntime` is built from
+  worker** (`DRAIN.md`): per message an ephemeral in-process `BrokerRuntime` is built from
   the image-baked `AgentManifest`, the provenance chain reaches its broker-held turn via
   `ingest_chain` BEFORE any action, and a consumer-injected Receiver
-  (`safe_agents/channels/drain/`, the sa#141 provider-path discipline) acts through a
+  (`safe_agents/channels/drain/`, the connector-injection provider-path discipline) acts through a
   brokered-call facade over that same runtime (`handle_request` only — no turn controls, so the
   receiver cannot roll the ingested taint). The drain adds no second trust surface — it trusts
   the airlock's stamp; receiver idempotency is a contract obligation; permanently-bad records
@@ -105,7 +105,7 @@ shared across adapters — the screen is injected once, at gate 7, never per-ada
 
 ## Outbound — the A2A publish seam (`peer.publish`)
 
-Distinct from the notifier reply above is **`peer.publish`** (`channels/PUBLISH.md`, sa#156): a
+Distinct from the notifier reply above is **`peer.publish`** (`channels/PUBLISH.md`): a
 sending agent emitting a *new* `EventTrigger` addressed to a **peer agent's** principal, not a reply
 on an open conversation. It is the sending half of the same one-record-two-seams contract — the
 receiver re-validates and re-gates the envelope at its airlock as an ordinary inbound signal
@@ -113,7 +113,7 @@ receiver re-validates and re-gates the envelope at its airlock as an ordinary in
 
 It stands on the same floor as every other outbound op: **brokered** (the agent holds no peer
 transport credential — the base `peer.publish` op is `external=True, effect="write"`, its `peer`
-connector consumer-supplied via sa#141), **broker-stamped provenance** (the sending zone's chain
+connector consumer-supplied via the connector-injection seam), **broker-stamped provenance** (the sending zone's chain
 entry and its taint are set by the broker from the turn, never authored by the agent —
 `TRUST-MAPPING.md` §"The one-way rule — sender side"), and **no shared store** (only the envelope
 and its `event_id` cross the boundary). A tainted turn's publish escalates through the standing

@@ -1,4 +1,4 @@
-"""sa#152 — durable seam bindings (DynamoDbDedupeStore, S3 sinks) against fakes.
+"""Durable seam bindings (DynamoDbDedupeStore, S3 sinks) against fakes.
 
 Hand-rolled fake boto3 clients (no moto, no new deps, no live AWS): the fakes are
 the minimal surface each store touches, and the DynamoDB fake raises a
@@ -103,7 +103,7 @@ def test_dedupe_expired_but_undeleted_row_still_hits():
     """An expired row DynamoDB has not yet reaped is still a dedupe hit: __contains__
     never reads the ttl attribute, so the ~48h TTL-deletion lag can only WIDEN the
     dedupe window, never narrow it — the lag fails toward dropping a replay
-    (sa#213 dedupe-ttl-30d-replay, near-side semantics)."""
+    (trigger-range dedupe-ttl-30d-replay, near-side semantics)."""
     fake = FakeDynamoClient()
     store = _store(fake)
     key = (_IDENTITY, "evt-replay")
@@ -118,7 +118,7 @@ def test_dedupe_expired_but_undeleted_row_still_hits():
 def test_dedupe_replay_after_ttl_deletion_reads_as_new():
     """Once DynamoDB TTL actually deletes the row, a replayed (identity, event_id) is
     indistinguishable from never-seen: __contains__ misses and add() re-arms a fresh
-    30d ttl (sa#213 dedupe-ttl-30d-replay, far-side semantics). Whether
+    30d ttl (trigger-range dedupe-ttl-30d-replay, far-side semantics). Whether
     accepted-as-NEW is intended or a finding is a recorded DECISION in the trigger
     ledger, not this test's claim — this pins only what the code DOES. NB the gate
     order bounds the blast radius: expiry (gate 4) runs before dedupe (gate 6), so a

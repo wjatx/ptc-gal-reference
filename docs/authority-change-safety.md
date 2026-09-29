@@ -3,7 +3,7 @@
 **Status: design call, not yet decided.** This doc frames the deferred session on *changing an
 agent's authority while it runs* — increasing it (promotion / loosening the envelope) and decreasing
 it (demotion / tightening). It exists so that session starts from the analysis below rather than
-cold. Nothing here is built; the broker-destub Phase 3 work (sa#122) is pure mechanism and does not
+cold. Nothing here is built; the broker-destub Phase 3 work is pure mechanism and does not
 depend on resolving any of this.
 
 ## Why this is not the obvious problem
@@ -131,7 +131,7 @@ refuses a call because it *would* carry the counter past a bound. That is a fore
 deterministically by arithmetic, whose only possible effect is to refuse. It satisfies both clauses of
 the corrected rule, which is why it has never been in tension with `docs/deterministic-gate.md`. The
 `transform` verb has the same shape: it substitutes a narrower operation and can never widen (it
-carries arguments through verbatim — #273). Monotonicity toward
+carries arguments through verbatim). Monotonicity toward
 the safe direction, not the absence of prediction, is what the deterministic-gate rule is actually
 protecting. Cite this when the rule is challenged as over-strict, because the over-strict reading is
 the one we published first.
@@ -192,7 +192,7 @@ Read that as validation of a choice we already made rather than as a new require
 contract's sign of life is deliberately *not* a heartbeat: it is a successful audit or ledger append
 of a declared `expected_op`, an artifact the agent cannot forge and cannot produce without actually
 having done the work (`docs/friction-doctrine.md` §availability). Torque is a heartbeat. An audit
-append is proof of work. When specifying any future obligation detector under #344, this is the test
+append is proof of work. When specifying any future obligation detector, this is the test
 to apply: can the subject emit the signal without performing the duty? If yes, wheel weights will
 exist for it.
 
@@ -212,11 +212,11 @@ repo's rule that a control which looks enabled but is not is worse than either p
 
 ## Relationship to current work
 
-- **Phase 3 / sa#122 (broker-destub)** is mechanism-only: real envelope hash → decision + audit,
+- **Phase 3 (broker-destub)** is mechanism-only: real envelope hash → decision + audit,
   verify-at-decision, loud quarantine on mismatch. It bakes in no polarity and is unaffected by this
   design call. It *provides* the hash-binding that makes envelope changes detectable in the first
   place.
 - This design call is the natural companion to the earlier-deferred "increasing authority for a
   running agent" question (blue/green vs live-patch), now scoped to **both** directions.
-- See also: the `taint-completeness` follow-on epic (sa#136/137) and the polarity invariant in
+- See also: the `taint-completeness` follow-on epic and the polarity invariant in
   `CLAUDE.md`.

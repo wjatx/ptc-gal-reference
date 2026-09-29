@@ -1,6 +1,6 @@
 """gal_terminal_receiver.py — the GAL terminal-proof FRESH principal's drain Receiver.
 
-The sa#4 epic close requires the full grant lifecycle drilled on a grant with NO
+Closing the autonomy epic requires the full grant lifecycle drilled on a grant with NO
 drill-scarred history (GAL §12 claims "from bootstrap"; a fresh principal is the
 only honest way to make that claim). This receiver is byte-for-byte the
 owner-channel reference receiver with one override: the principal segment. It is

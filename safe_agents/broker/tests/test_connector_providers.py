@@ -1,4 +1,4 @@
-"""Tests for sa#141 slice 1 — consumer-supplied connectors + secret injection.
+"""Tests for connector-injection slice 1 — consumer-supplied connectors + secret injection.
 
 Four layers, matching the design:
 
@@ -247,14 +247,14 @@ class TestSecretMappingEndToEnd:
 
 
 # ---------------------------------------------------------------------------
-# 5. Prefix resolution — a connector_secrets value is a LEAF, not a full id (sa#164)
+# 5. Prefix resolution — a connector_secrets value is a LEAF, not a full id
 # ---------------------------------------------------------------------------
 
 class TestPrefixedSecretLeafResolution:
     """`_PrefixedSecrets` treats its input as a leaf under `<prefix>/connectors/`,
     whether it's the default `leaf == tool` or a `connector_secrets` override.
 
-    Regression for sa#164: an override value must resolve to
+    Regression for the bare-leaf secret prefix: an override value must resolve to
     `<prefix>/connectors/<leaf>`, never be passed through raw — otherwise the
     documented "maps to a secret NAME" contract silently double-prefixes or misses.
     """

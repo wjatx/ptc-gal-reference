@@ -1,4 +1,4 @@
-"""server.py — the stdio binding for the broker's MCP mouth (#283).
+"""server.py — the stdio binding for the broker's MCP mouth.
 
 The only module in the gateway that touches the `mcp` SDK, and it imports it
 lazily inside functions — so `safe_agents.broker.gateway` imports cleanly with the

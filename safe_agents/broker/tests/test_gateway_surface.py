@@ -1,4 +1,4 @@
-"""Conformance for the broker's MCP mouth — the pure half (#283).
+"""Conformance for the broker's MCP mouth — the pure half.
 
 No `mcp` SDK is imported here, by design: the gateway's decisions live in
 `gateway/surface.py` and must be provable without a transport or an optional
@@ -73,7 +73,7 @@ class TestAdvertisedTools:
         """Pinned as a deliberate placeholder, not an accident.
 
         served_registry() carries no argument schema and the ratified schemas live
-        in registry rows build_runtime does not return (#266 finding). A schema the
+        in registry rows build_runtime does not return. A schema the
         gateway invented would have clients refuse valid calls locally — enforcement
         in the wrong place, and off the audit tape.
         """
@@ -127,7 +127,7 @@ class TestCallRouting:
         assert len(sink.records()) == before
 
     def test_unclassified_coordinate_is_refused_AND_recorded(self, surface) -> None:
-        """Was the reverse assertion until #281 was fixed, and worth the history.
+        """Was the reverse assertion until the host-refusal audit gap was fixed, and worth the history.
 
         `handle_request` denies an op absent from `tool_ops` before the PDP runs,
         and that early return used to write NOTHING — so a refusal left no line on
@@ -199,7 +199,7 @@ class TestNameCollision:
 
 
 class TestRefusalIsNotFailure:
-    """#281 — a control that REFUSED must not audit as an execution failure.
+    """A control that REFUSED must not audit as an execution failure.
 
     Before this, a tool declared in the manifest but carrying no ratified
     registry row (key #1 present, key #2 absent) was correctly refused and then

@@ -1,4 +1,4 @@
-"""Out-of-band demotion runner — DemotionSignal → evaluator wiring (sa#59).
+"""Out-of-band demotion runner — DemotionSignal → evaluator wiring.
 
 The broker process (brokerRole) cannot write the grants table — that invariant is
 load-bearing (infra/lib/identity-stack.ts: the broker can neither promote itself
@@ -20,10 +20,10 @@ Signal flow:
 - Externally-received DemotionSignals (from any delivery channel a consumer
   wires) fold in through ``metrics_from_signals``; the runner composes both.
 - A record-only repeat breach (the demotion would not change the level) is
-  deduped per UTC day (#191): already recorded today → "deduped", ZERO writes
+  deduped per UTC day: already recorded today → "deduped", ZERO writes
   (no grant ts/hash churn, no ledger noise). A demotion that WOULD change the
   level is never deduped.
-- Certification-term lapse (#255, GAL §6.7.6) runs FIRST in ``main``, under this
+- Certification-term lapse (GAL §6.7.6) runs FIRST in ``main``, under this
   same identity, via ``grants.lapse.run_lapse``: an expired term lowers the grant
   to lastSafeLevel with a ``lapse``-typed record — never a demotion record, and
   never with a trigger named. The evaluation instant is the wall clock read
@@ -126,7 +126,7 @@ class RunnerOutcome:
             no-breach   — evaluator found no configured trigger tripped
             deduped     — a record-only repeat breach already recorded today
                           (same UTC day, same triggers, same level); nothing
-                          written — zero grant churn, zero ledger noise (#191)
+                          written — zero grant churn, zero ledger noise
             demoted     — grant lowered; updated_grant + record carry the result
             conflict    — concurrent grant modification (caller re-reads and
                           retries), or the ledger append hit an existing record
@@ -180,7 +180,7 @@ def metrics_from_signals(
 # enforcement.MAX_WINDOW_PERIODS at either period.
 FALSE_ACTION_WINDOW_PERIODS = 7
 
-# Back-compat name (pre-#212).
+# Back-compat name (pre-counter-period).
 FALSE_ACTION_WINDOW_DAYS = FALSE_ACTION_WINDOW_PERIODS
 
 
@@ -208,7 +208,7 @@ def _breach_signal(
     differs per caller (a counter point-read, a period-window sum, or a typed
     artifact/record predicate collapsed to 1.0-vs-0.0 against threshold 1.0) and stays in
     each caller; only this assembly is shared. ``now`` is injectable for tests and stamps
-    period/ts only; ``period`` names the bucket size the stamp renders at (#212).
+    period/ts only; ``period`` names the bucket size the stamp renders at.
     """
     if spent < threshold:
         return None
@@ -247,7 +247,7 @@ def derive_budget_breach(
     ``_emit_demotion_signal`` field population, or None when under tolerance.
     ``now`` is injectable for tests and stamps period/ts only; the counter key's
     bucket always comes from scoped_counter_key itself (real time). ``period``
-    must match the manifest's counter_period (#212) — a mismatch reads a
+    must match the manifest's counter_period — a mismatch reads a
     disjoint key and sees zero spend (a missed breach is the fail-safe
     direction for a DEMOTION check only because the runner never promotes).
     """
@@ -281,7 +281,7 @@ def derive_false_action(
     """Re-derive the false_action signal from the durable scoped counter.
 
     Reads the ``…:false_action`` counter the PEP increments on an authenticated owner
-    flag (#193). The threshold is ``>= 1``: ONE authenticated flag suffices to demote
+    flag. The threshold is ``>= 1``: ONE authenticated flag suffices to demote
     (the maintainer's ease-gradient doctrine — easier to get demoted than to overcome the
     safeguards), and no accumulation of flags can ever promote. Re-deriving from the
     durable counter (never from a message) keeps the runner deterministic — an agent
@@ -294,7 +294,7 @@ def derive_false_action(
     now against an op that ran a period ago lands on that period's key; a point-read of
     the current period would miss it. The window's newest period is anchored on ``now``
     (real time by default), so the run period inclusive of the last ``window_periods``
-    periods is summed. ``period`` must match the manifest's counter_period (#212).
+    periods is summed. ``period`` must match the manifest's counter_period.
 
     Returns a false_action DemotionSignal, or None when no flag falls in the window.
     ``now`` is injectable for tests and stamps period/ts AND pins the window anchor.
@@ -336,9 +336,9 @@ def derive_stale_confidence(
     now: datetime.datetime | None = None,
     period: "CounterPeriod" = "utc-day",
 ) -> DemotionSignal | None:
-    """Derive the stale_confidence signal from a typed ConfidenceArtifact (#192).
+    """Derive the stale_confidence signal from a typed ConfidenceArtifact.
 
-    The #184 ``stale`` flag is the label-free drift INPUT (broker/EVIDENCE.md
+    The ``stale`` flag is the label-free drift INPUT (broker/EVIDENCE.md
     §stale_confidence): the drift DETECTOR that sets it is consumer/reference-tier
     and never lives here — this derivation consumes the flag as given, exactly as
     ``derive_false_action`` consumes the counter a /flag wrote. Deterministic: a
@@ -375,7 +375,7 @@ def derive_corroboration_failure(
     now: datetime.datetime | None = None,
     period: "CounterPeriod" = "utc-day",
 ) -> DemotionSignal | None:
-    """Derive the corroboration_failure signal from a typed quorum record (#192).
+    """Derive the corroboration_failure signal from a typed quorum record.
 
     Consumes a ``CorroborationRecord`` — the k-of-n independent-source quorum
     result a consumer's corroboration pass produced — and applies the ONE
@@ -406,7 +406,7 @@ def derive_corroboration_failure(
 
 
 # ---------------------------------------------------------------------------
-# Ledger seam + record-only same-day dedupe (#191)
+# Ledger seam + record-only same-day dedupe
 # ---------------------------------------------------------------------------
 
 @runtime_checkable
@@ -516,7 +516,7 @@ def run_demotion(
     if not result.should_demote:
         return RunnerOutcome(status="no-breach", reason=result.reason)
 
-    # Record-only same-day dedupe (#191): apply_demotion's own target + clamp
+    # Record-only same-day dedupe: apply_demotion's own target + clamp
     # (shared helpers, never re-derived) — when the level would NOT change,
     # another pass would only churn the grant ts/hash and append ledger noise.
     # A level-CHANGING demotion is never deduped.
@@ -616,7 +616,7 @@ def _resolve_table_name(table_name: str | None) -> str:
 
 
 def _ceremony_hmac_key() -> bytes:
-    """The ceremony's NAMED store-integrity key — never a dev fallback (#205).
+    """The ceremony's NAMED store-integrity key — never a dev fallback.
 
     Named on BOTH arms: a durable local store's tamper evidence is only as real
     as its key discipline, and this must NOT route through the broker's
@@ -651,7 +651,7 @@ def _build_stores(table_name: str | None):
             SqlitePromotionRecordStore,
         )
 
-        # GRANT# and RECORD# are the CHECKER-writable key space (#203), so both
+        # GRANT# and RECORD# are the CHECKER-writable key space, so both
         # take the grants-store options: their own file when the deployment
         # splits, the co-located broker.db when it does not.
         opts = sqlite_grants_open_options()
@@ -818,7 +818,7 @@ _EXIT_CODES: dict[RunnerStatus, int] = {
     "quarantined": 1,
 }
 
-# The lapse pass (#255): a lapse, or nothing owed, is a clean completion;
+# The lapse pass: a lapse, or nothing owed, is a clean completion;
 # conflict and quarantine need operator attention, as for demotion.
 _LAPSE_EXIT_CODES: dict[LapseStatus, int] = {
     "no-grant": 0,
@@ -924,7 +924,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 if flagged is not None:
                     signals.append(flagged)
-        # The typed-evidence derivations (#192): file inputs, no counter store.
+        # The typed-evidence derivations: file inputs, no counter store.
         # An unreadable or malformed input REFUSES loudly (exit 2) — a bad input
         # must never read as "no breach".
         if args.stale_artifact_json is not None:
@@ -976,7 +976,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # PII-safe one-line JSON: ids + status + trigger names + the audit-safe
-    # reason string — never payload content (the sa#153 log-surface discipline).
+    # reason string — never payload content (the log-metric surface discipline).
     print(
         json.dumps(
             {

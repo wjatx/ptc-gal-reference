@@ -1,4 +1,4 @@
-"""host.py — the broker as a safe MCP host: compose gate + client + registry (#174).
+"""host.py — the broker as a safe MCP host: compose gate + client + registry.
 
 This is the assembly MCP-HOST.md's reference tier calls for: it wires the three
 already-built parts into the broker's call path so "uncallable" is enforced at
@@ -18,7 +18,7 @@ two responsibilities:
   * ``refresh()`` — re-run discovery against the live advertised set, cache the
     ``DiscoveryResult`` snapshot for the session, and surface every failed-closed
     finding LOUDLY, exactly once per refresh (one ERROR log per finding, mirroring
-    the sa#124 quarantine-surfacing shape).
+    the loud grant-quarantine surfacing shape).
   * ``call()`` — refuse (``ToolNotCallableError`` carrying the ``ToolState``
     reason) unless the cached snapshot's verdict for the tool is ACTIVE; only then
     delegate to the client. With no refresh yet there is no snapshot, so
@@ -27,7 +27,7 @@ two responsibilities:
 
 The host adds no floor and no decision verb. A call that passes the ACTIVE gate is
 still a normal ``external=True, effect="read"`` op the PDP gates per-call and whose
-response self-taints as ``connector:<server_id>.<tool_name>`` (sa#134) with zero
+response self-taints as ``connector:<server_id>.<tool_name>`` with zero
 changes to the PEP — that binding lives in ``mcp_connector.py``.
 """
 
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 class ToolNotCallableError(ConnectorRefusedError):
     """The host refused a call: the tool is not ACTIVE in the cached snapshot.
 
-    A REFUSAL, not a failure (#281): two-key admission declined this call and
+    A REFUSAL, not a failure: two-key admission declined this call and
     nothing was attempted. Subclassing the marker is what keeps that visible on
     the audit tape instead of collapsing into `outcome="failed"` beside a
     crashed child.
@@ -192,7 +192,7 @@ class McpHost:
         return None
 
     def _surface_findings(self, result: DiscoveryResult) -> None:
-        """One ERROR log per finding (MCP-HOST.md M5, the sa#124 loud shape).
+        """One ERROR log per finding (MCP-HOST.md M5, the loud-quarantine shape).
 
         The findings are a per-refresh snapshot: the gate emits exactly one per
         failed-closed ``(server_id, tool_name)``, so a plain loop here logs each

@@ -1,4 +1,4 @@
-# ec2-woken arm — inbound airlock wake path (Arm, sa#34)
+# ec2-woken arm — inbound airlock wake path (Arm)
 
 The ec2-woken arm is an **event-driven WAKE mechanism** for a *sleeping* EC2 agent box.
 An inbound event does not run the agent directly — it passes through an untrusted-input
@@ -31,11 +31,11 @@ Explicitly **NO `secretsmanager:*`** and **NO `*/connectors/*`** — asserted in
 template comments and in `tests/test_ec2_woken_arm.py::TestGuardrailHoldsNoCredentials`.
 A fully compromised airlock "can still only ask" — here, it can only wake the box.
 
-The broker is **not** in this stack. It lives on the EC2 box (sa#98). The airlock only
+The broker is **not** in this stack. It lives on the EC2 box. The airlock only
 decides *whether to wake*; every actual tool/connector call the woken agent makes still
 goes through the broker on the box.
 
-### The waker's grant posture (#209 — why it holds no broker grant)
+### The waker's grant posture (why it holds no broker grant)
 
 The brief's broker-placement invariant reads "the waking Lambda is itself a principal
 with a scoped grant." For this arm that is satisfied on the **IAM plane, deliberately
@@ -121,7 +121,7 @@ credentials — it only moves already-guardrailed events onto the local spool.
 ## Deferred
 
 - **The live box-drain loop** — feeding the spooled events into a confined + brokered
-  agent run and replying needs the running EC2 box (sa#98). `box/emit-runner-ready.sh` is
+  agent run and replying needs the running EC2 box. `box/emit-runner-ready.sh` is
   the drain + readiness seam; it does not itself run the agent.
 - **The real intent classifier** — the classify step is a wired, env-driven stub; a real
   classifier calls the box's brokered model proxy (never a hardcoded vendor model).

@@ -17,7 +17,7 @@
 #   autonomous — core tools + python + claude + the systemd system-service run
 #                path ONLY. No OpenShell, no k8s, no Go/Rust, no Remote Control.
 #                Egress confinement is the netns that FORWARDS to the broker SERVICE
-#                (two-box model, sa#35 Option A), NOT OpenShell — the confined turn is
+#                (two-box model, Option A), NOT OpenShell — the confined turn is
 #                run-brokered.sh (a real brokered round-trip), so no sandbox runtime here.
 #   interactive — the full development-harness toolchain on top of autonomous: OpenShell sandbox
 #                 runtime, k8s, Go, Rust, Remote Control — the dev-box / travel-coding
@@ -56,7 +56,7 @@ log "Step 3/3 (always): Claude Code CLI (HARNESS-COUPLING BLOCK)"
 "${SCRIPT_DIR}/scripts/setup-claude.sh" 2>&1 | tee -a "$LOG"
 
 # OpenShell is NOT installed here. The autonomous profile's egress confinement is the
-# netns + broker-proxy model (docs/model-egress.md, sa#35), not the OpenShell sandbox.
+# netns + broker-proxy model (docs/model-egress.md), not the OpenShell sandbox.
 # OpenShell installs only under SA_PROFILE=interactive (the dev-box arm) — see below.
 
 # ── Agent directory ───────────────────────────────────────────────────────────
@@ -68,13 +68,13 @@ sudo chown -R dev:dev "${AGENT_DIR}"
 RUN_EXEC=""
 
 if [ "${SA_PROFILE}" = "autonomous" ]; then
-    # ── Autonomous egress confinement: netns forwards to the broker SERVICE (sa#35, Option A) ──
+    # ── Autonomous egress confinement: netns forwards to the broker SERVICE (Option A) ──
     # Converged TWO-BOX model: the agent runs inside a network namespace that FORWARDS to the
     # external broker SERVICE (broker.safe-agents.local), NOT a co-located model-proxy stub. The
     # confined turn does a REAL brokered round-trip (claude -p via the broker proxy + a brokered
     # github.whoami) and writes a run record — run-brokered.sh, with a host/netns split (oauth
     # fetch + run record on the HOST, the confined turn via `ip netns exec`). There is NO on-box
-    # proxy any more — the broker is its own service. Scope: NETWORK confinement only (fs is sa#95).
+    # proxy any more — the broker is its own service. Scope: NETWORK confinement only (fs is #67).
     log "[autonomous] installing netns + broker-service wiring (sa#35)"
 
     # Platform executables live under /opt so the root system services can exec them without
@@ -157,7 +157,7 @@ fi
 # ── Systemd service + timer ───────────────────────────────────────────────────
 log "Writing systemd service + timer for ${SA_AGENT_NAME}"
 
-# Profile-conditional confinement (sa#35): the autonomous service runs as root so run-brokered.sh
+# Profile-conditional confinement: the autonomous service runs as root so run-brokered.sh
 # can `ip netns exec` into the confined namespace (it drops to the dev user inside); it reads the
 # env contract from /etc/safe-agents/agent.env and orders after the netns-setup unit. The
 # interactive service runs run-agent.sh directly as dev (OpenShell confines it).
@@ -221,8 +221,8 @@ sudo restorecon -F \
 sudo systemctl daemon-reload
 sudo systemctl enable --now "${SA_AGENT_NAME}.timer"
 
-# ── Broker sidecar stub (sa#12) ───────────────────────────────────────────────
-# The broker binary is sa#12. This installs the stub unit so the service exists
+# ── Broker sidecar stub ───────────────────────────────────────────────
+# The broker binary is built separately. This installs the stub unit so the service exists
 # and can be inspected; actual binary deployed separately under brokerRole.
 sudo mkdir -p /opt/broker
 
@@ -258,7 +258,7 @@ sudo systemctl enable "broker-${SA_AGENT_NAME}.service" || true
 # to activate the full development-harness experience (OpenShell sandbox runtime,
 # k8s/DevOps tools, Go, Rust, Remote Control).
 if [ "${SA_PROFILE}" = "interactive" ]; then
-    # OpenShell sandbox runtime (LIVE-VERIFIED #93): rootless podman + OpenShell
+    # OpenShell sandbox runtime (LIVE-VERIFIED): rootless podman + OpenShell
     # gateway (systemd --user service; installer registers it on :17670). This is
     # the dev-box confinement mechanism — autonomous agents use netns instead.
     log "[interactive] installing OpenShell sandbox runtime"

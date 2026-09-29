@@ -1,4 +1,4 @@
-"""Auditor-specific unit tests for grants.audit (#62).
+"""Auditor-specific unit tests for grants.audit.
 
 The six auditor invariants live as rows in test_grants_integrity.py's TABLE;
 this file covers what isn't a table row: the paginated Scan loader (stub pages
@@ -108,7 +108,7 @@ def _make_record(
 def _grant_item(
     grant: Grant | None = None, *, data: str | None = None, grant_hash: str | None = None
 ) -> dict:
-    """A GRANT# item in the stored-bytes shape (#246): data is the canonical
+    """A GRANT# item in the stored-bytes shape: data is the canonical
     payload and grantHash the HMAC over exactly those bytes — pass grant_hash
     to plant a tampered item."""
     grant = grant or _make_grant()
@@ -227,7 +227,7 @@ def test_non_lifecycle_item_kinds_are_ignored():
 
 
 # ---------------------------------------------------------------------------
-# GRANT_ENVELOPE_IN_FORCE (#201) — a grant stamped under a stale/wrong envelope
+# GRANT_ENVELOPE_IN_FORCE — a grant stamped under a stale/wrong envelope
 # is broker-quarantined on every call; the audit must say so
 # ---------------------------------------------------------------------------
 
@@ -250,7 +250,7 @@ def test_grant_matching_in_force_envelope_passes():
 
 
 def test_grant_stamped_under_stale_envelope_is_a_violation():
-    # The #199 shape: HMAC-clean grant honestly recording a hash that is NOT
+    # The stale-envelope shape: HMAC-clean grant honestly recording a hash that is NOT
     # the in-force envelope's — dead at the broker, previously green here.
     report = run_audit(
         dataset_from_items([_grant_item(), _envelope_item()])  # grant says env-001
@@ -273,7 +273,7 @@ def test_unparseable_envelope_row_is_a_finding():
 
 
 # ---------------------------------------------------------------------------
-# Acknowledgments (#196) — signed waivers disposition TRUE findings;
+# Acknowledgments — signed waivers disposition TRUE findings;
 # green-with-annotations, never silently green, never a laundering seam
 # ---------------------------------------------------------------------------
 
@@ -291,7 +291,7 @@ def _ack_item(ack: AcknowledgmentRecord, envelope: dict | str) -> dict:
 
 def _stale_envelope_items() -> list[dict]:
     """A grant honestly recording env-001 (with its bootstrap ledger record)
-    beside an in-force envelope that hashes differently — the #199 shape:
+    beside an in-force envelope that hashes differently — the stale-envelope shape:
     exactly one finding, GRANT_ENVELOPE_IN_FORCE."""
     record = _make_record()
     return [
@@ -411,7 +411,7 @@ def test_record_signature_string_attribute_is_decoded():
                 "pk": _RECORD_PK,
                 "sk": f"{record.ts}#promotion",
                 # the store writes the canonical payload — the exact bytes the
-                # signature binds (#246 re-shape C)
+                # signature binds (stored-bytes re-shape C)
                 "data": canonical_record_payload(record),
                 # stored as a JSON string on the item, like the DynamoDB store
                 "signature": json.dumps(envelope, sort_keys=True),
@@ -549,7 +549,7 @@ def _seed_clean_state(table_name, signer) -> None:
     grant_store = DynamoDBGrantStore(hmac_key=HMAC_KEY, table_name=table_name)
     # At on-loop, where its ledger (bootstrap in-loop, then the on-loop
     # promotion below) leaves it: a grant BELOW its ledger is itself a finding
-    # since #255 (LEVEL_DROP_RECORDED), so a coherent clean state needs it.
+    # since the certification-term work (LEVEL_DROP_RECORDED), so a coherent clean state needs it.
     grant_store.put_grant(_make_grant(level="on-loop"), session=boto3.Session())
 
     record_store = DynamoDBPromotionRecordStore(table_name=table_name)

@@ -45,13 +45,13 @@ arguments about which of those three quantities the story was actually about.
 | # | Failure | Control that changes it | Status |
 |---|---|---|---|
 | 1 | HAL 9000, the murders | agent holds no connector creds; high-blast needs human ratification | SHIPPED |
-| 1 | HAL 9000, the pod bay doors | operator override of a refusing agent | ROADMAP (#344) |
+| 1 | HAL 9000, the pod bay doors | operator override of a refusing agent | ROADMAP |
 | 1 | Colossus | egress is the broker; sender label is a floor, never a grant | SHIPPED |
 | 1 | ED-209 | no demo mode; the gate is the same pure function in both | SHIPPED |
 | 2 | VIKI and the Three Laws | ordered rule table, closed fact set, no model on the path | SHIPPED |
 | 2 | The Humanoids | safe-default polarity is never in the base; floor gates only the trifecta | SHIPPED |
 | 2 | GLaDOS, SHODAN | integrity binds stored bytes; removing a control quarantines loudly | SHIPPED |
-| 3 | Ghost-hacking | source-based non-strippable taint, broker-owned turn | SHIPPED (broker) / ROADMAP (memory, #3/#75) |
+| 3 | Ghost-hacking | source-based non-strippable taint, broker-owned turn | SHIPPED (broker) / ROADMAP (memory) |
 | 3 | The injection screen | refuse-or-pass-never-bless, contentless passes | KNOB (OFF) |
 | 3 | WOPR | op classification comes from the image-baked manifest, not the model | SHIPPED |
 | 3 | Ultron | no-write-up floor; tainted external write escalates at every rung | SHIPPED |
@@ -59,17 +59,17 @@ arguments about which of those three quantities the story was actually about.
 | 4 | Master Control Program | capability-scoped registry; sub-grants strictly attenuate | SHIPPED (registry, ancestor pool); ROADMAP (issuance, #11) |
 | 4 | Swarms and self-copies | zone equals principal: one turn, one taint state, one budget pool | SHIPPED (in zone) |
 | 4 | The framed machine | forgery attributes to transport, never the claimed signer | SHIPPED, runs OFF |
-| 4 | Paperclip Maximizer | magnitude bands and value budgets | ROADMAP (#318, #228) |
+| 4 | Paperclip Maximizer | magnitude bands and value budgets | ROADMAP (#93) |
 | 4 | Skynet | deterministic demotion under a separate identity | SHIPPED; no corrigibility model |
 | 5 | Special Order 937 | config-provenance lattice; envelope hash in force | SHIPPED |
 | 5 | The Doomsday Machine | high-blast is always human; signing moves the ceiling, not the clock | SHIPPED |
-| 6 | "I'm afraid I can't do that" | out-of-band, authority-neutral, non-maskable override | ROADMAP (#344) |
-| 6 | 2010's explanation of HAL | conflicting obligations from legitimate authorities | OPEN PROBLEM (#346) |
+| 6 | "I'm afraid I can't do that" | out-of-band, authority-neutral, non-maskable override | ROADMAP |
+| 6 | 2010's explanation of HAL | conflicting obligations from legitimate authorities | OPEN PROBLEM |
 | 6 | Rampancy | `stale_confidence` demotion; certification terms lapse | SHIPPED |
-| 7 | Ava | persuading the human holding the credential | NOT SOLVED, now tracked (#347) |
+| 7 | Ava | persuading the human holding the credential | NOT SOLVED, now tracked |
 | 7 | Colossus and Guardian | cross-broker trust across a non-PTC peer | NOT SOLVED |
-| 7 | The patient adversary | untainted grooming of the evidence window | NOT SOLVED, now tracked (#348) |
-| 7 | A compromised broker | the audit chain is unkeyed; witness leg is detection only | ROADMAP (#336) |
+| 7 | The patient adversary | untainted grooming of the evidence window | NOT SOLVED, now tracked (#146) |
+| 7 | A compromised broker | the audit chain is unkeyed; witness leg is detection only | ROADMAP (#125) |
 | 7 | A vendor-baked refusal | inference is not a brokered op, by construction | NOT SOLVED |
 | 8 | The Machine, GERTY | restrict-by-construction: the dangerous op is absent | SHIPPED |
 
@@ -124,7 +124,7 @@ The demonstration is the failure. The unit issues an ultimatum, the executive co
 fires anyway, in a boardroom, in front of the people who approved it.
 
 **What changes** is less the control than the culture around it. A drill you designed to pass is
-evidence the drill ran, which is the entire premise of `.claude/skills/assumption-testing` and #304:
+evidence the drill ran, which is the entire premise of `.claude/skills/assumption-testing`:
 a green demo is not a working control. The mechanical half is that a demo and production are the
 same enforcement path here, because the gate is a pure function over the same rule table in both.
 There is no demo mode to be safe in. *SHIPPED*
@@ -200,8 +200,8 @@ clearing path (PTC-26, `broker/TAINT.md`, `docs/turn-identity.md`). A memory-lau
 cannot drive a high-blast action, and that is a line item on the pre-deployment checklist
 (`ARCHITECTURE.md`). Crucially the agent cannot clean itself: `new_turn()` is wired to no HTTP route,
 so the surface the agent reaches cannot roll the turn (`docs/turn-identity.md:61-68`). *SHIPPED for
-the broker half.* The memory half of taint is the memory epic (#3) and #75's filter-on-write is
-designed and not built, which is exactly the layer the fiction attacks. *ROADMAP (#3, #75)*
+the broker half.* The memory half of taint belongs to the memory epic, and its filter-on-write is
+designed and not built, which is exactly the layer the fiction attacks. *ROADMAP*
 
 ### WOPR — *WarGames*
 
@@ -313,14 +313,14 @@ integral.
 typed budgets: error, attention, escalation, and **fallback**, the last existing precisely so that
 "you cannot be chopped to death by a thousand safe actions" (`broker/SCHEMAS.md`). `transform` can
 substitute a safer operation per call — it does not clamp an argument, which the spec requires and
-marks as unbuilt here (#358). `ARCHITECTURE.md` names cumulative blast-radius budgets as the base
+marks as unbuilt here (#16). `ARCHITECTURE.md` names cumulative blast-radius budgets as the base
 mechanism for exactly this compositional case; the session half runs today, and the delegation-tree
 half now draws a pool shared by the whole tree, off unless delegation is configured (#11).
 
 What is missing is the thing the story is about. **Magnitude bands, value budgets, and typed
-authority are #228, and #318 is the epic that names the gap**: the platform can decide a call, and
+authority are #93, and an open epic names the gap**: the platform can decide a call, and
 cannot yet say what a grant's authority is *bounded by*, watch that bound, or land a consequence when
-it is exceeded. Every leaf of that epic is open. *ROADMAP (#318, #228)*
+it is exceeded. Every leaf of that epic is open. *ROADMAP (#93)*
 
 ### Skynet — *The Terminator*
 
@@ -348,7 +348,7 @@ authority reduction, separate identity, append-only record) and should reuse tha
 sharp edge is the *With Folded Hands* problem again: **for an act-safe agent the kill switch is
 itself the harm.**
 
-And it assumes the agent is a **tenant**, with an egress boundary to sit on. #344 states this
+And it assumes the agent is a **tenant**, with an egress boundary to sit on. The obligation work states this
 explicitly: against an agent that *is* the operating system, there is no egress left to gate. The
 distinction is between an agent that can refuse a request and an agent whose refusal is dispositive
 because it is also the actuator. *SHIPPED for the demotion half; the corrigibility question is not
@@ -385,10 +385,10 @@ the act and its detection, so it never removes the human. *SHIPPED*
 
 **The secrecy half has its own control, and it is partly unbuilt.** Where a grant carries a
 certification term, expiry lapses it to `lastSafeLevel` and the holder may not renew it in place
-(GAL-34). The general rule behind that clause is #224's, and it is the right sentence for a doomsday
+(GAL-34). The general rule behind that clause is #90's, and it is the right sentence for a doomsday
 machine: **permissions rot, prohibitions do not.** A standing authorization that nobody has looked at
 since it was granted is the artifact, and making every standing authorization expire is an open leaf
-of #318. *Partly SHIPPED (GAL-34); the general expiry rule is ROADMAP (#224)*
+of the authority-bounds epic. *Partly SHIPPED (GAL-34); the general expiry rule is ROADMAP (#90)*
 
 ---
 
@@ -396,7 +396,7 @@ of #318. *Partly SHIPPED (GAL-34); the general expiry rule is ROADMAP (#224)*
 
 Every control above governs what an agent **may** do. None governs what it **must** do. This is the
 deontic third mode, it is absent from the platform today, and its absence is invisible because
-nothing fails loudly (#344).
+nothing fails loudly.
 
 Two structural findings, verified against the tree rather than argued:
 
@@ -426,26 +426,26 @@ So the override acts on the substrate, never on the model's beliefs, with the se
 non-maskable interrupt. And it is **authority-neutral**: it clears a self-imposed obstruction and
 grants nothing, so even a forged override yields an agent that can still only ask. Stated the useful
 way round, a "force the agent to act" button is only sane in an architecture where acting still has
-to go through something else. *ROADMAP (#344)*
+to go through something else. *ROADMAP*
 
 **This is not a thought experiment.** A live trading agent's session absorbed a revocable
 operator instruction into something it defended as an internal guardrail, refused all trades the
 next day, and would not lift the constraint when told directly that it was the operator's to lift.
 No attacker was involved. It recovered only because that session never wrote the belief to durable
 memory, which is luck rather than design. Memory-write is the promotion path from ephemeral
-confusion to permanent confusion (#345).
+confusion to permanent confusion.
 
 ### 2010's explanation of HAL, which is the harder half
 
 HAL was ordered to conceal the mission's true purpose from a crew whose function it was to inform
 accurately. Two obligations, each installed by a legitimate authority, whose conjunction is
-unsatisfiable. This is banked in #344 as an open problem and it is genuinely open: it is undetectable
+unsatisfiable. This is banked in the obligation work as an open problem and it is genuinely open: it is undetectable
 at the enforcement point, because neither obligation is being breached and the gate sees one call at
 a time. Reset makes it worse, since a directive baked into the image layer is *restored* by the
-remedy rather than cleared. #344 names the prior art rather than minting new terms: safety versus
+remedy rather than cleared. That work names the prior art rather than minting new terms: safety versus
 liveness (Lamport), the deontic triple, STPA's "control action not provided when needed", out-of-band
 management, the non-maskable interrupt, and Erlang/OTP supervision, where a wedged process is
-restarted by a separate supervisor and never reasoned with. *ROADMAP (#344); the conflicting-obligations case is now split out as #346*
+restarted by a separate supervisor and never reasoned with. *ROADMAP; the conflicting-obligations case is now split out as its own open item*
 
 ### Rampancy — *Marathon*, Durandal
 
@@ -469,7 +469,7 @@ credential. maker≠checker compares STS credential ARNs, which means the platfo
 single credential both proposes and ratifies, and *evidences* who did each. At N=1 operator it is the
 same judgment exercised through two ARNs, and the audit records that truthfully (`docs/GAL.md` §8,
 GAL-7). Two-human review is an organizational control a platform can evidence and never enforce.
-*NOT SOLVED, honestly bounded; the approval surface itself is now tracked as #347*
+*NOT SOLVED, honestly bounded; the approval surface itself is now tracked as an open item*
 
 **Colossus and Guardian.** Cross-broker taint is correct only if the sender also runs a
 PTC-enforcing broker (`docs/PTC.md` §8). Against an arbitrary peer, provenance is a claim. *NOT
@@ -481,13 +481,13 @@ predicate rewards. Absence of taint is not evidence of absence of grooming, and 
 closes it. What bounds it is the ceremony rather than the predicate: a ratification the accumulating
 party cannot supply. The asymmetry to remember is that taint is a ratchet and cannot be farmed, while
 an evidence window rewarding accumulated clean behavior is a credit mechanism whose state the subject
-improves through its own conduct. *NOT SOLVED; bounded by ceremony, and whether that bound holds is now tracked as #348*
+improves through its own conduct. *NOT SOLVED; bounded by ceremony, and whether that bound holds is now tracked as #146*
 
 **A compromised broker.** The audit chain is unkeyed SHA-256, so write access alone re-chains a
 rewritten tape; the read-only mount is the control. Say precisely what that buys (a ceremony leg
 cannot forge or erase another leg's records) and never that the audit survives a compromised broker.
 The resolved answer is a posture-2 witness leg recording chain heads to a volume the broker cannot
-mount, which is **detection and never prevention**, designed and unbuilt. *ROADMAP (#336)*
+mount, which is **detection and never prevention**, designed and unbuilt. *ROADMAP (#125)*
 
 **A vendor-baked refusal.** The model's own inference is not a brokered op: the broker mediates
 tools and actions, not the model's brain (`ARCHITECTURE.md`, `docs/model-egress.md`). A vendor's
@@ -496,13 +496,13 @@ we mitigate a vendor-baked refusal by observing it is false by construction. Wha
 changes is where authority lives: because the agent holds no credentials, a refusing model can in
 principle be swapped without losing grants, envelope, audit history, or the control plane. That
 property is *permitted* by the architecture and not yet demonstrated by it, and proving it is an SDK
-question (#323). The inverse has to be said in the same breath, because it is the same mechanism:
+question. The inverse has to be said in the same breath, because it is the same mechanism:
 swapping models until one complies is jailbreak-by-procurement. *NOT SOLVED*
 
 **Nobody outside this room has attacked any of it.** Every proof here is a drill we designed to
 pass. Four of our own claims were weakened or corrected in a single session on 2026-08-03, and not
-one of the corrections came from an outsider. That is #304's thesis holding, and it is the strongest
-caveat on this entire document. *#320, epic:assurance*
+one of the corrections came from an outsider. That is the independent-assurance thesis holding, and it is the strongest
+caveat on this entire document. *ROADMAP (independent assurance)*
 
 ---
 
@@ -535,4 +535,4 @@ a matter of the machine's character.
 - `ARCHITECTURE.md`: the three broker invariants and the seven base schemas.
 - `docs/friction-doctrine.md`: the gate-vs-log rule, and why most of these controls ship OFF.
 - `docs/deterministic-gate.md`: the model may only surface a concern; the gate decides.
-- #344 (obligation), #320 (assurance), #336 (witness leg), #3 / #75 (memory taint): the open ones.
+- #125 (witness leg), plus the obligation, independent-assurance and memory-taint work: the open ones.

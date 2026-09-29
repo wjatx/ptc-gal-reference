@@ -19,7 +19,7 @@ regexes = [
   # path: exempting the whole file would mean a real secret pasted there later is
   # never caught, which is the guard quietly ceasing to guard.
   '''sk-live-abc123''',
-  # Same shape, same day, same lesson (#253, commit d3bc7f5): two fixtures spelled to
+  # Same shape, same day, same lesson (commit d3bc7f5): two fixtures spelled to
   # LOOK like live vendor keys, for realism they did not actually need — the tests only
   # ever require an opaque string. Replaced in the working tree with values that trip no
   # rule; allowlisted as exact STRINGS so full-history scans pass without exempting the
@@ -28,7 +28,7 @@ regexes = [
   '''sk-live-4f8a2b91c7de6035-rotate-me''',
 ]
 paths = [
-  # Historical path only (moved to safe_agents/pipeline/tests in the sa#106 extraction):
+  # Historical path only (moved to safe_agents/pipeline/tests in the SDK extraction):
   # its deploy-key fixture is a bare "-----BEGIN OPENSSH PRIVATE KEY-----" header string,
   # which trips the private-key rule on full-history scans.
   '''core/pipeline/tests/test_pipeline\.py''',
@@ -39,7 +39,7 @@ paths = [
 # ---------------------------------------------------------------------------
 # gitleaks ships rules for secret VALUES, so a live Secrets Manager *name* in
 # tracked source passes every scan — which is exactly how a consumer's secret
-# prefix ended up in base source, docs and a shell script (#302). A name grants nobody
+# prefix ended up in base source, docs and a shell script. A name grants nobody
 # access on its own, but it is reconnaissance in a repo that is going public,
 # and it leaks the account's layout.
 #
@@ -70,7 +70,7 @@ regexes = [
   '''safe-agents/(development|staging|production)/''',
   # This repo's OWN smoke agents. Real secrets, but this project's own fixtures rather
   # than a tenant's — the rule exists to keep a CONSUMER's ids out of base source.
-  # Renaming these before the repo goes public is optional hygiene, tracked on #302.
+  # Renaming these before the repo goes public is optional hygiene.
   '''\b(smoke-ec2|smoke-fargate|smoke-woken|smoke-rhel-openshell)/''',
   # Prose, not an id: "ssh/deploy-key" as a category, "<unknown>-cal-agent" in a fixture.
   '''\bssh/deploy-key\b''',

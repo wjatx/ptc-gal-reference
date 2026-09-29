@@ -1,5 +1,5 @@
 """
-EC2 arm — netns + broker-SERVICE egress confinement tests (sa#35, Option A).
+EC2 arm — netns + broker-SERVICE egress confinement tests (Option A).
 
 Converges the always-on EC2 box onto the TWO-BOX broker model: the confined agent does a REAL
 brokered round-trip against the broker SERVICE at broker.safe-agents.local (like the proven

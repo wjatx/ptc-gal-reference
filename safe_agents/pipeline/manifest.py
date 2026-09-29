@@ -56,7 +56,7 @@ class Schedule:
 
     state: str = "DISABLED"
     """Initial EventBridge Scheduler state. Defaults DISABLED — a provision should never
-    enable a production schedule before its first manual proof (sa#115)."""
+    enable a production schedule before its first manual proof."""
 
 
 @dataclass

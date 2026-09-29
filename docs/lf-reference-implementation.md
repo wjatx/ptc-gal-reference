@@ -62,7 +62,7 @@ A marker is scoped to the specific requirement that is unbuilt, not to the claus
 
 > The decision function is pure, deterministic, and model-free; facts are pre-resolved into a closed
 > fact set with no model-derived field; evaluation is first-match over an ordered rule set; the
-> matched rule is recorded (recording the matched rule: not yet implemented — #365); unmatched
+> matched rule is recorded (recording the matched rule: not yet implemented — #22); unmatched
 > writes default-deny.
 
 Four of those five requirements ship. The fifth does not, and the marker names it and points at the
@@ -166,7 +166,7 @@ posture where the boundary exists, or attack the boundary.
 One thing on that path is **not** posture-scoped, and we would rather you heard it from us. The default
 local seed mode writes grants from inside the broker process, and the grant it writes carries
 `promotedBy: "human-reviewer"` and an evidence reference as hardcoded literals, with no demotion
-triggers armed (#372, open). Skipping a ceremony that has no boundary to enforce it is a posture
+triggers armed (#27, open). Skipping a ceremony that has no boundary to enforce it is a posture
 statement; *asserting in authority state that a human reviewed something* is a false record, and a
 false record does not get cheaper at a lower posture. The fix is a posture decision we have not yet
 taken; the misattribution is a defect at every posture.

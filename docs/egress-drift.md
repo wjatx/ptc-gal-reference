@@ -1,7 +1,7 @@
-# Egress-policy drift standard (sa#52)
+# Egress-policy drift standard
 
 What counts as **egress-policy drift**, how severe each kind is, and what the off-substrate
-auditor (sa#26) must diff. This is the *specification*; the auditor is the *implementation* that
+auditor (#50) must diff. This is the *specification*; the auditor is the *implementation* that
 calls `broker.auditor.check_egress_drift` with a live source and routes the alarms.
 
 The network-layer egress confinement is the architectural load-bearer (`ARCHITECTURE.md`
@@ -27,7 +27,7 @@ layer that actually confines the agent. The standard covers both:
 | Layer | `layer` value | Source of truth | What it confines |
 |---|---|---|---|
 | Security group | `sg` | CDK synth template (`infra/cdk.out/SafeAgents-Network-<env>.template.json`) | what the **box** may reach |
-| netns + model-proxy | `netns_proxy` | `safe_agents/arms/<arm>/bootstrap/scripts/agent-netns-setup.sh` (veth /30 forwarding hop; since sa#97 the netns no longer blackholes the default route — confinement is the host SG). `ec2` also runs a co-located `model-proxy-stub.py` (`DEFAULT_ALLOWLIST=api.anthropic.com`, port 8443); `rhel-openshell` forwards to the external broker service with no on-box proxy. | what the **agent** may reach |
+| netns + model-proxy | `netns_proxy` | `safe_agents/arms/<arm>/bootstrap/scripts/agent-netns-setup.sh` (veth /30 forwarding hop; the netns no longer blackholes the default route — confinement is the host SG). `ec2` also runs a co-located `model-proxy-stub.py` (`DEFAULT_ALLOWLIST=api.anthropic.com`, port 8443); `rhel-openshell` forwards to the external broker service with no on-box proxy. | what the **agent** may reach |
 
 ## Canonical source of truth
 
@@ -75,18 +75,18 @@ highest among its items.
 | veth /30 topology altered (reachable peer changed) | **critical** | the agent's only-reachable-peer invariant is broken |
 | Allowlisted model host **missing** from live | warning | the model may be unreachable; not an egress widening |
 
-The mapping is the sa#52 SG model (extra-live-egress → critical, missing → warning, inbound →
+The mapping is the SG drift model (extra-live-egress → critical, missing → warning, inbound →
 warning) extended to layer 2, where "extra reachable host/route" is the critical analogue of an
 extra outbound SG rule.
 
-## Detection mechanism (out of scope here: sa#26)
+## Detection mechanism (out of scope here: #50)
 
-The off-substrate auditor (sa#26) constructs a **live** `EgressPolicySource` and calls
+The off-substrate auditor (#50) constructs a **live** `EgressPolicySource` and calls
 `check_egress_drift(source)`. For the SG layer the live source is
 `DescribeSecurityGroupRules` on the arm's agent/broker/endpoint SGs (read-only IAM:
 `ec2:DescribeSecurityGroupRules`); for the netns/proxy layer the live source is the on-box
 confinement smoke (`smoke-egress.sh` assertions, reported as `netns_proxy` rules). Building that
-live source is **sa#26's scope, not this work-item** — this standard defines *what to diff and the
+live source is **#50's scope, not this work-item** — this standard defines *what to diff and the
 severity mapping*; the auditor does the diffing and the alarm routing. The watchdog is read-only:
 it detects and reports; it never reverts a rule (remediation is a human action).
 
@@ -99,7 +99,7 @@ it detects and reports; it never reverts a rule (remediation is a human action).
   `layer`, `severity`, and a human-readable `reason` so the auditor can format this without
   re-deriving it; the arm comes from which snapshot the auditor loaded.
 
-Egress-policy drift (this) and audit-chain gaps (sa#26's other check) are **separate failure modes
+Egress-policy drift (this) and audit-chain gaps (#50's other check) are **separate failure modes
 with separate alarm channels** — co-located in the auditor, never conflated.
 
 ## Scope notes

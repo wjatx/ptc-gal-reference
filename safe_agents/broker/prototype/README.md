@@ -1,4 +1,4 @@
-# Broker local-Mac prototype (sa#98)
+# Broker local-Mac prototype
 
 A dependency-light, stdlib-only HTTP wrapper around the tested broker **library** so the
 agent↔broker **tool-call round-trip** can be run and felt on a Mac — *before* committing to
@@ -67,18 +67,18 @@ extend it, and let the friction decide.
 ## What is deliberately NOT here (deferred to the real build)
 
 - **No model-inference proxy.** The `:8443` CONNECT proxy is already solved
-  (`model-proxy-stub.py`, #97). This prototype is only the *tool-call* surface.
+  (`model-proxy-stub.py`). This prototype is only the *tool-call* surface.
 - **In-memory everything.** `InMemoryStore` / `InMemoryIntentStore` / `InMemorySink` /
   `FakeSecretsProvider` / `StubConnector` — no DynamoDB, S3, or Secrets Manager. The **real
   PIP** reads grant state, atomic counters, and budgets from DynamoDB; here it returns fixed
   `Facts`. Wiring those is the AWS step.
 - **One process, no IAM split.** On AWS the broker runs on a **separate small EC2 box** under
-  `brokerRole` (the agent box is `agentRole`) — that two-box split is the design decision on
-  #98 (it dissolves the two-identities-on-one-box problem and lets the agent box be
+  `brokerRole` (the agent box is `agentRole`) — that two-box split is the settled design
+  (it dissolves the two-identities-on-one-box problem and lets the agent box be
   SG-confined again, since it no longer needs NAT). This prototype runs the broker in one
   local process to focus on the software unknowns.
 
-## Next steps (the path on #98)
+## Next steps (the path to the two-box deploy)
 
 1. **(here)** local prototype → settle protocol + marshaling + PIP shape.
 2. real PIP against DynamoDB; a couple of real connectors; graceful WAL-replay-on-restart.

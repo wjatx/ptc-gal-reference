@@ -1,7 +1,7 @@
 """seed_envelope.py — out-of-band envelope seed for the broker's DynamoDB read
-seam (Phase 3 Slice A of the broker-destub epic, sa#136).
+seam (Phase 3 Slice A of the broker-destub epic).
 
-Mirrors seed_grants.py's out-of-band seeding pattern (sa#36 Phase C1): with
+Mirrors seed_grants.py's out-of-band seeding pattern (from the Fargate arm): with
 Slice B wired, build_runtime only ever READS its in-force envelope
 (`load_inforce_envelope`) when BROKER_ENVELOPE_LOAD=store — never writes it — so
 this script is the one write path, and must run BEFORE seed_grants and the broker. It is co-located in the SAME DynamoDB table as grants (the
@@ -21,7 +21,7 @@ Required env:
   BROKER_ENVELOPE_MANIFEST  Path to the agents/<name>.yaml to seed from.
 
 The store-key principal is derived from the SAME manifest the envelope is read
-from — its `principal:` block (#197). When that manifest has no `principal:`
+from — its `principal:` block. When that manifest has no `principal:`
 block (pipeline-style agents/*.yaml), BROKER_MANIFEST must be set explicitly
 and supplies it. When BOTH name a principal and they differ, the seed REFUSES:
 a split-brain env is operator error, and writing under either guess mints a
@@ -48,7 +48,7 @@ from pydantic import ValidationError
 # forced into the no-op skip path as belt-and-braces — this script does its own
 # envelope seeding below, explicitly, and must never touch grants as a side effect.
 # Scoped, not a bare setdefault: a module-level leak poisoned later same-process
-# callers (#210).
+# callers.
 from safe_agents.broker.prototype.boot_config import grant_load_suppressed  # noqa: E402
 
 with grant_load_suppressed():
@@ -65,7 +65,7 @@ with grant_load_suppressed():
 
 
 class SeedPrincipalError(ValueError):
-    """Raised when no unambiguous store-key principal can be derived (#197)."""
+    """Raised when no unambiguous store-key principal can be derived."""
 
 
 def _envelope_manifest_principal(manifest_path: Path) -> Principal | None:
@@ -95,7 +95,7 @@ def _envelope_manifest_principal(manifest_path: Path) -> Principal | None:
 
 def _resolve_seed_principal(manifest_path: Path) -> Principal:
     """The store-key principal, derived from the SAME manifest the envelope is
-    read from (#197) — never from a default.
+    read from — never from a default.
 
     BROKER_MANIFEST, when explicitly set, is cross-checked: a mismatch between
     the two manifests' principals is a split-brain env and is REFUSED rather
@@ -157,7 +157,7 @@ def main() -> int:
     manifest_path = Path(manifest_env)
 
     # The envelope is keyed by the principal of the SAME manifest it is read from
-    # (#197), cross-checked against BROKER_MANIFEST when set — never a default.
+    #, cross-checked against BROKER_MANIFEST when set — never a default.
     try:
         principal = _resolve_seed_principal(manifest_path)
     except SeedPrincipalError as exc:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-brokered.sh — the confined + brokered turn for the RHEL+OpenShell autonomous arm (sa#35, Option A).
+# run-brokered.sh — the confined + brokered turn for the RHEL+OpenShell autonomous arm (Option A).
 #
 # Converges the RHEL autonomous box onto the TWO-BOX broker model: a real brokered round-trip
 # against the broker SERVICE at broker.safe-agents.local — exactly like the proven EC2 arm and the

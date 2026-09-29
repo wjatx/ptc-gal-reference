@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-brokered.sh — the per-message confined + brokered runner for the ec2-woken box (sa#98).
+# run-brokered.sh — the per-message confined + brokered runner for the ec2-woken box.
 #
 # One invocation == one inbound task message run as a confined, brokered agent turn. The box
 # is confined by NETWORK TOPOLOGY (like the Fargate arm, safe_agents/arms/fargate/run.sh), NOT by an

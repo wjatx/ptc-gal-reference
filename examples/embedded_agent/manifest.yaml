@@ -3,7 +3,7 @@
 # A small research assistant that searches a local corpus. It exists to prove one
 # thing no other example proves: the broker is usable as a LIBRARY, embedded in a
 # plain Python program, through the public `safe_agents.broker.api` surface — not
-# only as a service configured by a manifest and a consumer image (#266).
+# only as a service configured by a manifest and a consumer image.
 #
 # Read agent.py beside this file for the twenty lines that consume it, and README.md
 # for what the example claims and — just as important — what it does NOT claim.
@@ -32,7 +32,7 @@ connectors:
   - search
   - notify
 
-# ── Consumer-supplied connector (the sa#141 injection seam) ───────────────────
+# ── Consumer-supplied connector (the connector-injection seam) ────────────────
 # This example's `search` is a fixed in-process corpus, not the base
 # SearchConnector: the provider path is imported / zero-arg instantiated /
 # protocol-checked at build_runtime, fail-closed. Honored ONLY from this
@@ -42,7 +42,7 @@ connectors:
 connector_providers:
   search: "examples.embedded_agent.local_search_connector:LocalSearchConnector"
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 # The broker resolves each granted (tool, op) against THIS table; the base names
 # no op. `search.query` is external: false because the corpus is in-process — an
 # honest classification, not a convenience: calling a local read "external" would

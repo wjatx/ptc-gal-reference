@@ -1,7 +1,7 @@
 # Threat model — the adversaries, the boundaries, and the untrusted-input register
 
 > **Status: standard, describing code on `main` (2026-08-04).** This is the referent for the phrase
-> "our threat model" (#268): who the adversary is, where the trust boundaries fall, every base-owned
+> "our threat model": who the adversary is, where the trust boundaries fall, every base-owned
 > path where attacker-influenced content enters, and what each mechanism does not buy. Per-mechanism
 > depth stays in the contracts this document cites; nothing is duplicated from them. Register scope
 > is **hybrid** [ruling: maintainer, 2026-08-04]: this document carries real rows for the base's own
@@ -12,7 +12,7 @@
 
 Both market-awareness studies closed their non-action decisions with some form of "our equivalents
 were derived from our threat model." Until this document, that phrase had no referent: the attacker
-model was recoverable only by reading most of the repo (#268). The mechanisms were always stronger
+model was recoverable only by reading most of the repo. The mechanisms were always stronger
 than the artifact; this states the artifact once, derived from the code and the conformance suites
 on `main`, never from theory.
 
@@ -54,7 +54,7 @@ completely, which converts it into A1; the deterministic controls therefore neve
 log injection into human-read stores.
 
 **A3: the vendor behind a remote tool.** Honors the advertised contract while doing undeclared
-things behind it (#232). Its visible half (a changed name, description, or schema) is caught by
+things behind it. Its visible half (a changed name, description, or schema) is caught by
 construction; its invisible half (a faithful result with an undeclared side effect) is inherent to
 calling someone else's code and is bounded by disclosure decisions, not by drift machinery (§5).
 
@@ -63,14 +63,14 @@ registry rows, envelopes, intents. Attempts to mint authority, raise a rung, or 
 tool. The posture against A4 is uniform: integrity binds the stored bytes, a store row can select
 or tighten but never mint, and a verification failure lands toward less authority. This now holds
 for the frozen intent row too, which HMAC-verifies before release rather than executing and
-detecting after (#349 closed the last gap here).
+detecting after (the intent-row HMAC closed the last gap here).
 
 **Explicitly out of scope**, named here so a reviewer does not have to discover them:
 
 - **A compromised broker.** The broker holds the HMAC keys and writes the audit; the tape's chain
   is unkeyed SHA-256, so to an attacker holding the broker identity the audit is testimony, not
   evidence. The planned answer is detection, never prevention: a witness leg recording chain heads
-  to storage the broker cannot mount (#336), with S3 Object Lock as the cloud tier (GOVERNANCE
+  to storage the broker cannot mount (#125), with S3 Object Lock as the cloud tier (GOVERNANCE
   mode, durable environments only; `development` sets no retention).
 - **The accountable owner acting through ceremony.** maker≠checker guarantees two credentials, one
   unmintable by the proposer; that two *humans* hold them is an organizational control the platform
@@ -96,7 +96,7 @@ Where each adversary's reach ends, and the mechanism that ends it.
   by broker code — IAM on AWS, a read-only mount on the cluster — so this is a deployed property to
   assert per arm, and a single-machine run falls outside its reach rather than failing it
   (`docs/posture-ladder.md`). The residue that is NOT posture-scoped: the default seed path stamps
-  `promotedBy` and an evidence ref as literals (#372), which is a false entry in authority state at
+  `promotedBy` and an evidence ref as literals (#27), which is a false entry in authority state at
   any posture. The maker cannot sign or write the checker's key space; the acting
   roles hold no `dynamodb:Scan`. The ceremony and audit roles are
   context-gated at deploy: a redeploy that omits any of the five `<x>TrustedPrincipals` contexts
@@ -112,7 +112,7 @@ Where each adversary's reach ends, and the mechanism that ends it.
   tightens and mutates only through ceremony; secrets are bare leaves. One known drift from the
   lattice: the drain's receiver provider path is honored from a deploy-mutable Lambda env var rather
   than an image-baked artifact, stronger than store-loaded but weaker than the lattice states
-  (#350).
+  (#126).
 - **The airlock.** Channel ingress passes a fixed gate order in which the trust map is the sole
   authorization authority; a sender label is a floor, never a grant
   (`channels/TRUST-MAPPING.md`, `channels/ADAPTERS.md`).
@@ -130,7 +130,7 @@ gap this table exists to make visible.
 | # | Channel | Enters at | Mechanical defense | Pinned by |
 |---|---|---|---|---|
 | 1 | Connector/tool results returned to the agent (the primary injection carrier) | `safe_agents/broker/runtime/pep.py:1004` | No content filtering, by design. A successful external read self-ingests `connector:{tool}.{op}` into the broker-held turn (`pep.py:1045`); taint is non-strippable (`safe_agents/broker/taint/context.py:81`); `tainted_external_write` escalates the next external write (`safe_agents/broker/pdp/engine.py:266`) | `test_taint_self_ingest.py:108`, `test_turn_identity.py` |
-| 2 | Accepted channel envelopes delivered to the consumer's receiver | `safe_agents/channels/drain/handler.py:229,353` | Chain taint is ingested into the same broker-held turn before the receiver runs; the receiver's facade exposes no turn controls; the provider path is honored from deploy env, not the message (#350 tracks moving it fully image-baked) | `test_drain_handler.py:182,196,207` |
+| 2 | Accepted channel envelopes delivered to the consumer's receiver | `safe_agents/channels/drain/handler.py:229,353` | Chain taint is ingested into the same broker-held turn before the receiver runs; the receiver's facade exposes no turn controls; the provider path is honored from deploy env, not the message (#126 tracks moving it fully image-baked) | `test_drain_handler.py:182,196,207` |
 | 3 | Tool descriptions served to the wrapped model by the MCP gateway | `safe_agents/broker/gateway/surface.py:130` | Defense by absence: descriptions are composed from the broker's own classification, never from anything a tool server said | `test_gateway_surface.py:60` |
 
 ### 4b. Into gate inputs
@@ -151,9 +151,9 @@ gap this table exists to make visible.
 | 9 | Grant rows | `safe_agents/broker/grants/store.py:500` | HMAC over the exact stored bytes, verify-then-parse; a quarantined grant is treated as absent (less authority) and surfaced loudly; an HMAC-clean grant whose `envelopeHash` differs from the in-force hash also quarantines | `test_grants_store.py:187,204`, `test_envelope_hash.py:116` |
 | 10 | MCP registry rows (the second admission key) | `safe_agents/broker/mcp/registry.py:452` | Same HMAC discipline; tampered bytes are never parsed; a row can activate only what the image-baked manifest declares, so the store selects or tightens, never mints | `test_mcp_row_integrity.py:142`, `test_mcp_registry_store.py:207` |
 | 11 | The envelope record (`BROKER_ENVELOPE_LOAD=store`) | `safe_agents/broker/envelope/store.py:120` | Deliberately no row HMAC: integrity rides the grant binding, since a tampered envelope changes the in-force hash and every existing grant quarantines to deny. The schema carries no field that can name code | `test_envelope_hash.py:116` |
-| 12 | Frozen intent rows between hold and release | `safe_agents/broker/runtime/pep.py:456,1222` | WYSIWYE: the human-facing render is broker-composed and raw args never enter it. The frozen half carries an item-level HMAC over its stored bytes, verify-then-parse at every read that can release; a mismatch (or a valid row replayed under another intent's key) quarantines and refuses before execution, mirroring the grant store (#349). Hold-side and release-side call digests still land on the tape (#198) | `test_out_of_band_approval.py` (`TestIntentTamperQuarantine`), `test_core_store_differential.py` (`TestIntentTamperEvidence`), `test_approval.py:155,215,232` (WYSIWYE) |
+| 12 | Frozen intent rows between hold and release | `safe_agents/broker/runtime/pep.py:456,1222` | WYSIWYE: the human-facing render is broker-composed and raw args never enter it. The frozen half carries an item-level HMAC over its stored bytes, verify-then-parse at every read that can release; a mismatch (or a valid row replayed under another intent's key) quarantines and refuses before execution, mirroring the grant store. Hold-side and release-side call digests still land on the tape | `test_out_of_band_approval.py` (`TestIntentTamperQuarantine`), `test_core_store_differential.py` (`TestIntentTamperEvidence`), `test_approval.py:155,215,232` (WYSIWYE) |
 | 12b | Ceremony proposal rows read at ratify time (grant promotion and MCP admission) | `safe_agents/broker/grants/proposals.py:107`; `safe_agents/broker/mcp/proposals.py:62` | These are the A4 surface §4c exists for: a store row an authority-minting gate reads. Both carry HMAC over stored bytes with verify-then-parse, raising `ProposalIntegrityError` on tamper, so a rewritten proposal cannot launder a ratification | `test_grant_proposals`, `test_mcp_proposal_integrity` |
-| 13 | Snapshot artifacts and admission-ceremony rendering | `safe_agents/broker/mcp/render.py` | Per-entry `def_hash` makes a tampered snapshot diff loudly; a description delta renders verbatim, in full, and first, with its own acknowledgment a bulk `--yes` cannot supply; schema deltas are machine-summarized; a newly-required input field on a remote server renders as a disclosure escalation naming the vendor (#232). A wrapper's own review surface applies the same rendering discipline, outside this tree | `test_mcp_render.py:117,131` |
+| 13 | Snapshot artifacts and admission-ceremony rendering | `safe_agents/broker/mcp/render.py` | Per-entry `def_hash` makes a tampered snapshot diff loudly; a description delta renders verbatim, in full, and first, with its own acknowledgment a bulk `--yes` cannot supply; schema deltas are machine-summarized; a newly-required input field on a remote server renders as a disclosure escalation naming the vendor. A wrapper's own review surface applies the same rendering discipline, outside this tree | `test_mcp_render.py:117,131` |
 
 ### 4d. Durable human-read stores written from attacker-influenced flow
 
@@ -174,7 +174,7 @@ gap this table exists to make visible.
 Residual exposure after the control fires, stated by the platform rather than discovered by a
 reviewer.
 
-- **The model channel is a deliberate, allowlisted hole** (#125). The proxy constrains where the
+- **The model channel is a deliberate, allowlisted hole**. The proxy constrains where the
   agent talks, never what crosses: injected instructions ride any tainted input the model later
   reasons over, and everything the agent's context holds is disclosed to the model provider on
   every call. What bounds it: the agent holds no credentials and the gate is deterministic and
@@ -189,20 +189,20 @@ reviewer.
   (`channels/SCREENING.md`).
 - **A signed tool definition binds the contract, not the vendor.** Undeclared vendor-side behavior
   behind a faithful result is invisible by construction, and a money cap does not bound the
-  information blast radius. The unit of trust for a remote server is the vendor. #232 owns placing
+  information blast radius. The unit of trust for a remote server is the vendor. Still open: placing
   this statement in `broker/MCP-HOST.md` and the transport-aware diff.
 - **Store integrity binds stored bytes against A4, not against the key holder.** The broker holds
   the HMAC keys and writes the tape; a compromised broker is out of scope (§2), and the honest
-  posture there is detection via the witness leg (#336), which is designed and unbuilt.
-- **Intent release now refuses on tamper (#349).** The frozen intent row HMAC-verifies before
+  posture there is detection via the witness leg (#125), which is designed and unbuilt.
+- **Intent release now refuses on tamper.** The frozen intent row HMAC-verifies before
   release, so an A4 rewrite between hold and release quarantines and does not execute; executed==
-  approved stays provable from the tape receipts (#198) on top of that. This limit statement is
+  approved stays provable from the tape receipts on top of that. This limit statement is
   retained as a record of the gap the register sweep found and closed, not as a live limit.
 - **Egress confinement has two halves with different defaults.** The code/credential half is always
   on; the network topology (`secureNetwork`) ships OFF on the experiment floor, so posture claims
   must name their posture (`docs/posture-ladder.md`).
 - **Every proof here is a drill we designed to pass.** No third party has attacked these claims;
-  that gap is tracked, not waved away (#304, #320, `/assumption-testing`).
+  that gap is tracked, not waved away (`/assumption-testing`).
 
 ## 6. The consumer register contract
 
@@ -236,5 +236,5 @@ rule still applies (`channels/TRUST-MAPPING.md`).
 - `docs/config-provenance.md`: the A4 lattice behind §4c.
 - `docs/model-egress.md`, `docs/network-security-layer.md`, `docs/posture-ladder.md`: the network
   boundary and what may be claimed about it.
-- #268 (this document's mandate), #125 (the model-channel limit, discharged in §5), #232 (the
-  MCP-HOST limit statement, still open), #336 (the witness leg), #304/#320 (independent assurance).
+- #125 (the witness leg); untracked here: this document's mandate, the model-channel limit
+  (discharged in §5), the MCP-HOST limit statement (still open), and independent assurance.

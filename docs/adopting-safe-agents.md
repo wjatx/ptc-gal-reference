@@ -33,12 +33,12 @@ connector directly, or hold a connector secret, it's wrong.
     tamper-evident without off-device sync — documented).
   - `ec2-woken` — a **sleeping** box woken by an event: API Gateway → guardrail Lambda (the
     "airlock") → SQS + `StartInstances`; the box drains the queue, runs, and sleeps. Cheapest for
-    bursty inbound. **Fully proven live, end to end** (sa#34): guardrail (200/4xx/injection/dedup)
+    bursty inbound. **Fully proven live, end to end**: guardrail (200/4xx/injection/dedup)
     → wake → drain a real message → confined brokered run (model + a brokered tool call via the
     broker) → run record → self-stop.
   - `ec2` — always-on scheduled box (systemd timer). Confinement (netns) proven; the real-broker
     on-box round-trip (G9) is proven on the EC2 substrate via the ec2-woken box, which is itself a
-    confined EC2 instance routing to the broker service (sa#98).
+    confined EC2 instance routing to the broker service.
 - **The broker** — the deterministic decision + audit engine. Deployed as a **persistent service**
   (the two-box topology): one broker box per environment holds the connector creds and reaches the
   outside world; confined agents route to it at `broker.safe-agents.local`.
@@ -74,11 +74,11 @@ fargate_provision(manifest, aws, environment="production",
 
 Each day the scheduler launches a fresh, confined RunTask → broker round-trip → run record → it
 exits (scale-to-zero; cheaper than an always-on EC2 idling 23h/day). This is **proven live** —
-a scheduler-fired RunTask ran the full capstone end-to-end (sa#103, sa#36).
+a scheduler-fired RunTask ran the full capstone end-to-end.
 
 > **When to use `ec2-woken` instead:** only for *event-driven* wakes (an inbound webhook/message
 > should boot a sleeping box, stay warm through the exchange, and sleep when idle). A daily
-> *scheduled* agent doesn't need the airlock at all. The full ec2-woken loop is proven live (sa#34),
+> *scheduled* agent doesn't need the airlock at all. The full ec2-woken loop is proven live,
 > so it's ready when you want the warm-box conversational UX — the example agent, being scheduled today,
 > just doesn't need it yet.
 
@@ -207,9 +207,9 @@ arm is the upgrade — same manifest, same broker refactor).
               5. persist the updated context; exit (scale-to-zero)
 ```
 
-**What's already proven** (reuse as-is): the scheduler → RunTask path (sa#36/#103); the airlock
-guardrail's screen/allow-list/dedup (sa#34); the confined agent → broker round-trip + run record +
-audit (sa#36/#39).
+**What's already proven** (reuse as-is): the scheduler → RunTask path; the airlock
+guardrail's screen/allow-list/dedup; the confined agent → broker round-trip + run record +
+audit.
 
 **What you build for this pattern** (small, all on the platform's grain):
 - **Guardrail → RunTask target.** Today the airlock guardrail targets SQS + `StartInstances` (the

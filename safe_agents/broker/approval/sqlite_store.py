@@ -12,18 +12,18 @@ One deliberate layout difference from Dynamo: expiry rides the substrate's
 indexed ``expires_at`` COLUMN as ISO-8601, not an epoch ``ttl`` attribute in
 the item. Dynamo's epoch attr exists only to feed the DDB TTL daemon; sqlite
 has no daemon, so the item JSON carries no ttl and the column serves the boot
-sweep instead. Expiry is a PREDICATE AT USE (sa#213 — deletion timing is never
+sweep instead. Expiry is a PREDICATE AT USE (deletion timing is never
 correctness: ``approve()`` checks the intent's ``expiry`` field at use
 regardless of whether the row still exists). :meth:`SqliteIntentStore.sweep_expired`
 is a BOUNDED-LAG privacy property, not an enforcement mechanism — an expired
 intent's payload should not linger forever — scoped strictly to INTENT# rows
 and run at boot by the broker (wired by boot code, never this module).
 
-The executed-transition retention semantics match Dynamo (sa#213 pin): the
+The executed-transition retention semantics match Dynamo (trigger-range pin): the
 retention window derives from ``executed_at`` ITSELF, not the store's clock,
 so expires_at == executedAt + EXECUTED_INTENT_RETENTION_DAYS holds
-structurally. A tz-naive executed_at is UTC, never broker-local (#193
-finding 6).
+structurally. A tz-naive executed_at is UTC, never broker-local (evidence-labeling
+finding).
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def _parse_utc(ts: str) -> datetime:
     """Parse an ISO-8601 timestamp to an aware UTC datetime.
 
     Accepts the 'Z' suffix (Dynamo's put path does the same ``.replace``) and
-    treats a tz-naive timestamp as UTC (#193 finding 6). All expiry
+    treats a tz-naive timestamp as UTC (an evidence-labeling finding). All expiry
     comparisons go through here — datetime comparison, never string
     comparison, so 'Z' and '+00:00' spellings of one instant compare equal.
     """
@@ -64,7 +64,7 @@ class SqliteIntentStore(substrate.SqliteStoreBase):
     Item layout mirrors ``DynamoIntentStore`` (minus the ttl attr — see the
     module docstring):
         pk = "INTENT#<intent_id>"  sk = "v0"
-        attrs {"data": <canonical frozen-half payload — the #349 HMAC basis>,
+        attrs {"data": <canonical frozen-half payload — the intent HMAC basis>,
                "intentHash": <hmac over those exact bytes>,
                "status"[, "approvedBy"][, "executedAt"]}
     The substrate ``expires_at`` column carries the intent's expiry (or, once
@@ -110,7 +110,7 @@ class SqliteIntentStore(substrate.SqliteStoreBase):
         attrs = substrate.get_item(self._connection(), *self._item_key(intent_id))
         if attrs is None:
             return None
-        # Verify-then-parse over the STORED bytes (#349) — the shared helper,
+        # Verify-then-parse over the STORED bytes — the shared helper,
         # so all three backends quarantine identically.
         return intent_from_item(intent_id, attrs, self._hmac_key)
 
@@ -145,9 +145,9 @@ class SqliteIntentStore(substrate.SqliteStoreBase):
             if executed_at is not None:
                 # Stamp executedAt AND extend the expires_at column so the
                 # executed intent survives its short approval window for the
-                # after-the-fact /flag review (#193 Phase 6c). The retention
+                # after-the-fact /flag review (evidence labeling). The retention
                 # anchors on executed_at itself, never the store's clock
-                # (sa#213 pin) — same derivation as DynamoIntentStore's ttl.
+                # (trigger-range pin) — same derivation as DynamoIntentStore's ttl.
                 executed_dt = _parse_utc(executed_at)
                 attrs["executedAt"] = executed_at
                 expires_at = (
@@ -162,7 +162,7 @@ class SqliteIntentStore(substrate.SqliteStoreBase):
         This is the sqlite stand-in for the DynamoDB TTL daemon, run at boot by
         the broker (boot wiring calls it — this module never does). It is a
         BOUNDED-LAG PRIVACY property, never correctness: expiry is a PREDICATE
-        AT USE (sa#213 — ``approve()`` checks the intent's ``expiry`` field
+        AT USE (``approve()`` checks the intent's ``expiry`` field
         whether or not the row was swept; deletion timing is never
         load-bearing), the sweep only bounds how long an expired intent's
         payload can linger at rest.

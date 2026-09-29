@@ -13,7 +13,7 @@ row pump (sqlite row → Dynamo item, attribute map verbatim), never a schema
 translation. The ``item`` column holds the NON-key attribute map; pk/sk live
 only in their columns, so the two can never diverge.
 
-Conditional-write semantics (#190) come from the transaction shape, not a
+Conditional-write semantics come from the transaction shape, not a
 condition-expression DSL: every write runs inside ``BEGIN IMMEDIATE``, which
 takes the single writer lock up front — a read-check-write sequence inside the
 transaction is therefore serialized against every other writer, exactly the
@@ -27,11 +27,11 @@ Durability: ``synchronous=FULL`` under WAL — each commit is fsync'd. The
 ceremony writes admissions and ledger records; write volume is human-paced and
 the trust properties are worth the sync.
 
-Expiry/period are PREDICATES AT USE (the sa#213 doctrine — deletion timing is
+Expiry/period are PREDICATES AT USE (the trigger-range doctrine — deletion timing is
 never correctness): the indexed columns exist so a later boot+timer sweep can
 find candidates cheaply, but nothing in this module deletes.
 
-**A store may be opened read-only, and that is a security seam** (#203): the
+**A store may be opened read-only, and that is a security seam**: the
 grant ceremony's maker half reads the grant store to assemble evidence but must
 be structurally unable to write it, which on a cluster means the file arrives on
 a read-only mount and the kernel issues the refusal. Supporting that costs this
@@ -61,7 +61,7 @@ SCHEMA_VERSION = "1"
 # WAL is the default and stays the default: readers never block the writer,
 # which is what a gateway daemon and a ceremony CLI sharing one file want.
 #
-# DELETE exists for exactly one reason (#203): **a WAL database cannot be
+# DELETE exists for exactly one reason: **a WAL database cannot be
 # opened from a read-only mount at all.** WAL keeps its index in a `-shm`
 # sidecar that every reader must map read-write, so a reader on a read-only
 # filesystem fails at OPEN with "attempt to write a readonly database" — a
@@ -212,7 +212,7 @@ def open_connection(
 
 
 def _open_read_only(db_path: str | Path) -> sqlite3.Connection:
-    """Open a database the process must not — and CANNOT — write (#203).
+    """Open a database the process must not — and CANNOT — write.
 
     This exists so the maker half of the ceremony can read the grant store it
     is structurally forbidden to write: on OpenShift the grant database arrives
@@ -225,7 +225,7 @@ def _open_read_only(db_path: str | Path) -> sqlite3.Connection:
     ``mkdir`` on the parent, the ``journal_mode`` pragma, and the
     ``CREATE TABLE IF NOT EXISTS`` bootstrap all fail on a read-only mount. So
     the schema version is VERIFIED by SELECT here rather than ensured, and an
-    absent file REFUSES rather than being created — the #205 reasoning applies
+    absent file REFUSES rather than being created — the named-config-or-refuse reasoning applies
     unchanged: a silently-fresh empty database reads as "no grants exist",
     which fails toward *more* authority for a maker assembling evidence.
     """
@@ -283,10 +283,10 @@ class SqliteStoreBase:
     no store module reads ``BROKER_SQLITE_PATH`` itself.
 
     Lazy is load-bearing, not an optimization: constructing a store touches no
-    disk, so a boot that REFUSES before first use (the #205 named-config-or-
+    disk, so a boot that REFUSES before first use (the named-config-or-
     refuse seams) leaves no database file behind at all.
 
-    ``journal_mode`` and ``read_only`` are per-store because the #203 split
+    ``journal_mode`` and ``read_only`` are per-store because the maker/checker write split
     puts the checker-writable key space (``GRANT#``/``RECORD#``/``TOOLDEF#``/
     ``TOOLREC#``) in its own database file, which the maker mounts read-only.
     Both default to today's behaviour exactly, so a deployment that does not
@@ -367,7 +367,7 @@ def put_new_item(
     expires_at: str | None = None,
     period: str | None = None,
 ) -> None:
-    """Create-only write: a plain INSERT, never REPLACE (#190).
+    """Create-only write: a plain INSERT, never REPLACE.
 
     Raises ``sqlite3.IntegrityError`` if (pk, sk) exists — the caller maps
     that to its own append-only / already-exists vocabulary. Inside a

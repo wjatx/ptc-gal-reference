@@ -1,12 +1,12 @@
-"""grants.audit — read-only grant-integrity auditor (#62).
+"""grants.audit — read-only grant-integrity auditor.
 
 Pure functions over an already-loaded grants-table dataset → typed findings.
 The auditor NEVER writes: the only AWS-touching function is ``load_dataset``,
 and its only API call is a paginated Scan. Everything else operates on the
 parsed ``AuditDataset``, so the same rules run identically against production
-items and in-memory fixtures (the #62 CI policy table).
+items and in-memory fixtures (the CI policy table).
 
-Two loaders, one parser (#252): ``load_dataset`` (DynamoDB Scan) and
+Two loaders, one parser: ``load_dataset`` (DynamoDB Scan) and
 ``load_dataset_sqlite`` (a local ``broker.db``) both hand whole items to
 ``dataset_from_items``, so a local floor is audited by the same rules under the
 same names as a cloud floor — a differential test asserts identical findings
@@ -30,9 +30,9 @@ Rules (each documented at its check site in run_audit):
   LEVEL_LEDGER_CONSISTENT   grant.level never exceeds the ledger-derived level
   LEVEL_DROP_RECORDED       grant.level never sits BELOW the ledger-derived
                             level: every drop (demotion, tightening, lapse)
-                            has its record (#255)
+                            has its record
   GRANT_TERM_RATIFIED       grant.certifiedUntil equals the term on the
-                            promotion record that last set it (#255)
+                            promotion record that last set it
   RECORD_SIGNATURE_VERIFIES every record in scope carries a DSSE envelope that
                             verifies under ITS RECORD TYPE'S signing role
                             (issuer: promotion/bootstrap/tightening;
@@ -47,11 +47,11 @@ Rules (each documented at its check site in run_audit):
   QUARANTINED_NO_RAISE      (keyed) a quarantined grant never sits above its
                             ledger-derived level
   GRANT_ENVELOPE_IN_FORCE   grant.envelopeHash matches the stored in-force
-                            envelope for its principal (#201)
+                            envelope for its principal
   UNPARSEABLE_ITEM          a lifecycle item that cannot be parsed is itself
                             a finding, never a crash
 
-Acknowledgments (#196): a TRUE finding can be dispositioned by a signed ACK#
+Acknowledgments: a TRUE finding can be dispositioned by a signed ACK#
 ceremony record (grants/acknowledgments.py) — the matched finding moves to
 ``AuditReport.acknowledged`` (with the waiver ref) instead of ``violations``,
 GREEN-with-annotations, never silently green. Only WAIVABLE_RULES can be
@@ -170,7 +170,7 @@ class AuditViolation:
 
 @dataclass(frozen=True)
 class AcknowledgedFinding:
-    """A true finding dispositioned by a verified acknowledgment (#196).
+    """A true finding dispositioned by a verified acknowledgment.
 
     Reported BESIDE the violations, never dropped: the dispatch is
     GREEN-with-annotations, never silently green. waiver_ref names the
@@ -215,7 +215,7 @@ class AuditReport:
 class AuditedGrant:
     """One parsed GRANT# item, with the stored bytes and item-level HMAC.
 
-    raw_data / stored_hash are the integrity basis itself (#246 stored-bytes):
+    raw_data / stored_hash are the integrity basis itself (stored-bytes integrity):
     GRANT_TAMPER verifies the bytes verbatim, never a re-serialization.
     """
 
@@ -228,7 +228,7 @@ class AuditedGrant:
 class AuditedRecord:
     """One parsed RECORD# item with the DSSE envelope stored beside it.
 
-    raw_data is the exact stored serialization — the verify basis since #246
+    raw_data is the exact stored serialization — the verify basis since stored-bytes integrity
     (the signature's subject digest is the sha256 over these bytes verbatim,
     never a re-serialization of the parsed record). signature stays as loaded:
     a dict for a well-formed envelope, None for an unsigned append, or the
@@ -255,9 +255,9 @@ class AuditedProposal:
 
 @dataclass(frozen=True)
 class AuditedAcknowledgment:
-    """One parsed ACK# item with its DSSE envelope stored beside it (#196).
+    """One parsed ACK# item with its DSSE envelope stored beside it.
 
-    raw_data is the exact stored serialization — the verify basis since #246
+    raw_data is the exact stored serialization — the verify basis since stored-bytes integrity
     instance 7 (subject digest over the stored bytes verbatim). signature
     stays as loaded (dict / None / raw undecodable value) —
     verify_acknowledgment fails closed on anything that is not a dict.
@@ -271,7 +271,7 @@ class AuditedAcknowledgment:
 @dataclass(frozen=True)
 class AuditedEnvelope:
     """One parsed ENVELOPE# item, reduced to what the audit judges: which
-    principal it is in force for, and its recomputed content hash (#201).
+    principal it is in force for, and its recomputed content hash.
 
     The hash is recomputed here from the stored bytes via the SAME
     model-load + compute_envelope_hash path the broker runtime uses at boot,
@@ -311,9 +311,9 @@ class AuditDataset:
 # AWS-touching function in this module, and its only API call is a Scan.
 #
 # The sqlite arm exists because a local floor that cannot be audited by its own
-# tooling has no honest posture story (#252): after the grants-sqlite slice
-# (#247) every grants store family had a local arm EXCEPT the thing that audits
-# them — the #267 second-arm shape, correct at site #1 and silently absent at
+# tooling has no honest posture story: after the grants-sqlite slice
+# every grants store family had a local arm EXCEPT the thing that audits
+# them — the second-arm shape (#140), correct at site #1 and silently absent at
 # site #2.
 
 
@@ -366,7 +366,7 @@ def dataset_from_items(items: Iterable[dict]) -> AuditDataset:
 
     Item kinds that share the grants table but are not lifecycle items
     (COUNTER#, IDEM#, INTENT#, ...) are ignored — they have their own
-    integrity mechanisms. ENVELOPE# rows ARE parsed since #201: the
+    integrity mechanisms. ENVELOPE# rows ARE parsed now: the
     GRANT_ENVELOPE_IN_FORCE rule judges grants against them, so an envelope
     row that fails to parse is an UNPARSEABLE_ITEM finding like any
     lifecycle item.
@@ -581,7 +581,7 @@ def run_audit(
     the table as it stands. It proves consistency between what is stored and
     what the ceremony ledger accounts for; it cannot replay how the state was
     reached — the write-side guards (conditional writes, quarantine refusals,
-    single-shot proposal consumption) own that, and the #62 policy table
+    single-shot proposal consumption) own that, and the CI policy table
     proves THOSE stay live.
 
     ``signing_epoch`` is the ISO-8601 UTC instant from which EVERY record type
@@ -608,13 +608,13 @@ def run_audit(
         coordinate_records = ledger.get(coordinate, [])
 
         # LEDGER_COUNTERPART — every level was earned through the ceremony
-        # ledger: seeds emit bootstrap records (#123), promotions append
+        # ledger: seeds emit bootstrap records, promotions append
         # promotion records, so a grant with neither is a bypass write.
-        # Since #244 the record and the grant commit as ONE atomic unit
+        # Since the atomic-write change the record and the grant commit as ONE atomic unit
         # (write_record_and_grant at every ceremony write-pair site), so NEW
         # findings here can no longer be ceremony fallout. The rule STAYS: it
         # still catches historical artifacts (pre-atomicity interruptions)
-        # and out-of-band tamper — a finding dated after the #244 cutover is
+        # and out-of-band tamper — a finding dated after the atomic-write cutover is
         # tamper evidence, same framing as MCP_ORPHAN_RECORD (mcp/audit.py).
         if not any(
             e.record.recordType in _EARNING_RECORD_TYPES for e in coordinate_records
@@ -649,11 +649,11 @@ def run_audit(
                 )
             )
 
-        # LEVEL_DROP_RECORDED (#255, GAL §6.11) — every level drop is recorded:
+        # LEVEL_DROP_RECORDED (GAL §6.11) — every level drop is recorded:
         # demotion, tightening and lapse each append their record in the SAME
-        # atomic unit as the lowered grant (#244), so a grant below its
+        # atomic unit as the lowered grant, so a grant below its
         # ledger-derived level is a drop no record explains — an out-of-band
-        # write, or pre-#244 history where demotion wrote the grant first.
+        # write, or pre-atomic-write history where demotion wrote the grant first.
         # Waivable (acknowledgments.WAIVABLE_RULES) because that history
         # failed toward less authority. Read-side limit: it judges the stored
         # level only. A grant whose certification term has passed but whose
@@ -673,7 +673,7 @@ def run_audit(
                 )
             )
 
-        # GRANT_TERM_RATIFIED (#255, GAL §6.7.6) — the term enforced is the
+        # GRANT_TERM_RATIFIED (GAL §6.7.6) — the term enforced is the
         # term the checker ratified. Only a promotion sets a term: the ceremony
         # writes the same value onto the grant and onto the signed promotion
         # record, and every later write (demotion, tightening, lapse, re-seed,
@@ -705,10 +705,10 @@ def run_audit(
                 )
             )
 
-        # GRANT_ENVELOPE_IN_FORCE (#201) — grant.envelopeHash must match the
+        # GRANT_ENVELOPE_IN_FORCE — grant.envelopeHash must match the
         # stored in-force envelope for its principal. A mismatched grant is
-        # quarantined by the broker on EVERY call (sa#122) — operationally
-        # dead — yet is HMAC-clean, so no other rule sees it (#199's incident
+        # quarantined by the broker on EVERY call — operationally
+        # dead — yet is HMAC-clean, so no other rule sees it (the dead-grant incident
         # grant passed a green audit). Fires expectedly after any far-jump
         # redeploy: the remedy is `re-seed`, which re-attests HMAC-clean
         # grants at the same level. Read-side limit: judged only where an
@@ -732,7 +732,7 @@ def run_audit(
         if hmac_key is not None:
             # GRANT_TAMPER — the read-side twin of the store's verify-on-read
             # quarantine: HMAC the STORED BYTES verbatim against the item-level
-            # grantHash (#246 — never a re-serialization, so schema evolution
+            # grantHash (never a re-serialization, so schema evolution
             # can never fire this rule). A missing grantHash attribute is a
             # finding too: the item cannot be verified. Every finding here is
             # a grant that reads back quarantined and needs operator attention.
@@ -787,8 +787,8 @@ def run_audit(
     #   epoch unset — the pre-epoch scope (promotion required, lapse-if-signed)
     #                 plus a LOUD annotation that the rest is unenforced.
     # Read-side limit: predicate fields inside the record (covered, provenance
-    # maturity) are proposer ASSERTIONS at N=1 owner — #364 tracks deriving
-    # provenance maturity rather than asserting it (#193/#174 were named here
+    # maturity) are proposer ASSERTIONS at N=1 owner — #21 tracks deriving
+    # provenance maturity rather than asserting it (two earlier issues were named here
     # and both closed without landing that measurement) — so this rule verifies
     # AUTHENTICITY (who signed what), never the truth of the asserted evidence.
     if resolvers is None:
@@ -870,7 +870,7 @@ def run_audit(
                     )
                 )
                 continue
-            # Verify from the STORED bytes (#246): the subject digest is the
+            # Verify from the STORED bytes: the subject digest is the
             # sha256 over the item's data string verbatim — NEVER a
             # re-serialization of the parsed record (that would re-derive the
             # basis from today's model and read every pre-schema-growth record
@@ -950,7 +950,7 @@ def run_audit(
                     )
                 )
 
-    # Acknowledgments (#196) — sanctioned disposition of TRUE findings. Judged
+    # Acknowledgments — sanctioned disposition of TRUE findings. Judged
     # BEFORE they can waive anything: a waiver mints "green", so it is itself
     # authority. Rules: only WAIVABLE_RULES can be acknowledged (closed
     # vocabulary — HMAC tamper etc. stay un-waivable); the acknowledgment must
@@ -981,7 +981,7 @@ def run_audit(
                     )
                 )
                 continue
-            # Verify from the STORED bytes (#246 instance 7); an entry without
+            # Verify from the STORED bytes (stored-bytes instance 7); an entry without
             # them cannot be verified — fail closed, the waiver applies nothing.
             if entry.raw_data is None:
                 violations.append(

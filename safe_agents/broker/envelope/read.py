@@ -1,11 +1,11 @@
 """load_inforce_envelope — the source-agnostic read seam the broker calls at
-startup (Phase 3 Slice B of the broker-destub epic, sa#136). Slice B is now
+startup (Phase 3 Slice B of the broker-destub epic). Slice B is now
 wired: build_runtime calls this once at startup when BROKER_ENVELOPE_LOAD=store
 (broker/prototype/broker_server.py::build_runtime) and fails fast if it raises.
 
 Kept as its own function (rather than a method on EnvelopeStore) so a future
 source — Streams-backed cache invalidation, a file-backed dev fallback,
-whatever sa#122 eventually needs — can swap in behind the same signature
+whatever a store-loaded envelope eventually needs — can swap in behind the same signature
 without touching call sites.
 """
 

@@ -1,4 +1,4 @@
-"""Evidence contract — constructed confidence as a typed artifact (#184).
+"""Evidence contract — constructed confidence as a typed artifact.
 
 Pillar 4 (calibrated uncertainty). The base does NOT read a raw model logprob and
 call it confidence: a logprob is a next-token statistic, not a claim about whether
@@ -6,7 +6,7 @@ call it confidence: a logprob is a next-token statistic, not a claim about wheth
 independent samples, ensemble agreement, or a conformal threshold — and packaged as
 a typed `ConfidenceArtifact` the deterministic gate can key on. Every function in
 this module is pure: there is no model in the decision path (the same discipline as
-`Liveness.overdue` — sa#160 — which observes THAT a contract was met, never judges
+`Liveness.overdue`, which observes THAT a contract was met, never judges
 WHY).
 
 What lives here, and at which tier (`docs/contract-vs-reference.md`):
@@ -41,7 +41,7 @@ from .common import DemotionTrigger, Principal
 if TYPE_CHECKING:
     # ToolOp is a signature-only annotation here (never a model field), so it lives
     # under TYPE_CHECKING: brokered_call.py now imports ConfidenceArtifact from THIS
-    # module at runtime (#184), and a runtime ToolOp import here would close that cycle.
+    # module at runtime, and a runtime ToolOp import here would close that cycle.
     from .brokered_call import ToolOp
     from .envelope import Confidence
 
@@ -107,7 +107,7 @@ ConfidenceEvidence = Annotated[
 
 
 class ConfidenceArtifact(BaseModel):
-    """The typed confidence artifact a gate keys on (#184).
+    """The typed confidence artifact a gate keys on.
 
     Constructed confidence packaged as a contract: the value, the error-budget draw
     numerator, the method-discriminated evidence, and a drift flag. Never a raw
@@ -126,12 +126,12 @@ class ConfidenceArtifact(BaseModel):
     # method-discriminated construction evidence
     evidence: ConfidenceEvidence
     # label-free drift flag — voids the conformal threshold; a stale artifact never
-    # meets a bar (#65 absorbed: the drift DETECTOR is reference-tier and later; this
+    # meets a bar (#59 absorbed: the drift DETECTOR is reference-tier and later; this
     # is the input it sets)
     stale: bool = False
     # ISO-8601 UTC timestamp of construction
     computed_at: str
-    # attach-only findings (e.g. the #58 evidence reviewer raises suspicion here).
+    # attach-only findings (e.g. the evidence reviewer raises suspicion here).
     # NEVER read by any gate — an annotation cannot license or veto anything; it is
     # a place to record, not a place to decide.
     annotations: list[str] = Field(default_factory=list)
@@ -143,7 +143,7 @@ BlastClass = Literal["low", "medium", "high"]
 
 
 def derive_blast_class(op: ToolOp) -> BlastClass:
-    """Derive a decision's blast class from its ToolOp classification (#184).
+    """Derive a decision's blast class from its ToolOp classification.
 
     Pure derivation — no new declaration invented; the class falls out of the same
     effect/external/reversible facts the PDP already keys on:
@@ -163,7 +163,7 @@ def derive_blast_class(op: ToolOp) -> BlastClass:
 
 
 def effective_blast_class(op: ToolOp, high_blast_overrides: Collection[str]) -> BlastClass:
-    """The blast class after consumer overrides — TIGHTEN-ONLY (#184).
+    """The blast class after consumer overrides — TIGHTEN-ONLY.
 
     If `f"{op.tool}.{op.op}"` is in `high_blast_overrides`, the class is forced to
     "high"; otherwise it is `derive_blast_class(op)`. There is deliberately NO input
@@ -176,7 +176,7 @@ def effective_blast_class(op: ToolOp, high_blast_overrides: Collection[str]) -> 
 
 
 def meets_bar(artifact: ConfidenceArtifact | None, knob: Confidence | None) -> bool:
-    """The deterministic below-bar predicate the PDP wiring will call (#184).
+    """The deterministic below-bar predicate the PDP wiring will call.
 
     Returns True when the artifact clears the configured confidence bar (or no bar
     is configured). The wiring slice routes a False through the per-agent safe
@@ -207,7 +207,7 @@ def error_budget_draw(
     blast_class: BlastClass,
     blast_weights: Mapping[str, float],
 ) -> float:
-    """The per-decision error-budget draw: `error_prob × blast_radius` (#184).
+    """The per-decision error-budget draw: `error_prob × blast_radius`.
 
     `blast_radius` is the consumer-declared weight for the decision's blast class
     (`Budgets` §6: the error budget is drawn down as `Σ error_prob × blast_radius`).
@@ -226,7 +226,7 @@ def error_budget_draw(
 
 
 class DemotionSignal(BaseModel):
-    """Typed demotion input emitted by evidence machinery (#184).
+    """Typed demotion input emitted by evidence machinery.
 
     Emitted at breach detection (e.g. an error-budget breach → `budget_breach`), and
     consumed by the Phase-3 evaluator (`grants.demotion.DemotionMetrics` maps emitted
@@ -252,7 +252,7 @@ class DemotionSignal(BaseModel):
 
 
 class CorroborationRecord(BaseModel):
-    """A k-of-n independent-source quorum result — the corroboration_failure input (#192).
+    """A k-of-n independent-source quorum result — the corroboration_failure input.
 
     The typed shape a corroboration pass PRODUCES and the demotion runner CONSUMES
     (`grants.runner.derive_corroboration_failure`): a premise was checked against `n`

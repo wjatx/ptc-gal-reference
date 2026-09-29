@@ -1,4 +1,4 @@
-"""Tests for the reference-tier confidence constructors (#184).
+"""Tests for the reference-tier confidence constructors.
 
 Two things are proven here:
 

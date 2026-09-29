@@ -1,4 +1,4 @@
-"""#205 — opt-in live post-deploy assertion of the airlock/drain deploy binding.
+"""Opt-in live post-deploy assertion of the airlock/drain deploy binding.
 
 Sibling to ``test_airlock_live.py`` (same env-gated, exports-resolved idiom). Run
 IMMEDIATELY after any channels deploy to prove the deployed function

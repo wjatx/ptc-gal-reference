@@ -1,6 +1,6 @@
 # owner-channel — a fictional human-as-owner airlock + drain consumer
 
-A **fictional** example consumer for the sa#176 owner channel, standing on BOTH channels
+A **fictional** example consumer for the owner channel, standing on BOTH channels
 seams: the inbound airlock (a `ChannelsManifest`) that admits its one mapped human owner,
 and the drain (a broker `AgentManifest` + `Receiver`) that lets an airlock-accepted owner
 command drain end-to-end to a ledger. It is the human-as-owner complement to
@@ -38,7 +38,7 @@ manifest.
 
 ## What it shows
 
-The sa#176 driving case — a human owner reaching this agent as the OWNER sender class. The
+The owner-channel driving case — a human owner reaching this agent as the OWNER sender class. The
 airlock verifies the token, reads the sender identity, `normalize`s the command, maps the
 owner identity to a principal, dedupes, and stamps its own provenance hop before the
 envelope reaches a worker. The airlock loop itself is channel-agnostic — everything

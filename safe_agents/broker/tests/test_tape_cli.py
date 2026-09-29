@@ -1,4 +1,4 @@
-"""Tests for the local audit-tape surface — FileTapeReader + tape_cli (#300).
+"""Tests for the local audit-tape surface — FileTapeReader + tape_cli.
 
 The tape is the payoff of the architecture and it was reachable only by someone who
 had read the source: the product wrapper contained no occurrence of the string "audit", and the
@@ -166,7 +166,7 @@ def test_an_unreadable_tape_refuses_rather_than_verdicting(tmp_path, capsys):
 
 
 def test_the_held_record_says_why_it_was_held(tape, capsys):
-    """#300 item 3: a held record used to carry reason: null, so the tape could
+    """A held record used to carry reason: null, so the tape could
     show that a call was held and never say what held it."""
     tape_cli.main(["--path", tape])
 

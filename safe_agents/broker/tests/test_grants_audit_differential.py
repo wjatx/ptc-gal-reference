@@ -1,9 +1,9 @@
-"""#252 — the grants audit reports the same thing on sqlite as on DynamoDB.
+"""The grants audit reports the same thing on sqlite as on DynamoDB.
 
 The auditor was split correctly from the start: ``dataset_from_items`` has
 always been backend-agnostic and only the LOADER touched AWS. So after the
-grants-sqlite slice (#247), every grants store family had a local arm except
-the thing that audits them — the #267 second-arm shape, right at site #1 and
+grants-sqlite slice, every grants store family had a local arm except
+the thing that audits them — the missing-second-arm shape (#140), right at site #1 and
 silently absent at site #2. ``load_dataset_sqlite`` closes it.
 
 Two legs, because they fail differently:
@@ -105,7 +105,7 @@ def _seed_sqlite_clean_state(db_path, signer) -> None:
     """The sqlite twin of ``_seed_clean_state`` — the SAME logical state through
     the real local write paths, so the comparison is store-shape to store-shape
     rather than fixture to fixture."""
-    # on-loop, matching its ledger — see _seed_clean_state (#255).
+    # on-loop, matching its ledger — see _seed_clean_state.
     SqliteGrantStore(hmac_key=HMAC_KEY, db_path=db_path).put_grant(
         _make_grant(level="on-loop")
     )

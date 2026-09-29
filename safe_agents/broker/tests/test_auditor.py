@@ -2,7 +2,7 @@
 
 All tests run against in-memory fakes. No AWS credentials, no live S3, no boto3.
 
-Acceptance criteria (from sa#26):
+Acceptance criteria (from #50):
 1. A valid tape passes chain integrity.
 2. A gap (deleted record) is detected.
 3. A mutation (tampered field) is detected.
@@ -180,7 +180,7 @@ COMMITTED_RULES = [
 
 def test_extra_live_rule_flagged_as_drift():
     # An extra OUTBOUND rule present in live but not committed is a potential egress
-    # bypass — sa#52 classifies this as critical (not merely warning).
+    # bypass — the severity model classifies this as critical (not merely warning).
     live = COMMITTED_RULES + [
         {"protocol": "tcp", "port": 22, "cidr": "0.0.0.0/0", "direction": "egress"},
     ]
@@ -275,7 +275,7 @@ def test_empty_committed_with_live_rules_is_drift():
 
 
 # ---------------------------------------------------------------------------
-# 6. sa#52 severity model — SG layer (extra-live→critical, missing→warning)
+# 6. Severity model — SG layer (extra-live→critical, missing→warning)
 # ---------------------------------------------------------------------------
 
 SG_COMMITTED = [
@@ -342,7 +342,7 @@ def test_critical_dominates_rollup_severity():
 
 
 # ---------------------------------------------------------------------------
-# 7. sa#52 severity model — netns/proxy layer (the second layer)
+# 7. Severity model — netns/proxy layer (the second layer)
 # ---------------------------------------------------------------------------
 
 NETNS_COMMITTED = [
@@ -439,7 +439,7 @@ def test_committed_snapshot_loads_and_self_matches(arm):
     assert any(r.get("layer") == "sg" for r in rules)
     assert any(r.get("layer") == "netns_proxy" for r in rules)
 
-    # Confinement keystone (sa#97 two-box model): the netns no longer blackholes
+    # Confinement keystone (two-box model): the netns no longer blackholes
     # the default route — it forwards through the host veth, and deny-by-default is
     # enforced at the SG layer. So the invariants that must hold for EVERY arm are:
     # the agent SG never reaches the open internet, and the netns carries its veth.

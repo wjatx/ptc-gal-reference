@@ -1,5 +1,5 @@
 """
-ec2-woken BOX tests — acceptance criteria for sa#98 / sa#34 G9 (the woken drain-loop box).
+ec2-woken BOX tests — acceptance criteria for the woken drain-loop box.
 
 Companion to test_ec2_woken_arm.py (which covers the airlock wake path). These tests cover the
 BOX the airlock wakes: its confined provision, the NO-connector-creds invariant on its role, the

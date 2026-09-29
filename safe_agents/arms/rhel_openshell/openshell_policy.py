@@ -1,5 +1,5 @@
 """
-OpenShell sandbox policy generator — broker-centric network whitelist (sa#92).
+OpenShell sandbox policy generator — broker-centric network whitelist.
 
 Generates per-agent OpenShell policy YAML enforcing default-deny egress,
 whitelisting ONLY:

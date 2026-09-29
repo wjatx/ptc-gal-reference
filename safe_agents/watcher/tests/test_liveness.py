@@ -1,5 +1,5 @@
 """
-Tests for the external liveness watcher (sa#38, sa#140).
+Tests for the external liveness watcher.
 
 Covers:
   1. load_agent_manifests: discovers test-stub.yaml from agents/ dir
@@ -13,7 +13,7 @@ Covers:
   9. make_fixture_reader and make_dynamodb_reader are importable
  10. check_liveness returns empty list when no manifests in agents_dir
  11. DynamoDB reader Queries sched-<date> runs; latest-by-ts drives the verdict
- 12. Opt-in scope (sa#140): no liveness.monitored: true → never checked
+ 12. Opt-in scope: no liveness.monitored: true → never checked
  13. liveness.environments scoping: declared [production] agent not checked in staging
  14. weekday calendar: weekend date skipped; weekday date alarms
 """
@@ -62,7 +62,7 @@ def _write_agent_manifest(
     Write a minimal agent YAML into agents_dir and return its path.
 
     Defaults to liveness.monitored: true so existing tests exercise the
-    watcher's default checked path (sa#140's opt-in scope). Pass
+    watcher's default checked path (the liveness watcher's opt-in scope). Pass
     monitored=False to test the unmonitored/opt-out path.
     """
     liveness: dict = {"monitored": monitored}
@@ -340,7 +340,7 @@ def test_query_reader_latest_by_ts_drives_verdict(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 12. Opt-in scope (sa#140): no liveness.monitored: true → never checked
+# 12. Opt-in scope: no liveness.monitored: true → never checked
 # ---------------------------------------------------------------------------
 
 def test_unmonitored_agent_is_never_checked(tmp_path: Path) -> None:
@@ -408,7 +408,7 @@ def test_weekday_calendar_alarms_on_weekday(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Monitoring nothing is not health (sa#38, found 2026-07-29)
+# Monitoring nothing is not health (found 2026-07-29)
 # ---------------------------------------------------------------------------
 #
 # The watcher ran daily against a repo where no manifest sets

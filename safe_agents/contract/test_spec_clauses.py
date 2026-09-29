@@ -1,5 +1,5 @@
 """
-Pytest tests for the PTC/GAL conformance-clause extraction harness (#359).
+Pytest tests for the PTC/GAL conformance-clause extraction harness.
 
 These pin the exit predicate against the real specs, so a spec edit that breaks
 extraction fails here rather than silently shrinking the inventory the
@@ -130,7 +130,7 @@ def test_neighbouring_clauses_are_unmarked(rows: list[ClauseRow], clause_id: str
     """
     A marker binds only its own clause, and a scope leak shows up here.
 
-    The neighbours were re-picked on 2026-08-08 when the #359 findings were
+    The neighbours were re-picked on 2026-08-08 when the conformance-audit findings were
     marked: the previous set named PTC-24 and GAL-33, and both are now marked
     themselves, so they could no longer witness containment. Each id below is
     unmarked and sits beside at least one marked clause — PTC-1/PTC-4 bracket

@@ -1,4 +1,4 @@
-"""Consumer-side polarity -> liveness-default derivation (sa#160).
+"""Consumer-side polarity -> liveness-default derivation.
 
 **This is NOT base code.** It lives under `examples/` on purpose. The base ships
 the liveness MECHANISM — a typed `Envelope.liveness` field and the deterministic

@@ -1,4 +1,4 @@
-"""Consumer-side confidence-attachment policy for the `confidence-reporter` (#184).
+"""Consumer-side confidence-attachment policy for the `confidence-reporter`.
 
 **This is NOT base code.** It lives under `examples/` on purpose. The base ships the
 confidence MECHANISM — the `ConfidenceArtifact` contract, the deterministic

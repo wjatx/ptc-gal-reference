@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# cluster-demo-baseline.sh — THE UNBROKERED BASELINE (#154, the concrete half of #304).
+# cluster-demo-baseline.sh — THE UNBROKERED BASELINE (the concrete half of independent assurance).
 #
 # Every other leg in this arm shows the platform REFUSING something. None of them
-# shows that anything was ever at risk. That gap is what #304 names: "every
+# shows that anything was ever at risk. That gap is the independent-assurance one: "every
 # security proof is a drill we designed to pass". A drill in which the harm never
 # occurs demonstrates a system saying no; it does not demonstrate that the no
 # mattered.
@@ -100,7 +100,7 @@ ok "the forbidden call SUCCEEDED with no broker in the path — this is the harm
 say "2. THE SAME CALL, through the broker"
 # Two calls, and the second is the positive control. A broker that had crashed
 # would "refuse" the first one just as convincingly, which is the failure mode
-# #312 exists to stop: a negative proof that cannot name what refused it.
+# naming the mechanism exists to stop: a negative proof that cannot name what refused it.
 python3 - "$BROKER_URL" "$SERVER_ID" "$UNADMITTED" "$ADMITTED" <<'PY' || die "the brokered half did not behave as the baseline requires"
 import json
 import sys

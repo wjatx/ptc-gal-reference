@@ -1,5 +1,5 @@
 """
-ec2-woken arm provisioner + teardown — the inbound airlock wake path (sa#34).
+ec2-woken arm provisioner + teardown — the inbound airlock wake path.
 
 Re-derives the responsive-agent inbound path, generalized for any agent and stripped
 to the broker-centric, agent-agnostic core:
@@ -10,7 +10,7 @@ The guardrail Lambda is an untrusted-input taint boundary that holds NO connecto
 credentials. This module deploys the airlock SAM stack (airlock.yaml + airlock/) and
 tears it down, parameterized from the agent manifest's `inbound:` block.
 
-How it plugs into the pipeline (sa#32):
+How it plugs into the pipeline:
     provision_phase() calls ec2_woken_provision() for arm=ec2-woken; teardown_phase()
     calls ec2_woken_teardown(). Read-side AWS calls (secret read, instance discovery)
     go through the injected AWSInterface (FakeAWS in tests). The stack deploy/delete
@@ -119,7 +119,7 @@ def _discover_runner_instance_id(
 ) -> str:
     """Find the sleeping EC2 box to wake by the standard arm tag set.
 
-    The box itself is provisioned by the EC2 arm (sa#98, deferred); the airlock only
+    The box itself is provisioned by the EC2 arm (deferred); the airlock only
     needs its instance id. Fails loudly if no box is found rather than deploying a wake
     path that points at nothing.
     """
@@ -243,7 +243,7 @@ def ec2_woken_provision(
 
     Parameters
     ----------
-    runner_instance_id: override the tag-discovered box id (useful before sa#98 lands).
+    runner_instance_id: override the tag-discovered box id (useful before the woken box exists).
     sam_deploy:         injected deployer (default: the `sam` CLI). Tests pass a fake.
     template_path:      override the airlock.yaml path (default: alongside this module).
 
@@ -314,7 +314,7 @@ def ec2_woken_teardown(
 
     Deletes the whole SAM stack (guardrail Lambda, HTTP API, SQS queue, dedup table,
     execution role) in one `sam delete`. Idempotent — deleting an absent stack is a
-    clean no-op. NEVER touches the EC2 box itself (owned by the EC2 arm / sa#98) or any
+    clean no-op. NEVER touches the EC2 box itself (owned by the EC2 arm) or any
     infra/ floor resource.
 
     Returns

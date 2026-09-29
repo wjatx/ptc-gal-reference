@@ -95,7 +95,7 @@ The distinguishing property is that an out-of-scope action is refused by the **i
 rather than by the broker: a capability's role grants exactly its declared actions on its declared
 resources, so a broker bug or a broker compromise still cannot reach past the role — "the
 enforcement point gets an enforcement point", proven live on `development` with out-of-scope actions
-AccessDenied by IAM rather than by broker policy [#175].
+AccessDenied by IAM rather than by broker policy .
 
 This posture also gets the operator identity plane: maker≠checker on ceremonies is enforced by
 comparing credential ARNs rather than by convention, and no single identity can both propose and
@@ -185,21 +185,21 @@ Since the chain is unkeyed, the whole question at each posture is **who can writ
   in this repo is granted it); the retention applies in **durable environments only** — `development`
   sets no default retention and the sink sets none per object, so nothing is locked there; and **no
   drill has ever attempted the delete**, so this is a configuration read from CDK rather than an
-  observed refusal. See #333 and #334.
+  observed refusal. See #144.
 
 **Nothing here yet survives a compromised broker.** That needs an anchor the writer cannot reach —
 either an in-cluster witness holding periodic chain heads on a volume the broker cannot mount, or
-off-device custody — and it is **not built** (#250 Phase 7). When it is, it will buy *detection*: a
+off-device custody — and it is **not built**. When it is, it will buy *detection*: a
 verifier holding the anchor sees that a rewrite happened. Preventing one is a different and stronger
 claim, and the distinction must travel with the wording.
 
-## Who the actor is (#165, the cheap half)
+## Who the actor is (#78, the cheap half)
 
 Posture and the audit surface must not say "the agent did X". The agent **asked**; the broker
 **performed**, under its own identity, which is the whole point of the architecture — an agent that
 holds no credentials cannot itself be the performer of anything.
 
-The full attribution model is #165's deliverable and names five roles (subject / requester /
+The full attribution model is #78's deliverable and names five roles (subject / requester /
 decider / performer / recorder). Posture's obligation is the cheap half: never collapse *requester*
 into *performer* in user-facing text, because that collapse erases exactly the evidence for "a fully
 compromised agent can still only ask".

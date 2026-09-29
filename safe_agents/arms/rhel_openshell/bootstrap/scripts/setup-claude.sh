@@ -4,7 +4,7 @@
 # no git repo available on the box; no bin/ to copy.
 #
 # This script is ONE OF ONLY TWO places safe-agents couples to Claude Code
-# specifically (the other is the memory SessionStart loader, #71). All other
+# specifically (the other is the memory SessionStart loader). All other
 # bootstrap, two-identity split, run-record wiring, and broker sidecar code
 # is harness-neutral.
 #

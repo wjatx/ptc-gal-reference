@@ -1,4 +1,4 @@
-"""peer_connector.py — the BASE reference `peer` connector (peer.publish, #172).
+"""peer_connector.py — the BASE reference `peer` connector (peer.publish).
 
 `peer.publish` speaks our OWN protocol to our OWN airlock (EventTrigger,
 `/inbound`, the provenance chain — all base), so its transport is platform

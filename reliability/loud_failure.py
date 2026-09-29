@@ -1,7 +1,7 @@
 """
 loud_failure — core assert-the-artifact / loud-failure primitives.
 
-Design rules (from sa#25):
+Design rules (from #49):
   - Never raise Python exceptions for assertion failures; the caller is a
     shell pipeline. Write JSON to stderr and call sys.exit(1).
   - All failures include: invariant, observed, component, ts (UTC ISO-8601).

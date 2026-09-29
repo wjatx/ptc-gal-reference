@@ -1,4 +1,4 @@
-"""sa#152 — live smoke against the deployed development airlock.
+"""Live smoke against the deployed development airlock.
 
 Opt-in: set AIRLOCK_LIVE_SMOKE=1 with AWS credentials for the development
 account (the same env-gated idiom as the live connector tests). Endpoint URL,
@@ -9,7 +9,7 @@ Drives the deployed endpoint through the gate matrix — bad token, unmapped
 sender, expired envelope, the valid signal, and its replay — then proves
 acceptance and end-to-end delivery from each seam's OWN output:
 
-sa#166: since the drain worker went live, the accepted queue is consumed by
+Since the drain worker went live, the accepted queue is consumed by
 the webhook-peer drain's ESM — a test process can no longer win the race to
 read it. The airlock's accept observable is now the structured
 `channel_accepted` CloudWatch log event (PII-safe: event/identity_digest/

@@ -1,4 +1,4 @@
-"""Grant-ceremony command surface (#123) — the store's only sanctioned mutation path.
+"""Grant-ceremony command surface — the store's only sanctioned mutation path.
 
     python -m safe_agents.broker.grants.commands {seed,re-seed,propose,ratify,reject,acknowledge,tighten}
 
@@ -21,7 +21,7 @@ ratify    the checker: loads the integrity-verified proposal and runs the full
           an UNSIGNED record with a LOUD warning).
 reject    the checker declines: flips the stored proposal to 'rejected' — the
           single-shot burn; a rejected proposal can never be ratified.
-acknowledge  disposition a TRUE audit finding (#196): appends a signed waiver
+acknowledge  disposition a TRUE audit finding: appends a signed waiver
           record bound to the exact finding fingerprint — never edits the
           flagged item; refuses un-waivable rules and refuses unsigned.
 tighten   voluntary tightening: any level -> in-loop, always permitted — no
@@ -128,13 +128,13 @@ from safe_agents.broker.schemas.evidence import ConfidenceArtifact, effective_bl
 # ---------------------------------------------------------------------------
 # Evidence-counter suffixes — the durable scoped counters propose reads (same
 # scoped_counter_key derivation as the PEP, so evidence and enforcement can
-# never disagree about the coordinate). Since #193 the PEP WRITES the
+# never disagree about the coordinate). Since evidence labeling the PEP WRITES the
 # observations/human_override labels (pep.py executor closures + reject_intent)
 # so the constants live beside scoped_counter_key in enforcement.store; the
 # re-export here keeps existing readers working. false_action still has no
 # writer (its review surface is a deliberate later design conversation);
 # absence reads as 0. ERROR_BUDGET_SUFFIX is the counter the PEP already
-# meters (#184; runner.derive_budget_breach reads it).
+# meters (runner.derive_budget_breach reads it).
 # ---------------------------------------------------------------------------
 from safe_agents.broker.enforcement.store import (
     ERROR_BUDGET_SUFFIX,
@@ -145,14 +145,14 @@ from safe_agents.broker.enforcement.store import (
 
 
 # ---------------------------------------------------------------------------
-# Optional evidence reviewer (sa#58) — ships OFF; findings-attach-never-gate.
+# Optional evidence reviewer — ships OFF; findings-attach-never-gate.
 # The env var selects a kind from the CLOSED image-baked catalog
 # (grants/reviewers/REVIEWER_REGISTRY) — it can never name an import path
 # (docs/config-provenance.md). Unset = checker None, byte-for-byte the
 # reviewer-less ceremony. A MISCONFIGURED reviewer refuses the ceremony loudly
 # (config error != runtime failure: a failing reviewer at review time degrades
 # to a recorded finding in ceremony.execute(), but a bad config must fail at
-# startup, per sa#58's same-family conformance rule).
+# startup, per the evidence reviewer's same-family conformance rule).
 # ---------------------------------------------------------------------------
 REVIEWER_KIND_ENV = "GRANTS_REVIEWER_KIND"
 REVIEWER_PARAMS_ENV = "GRANTS_REVIEWER_PARAMS"
@@ -188,7 +188,7 @@ def _resolve_reviewer() -> CheckerProtocol | None:
 
 
 def _caller_identity(session: object = None) -> str:
-    """This ceremony's operator identity — the STS Arn, or the local arm (#226).
+    """This ceremony's operator identity — the STS Arn, or the local arm.
 
     A thin delegate to the ONE resolver in ``broker.ceremony_identity``, shared
     with the MCP admission ceremony: extending only one copy would silently
@@ -266,7 +266,7 @@ def seed_command(
             ts=ts,
             attestation=attestation_for(caller),
         )
-        # Atomic grant+bootstrap-record (#244): every grant has a ledger
+        # Atomic grant+bootstrap-record: every grant has a ledger
         # counterpart FROM BIRTH by construction — the old "grant created but
         # the record collided" reconcile branch cannot occur.
         try:
@@ -331,7 +331,7 @@ def reseed_command(
       - A STORE-layer quarantine (grants/store.py: the stored HMAC does not
         match) is tampering, a mis-seeded key, or key rotation drift — NEVER
         re-attestable; refused loudly. That is an incident, not a ceremony.
-      - The envelope-hash-mismatch kind (sa#122) is a PIP-level quarantine: the
+      - The envelope-hash-mismatch kind is a PIP-level quarantine: the
         store read comes back HMAC-CLEAN but grant.envelopeHash differs from
         the hash now in force (a far-jump broker redeploy). That is the one
         re-attestable case: the grant is rebuilt with the new hash at the SAME
@@ -430,7 +430,7 @@ def propose_command(
             "quarantine first"
         )
         return 1
-    # #255: a grant whose term has passed but whose lapse is not yet recorded
+    # A grant whose term has passed but whose lapse is not yet recorded
     # cannot anchor a promotion — its stored level is no longer certified, and
     # enforcement already acts at lastSafeLevel. The ceremony re-checks this at
     # ratify time; refusing here keeps the maker from staging a doomed proposal.
@@ -456,8 +456,8 @@ def propose_command(
         print(f"REFUSED: --artifact-json {args.artifact_json} is unusable: {exc}")
         return 1
 
-    # The evidence metrics sum over the declared period window (#193, periods
-    # #212): a bare read_counter is a single-period point read, so window_n
+    # The evidence metrics sum over the declared period window (counter
+    # periods): a bare read_counter is a single-period point read, so window_n
     # silently meant "the current period only" until this. read_counter_window
     # validates window_periods per period and raises ValueError out of range —
     # refuse loudly, never a bad-window read. The anchor bucket is derived ONCE
@@ -502,7 +502,7 @@ def propose_command(
         # Deliberately a single-period point read, NEVER windowed: the error
         # budget is a per-period budget whose tolerance comparison is
         # period-scoped (the same coordinate as derive_budget_breach); windowing
-        # it would silently change #184 semantics.
+        # it would silently change error-budget semantics.
         spent = enforcement_store.read_counter(
             scoped_counter_key(
                 principal, tool, op, ERROR_BUDGET_SUFFIX, period=args.period
@@ -610,7 +610,7 @@ def ratify_command(
 ) -> int:
     """Load the stored proposal and run the full maker-checker ceremony.
 
-    checker: the optional sa#58 evidence reviewer (findings recorded, never
+    checker: the optional evidence reviewer (findings recorded, never
     gated on). None — the default, and the state whenever GRANTS_REVIEWER_KIND
     is unset — is byte-for-byte the reviewer-less ceremony.
     """
@@ -618,7 +618,7 @@ def ratify_command(
     caller = _caller_identity(session)
 
     # A ratified PromotionRecord mints acting authority, so storing it unsigned
-    # is minting a weaker artifact than the ceremony claims (#196's polarity,
+    # is minting a weaker artifact than the ceremony claims (the acknowledgment ceremony's polarity,
     # applied to the fully-unconfigured case). Refuse up front — before the
     # proposal is even loaded — unless the operator explicitly opted in, so a
     # refusal provably writes nothing (no record, no grant mutation, the
@@ -655,7 +655,7 @@ def ratify_command(
         )
         return 1
 
-    # Window provenance for the checker (#193, periods #212): the period-span
+    # Window provenance for the checker (evidence labeling, counter periods): the period-span
     # the evidence was summed over, integrity-bound on the proposal.
     # observation_count=N earned this period reads very differently from N
     # scraped thin across many — the checker judges the sample against the max
@@ -665,7 +665,7 @@ def ratify_command(
         f"summed over {proposal.window_periods} {proposal.period} period(s); "
         f"window_n={proposal.window_n}"
     )
-    # The term is part of what the checker ratifies (#255): show it.
+    # The term is part of what the checker ratifies: show it.
     print(
         "certification term: "
         + (
@@ -685,7 +685,7 @@ def ratify_command(
             file=sys.stderr,
         )
 
-    # Signing is ceremony-side since #244: the signature rides the atomic
+    # Signing is ceremony-side since the atomic write: the signature rides the atomic
     # record+grant transact leg, so the old put_record signing wrapper is gone.
     ceremony = PromotionCeremony(
         grant_store=grant_store,
@@ -849,7 +849,7 @@ def tighten_command(
 
 
 # ---------------------------------------------------------------------------
-# acknowledge — disposition a TRUE audit finding with a signed waiver (#196)
+# acknowledge — disposition a TRUE audit finding with a signed waiver
 # ---------------------------------------------------------------------------
 
 def acknowledge_command(
@@ -968,7 +968,7 @@ def main(argv: list[str] | None = None) -> int:
         # reject
         return reject_command(args, proposal_store=_build_proposal_store(args.table_name))
     except (RunnerConfigError, IssuerSigningConfigError, BrokerConfigError) as exc:
-        # BrokerConfigError: #205's named-config refusals (e.g. manifest-mode
+        # BrokerConfigError: the named-config refusals (e.g. manifest-mode
         # ceremony on the dynamo arm with BROKER_MANIFEST unset) — same clean
         # operator-facing voice as the other config refusals, never a traceback.
         print(f"ERROR: {exc}", file=sys.stderr)

@@ -5,7 +5,7 @@ secrets provider, connector) fails, the broker round-trip must never return a
 BrokerResponse with decision_kind="allow" that would make the fault look like a
 success. A store or audit fault surfaces as an exception; a connector or
 credential failure of an allowed call becomes a deny-shaped reply with an
-outcome="failed" audit record (sa#102, #35).
+outcome="failed" audit record (#35).
 
 Each test wires one fault-injecting fake from broker.chaos into an otherwise
 valid BrokerRuntime and calls handle_request() against an operation whose
@@ -274,7 +274,7 @@ def test_secrets_failure_is_audited_never_silent():
 # can now 401 / time out / hit a network error — the old StubConnector never
 # could). A connector failure is DISTINCT from a store/secrets/audit fault: the
 # broker must NOT report success, but it also must not surface a raw 500. Instead
-# it (sa#102):
+# it:
 #   - marks the WAL entry compensated/escalated via enforce()'s saga,
 #   - emits an AuditRecord with outcome="failed" (the invariant), and
 #   - returns a clean deny-shaped BrokerResponse (never propagates).

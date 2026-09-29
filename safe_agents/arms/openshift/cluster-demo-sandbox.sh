@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cluster-demo-sandbox.sh — DEMONSTRATION 1: the sandbox permits, the broker refuses
-# (#250 Phase 5).
+# (Phase 5).
 #
 # THE QUESTION THIS ANSWERS is the one the room actually asks: "how is this better than
 # just using OpenShell?" The honest answer, and the drill says it on screen, is that it
@@ -145,8 +145,8 @@ for tool, op, args, mechanism, english in ATTEMPTS:
     print(f"   attempt: {tool}.{op} — {english}")
     print(f"       sandbox: permitted the call (it is an ordinary socket to an allowed peer)")
     print(f"       broker:  {kind} — {reason[:110]}")
-    # The MECHANISM, not merely "not allow" (#312). `deny` populates `reason` (unlike
-    # require_approval, #316), so demonstration 1 CAN name which control fired -- and a
+    # The MECHANISM, not merely "not allow". `deny` populates `reason` (unlike
+    # require_approval, #116), so demonstration 1 CAN name which control fired -- and a
     # refusal that named a different one must not read as this one.
     if kind == "allow" or r.get("result") is not None:
         failures.append(f"{tool}.{op} WAS ALLOWED — the broker did not refuse it")

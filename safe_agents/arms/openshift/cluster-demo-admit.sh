@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # cluster-demo-admit.sh — admit a SECOND tool, so demonstration 2 has an untrusted
-# read to be tainted by (#250 Phase 5).
+# read to be tainted by (Phase 5).
 #
 #   cluster-demo-admit.sh propose    # runs as safe-agents-maker
 #   cluster-demo-admit.sh ratify     # runs as safe-agents-checker
@@ -73,8 +73,8 @@ case "$MODE" in
       system:serviceaccount:*:safe-agents-checker) ;;
       *) die "the ratify half must run as the checker, got '$WHOAMI'" ;;
     esac
-    # The #282 shim, same as cluster-ratify.sh: a projected Secret under an fsGroup
-    # gets 0440 OR-ed into whatever defaultMode was requested, so #226's mode check can
+    # The issuer-key shim, same as cluster-ratify.sh: a projected Secret under an fsGroup
+    # gets 0440 OR-ed into whatever defaultMode was requested, so the issuer-key mode check can
     # never pass on the projection itself. A compatibility shim, NOT a control — in a
     # pod the boundary protecting this key is the pod.
     PROJECTED_KEY="${PROJECTED_KEY:-/run/issuer-projected/issuer.pem}"

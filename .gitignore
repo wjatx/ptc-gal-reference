@@ -7,7 +7,7 @@
 *_API_KEY*
 # ...but not test MODULES about secrets. core.ignorecase=true (the macOS default)
 # makes *_SECRET* match test_secrets_arms.py, which git then drops from `add -A`
-# SILENTLY — the #248 secrets-arm suite was the first source file to ever collide
+# SILENTLY — the secrets-arm suite was the first source file to ever collide
 # with these patterns, and more are coming (the keychain arm, the container floor).
 # Filename patterns cannot judge content anyway; gitleaks scans contents and is the
 # real guard. Keep this negation narrow: test modules under safe_agents/ only.

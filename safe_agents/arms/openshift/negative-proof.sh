@@ -1,4 +1,4 @@
-# negative-proof.sh — assert the SPECIFIC mechanism refused (#312). Sourced, never run.
+# negative-proof.sh — assert the SPECIFIC mechanism refused. Sourced, never run.
 #
 #   source "$(dirname "$0")/negative-proof.sh"
 #
@@ -14,7 +14,7 @@
 #
 #   * Phase 3 signing half: a check grepped for "REFUSED" and labelled the M8
 #     refusal as M7 -- the wrong control, reported as the right one.
-#   * #310 tamper leg: four attempts asserted rc != 0 and never checked that the
+#   * tape tamper leg: four attempts asserted rc != 0 and never checked that the
 #     kernel said "Read-only file system", so a read-only ROOT filesystem, a bad SCC
 #     or a mistyped volume would each have printed PASS four times.
 #   * Phase 4 agent leg: a 500 from a broker that ANSWERED was reported as "could not
@@ -38,7 +38,7 @@
 # LIVES HERE, not in a shared arms/ directory, for a mechanical reason worth knowing:
 # kustomize's configMapGenerator cannot reach outside its own root without disabling
 # the load restrictor, and these scripts ride to the cluster in that ConfigMap. When
-# arms/local/container-arc.sh adopts this (#312 asks it to), decide placement then --
+# arms/local/container-arc.sh adopts this (as it should), decide placement then --
 # with two real consumers, rather than guessing now with one.
 
 # --- state -------------------------------------------------------------------
@@ -67,7 +67,7 @@ _np_note() { printf '   \033[31m%s\033[0m\n' "$*" >&2; }
 # Without it every refusal below is ambiguous: a pod with no network refuses every
 # connection, a read-only root filesystem refuses every write, and a pod that failed
 # to start refuses everything. All three produce a flawless-looking negative proof.
-# #203's maker-mount leg carries "evidence reads still succeed" for exactly this
+# The write split's maker-mount leg carries "evidence reads still succeed" for exactly this
 # reason -- read-denied is not a stricter write-denied, and a proof that checks only
 # the denial cannot tell a working control from a broken mount.
 np_control() {
@@ -87,7 +87,7 @@ np_control() {
 # --- np_precondition <label> -- <cmd...> -------------------------------------
 # The STATE the attempt runs against, asserted rather than assumed.
 #
-# From the #310 retro: placing the tamper attempt in the maker's existing leg would
+# From the tape-partition retro: placing the tamper attempt in the maker's existing leg would
 # have passed against an EMPTY directory while the heading claimed "cannot erase
 # another leg's records". The verb was right and the target was vacuous. So the
 # precondition ("the tape holds N records", "the file exists and is non-empty") is

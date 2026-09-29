@@ -1,4 +1,4 @@
-# The broker as a LONG-LIVED workload (#250 Phase 4).
+# The broker as a LONG-LIVED workload (Phase 4).
 #
 # Every leg before this one runs the broker in-process and exits: `cluster-serve.sh`
 # builds a runtime, makes two calls and closes it. That is enough to prove the store
@@ -63,7 +63,7 @@ spec:
             - { name: BROKER_PORT, value: "8080" }
             - { name: BROKER_STORE, value: sqlite }
             - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
-            # The #203 split, read-only here for the same reason the serve Job takes
+            # The write split, read-only here for the same reason the serve Job takes
             # it read-only: BROKER_GRANT_LOAD=read is get_grant and never a write, so
             # a serving broker has no business holding write access to the grant key
             # space. Free strengthening, not a Phase 4 requirement.
@@ -72,7 +72,7 @@ spec:
             - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
             - { name: BROKER_SECRETS, value: dir }
             - { name: BROKER_SECRETS_DIR, value: /run/connector-secrets }
-            # The #310 split. This pod is the tape's only writer, and the agent pod
+            # The audit-tape partition. This pod is the tape's only writer, and the agent pod
             # -- the one making the calls that land on it -- cannot reach the volume
             # at all. Note that does NOT make the tape safe from the broker: the
             # writer can still rewrite what it wrote, and the chain is unkeyed

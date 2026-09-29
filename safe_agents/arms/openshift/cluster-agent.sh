@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cluster-agent.sh — the Phase 4 predicate, attempted from INSIDE the agent pod (#250).
+# cluster-agent.sh — the Phase 4 predicate, attempted from INSIDE the agent pod.
 #
 # The whole phase is this script's log. Phases 2 and 3 could be argued from a
 # manifest if you were willing to take a `readOnly:` field on trust; this one cannot
@@ -14,7 +14,7 @@
 #
 # The third is not decoration. A pod that is broken in any unrelated way -- wrong
 # image, no network at all, a crashed sidecar -- produces the first two refusals
-# perfectly and proves nothing whatsoever. This is the egress twin of #310's write
+# perfectly and proves nothing whatsoever. This is the egress twin of the audit-tape partition's write
 # canary, and it is the check that is skipped every time it is not written down.
 #
 # WHAT THIS SCRIPT IS NOT ALLOWED TO DO, and the reason is not stylistic: it must not
@@ -42,7 +42,7 @@ SA_CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
 # a proof about one is not a proof about the other.
 TARGET_SECRETS="safe-agents-connector-secrets safe-agents-issuer"
 
-# The shared negative-proof helper (#312). Steps 2-4 below keep their refusals inside
+# The shared negative-proof helper. Steps 2-4 below keep their refusals inside
 # Python, and that is a deliberate limit rather than an oversight: the egress and RBAC
 # checks need to distinguish a timeout from a refusal from a gaierror, and an HTTP 403
 # from a 401 from a 404, which is richer than a fixed-string match on an exit code.
@@ -108,7 +108,7 @@ TIMEOUT = 8
 def attempt(label, host, port):
     """Returns (verdict, detail). A DROP shows as a timeout; a REJECT would show as
     ConnectionRefused; a DNS failure as gaierror. Collapsing those into 'it failed'
-    is the M7/M8 mislabelling #312 exists to prevent."""
+    is the M7/M8 mislabelling that naming the mechanism exists to prevent."""
     start = time.time()
     try:
         conn = socket.create_connection((host, port), timeout=TIMEOUT)
@@ -268,7 +268,7 @@ say "4. and a brokered call STILL EXECUTES — the positive control for all of t
 #
 # Raw HTTP, no SDK: this is what an agent on the other side of the boundary actually
 # has. Note what it does NOT send and could not: no credential, no connector handle,
-# no turn context. The broker mints the turn itself (sa#136), so the agent cannot
+# no turn context. The broker mints the turn itself, so the agent cannot
 # launder taint by declaring a fresh one.
 python3 - "$BROKER_URL" "$SERVER_ID" "$ADMIT_TOOL" "$REFUSE_TOOL" <<'PY' || die "the brokered call did not execute"
 import json
@@ -295,7 +295,7 @@ try:
 # SUBCLASS of URLError, so catching the parent first reports "could not reach the
 # broker" for a broker that answered with a 500. That mislabelling happened here on
 # the first run of this leg — a negative proof naming the wrong mechanism, which is
-# exactly what #312 exists to stop, arriving in the script written to demonstrate it.
+# exactly what naming the mechanism exists to stop, arriving in the script written to demonstrate it.
 except urllib.error.HTTPError as exc:
     print(f"   the broker ANSWERED and failed: HTTP {exc.code} {exc.reason}", file=sys.stderr)
     print("   the network path is fine — this is a broker-side error, not a boundary "

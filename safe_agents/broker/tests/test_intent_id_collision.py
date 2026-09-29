@@ -163,7 +163,7 @@ def _hold(runtime, args: dict, idempotency_key: str):
         pytest.param((_ARGS_A, "k1"), (_ARGS_B, "k2"), id="different_args"),
         pytest.param((_ARGS_A, "k1"), (_ARGS_A, "k2"), id="identical_args"),
         # A retry under the same key re-holds: enforce() releases the claim on a
-        # hold (#148), so the replay is a fresh hold, never an idempotent replay.
+        # hold, so the replay is a fresh hold, never an idempotent replay.
         pytest.param((_ARGS_A, "k1"), (_ARGS_A, "k1"), id="same_key_retry"),
     ],
 )

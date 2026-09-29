@@ -6,7 +6,7 @@ contract that landed with ``admit_tool_with_record``. One contract, three
 backends: these classes fill ``ToolRegistryStore`` and ``AdmissionProposalStore``
 exactly as ``MemoryToolRegistry``/``DynamoToolRegistry`` and their proposal
 siblings do — same error vocabulary, same HMAC quarantine-on-read semantics,
-same #190 conditional-write discipline — with durability coming from
+same conditional-write discipline — with durability coming from
 ``sqlite_substrate`` (one ``broker.db``, WAL, item-shaped rows keyed exactly like
 the DynamoDB single-table items so ``example-wrapper migrate`` stays a row pump).
 
@@ -25,7 +25,7 @@ read verify the stored bytes verbatim BEFORE parsing.
 
 The ``session`` parameters exist for Protocol parity and are ignored — there is
 no boto3 here; identity on the local arm is the solo-ceremony resolver's
-concern (#226), not the store's.
+concern, not the store's.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ class SqliteToolRegistry(_SqliteStoreBase):
     Item layout mirrors ``DynamoToolRegistry`` key-for-key:
         row     pk="TOOLDEF#<server_id>#<tool_name>"  sk="ROW"
                 attrs {"data": <canonical row payload>, "rowHash": <hmac over
-                those exact bytes — the #246 stored-bytes basis>}
+                those exact bytes — the stored-bytes basis>}
         record  pk="TOOLREC#<server_id>#<tool_name>"  sk=<ts>
                 attrs {"data": <record JSON>[, "signature": <DSSE JSON>]}
     """
@@ -97,7 +97,7 @@ class SqliteToolRegistry(_SqliteStoreBase):
         attrs = substrate.get_item(conn, *self._row_key(server_id, tool_name))
         if attrs is None:
             return ToolReadResult(tool=None)
-        # Verify-then-parse over the STORED bytes (#246) — the shared registry
+        # Verify-then-parse over the STORED bytes — the shared registry
         # helper, so all three backends quarantine identically.
         return _read_result_from_item(attrs.get("data"), attrs.get("rowHash"), self._hmac_key)
 
@@ -111,9 +111,9 @@ class SqliteToolRegistry(_SqliteStoreBase):
         expected: ToolReadResult | None,
     ) -> tuple[dict, bool]:
         """The row leg's conditions, evaluated INSIDE the caller's transaction
-        (so the read is serialized against every other writer — the #190
+        (so the read is serialized against every other writer — the
         conditional evaluated atomically against current state). Returns the
-        item attrs to store (stored-bytes basis, #246: serialize once, HMAC
+        item attrs to store (stored-bytes basis: serialize once, HMAC
         that exact string) and whether a row currently exists. Same checks,
         same error vocabulary as the other backends.
         """
@@ -169,7 +169,7 @@ class SqliteToolRegistry(_SqliteStoreBase):
     def _record_attrs(record: McpAdmissionRecord, signature: dict | None) -> dict:
         # canonical_record_payload, NOT model_dump_json: the DSSE subject digest
         # is the sha256 of the CANONICAL (sorted-key) serialization, and
-        # verification digests the STORED bytes verbatim (#246). pydantic's
+        # verification digests the STORED bytes verbatim. pydantic's
         # model_dump_json emits declaration order, so a record stored that way
         # can never verify against its own signature — the Dynamo arm has
         # always written canonical_record_payload, and the two arms must store

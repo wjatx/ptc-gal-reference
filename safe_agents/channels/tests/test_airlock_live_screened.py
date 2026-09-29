@@ -1,4 +1,4 @@
-"""sa#152 Slice B — live smoke with the reference Bedrock screen ENABLED.
+"""Live smoke with the reference Bedrock screen ENABLED.
 
 Opt-in: set AIRLOCK_LIVE_SMOKE_SCREENED=1, and run only when the development
 airlock is deployed with the screened example manifest

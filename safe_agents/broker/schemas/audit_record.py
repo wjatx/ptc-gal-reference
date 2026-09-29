@@ -40,7 +40,7 @@ class AuditRecord(BaseModel):
     approvedBy: str | None = None
     # held = intent awaiting approval; executed/denied/refused/failed are terminal.
     #
-    # `refused` is the #281 member: a control REFUSED the call after the PDP
+    # `refused` is the host-refusal member: a control REFUSED the call after the PDP
     # decided — two-key MCP admission is the first — so nothing was attempted.
     # It is distinct from `denied` (the PDP itself said no, before execution was
     # ever reached) and from `failed` (the execution step broke: the effect was
@@ -52,16 +52,16 @@ class AuditRecord(BaseModel):
     # committed randomization seed, where allocation was randomized (auditable randomness);
     # allows "why not engage that one?" to have a reconstructable answer in the log
     seed: str | None = None
-    # #198 gap A: stamped on the hold record and its approve-release records; joins a
+    # Receipt gap A: stamped on the hold record and its approve-release records; joins a
     # hold to its release across the intent TTL. None == pre-receipts record or a
     # non-approval decision.
     intentId: str | None = None
-    # #198 gap A: digest of the frozen Intent.materializedRequest (the full BrokeredCall,
+    # Receipt gap A: digest of the frozen Intent.materializedRequest (the full BrokeredCall,
     # canonical JSON). Stamped at hold time from the call being frozen and INDEPENDENTLY
     # recomputed at release time from the stored bytes — equal digests make
     # executed==approved byte-provable from durable state alone.
     storedCallDigest: str | None = None
-    # #198 gap B: broker-written digest of the connector's opaque response (the effect
+    # Receipt gap B: broker-written digest of the connector's opaque response (the effect
     # receipt). Digest only, never raw content (PII discipline, the argsDigest precedent).
     resultDigest: str | None = None
     # chains to the previous record (hash-chain integrity)

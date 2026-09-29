@@ -1,6 +1,6 @@
 """broker.envelope — the in-force risk Envelope's store, seed, and read seam.
 
-Phase 3 Slice A of the broker-destub epic (sa#136): DynamoDB (seeded from the
+Phase 3 Slice A of the broker-destub epic: DynamoDB (seeded from the
 authored agents/*.yaml `envelope:` block) becomes the broker's source for its
 in-force Envelope. Config-as-code (the yaml) stays the authorship source; the
 seed step here canonicalizes it into the store; `load_inforce_envelope` is the

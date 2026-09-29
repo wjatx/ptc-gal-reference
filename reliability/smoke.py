@@ -1,5 +1,5 @@
 """
-smoke — reusable forced-failure smoke-test base harness (sa#6 / sa#28).
+smoke — reusable forced-failure smoke-test base harness (#52).
 
 Purpose
 -------
@@ -19,8 +19,8 @@ Consumer repos subclass or configure the harness with their own probe
 functions. This module contains no broker, connector, or domain-specific
 logic — only the aggregation and exit-semantics machinery.
 
-Exit-code contract (sa#29 meta-alarm semantics)
-------------------------------------------------
+Exit-code contract (meta-alarm semantics)
+-----------------------------------------
 conclude() with no checks recorded  → emit_meta_alarm  → sys.exit(1)
 conclude() with all checks passed   → emit_heartbeat   → returns (exit 0)
 conclude() with any check failed    → emit_content_alarm → notify_fn + returns (exit 0)
@@ -201,7 +201,7 @@ class SmokeHarness:
         }
 
     # ------------------------------------------------------------------
-    # Meta-alarm exit semantics (sa#29)
+    # Meta-alarm exit semantics
     # ------------------------------------------------------------------
 
     def conclude(
@@ -212,7 +212,7 @@ class SmokeHarness:
     ) -> None:
         """Apply meta-alarm exit semantics. Call once, after all checks.
 
-        Exit-code mapping (sa#29 — load-bearing):
+        Exit-code mapping (load-bearing):
 
             No checks recorded → emit_meta_alarm  → sys.exit(1)
                 (harness misconfigured; the watchdog ran nothing)

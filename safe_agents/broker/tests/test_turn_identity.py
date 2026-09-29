@@ -1,10 +1,10 @@
-"""sa#136 exit predicate — broker-owned turn identity across /call.
+"""Broker-owned turn identity across /call.
 
-sa#134 landed broker-side taint self-ingestion, but it was inert across separate
+Broker-side taint self-ingestion landed first, but it was inert across separate
 ``POST /call`` requests: each call minted a fresh TurnContext keyed to the
 agent-supplied idempotency_key, so a read in call 1 never tainted a write in
 call 2, and an agent could mint a fresh turn to launder taint (memory/TAINT.md
-Rule 2). sa#136 makes the runtime hold ONE broker-minted TurnContext per
+Rule 2). Broker-owned turn identity makes the runtime hold ONE broker-minted TurnContext per
 principal across all /call requests; the turn rolls over only via the
 broker/harness-owned ``new_turn()``, never on anything the agent supplies.
 
@@ -18,7 +18,7 @@ The cross-/call acceptance predicates:
      write is allowed again) — proving taint is not permanently stuck, but that
      only a broker-side signal, never the agent, can clear it.
 
-Fixtures mirror test_taint_self_ingest.py (the in-turn sa#134 predicate); the
+Fixtures mirror test_taint_self_ingest.py (the in-turn self-ingestion predicate); the
 difference is these drive the taint across SEPARATE handle_request calls with no
 shared context threaded by the caller.
 """

@@ -1,4 +1,4 @@
-# Containerfile — the inbound channels airlock, as a Lambda container image (sa#152).
+# Containerfile — the inbound channels airlock, as a Lambda container image.
 #
 # Reference-tier (channels/ADAPTERS.md §"Reference bindings"): the base image a
 # consumer FROMs to add its own ChannelsManifest (see examples/webhook_peer/).

@@ -1,4 +1,4 @@
-# alpaca_paper_drill/manifest.yaml — the #221 Phase-1 drill consumer.
+# alpaca_paper_drill/manifest.yaml — the MCP-brokerage drill consumer.
 #
 # DRILL-SCOPED: this manifest exists to prove the native MCP construction +
 # spawn-time env-auth path against a REAL third-party server
@@ -7,7 +7,7 @@
 # decision, in its own repo, under its own GAL climb — never this file.
 #
 # The three declared tools are the CEILING, and the ceiling is read-only:
-# account info + market clock + one market-data lookup. Per the #221 epic
+# account info + market clock + one market-data lookup. Per the MCP-brokerage
 # constraint, no order / position-closing / account-mutating tool ever enters
 # this block (test_manifest_validates.py machine-checks the absence — the
 # missileer posture applied to a server we DON'T control: the dangerous tools
@@ -39,7 +39,7 @@ grant_classes:
 connectors:
   - alpaca
 
-# ── MCP server namespace + native spawn config (#174 / #221) ──────────────────
+# ── MCP server namespace + native spawn config ──────────────────
 # Pinned version: a third-party server runs INSIDE the broker task, so the
 # version is part of the reviewed surface — an upgrade is a re-vet trigger (its
 # changed tool descriptions will drift-quarantine admitted tools; that is the
@@ -55,7 +55,7 @@ mcp_servers:
       - {tool_name: get_clock, structured_output: true}
       - {tool_name: get_stock_latest_quote, structured_output: true}
 
-# ── Connector secret (sa#164 leaf convention) ─────────────────────────────────
+# ── Connector secret (bare-leaf convention) ───────────────────────────────────
 # The leaf VALUE is a flat JSON string map: {"ALPACA_KEY": "...",
 # "ALPACA_SECRET": "..."} — field names as provisioned, renamed by env_map
 # below. Floor leaf <prefix>/connectors/alpaca-mcp-paper is Phase-2
@@ -63,7 +63,7 @@ mcp_servers:
 connector_secrets:
   alpaca: "alpaca-mcp-paper"
 
-# ── Spawn-time credential delivery (#221, CONNECTOR-AUTH.md C9) ───────────────
+# ── Spawn-time credential delivery (CONNECTOR-AUTH.md C9) ───────────────
 # strategy defaults to static_secret; env_map is the explicit allowlist — a
 # credential field not named here never reaches the child.
 connector_auth:
@@ -72,7 +72,7 @@ connector_auth:
       ALPACA_API_KEY: ALPACA_KEY
       ALPACA_SECRET_KEY: ALPACA_SECRET
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 # All external reads. get_stock_latest_quote's symbol argument is agent-
 # composed egress; production adoption should declare its egress_arg once the
 # adopted server's schema is pinned (the drill leaves the query-egress knobs at

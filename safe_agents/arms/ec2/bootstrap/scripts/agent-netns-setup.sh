@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agent-netns-setup.sh — create the confined agent network namespace (safe-agents sa#35).
+# agent-netns-setup.sh — create the confined agent network namespace (two-box model).
 #
 # Process-isolation confinement for the EC2 / Amazon Linux 2023 (arm64) autonomous
 # arm, converged onto the TWO-BOX broker model (Option A). The netns is kept as a
@@ -18,13 +18,13 @@
 #     interface, so netns egress is bounded by the SAME SG/subnet the host sits behind
 #     (the broker, the AWS endpoints, and nothing else).
 #
-# What changed vs the old model (sa#97): the old netns installed a `blackhole default`
+# What changed vs the old model: the old netns installed a `blackhole default`
 # and reached a CO-LOCATED model-proxy stub at 10.255.255.1:8443. There is no on-box
 # proxy any more — the broker is its own service. So the netns gets a real default route
 # via the host veth, the host enables ip_forward + MASQUERADE for the veth /30, and DNS
 # is wired so the netns can resolve broker.safe-agents.local via the VPC resolver.
 #
-# Re-derived from the live-proven rhel-openshell copy (sa#35). The /30 + veth IP
+# Re-derived from the live-proven rhel-openshell copy. The /30 + veth IP
 # constants below MUST match every arm so the committed egress snapshot
 # (infra/snapshots/*.json) stays valid across substrates.
 #
@@ -32,7 +32,7 @@
 # agent-netns-setup.service oneshot at boot, BEFORE the agent run service. Installed
 # under /opt (copied there by user-data) so the system service can exec it.
 #
-# Scope: NETWORK namespace + forwarding only. Filesystem isolation is sa#95.
+# Scope: NETWORK namespace + forwarding only. Filesystem isolation is #67.
 #
 # Usage:  agent-netns-setup.sh [up|down]   (default: up)
 set -euo pipefail

@@ -1,5 +1,5 @@
 # confidence_budget/manifest.yaml — FICTIONAL example consumer for the confidence
-# knob (#184 — the calibrated-uncertainty floor, Pillar 4).
+# knob (the calibrated-uncertainty floor, Pillar 4).
 #
 # The base ships the MECHANISM: the ConfidenceArtifact contract, the deterministic
 # meets_bar predicate, and the error_prob × blast_radius budget draw
@@ -22,7 +22,7 @@ grant_classes:
   - report.publish
   - draft.save
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 # report.publish: an external, IRREVERSIBLE write — the blast derivation reads this
 #   (external ∧ reversible is not True) and returns "high" all on its own.
 # draft.save: an internal write — derives to "medium"; the high_blast list below

@@ -1,12 +1,12 @@
 # infra — shared platform substrate IaC
 
-> **Status: foundation deployed to `development` (sa#11 · #12–#17).** The layered CDK app (#12),
-> NetworkStack (#13), StateStack (#14), and IdentityStack (#15) are implemented; the conformance
-> test-table (#16, `npm test`) asserts the `ARCHITECTURE.md` invariants against synthesized
+> **Status: foundation deployed to `development`.** The layered CDK app,
+> NetworkStack, StateStack, and IdentityStack are implemented; the conformance
+> test-table (`npm test`) asserts the `ARCHITECTURE.md` invariants against synthesized
 > CloudFormation — 15 checks, green. All three stacks are **live in `development`**
 > (the account and region CDK resolves from your environment); 22 cross-stack exports + SSM params resolve and the
 > deployed invariants verify (agent role holds zero policies, tables ACTIVE with PITR, audit bucket
-> Object Lock enabled). Epic: **sa#11** (Platform foundation). Decisions (2026-06-28): **AWS CDK
+> Object Lock enabled). Part of the platform-foundation work. Decisions (2026-06-28): **AWS CDK
 > (TypeScript)** for the foundation; **multi-stack, same account** now (multi-account for
 > production = future hardening); **defense-in-depth egress** (subnet routing + security group +
 > netns). Note: keep all resource description fields ASCII-only — EC2 (SecurityGroup) and IAM
@@ -84,7 +84,7 @@ groups and their default-deny ingress but drops the NAT/endpoints/isolation and 
 — trading network-layer outbound containment for ~$4/mo vs ~$375/mo, warranted while this platform is a
 low-risk experiment floor. Both modes publish the same six outputs plus a `network-mode` value.
 `secureNetwork: true` restores the proven topology for a high-risk consumer. The design, cost, hard-won
-lessons (the sa#83 prefix-list bug, the SG dependency-cycle workaround, `open: false`), and re-enable
+lessons (the gateway-endpoint prefix-list bug, the SG dependency-cycle workaround, `open: false`), and re-enable
 steps live in `docs/network-security-layer.md`.
 
 **Environment naming.** Stacks use exactly `development` / `staging` / `production`. Never `dev`,
@@ -95,7 +95,7 @@ references silently.
 **Environment ownership.** `development` is the platform team's ephemeral iteration floor —
 torn down and rebuilt freely. `staging`/`production` are durable (`RemovalPolicy.RETAIN`) and
 `production` belongs to consumers; once one depends on it, coordinate before deploying to or
-destroying anything there. The binding rules live in `docs/environments.md` (sa#111).
+destroying anything there. The binding rules live in `docs/environments.md`.
 
 ## Planned architecture — layered CDK foundation, per environment
 
@@ -111,7 +111,7 @@ per environment { development | staging | production }   (same AWS account for n
   IdentityStack   — the 4 IAM roles · the Secrets Manager secret store
         │  CfnOutput / SSM-param exports
         ▼
-  ChannelsStack   — the inbound airlock (sa#152): POST /inbound HTTP API · airlock Lambda (outside
+  ChannelsStack   — the inbound airlock: POST /inbound HTTP API · airlock Lambda (outside
                     the VPC) · accepted-event SQS queue · webhook secret · its own execution role
   broker / arm stacks             ──import──►  the foundation above
 ```
@@ -152,7 +152,7 @@ cd infra
 npm install                                   # one-time / on dependency change
 npx cdk list   -c environment=development     # the three foundation stacks
 npx cdk synth  -c environment=development      # synthesize CloudFormation (no AWS creds needed)
-npm test                                       # conformance gate (#16) — asserts invariants on synth
+npm test                                       # conformance gate — asserts invariants on synth
 npx cdk deploy -c environment=development --all   # deploy (needs credentials; see bootstrap below)
 npm run build                                  # tsc type-check
 ```

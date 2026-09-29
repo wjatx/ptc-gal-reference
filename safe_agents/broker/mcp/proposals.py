@@ -1,4 +1,4 @@
-"""Durable admission-proposal store (#174).
+"""Durable admission-proposal store.
 
 admit-propose and admit-ratify are separate CLI invocations by different
 identities — maker != checker is structural (MCP-HOST.md M7) — so an admission
@@ -99,7 +99,7 @@ def canonical_proposal_payload(proposal: McpAdmissionProposal) -> str:
     the basis from whatever the model class looks like *today* — so any additive
     schema change (a new optional field emitted by ``model_dump``) invalidates
     every historical row and reports it as a tamper. That happened for real:
-    #221's field-carry widened ``McpToolDef`` from 4 fields to 10, and every
+    The MCP host work's field-carry widened ``McpToolDef`` from 4 fields to 10, and every
     proposal written before it began failing verification although none had been
     touched. A ceremony that cries tamper when a schema grows teaches operators
     to dismiss the alarm that matters.

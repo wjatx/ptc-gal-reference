@@ -1,5 +1,5 @@
 /**
- * Conformance test-table (sa#11 · #16) — the verifier that licenses the foundation build loop.
+ * Conformance test-table — the verifier that licenses the foundation build loop.
  *
  * Encodes the `ARCHITECTURE.md` pre-deployment checklist (lines 103–121) as machine-checkable
  * assertions against *synthesized* CloudFormation. No AWS calls: the stacks are instantiated in
@@ -87,7 +87,7 @@ Tags.of(verifyKeysApp).add('Project', 'safe-agents');
 Tags.of(verifyKeysApp).add('Environment', ENV);
 const channelsVerifyKeysTemplate = Template.fromStack(channelsVerifyKeys).toJSON() as CfnTemplate;
 
-// IdentityStack with the standing checker role declared (#202) — its own App, same clash
+// IdentityStack with the standing checker role declared — its own App, same clash
 // avoidance. The default identity template above stays the five-role shape (checker OFF), so
 // absent-by-default is asserted against `templates.identity`.
 const CHECKER_PRINCIPAL = 'arn:aws:iam::111122223333:user/example-checker';
@@ -101,7 +101,7 @@ Tags.of(checkerApp).add('Project', 'safe-agents');
 Tags.of(checkerApp).add('Environment', ENV);
 const identityCheckerTemplate = Template.fromStack(identityChecker).toJSON() as CfnTemplate;
 
-// The identity stack with the demotion operator-trust gate ON (#192): the context ADDS the
+// The identity stack with the demotion operator-trust gate ON: the context ADDS the
 // named principals to DemotionRole's trust ALONGSIDE the service principals (the deployment
 // binding), unlike the checker's named-principals-only role. Off-by-default is asserted
 // against `templates.identity`.
@@ -137,7 +137,7 @@ Tags.of(operatorApp).add('Project', 'safe-agents');
 Tags.of(operatorApp).add('Environment', ENV);
 const identityOperatorTemplate = Template.fromStack(identityOperator).toJSON() as CfnTemplate;
 
-// The channels stack with the drain worker enabled (sa#155): image tag + the two required
+// The channels stack with the drain worker enabled: image tag + the two required
 // image-baked env context keys. Asserted by the drain checks — the default template above stays
 // the drain-off shape (repo only), so drain-off-by-default is asserted against `templates.channels`.
 const DRAIN_MANIFEST_PATH = '/app/agents/drain-manifest.yaml';
@@ -169,9 +169,9 @@ Tags.of(openApp).add('Project', 'safe-agents');
 Tags.of(openApp).add('Environment', ENV);
 const openNetworkTemplate = Template.fromStack(openNetwork).toJSON() as CfnTemplate;
 
-// ComputeStack with the default (absent) `capabilityRoles` context — asserts sa#175's no-op default:
+// ComputeStack with the default (absent) `capabilityRoles` context — asserts capability-role scoping's no-op default:
 // no capability role, no sts:AssumeRole grant on the broker role, and (mechanically) the same shape
-// the pre-#175 stack synthesized. Its own App to avoid a stack-name clash with the compute-with-
+// the pre-capability-role stack synthesized. Its own App to avoid a stack-name clash with the compute-with-
 // capabilities variant below.
 const computeApp = new App({ context: { environment: ENV } });
 const computeDefault = new ComputeStack(computeApp, stackName(ENV, 'Compute'), {
@@ -201,9 +201,9 @@ Tags.of(computeCapApp).add('Project', 'safe-agents');
 Tags.of(computeCapApp).add('Environment', ENV);
 const computeWithCapabilitiesTemplate = Template.fromStack(computeWithCapabilities).toJSON() as CfnTemplate;
 
-// A production StateStack, synthesized to assert the env-aware removal polarity (#9-A): the same
+// A production StateStack, synthesized to assert the env-aware removal polarity: the same
 // code with the environment flipped must yield durable (RETAIN) state in production. This also
-// exercises promotion being code-identical (#9-B) — production synthesizes from the same source.
+// exercises promotion being code-identical — production synthesizes from the same source.
 const prodApp = new App({ context: { environment: 'production' } });
 const prodState = new StateStack(prodApp, stackName('production', 'State'), {
   environment: 'production',
@@ -240,7 +240,7 @@ function exportNames(tmpl: CfnTemplate): Set<string> {
   return names;
 }
 
-// ── checks: Network (#13) ────────────────────────────────────────────────────────────────────────
+// ── checks: Network ────────────────────────────────────────────────────────────────────────
 function agentSgLogicalId(): string {
   const sg = resourcesOfType(templates.network, 'AWS::EC2::SecurityGroup').find(([, r]) =>
     String(r.Properties?.GroupDescription ?? '').includes('Agent'),
@@ -353,7 +353,7 @@ function agentSubnetsHaveNoDefaultRoute(): boolean {
   return true;
 }
 
-// ── checks: VPC endpoints (#83) ───────────────────────────────────────────────────────────────
+// ── checks: VPC endpoints ───────────────────────────────────────────────────────────────
 
 /**
  * CDK synthesizes interface endpoint service names as a Fn::Join token:
@@ -474,14 +474,14 @@ function hasNoOpenIngress(tmpl: CfnTemplate): boolean {
   return !inlineOpen && !standaloneOpen;
 }
 
-// ── checks: State (#14) ────────────────────────────────────────────────────────────────────────
+// ── checks: State ────────────────────────────────────────────────────────────────────────
 function tables(): CfnResource[] {
   return resourcesOfType(templates.state, 'AWS::DynamoDB::Table').map(([, r]) => r);
 }
 
 function sixDurableTables(): boolean {
-  // grants / counters / intents / agent-runs + the channels dedupe table (sa#152) + the MCP
-  // admitted-tool registry (#174).
+  // grants / counters / intents / agent-runs + the channels dedupe table + the MCP
+  // admitted-tool registry.
   return tables().length === 6;
 }
 
@@ -497,7 +497,7 @@ function allTablesOnDemandWithPitr(): boolean {
   });
 }
 
-// #334. This used to filter every bucket for `ObjectLockEnabled === true` and assert the count
+// #144. This used to filter every bucket for `ObjectLockEnabled === true` and assert the count
 // was 1 — which proved that SOME one bucket carried the flag, never which, and coupled the check
 // to how many Object-Lock buckets the stack happens to have. Worse, it asserted the ENABLING FLAG
 // and not the RETENTION: `ObjectLockEnabled` is true in development, where the bucket carries no
@@ -546,7 +546,7 @@ function fourCustomerManagedKeys(): boolean {
 }
 
 function ledgerBucketVersionedWithoutWorm(): boolean {
-  // The ledger bucket (sa#131) must be versioned but must NOT carry Object Lock: it is the
+  // The ledger bucket must be versioned but must NOT carry Object Lock: it is the
   // agent's ledger copy, not the audit chain — append-only is enforced via brokerRole IAM.
   const bucket = resourcesOfType(templates.state, 'AWS::S3::Bucket').find(
     ([, r]) => r.Properties?.BucketName === `safe-agents-${ENV}-ledger`,
@@ -619,7 +619,7 @@ function mcpRegistryTableExistsWithGenericKeySchemaAndCmk(): boolean {
   );
 }
 
-// ── checks: Identity (#15) ───────────────────────────────────────────────────────────────────────
+// ── checks: Identity ───────────────────────────────────────────────────────────────────────
 interface Statement {
   Effect: string;
   Action?: string | string[];
@@ -643,7 +643,7 @@ const DDB_WRITE_ACTIONS = [
   'dynamodb:DeleteItem',
   'dynamodb:BatchWriteItem',
 ];
-// ssm:GetParameter is the #194 issuer verify-keys read: PUBLIC key material, deliberately
+// ssm:GetParameter is the issuer verify-keys read: PUBLIC key material, deliberately
 // Parameter Store so the watcher's no-Secrets-Manager rule stays absolute.
 const WATCHER_ALLOWED_ACTIONS = [
   'dynamodb:Query',
@@ -652,7 +652,7 @@ const WATCHER_ALLOWED_ACTIONS = [
   'kms:Decrypt',
   'ssm:GetParameter',
 ];
-// The sa#161 campaign watchdog's allowed surface: S3 read on the two channels audit prefixes +
+// The campaign watchdog's allowed surface: S3 read on the two channels audit prefixes +
 // read-only CloudWatch Logs on the broker/airlock groups. No dynamodb, no kms, no secretsmanager.
 const CAMPAIGN_WATCHER_ALLOWED_ACTIONS = [
   's3:GetObject',
@@ -715,7 +715,7 @@ function roleReadsSecrets(name: (typeof ROLE_NAMES)[number]): boolean {
 
 function fourBoundaryRolesPlusWatcher(): boolean {
   // The four boundary roles must be present and distinct, AND the only additional roles may be
-  // the two GitHub Actions OIDC watchers (sa#140 liveness/grants watcher, sa#161 campaign
+  // the two GitHub Actions OIDC watchers (liveness/grants watcher, campaign
   // watchdog) — no other surprise roles slip into IdentityStack.
   const roles = resourcesOfType(templates.identity, 'AWS::IAM::Role');
   const fourBoundaryRolesPresent = ROLE_NAMES.every((n) => roles.some(([id]) => id.startsWith(n)));
@@ -744,7 +744,7 @@ function secretStatementsForRole(name: (typeof ROLE_NAMES)[number]): Statement[]
 }
 
 function secretReadsAreNamespaceSplit(): boolean {
-  // Refined from the earlier only-broker-reads-secrets row (Phase 4, #123), and again when the
+  // Refined from the earlier only-broker-reads-secrets row (Phase 4), and again when the
   // demotion evaluator gained a signing key of its own: THREE disjoint namespaces, one per
   // signing/credential function. Broker reads ONLY */connectors/* (connector credentials),
   // promotion reads ONLY */issuer/* (the DSSE key for records that RAISE authority), demotion
@@ -824,7 +824,7 @@ function evaluatorSigningIsSplitFromIssuer(): boolean {
 
 function brokerRoleMcpRegistryIsReadOnly(): boolean {
   // The McpHost's discovery-time read of TOOLDEF# rows must be structurally unable to write the
-  // registry — mirrors "the broker cannot write grants" for the #174 admitted-tool store.
+  // registry — mirrors "the broker cannot write grants" for the MCP admitted-tool store.
   const stmts = statementsForRole('BrokerRole').filter((s) =>
     resourceString(s).includes('mcp-registry-table-arn'),
   );
@@ -835,7 +835,7 @@ function brokerRoleMcpRegistryIsReadOnly(): boolean {
   );
 }
 
-// ── checker-role checks (#202) — against the checker-variant identity template ────────────────
+// ── checker-role checks — against the checker-variant identity template ────────────────
 
 /** Statements for a role in an arbitrary identity template (the checker variant). */
 function statementsForRoleIn(template: CfnTemplate, prefix: string): Statement[] {
@@ -1059,7 +1059,7 @@ function makerRoleIsProposeShaped(): boolean {
 }
 
 function makerCannotMintAGrantRow(): boolean {
-  // The #203 write split: EVERY UpdateItem the maker holds is confined by a LeadingKeys
+  // The maker/checker write split: EVERY UpdateItem the maker holds is confined by a LeadingKeys
   // condition to the proposal key space, so a GRANT#/TOOLDEF# upsert is refused by IAM
   // rather than by the store's ConditionExpression — prevention, not detection.
   //
@@ -1101,7 +1101,7 @@ function makerCannotMintAGrantRow(): boolean {
 }
 
 function makerCheckerMcpRegistryHasNoPutItem(): boolean {
-  // Both admission-ceremony legs write the #174 registry via CONDITIONAL update_item — never
+  // Both admission-ceremony legs write the MCP registry via CONDITIONAL update_item — never
   // PutItem, which would authorize an unconditional overwrite (mirrors the grants
   // proposal/ratify statements' existing no-PutItem shape). Both roles are present together in
   // the full-operator-plane variant.
@@ -1209,7 +1209,7 @@ function brokerLedgerIsPutObjectOnly(): boolean {
 }
 
 function watcherRoleIsReadOnly(): boolean {
-  // The watcher (sa#140 liveness + #62 grants audit + #194 verify-keys) is assumed via GitHub
+  // The watcher (liveness + grants audit + verify-keys) is assumed via GitHub
   // Actions OIDC — a Federated principal, never a service principal — and its attached actions
   // must be exactly the read-only set WATCHER_ALLOWED_ACTIONS: no writes (the grants auditor
   // must be structurally unable to write the table it judges), no secrets access (the audit's
@@ -1238,7 +1238,7 @@ function watcherRoleIsReadOnly(): boolean {
 }
 
 function campaignWatcherRoleIsReadOnly(): boolean {
-  // The sa#161 campaign watchdog: same OIDC-only trust idiom as watcherRole, read-only S3 scoped
+  // The campaign watchdog: same OIDC-only trust idiom as watcherRole, read-only S3 scoped
   // to exactly channels/drops/* + channels/verdicts/*, read-only Logs scoped to exactly the
   // broker + channels-airlock log groups, and structurally no secretsmanager/dynamodb/kms/write
   // action anywhere.
@@ -1311,7 +1311,7 @@ function identityExportsPresent(): boolean {
     .every((n) => names.has(n));
 }
 
-// ── checks: Channels airlock (sa#152) ────────────────────────────────────────────────────────────
+// ── checks: Channels airlock ────────────────────────────────────────────────────────────
 // The airlock is a COMPONENT stack: it fronts untrusted external input, so it must sit OUTSIDE the
 // VPC, expose exactly one throttled POST /inbound route, hold a least-privilege (no-wildcard) role,
 // and skip the function/API entirely in the first bringup phase. The dedupe table is CMK-encrypted
@@ -1436,7 +1436,7 @@ function channelsScreenModelArnsScoped(): boolean {
   );
 }
 
-// ── checks: Channels drain worker (sa#155) ───────────────────────────────────────────────────────
+// ── checks: Channels drain worker ───────────────────────────────────────────────────────
 function drainOffByDefault(): boolean {
   // No channelsDrainImageTag → no drain function, no event source mapping; only the drain ECR
   // repo (push-before-tag bringup) exists. The default template must synthesize exactly one
@@ -1682,7 +1682,7 @@ function airlockEnvHasAlwaysOnAndNoManifest(): boolean {
 }
 
 function airlockErrorAlarmsWired(): boolean {
-  // sa#153 — the two silent-failure log events (handler_error / screen_error) each carry a metric
+  // The two silent-failure log events (handler_error / screen_error) each carry a metric
   // filter and an alarm; the alarms notify the one SNS alert topic and treat missing data as
   // notBreaching (no data = no failures, not an alarm).
   const filters = channelsResourcesOfType('AWS::Logs::MetricFilter');
@@ -1732,7 +1732,7 @@ function channelsExportsPresent(): boolean {
     .every((n) => names.has(n));
 }
 
-// ── checks: Compute per-capability IAM scoping (sa#175) ─────────────────────────────────────────
+// ── checks: Compute per-capability IAM scoping ─────────────────────────────────────────
 function computeCapabilityRolesOfType(tmpl: CfnTemplate, type: string): [string, CfnResource][] {
   return resourcesOfType(tmpl, type);
 }
@@ -1747,7 +1747,7 @@ function capabilityNoRoleByDefault(): boolean {
 
 function capabilityNoAssumeRoleGrantByDefault(): boolean {
   // Stronger than "no sts:AssumeRole": the default (no capabilityRoles context) must import the
-  // broker role IMMUTABLE, so CDK attaches NO inline policy to it at all — not the #175 assume
+  // broker role IMMUTABLE, so CDK attaches NO inline policy to it at all — not the capability-role assume
   // grant, and not the ECS-managed logs/ssmmessages task-role policy that an immutable import
   // silently drops. So assert there is no broker-role Policy resource whatsoever in the default
   // template (a regression guard for the conditional-mutability flip).
@@ -1929,7 +1929,7 @@ interface Row {
 }
 
 const ROWS: Row[] = [
-  // Network (#13) — invariant #2 made topological.
+  // Network — invariant #2 made topological.
   {
     id: 'egress/agent-no-open',
     group: 'Network',
@@ -1954,7 +1954,7 @@ const ROWS: Row[] = [
     desc: 'all resource descriptions are ASCII-only (EC2/IAM reject non-ASCII)',
     check: allDescriptionsAreAscii,
   },
-  // VPC endpoints (#83) — confined-subnet private AWS access, no NAT/IGW.
+  // VPC endpoints — confined-subnet private AWS access, no NAT/IGW.
   {
     id: 'endpoints/gateway',
     group: 'Network',
@@ -2029,7 +2029,7 @@ const ROWS: Row[] = [
     desc: "open mode's network-mode output is 'open'",
     check: () => networkModeOutputValue(openNetworkTemplate) === 'open',
   },
-  // State (#14) — durable, external, tamper-resistant.
+  // State — durable, external, tamper-resistant.
   {
     id: 'state/six-tables',
     group: 'State',
@@ -2090,7 +2090,7 @@ const ROWS: Row[] = [
     desc: 'production tables are DeletionPolicy:Retain (durable polarity)',
     check: productionStateIsDurable,
   },
-  // Identity (#15) — invariants #1 and #3: the agent holds nothing; the broker is a separate
+  // Identity — invariants #1 and #3: the agent holds nothing; the broker is a separate
   // identity that cannot promote itself; only the grant-lifecycle roles write grants.
   {
     id: 'identity/four-roles',
@@ -2158,7 +2158,7 @@ const ROWS: Row[] = [
     desc: 'the six role ARNs are exported',
     check: identityExportsPresent,
   },
-  // Standing checker role (#202) — OFF by default; when declared, topological maker≠checker.
+  // Standing checker role — OFF by default; when declared, topological maker≠checker.
   {
     id: 'identity/checker-off-by-default',
     group: 'Identity',
@@ -2273,7 +2273,7 @@ const ROWS: Row[] = [
     desc: 'all operator gates ON compose: 9 roles, boundary/watcher-role policies untouched',
     check: operatorPlaneComposes,
   },
-  // Channels airlock (sa#152) — the untrusted-input edge: outside the VPC, one throttled route,
+  // Channels airlock — the untrusted-input edge: outside the VPC, one throttled route,
   // least-privilege role, CMK-encrypted dedupe state, and a clean two-phase-bringup skip.
   {
     id: 'channels/airlock-no-vpc',
@@ -2359,7 +2359,7 @@ const ROWS: Row[] = [
     desc: 'channelsVerifyKeysArn sets BROKER_VERIFY_KEYS_SECRET_ARN and grants exactly one scoped GetSecretValue statement on that ARN',
     check: verifyKeysWiredWhenSet,
   },
-  // Channels drain worker (sa#155) — the accepted-queue → broker-turn binding.
+  // Channels drain worker — the accepted-queue → broker-turn binding.
   {
     id: 'channels/drain-off-by-default',
     group: 'Channels',
@@ -2426,7 +2426,7 @@ const ROWS: Row[] = [
     desc: 'channelsDeployFunction=false yields no filters, alarms, or alert topic',
     check: channelsNoFnHasNoAlarms,
   },
-  // Compute per-capability IAM scoping (sa#175)
+  // Compute per-capability IAM scoping
   {
     id: 'compute/capability-no-role-by-default',
     group: 'Compute',

@@ -1,8 +1,8 @@
-"""Honest-manifest proof for the Alpaca paper drill (#221 Phase 1).
+"""Honest-manifest proof for the Alpaca paper drill.
 
 Mirrors ``test_example_restricted_mcp_server.py``: the
 manifest validates as written AND each load-time invariant refuses a mutated
-copy. Plus the drill-specific ceiling check: the #221 epic constraint — no
+copy. Plus the drill-specific ceiling check: the standing constraint — no
 order / position-closing / account-mutating tool ever enters this drill's
 declarations — is machine-checked, not prose. SDK-free; runs in CI.
 """
@@ -18,13 +18,13 @@ import yaml
 from safe_agents.broker.schemas import AgentManifest
 
 # Lives here, not beside the manifest: `examples/` is on no pytest path, so a test
-# there never runs (#294). The house convention is example code in `examples/`, its
+# there never runs. The house convention is example code in `examples/`, its
 # test under `safe_agents/*/tests/` reaching across.
 _MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "examples" / "alpaca_paper_drill" / "manifest.yaml"
 )
 
-# The #221 ceiling: tool-name prefixes that must NEVER appear in this drill's
+# The drill's ceiling: tool-name prefixes that must NEVER appear in this drill's
 # declarations (order placement, position closing, account/watchlist mutation,
 # options exercise — every write-shaped surface the live server advertises).
 _FORBIDDEN_PREFIXES = (

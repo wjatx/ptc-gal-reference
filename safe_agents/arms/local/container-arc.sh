@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# container-arc.sh — the #247 local ceremony arc, re-run INSIDE a Linux container
-# as an arbitrary UID, with no AWS anything (#249, the openshift epic's Phase 1).
+# container-arc.sh — the local ceremony arc, re-run INSIDE a Linux container
+# as an arbitrary UID, with no AWS anything (the openshift epic's Phase 1).
 #
 # Runs *inside* the container; `container-arc-run.sh` is the host-side driver that
 # builds the images, makes the mounts and invokes this. What it proves, in order:
@@ -16,7 +16,7 @@
 #   5. the declared-but-unadmitted sibling is refused (two-key admission: the
 #      image-baked manifest is key #1, the ratified registry row key #2)
 #
-# Secrets arrive as a mounted DIRECTORY (#248's dir arm) and the issuer key is
+# Secrets arrive as a mounted DIRECTORY (the directory secrets backend) and the issuer key is
 # generated per-drill at 0600 inside the container, then destroyed with it.
 #
 # Deliberately NOT parameterized beyond the manifest: this is a drill, and a drill

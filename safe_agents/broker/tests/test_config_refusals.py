@@ -1,6 +1,6 @@
-"""test_config_refusals.py — #205: named-config-or-refuse at the broker boot seam.
+"""test_config_refusals.py — named-config-or-refuse at the broker boot seam.
 
-Doctrine (docs/config-provenance.md; the #197/#199 lesson): authority-shaping
+Doctrine (docs/config-provenance.md; the wrong-authority-mint lesson): authority-shaping
 config must be operator-NAMED; the machine refuses instead of defaulting or
 warn-and-continuing, and every refusal fails toward running nothing / less
 authority. Four seams, each pinned by a refusing-defaulted case and a passing
@@ -323,7 +323,7 @@ class TestStoreArmClosedSet:
 # ---------------------------------------------------------------------------
 # The sqlite arm (product-wrapper Phase 1): a recognized member of the closed set that
 # serves the MCP ceremony stores only — the broker service refuses to boot on
-# it (falling through to memory dev fallbacks would be the #197/#199 shape),
+# it (falling through to memory dev fallbacks would be the wrong-authority-mint shape),
 # and its db path is NAMED, resolved in boot_config and only there.
 # ---------------------------------------------------------------------------
 

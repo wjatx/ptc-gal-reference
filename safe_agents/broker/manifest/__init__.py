@@ -1,7 +1,7 @@
 """broker.manifest — the ToolOp table primitive + a copyable catalog of generic ops.
 
 A ToolOp classifies each tool operation once, as code/manifest-resident fact, never
-from model input: the model cannot assert its 'send' is really a 'draft'. Since #171
+from model input: the model cannot assert its 'send' is really a 'draft'. Now
 the classifications themselves are CONSUMER-OWNED — they travel in the agent's
 ``AgentManifest.tool_ops`` and ``build_runtime`` compiles them into a per-runtime
 ``ToolOpTable`` the broker resolves every call against. The base owns the ToolOp
@@ -54,7 +54,7 @@ class ToolOpTable:
 
     @classmethod
     def from_manifest(cls, manifest: "AgentManifest") -> "ToolOpTable":  # noqa: F821
-        """Build the runtime table from a consumer manifest's ``tool_ops`` (#171)."""
+        """Build the runtime table from a consumer manifest's ``tool_ops``."""
         return cls(list(manifest.tool_ops))
 
     def entry(self, tool: str, op: str) -> ToolOp | None:
@@ -101,7 +101,7 @@ class ToolOpTable:
 #               structurally bounded-blast (a fixed, broker-held destination the model
 #               can't widen). False ONLY when a mistake is both irreversible AND
 #               unbounded — rule 8 then requires approval every call. Omit for reads.
-#   egress_arg: name of the arg whose value egresses to the provider (sa#137).
+#   egress_arg: name of the arg whose value egresses to the provider.
 # ---------------------------------------------------------------------------
 
 CATALOG: list[ToolOp] = [
@@ -110,16 +110,16 @@ CATALOG: list[ToolOp] = [
     # not applicable to reads.
     ToolOp(tool="github", op="whoami", effect="read", external=True),
 
-    # --- Search (sa#133) ---
+    # --- Search ---
     # query: read, crosses a trust boundary to the search provider. The RESPONSE is
     # untrusted free-text web content; the broker self-ingests every successful external
-    # read into the TurnContext (sa#134), so the turn is tainted and a subsequent
-    # external write escalates to require_approval. egress_arg="query" (sa#137): the
+    # read into the TurnContext, so the turn is tainted and a subsequent
+    # external write escalates to require_approval. egress_arg="query": the
     # agent-composed query string egresses, so the broker bounds its size and meters
     # cumulative egress bytes — closing the query-as-exfil-channel gap.
     ToolOp(tool="search", op="query", effect="read", external=True, egress_arg="query"),
 
-    # --- Ledger (sa#131) ---
+    # --- Ledger ---
     # append: write to the platform's OWN durable brief/ledger sink — no trust boundary
     # is crossed (external=False), and the sink is append-only so a wrong append is
     # recoverable (reversible=True). The destination bucket/prefix are broker-held
@@ -133,7 +133,7 @@ CATALOG: list[ToolOp] = [
     # autonomously (rule 10); a tainted turn still hits rule 7 and requires approval.
     ToolOp(tool="notify", op="send", effect="write", external=True, reversible=True),
 
-    # --- Peer / A2A publish (sa#156) ---
+    # --- Peer / A2A publish ---
     # publish: emit an EventTrigger to a PEER agent's airlock. external=True,
     # effect="write" is the ENTIRE taint trigger — a tainted turn's publish hits the
     # standing tainted_external_write cut (rule 9), no publish-specific rule.

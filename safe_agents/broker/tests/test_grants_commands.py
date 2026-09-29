@@ -1,4 +1,4 @@
-"""Tests for the grant-ceremony command surface (#123) — grants/commands.py.
+"""Tests for the grant-ceremony command surface — grants/commands.py.
 
 Coverage (unit-level: InMemory stores, monkeypatched _caller_identity — no real
 STS/AWS; argv goes through the real _parse_args so the argparse wiring is
@@ -17,7 +17,7 @@ proven end-to-end):
   path warns LOUDLY.
 - issuer_keys.resolve_record_signer: OFF without the ARN, fails closed on a
   half-configured environment, resolves via the monkeypatched secret fetch.
-- _resolve_envelope_hash (#199): manifest mode refuses to stamp when the
+- _resolve_envelope_hash: manifest mode refuses to stamp when the
   BROKER_MANIFEST principal is not the ceremony's target principal (naming
   both remedies); store mode stays keyed by the principal argument.
 """
@@ -200,7 +200,7 @@ def propose_args(artifact_path, **overrides):
 
 def ratify_args(proposal_id: str, *, allow_unsigned: bool = True):
     """Parsed ratify args. allow_unsigned defaults True because most tests
-    exercise the ceremony with signer=None (#205: unsigned-without-flag
+    exercise the ceremony with signer=None (unsigned-without-flag
     refuses; the refusal itself is covered by a dedicated regression test)."""
     argv = [
         "ratify",
@@ -468,7 +468,7 @@ def test_propose_level_skip_is_refused(
 
 
 # ---------------------------------------------------------------------------
-# --window-days — the honest multi-day evidence window (#193)
+# --window-days — the honest multi-day evidence window
 # ---------------------------------------------------------------------------
 
 
@@ -509,7 +509,7 @@ def test_window_days_sees_earlier_utc_days(
     # counters — ceremony.execute runs the predicate over proposal.metrics).
     assert pending[0].metrics.observation_count == 100
     assert pending[0].metrics.false_action_count == 1
-    # The window span rides the proposal as checker-visible provenance (#193).
+    # The window span rides the proposal as checker-visible provenance.
     assert pending[0].window_periods == 7
     assert pending[0].period == "utc-day"
 
@@ -570,7 +570,7 @@ def test_ratify_refuses_tampered_window_days(
 def test_ratify_defaults_absent_window_keys_to_day_one(
     monkeypatch, artifact_path, grant_store, record_store, proposal_store, enforcement_store,
 ):
-    """A proposal stored before #193 has no window keys at all; it must still
+    """A proposal stored before evidence labeling has no window keys at all; it must still
     load (defaulting to 1 utc-day period) and ratify."""
     grant_store.put_grant(make_grant(level=AutonomyLevel.in_loop))
     seed_counters(enforcement_store)
@@ -579,7 +579,7 @@ def test_ratify_defaults_absent_window_keys_to_day_one(
     ) == 0
     proposal_id = stored_proposal_id(proposal_store)
 
-    # Simulate the pre-#193 item: drop the keys and RE-HASH so integrity passes
+    # Simulate the pre-evidence-labeling item: drop the keys and RE-HASH so integrity passes
     # (the fields genuinely never existed for that proposal).
     item = _only_stored_item(proposal_store)
     payload = json.loads(item["data"])
@@ -601,7 +601,7 @@ def test_ratify_defaults_absent_window_keys_to_day_one(
 def test_legacy_window_days_key_loads_as_window_periods(
     monkeypatch, artifact_path, grant_store, record_store, proposal_store, enforcement_store,
 ):
-    """A pre-#212 stored proposal spelled the span 'window_days'; it must load
+    """A pre-counter-period stored proposal spelled the span 'window_days'; it must load
     as window_periods (day-period semantics, which is what it always meant)."""
     grant_store.put_grant(make_grant(level=AutonomyLevel.in_loop))
     seed_counters(enforcement_store)
@@ -611,7 +611,7 @@ def test_legacy_window_days_key_loads_as_window_periods(
     ) == 0
     proposal_id = stored_proposal_id(proposal_store)
 
-    # Rewrite the item in the pre-#212 wire shape and RE-HASH (a genuine old item).
+    # Rewrite the item in the pre-counter-period wire shape and RE-HASH (a genuine old item).
     item = _only_stored_item(proposal_store)
     payload = json.loads(item["data"])
     payload["window_days"] = payload.pop("window_periods")
@@ -648,7 +648,7 @@ def test_propose_at_hour_period_reads_hour_buckets(
     monkeypatch, artifact_path, grant_store, proposal_store, enforcement_store,
 ):
     """--period utc-hour sums hour-bucketed evidence and stamps the period onto
-    the HMAC-bound proposal (#212). The full lifecycle at development speed."""
+    the HMAC-bound proposal. The full lifecycle at development speed."""
     grant_store.put_grant(make_grant(level=AutonomyLevel.in_loop))
     seed_counters_on_hour(enforcement_store, hour_offset=2)
 
@@ -929,7 +929,7 @@ def test_ratify_signs_record_when_issuer_key_injected(
 
     set_caller(monkeypatch, CHECKER_ARN)
     rc = ratify_command(
-        # A configured signer needs no --allow-unsigned opt-in (#205).
+        # A configured signer needs no --allow-unsigned opt-in.
         ratify_args(proposal_id, allow_unsigned=False),
         grant_store=grant_store,
         record_store=record_store,
@@ -980,7 +980,7 @@ def test_ratify_unsigned_without_flag_refuses_and_writes_nothing(
     monkeypatch, artifact_path, grant_store, record_store, proposal_store, enforcement_store,
     capsys,
 ):
-    """#205 regression: signer=None without --allow-unsigned refuses — no
+    """Regression: signer=None without --allow-unsigned refuses — no
     PromotionRecord, no grant mutation, proposal still pending (not burned)."""
     grant_store.put_grant(make_grant(level=AutonomyLevel.in_loop))
     seed_counters(enforcement_store)
@@ -1011,7 +1011,7 @@ def test_ratify_unsigned_without_flag_refuses_and_writes_nothing(
 
 
 # ---------------------------------------------------------------------------
-# acknowledge — signed waiver ceremony for TRUE audit findings (#196)
+# acknowledge — signed waiver ceremony for TRUE audit findings
 # ---------------------------------------------------------------------------
 
 
@@ -1049,7 +1049,7 @@ def test_acknowledge_appends_signed_verifying_record(monkeypatch, capsys):
     ack = AcknowledgmentRecord.model_validate_json(item["data"])
     assert ack.acknowledgedBy == CHECKER_ARN  # STS-derived, never asserted
     assert ack.detailDigest == violation_detail_digest(ack_args().detail)
-    # Verify from the STORED bytes (#246 instance 7)
+    # Verify from the STORED bytes (stored-bytes instance 7)
     result = verify_acknowledgment(
         item["data"], json.loads(item["signature"]), key_resolver_from_map({"issuer-key-1": public_pem})
     )
@@ -1101,7 +1101,7 @@ def test_resolve_record_signer_off_without_arn(monkeypatch):
 
 
 def test_resolve_record_signer_refuses_half_configured(monkeypatch):
-    """#196: key_id without the key ARN REFUSES — never an unsigned record."""
+    """key_id without the key ARN REFUSES — never an unsigned record."""
     monkeypatch.delenv(issuer_keys.ISSUER_SIGNING_KEY_SECRET_ARN_ENV, raising=False)
     monkeypatch.setenv(issuer_keys.ISSUER_SIGNING_KEY_ID_ENV, "issuer-key-1")
     with pytest.raises(issuer_keys.IssuerSigningConfigError, match="half-configured"):
@@ -1144,7 +1144,7 @@ def test_resolve_record_signer_fails_closed_on_bad_secret(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# issuer_keys — read-only verify-keys resolution seam (#194)
+# issuer_keys — read-only verify-keys resolution seam
 # ---------------------------------------------------------------------------
 
 
@@ -1203,7 +1203,7 @@ def test_resolve_issuer_verify_keys_fails_closed_on_unfetchable_param(monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# _resolve_envelope_hash (#199) — manifest mode refuses a principal mismatch;
+# _resolve_envelope_hash — manifest mode refuses a principal mismatch;
 # store mode stays keyed by the principal argument
 # ---------------------------------------------------------------------------
 
@@ -1237,7 +1237,7 @@ def _set_manifest(monkeypatch, principal: Principal | None):
 
 
 def test_resolve_envelope_hash_manifest_mode_mismatch_refused(monkeypatch):
-    """The #199 shape: ceremony target owner-example-agent, _MANIFEST left at
+    """The wrong-authority-mint shape: ceremony target owner-example-agent, _MANIFEST left at
     the example-advisor default — refused loudly, naming both principals and
     both remedies, instead of silently stamping the wrong envelope hash."""
     from safe_agents.broker.grants._commands_common import _resolve_envelope_hash
@@ -1309,7 +1309,7 @@ def test_resolve_envelope_hash_store_mode_unchanged(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# #255 — the certification term rides the ceremony CLI, and only the ceremony
+# The certification term rides the ceremony CLI, and only the ceremony
 # ---------------------------------------------------------------------------
 
 _TERM = "2026-10-01T00:00:00+00:00"

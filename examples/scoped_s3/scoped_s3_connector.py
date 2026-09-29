@@ -1,4 +1,4 @@
-"""scoped_s3_connector.py — the reference per-capability IAM-scoping consumer (#175).
+"""scoped_s3_connector.py — the reference per-capability IAM-scoping consumer.
 
 This is the worked example of the ``assumed_role`` credential strategy
 (``safe_agents.broker.runtime.credentials.AssumedRole``) + the ``capability_iam``
@@ -15,7 +15,7 @@ connector demonstrates the shape (consume the bundle, run one narrow classified 
 and refuses anything outside its declared scope, mirroring how real IAM would.
 
 Like ``examples/oauth_api/``, this is a consumer-owned connector reached via the
-``connector_providers`` seam (sa#141) and written ONLY against the public surface —
+``connector_providers`` seam and written ONLY against the public surface —
 ``safe_agents.connectors`` — never against broker internals (the consumer-boundary
 AST guard enforces that).
 
@@ -25,7 +25,7 @@ the credential it was given.
 
 Doctrine 2 (no raw command/query passthrough): ``execute`` exposes one narrow,
 classified capability (``s3.get_object`` on a declared key prefix), not a free-form
-``s3.execute(<cmd>)`` — the ToolOp table (#171) classifies the op and ``capability_iam``
+``s3.execute(<cmd>)`` — the ToolOp table classifies the op and ``capability_iam``
 bounds the identity; a passthrough arg would defeat both.
 """
 

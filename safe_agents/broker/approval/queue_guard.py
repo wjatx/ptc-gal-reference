@@ -1,4 +1,4 @@
-"""Approval-queue de-amplification — the pure, deterministic mechanism (sa#160).
+"""Approval-queue de-amplification — the pure, deterministic mechanism.
 
 The availability floor's second half. An attacker who forces abstention drives
 calls into `require_approval`; each held intent pages a human, so a flood of

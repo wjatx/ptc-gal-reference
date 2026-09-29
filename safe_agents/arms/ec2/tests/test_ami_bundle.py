@@ -1,5 +1,5 @@
 """
-Unit tests for safe_agents/arms/ec2/ami/bundle.py (sa#84).
+Unit tests for safe_agents/arms/ec2/ami/bundle.py.
 
 All tests are S3-free: AWS calls go through FakeS3. No live boto3 required.
 
@@ -349,11 +349,11 @@ def test_upload_platform_contract_returns_result_dict() -> None:
 
 
 # ---------------------------------------------------------------------------
-# EC2 bootstrap bundle (sa#97) — netns + broker-proxy confinement scripts
+# EC2 bootstrap bundle — netns + broker-proxy confinement scripts
 # ---------------------------------------------------------------------------
 
 def _make_ec2_bootstrap_dir(tmp_path: Path) -> Path:
-    """A minimal ec2/bootstrap/ tree: scripts/ with the confinement scripts (sa#35: no stub)."""
+    """A minimal ec2/bootstrap/ tree: scripts/ with the confinement scripts (no stub)."""
     root = tmp_path / "bootstrap"
     scripts = root / "scripts"
     scripts.mkdir(parents=True)
@@ -366,7 +366,7 @@ def _make_ec2_bootstrap_dir(tmp_path: Path) -> Path:
 
 
 def _make_ec2_box_dir(tmp_path: Path) -> Path:
-    """A minimal ec2/box/ tree: the run-brokered.sh runner (sa#35)."""
+    """A minimal ec2/box/ tree: the run-brokered.sh runner."""
     box = tmp_path / "box"
     box.mkdir(parents=True)
     (box / "run-brokered.sh").write_text("#!/usr/bin/env bash\nclaude -p hi\n", encoding="utf-8")
@@ -388,7 +388,7 @@ def test_bundle_ec2_bootstrap_root_is_ec2_bootstrap(tmp_path: Path) -> None:
 
 
 def test_bundle_ec2_bootstrap_includes_confinement_scripts(tmp_path: Path) -> None:
-    """The arm-agnostic confinement scripts land under scripts/ (no model-proxy stub, sa#35)."""
+    """The arm-agnostic confinement scripts land under scripts/ (no model-proxy stub)."""
     data = bundle_ec2_bootstrap(
         _make_ec2_bootstrap_dir(tmp_path), box_dir=_make_ec2_box_dir(tmp_path)
     )
@@ -404,7 +404,7 @@ def test_bundle_ec2_bootstrap_includes_confinement_scripts(tmp_path: Path) -> No
 
 
 def test_bundle_ec2_bootstrap_includes_run_brokered_runner(tmp_path: Path) -> None:
-    """The converged run-brokered.sh runner rides the same bundle under box/ (sa#35)."""
+    """The converged run-brokered.sh runner rides the same bundle under box/."""
     data = bundle_ec2_bootstrap(
         _make_ec2_bootstrap_dir(tmp_path), box_dir=_make_ec2_box_dir(tmp_path)
     )
@@ -547,7 +547,7 @@ def test_component_verifies_aws_version() -> None:
 
 # ---------------------------------------------------------------------------
 # read_manifest_identity — the S3 key must come from the manifest name, not the
-# package dir (the sa#35 footgun: name='smoke-rhel-openshell', package='test-stub')
+# package dir (the two-box capstone footgun: name='smoke-rhel-openshell', package='test-stub')
 # ---------------------------------------------------------------------------
 
 

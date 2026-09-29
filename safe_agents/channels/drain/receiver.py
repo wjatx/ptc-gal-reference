@@ -1,10 +1,10 @@
-"""channels.drain.receiver — the consumer Receiver seam (sa#155).
+"""channels.drain.receiver — the consumer Receiver seam.
 
 The drain worker is base reference code; what an accepted envelope *means* to
 an agent is consumer code. The Receiver is that seam: the consumer supplies a
 class implementing the protocol below, named by an image-baked dotted provider
 path (``"pkg.module:ClassName"``) — the same injection discipline as the
-broker's ``connector_providers`` (sa#141, ``broker/prototype/connector_registry.py``):
+broker's ``connector_providers`` (``broker/prototype/connector_registry.py``):
 importlib-loaded, zero-arg instantiated, protocol-checked, fail-closed with a
 typed error. A provider path is honored ONLY from the image-baked environment
 (``CHANNELS_DRAIN_RECEIVER``), never from anything store-loaded and never from

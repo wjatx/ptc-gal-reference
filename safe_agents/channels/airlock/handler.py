@@ -1,4 +1,4 @@
-"""channels.airlock.handler — the API Gateway → dispatch → SQS Lambda binding (sa#152).
+"""channels.airlock.handler — the API Gateway → dispatch → SQS Lambda binding.
 
 Thin by design: the whole point of the reference dispatcher
 (channels/dispatch.py) is that it stays unchanged and transport-free, so this
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 # The Lambda runtime hangs its handler on the ROOT logger but leaves levels at
 # the WARNING default, so an unleveled module logger silently drops every
 # .info() — including the structured drop/accept lines this module exists to
-# emit. Verified live (sa#152 bringup): invocations logged nothing.
+# emit. Verified live (airlock bringup): invocations logged nothing.
 logger.setLevel(logging.INFO)
 
 DEFAULT_DROP_PREFIX = "channels/drops/"

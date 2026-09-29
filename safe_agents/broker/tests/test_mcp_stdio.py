@@ -1,4 +1,4 @@
-"""Real-stdio-transport suite for the MCP host (#219, Leg 1).
+"""Real-stdio-transport suite for the MCP host (Leg 1).
 
 Everything in `test_mcp_host.py` rides the SDK's in-memory transport; this file
 is the stdio-path counterpart: every test here spawns
@@ -110,7 +110,7 @@ def _ledger_factory(registry: MemoryToolRegistry):
     )
 
     async def factory():
-        host = await inner()  # a started SupervisedStdioHost (#221 P3)
+        host = await inner()  # a started SupervisedStdioHost
         _admit_all(registry, await host.inner._client.list_tool_defs())
         await host.refresh()
         return host
@@ -346,8 +346,8 @@ def test_stdio_child_that_exits_immediately_fails_fast_not_timeout():
 
 
 # ---------------------------------------------------------------------------
-# Native construction (#221) — build_mcp_connectors against REAL children.
-# The #219 Leg-1 proofs above drive stdio_host_factory directly (the reference
+# Native construction — build_mcp_connectors against REAL children.
+# The stdio-transport proofs above drive stdio_host_factory directly (the reference
 # tier); these drive the SAME transport through the build_runtime construction
 # path a manifest's spawn config takes in production, so retiring the provider
 # pattern shrank no live coverage.

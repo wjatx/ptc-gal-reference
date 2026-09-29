@@ -1,5 +1,5 @@
 """Per-capability IAM declaration — the consumer-facing minimal IAM a connector
-capability runs with, consumed by the DEPLOY to provision a scoped role (#175).
+capability runs with, consumed by the DEPLOY to provision a scoped role.
 
 Doctrine 2 of `broker/CONNECTOR-AUTH.md`: with an assumed-role/ambient-identity
 credential, the credential *is* an identity, so its blast radius is whatever that
@@ -24,14 +24,14 @@ from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class CapabilityIam(BaseModel):
-    """The minimal IAM one connector capability runs with (#175).
+    """The minimal IAM one connector capability runs with.
 
     Keyed by connector **tool name** in `AgentManifest.capability_iam` — the same key
     space as `connector_auth`, so a capability's credential strategy (`assumed_role`)
     and its IAM scope line up one-to-one. `actions` are IAM action strings (e.g.
     `"s3:GetObject"`); `resources` are the resource ARNs those actions are scoped to.
     Both must be non-empty — a scoped role with no actions or no resources is either a
-    no-op or an unscoped wildcard, and #175's whole point is a bounded blast radius.
+    no-op or an unscoped wildcard, and scoping exists to bound the blast radius.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -1,6 +1,6 @@
-"""channels.drain.handler — the accepted-queue → broker-turn Lambda binding (sa#155).
+"""channels.drain.handler — the accepted-queue → broker-turn Lambda binding.
 
-The worker-side half of the airlock (sa#152): the airlock enqueues accepted,
+The worker-side half of the airlock: the airlock enqueues accepted,
 stamped EventTrigger envelopes; this handler drains them. Per SQS record it
 parses the envelope, drops it if expired (SCHEMAS C6), verifies the principal,
 builds an ephemeral in-process ``BrokerRuntime`` from the image-baked
@@ -8,7 +8,7 @@ AgentManifest, feeds the provenance chain into that runtime's broker-held turn
 (``ingest_chain`` — SCHEMAS C5, DRAIN.md D1/D2), and only then hands the
 envelope to the consumer's Receiver — through a minimal brokered-call facade
 that exposes ONLY ``handle_request``, never the turn controls, so ingest and
-action share one turn the receiver cannot roll (sa#136, DRAIN.md D2).
+action share one turn the receiver cannot roll (DRAIN.md D2).
 
 There is deliberately NO second trust surface here: no re-screening, no
 re-stamping, no dedupe store. The airlock is the sole gate surface and this
@@ -267,7 +267,7 @@ def _process_record(record: dict, state: _DrainState) -> None:
 
     runtime = _build_runtime(state.manifest)
 
-    # sa#176 — the human-as-owner approval fork. An owner-class approval envelope
+    # The human-as-owner approval fork. An owner-class approval envelope
     # ACTIONS a held intent out-of-band instead of starting an agent turn. The fork
     # REQUIRES sender_class == "owner": that label is set ONLY at the airlock's gate 8
     # from the trust map and is unforgeable on the wire, so a non-owner envelope that
@@ -308,7 +308,7 @@ def _process_record(record: dict, state: _DrainState) -> None:
         )
         return
 
-    # sa#193 Phase 6c — the human-as-owner flag fork. An owner-class flag envelope
+    # The human-as-owner flag fork. An owner-class flag envelope
     # marks an already-EXECUTED intent as reviewed-wrong (writing false_action) out
     # of band instead of starting an agent turn. Like the approval fork it REQUIRES
     # sender_class == "owner" (the unforgeable gate-8 label): a non-owner envelope
@@ -369,7 +369,7 @@ def handler(event: dict, context: Any = None) -> dict:
     are logged as ``drain_terminal_drop`` and NOT reported — the queue has no
     DLQ, so redelivering them would poison-loop for the retention period and
     then vanish silently; the structured log is the observable surface
-    (alarm-able the sa#153 way). Config errors raise out of the handler —
+    (alarm-able via a log-metric alarm). Config errors raise out of the handler —
     the WHOLE batch errors, by design.
     """
     state = _get_state()

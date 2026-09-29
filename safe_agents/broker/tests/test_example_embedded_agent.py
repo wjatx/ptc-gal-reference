@@ -1,4 +1,4 @@
-"""Tests for the embedded_agent worked example (#266).
+"""Tests for the embedded_agent worked example.
 
 The example proves the broker is usable as a LIBRARY — embedded in a plain Python
 program through `safe_agents.broker.api` — rather than only as a service configured

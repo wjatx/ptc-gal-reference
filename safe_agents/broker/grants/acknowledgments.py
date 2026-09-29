@@ -1,4 +1,4 @@
-"""grants.acknowledgments — sanctioned disposition of TRUE audit findings (#196).
+"""grants.acknowledgments — sanctioned disposition of TRUE audit findings.
 
 A waiver is a CEREMONY ARTIFACT, not a config toggle: an acknowledgment RECORD
 appended to the same append-only grants table — NEVER a mutation of the flagged
@@ -70,17 +70,17 @@ ACK_PREDICATE_TYPE = "https://safe-agents.dev/audit-acknowledgment/v1"
 
 WAIVABLE_RULES: frozenset[str] = frozenset(
     {
-        # A pre-ceremony grant with no ledger counterpart (#195's orphans):
+        # A pre-ceremony grant with no ledger counterpart (the pre-ceremony orphans):
         # honest history whose remediation is a coordinated operator session.
         "LEDGER_COUNTERPART",
         # An unsigned/unverifiable promotion record superseded by a signed
         # re-climb (the Phase 6 drill's 03:31 record): honest history.
         "RECORD_SIGNATURE_VERIFIES",
         # A grant stamped under a no-longer-in-force envelope: the EXPECTED
-        # window after a far-jump redeploy, pending re-seed (#201).
+        # window after a far-jump redeploy, pending re-seed.
         "GRANT_ENVELOPE_IN_FORCE",
-        # A grant BELOW its ledger-derived level with no record for the drop
-        # (#255): pre-#244, demotion wrote the grant FIRST and the record
+        # A grant BELOW its ledger-derived level with no record for the drop:
+        # before the atomic record+grant write, demotion wrote the grant FIRST and the record
         # second, so an interrupted pair left exactly this — honest history
         # that failed toward less authority. Never a raise; that stays
         # un-waivable under LEVEL_LEDGER_CONSISTENT.
@@ -119,7 +119,7 @@ class AcknowledgmentRecord(BaseModel):
 
 
 def canonical_ack_payload(ack: AcknowledgmentRecord) -> str:
-    """The ONE serialization of an acknowledgment — STORED and signed (#246
+    """The ONE serialization of an acknowledgment — STORED and signed (stored-bytes
     instance 7, found post-inventory): the stores write exactly this string as
     the item's data, the signature binds its sha256, and verification digests
     the STORED bytes verbatim — never a re-serialization of the parsed record,
@@ -184,7 +184,7 @@ def verify_acknowledgment(
     """Verify the STORED acknowledgment bytes against their DSSE envelope.
 
     Mirrors record_signing.verify_record mode-for-mode (missing / malformed /
-    unknown-signer / invalid). Since #246 (instance 7) the input is the stored
+    unknown-signer / invalid). Since stored-bytes integrity (instance 7) the input is the stored
     serialization itself — the subject digest is the sha256 over exactly those
     bytes, never a re-serialization of a parsed model.
     """

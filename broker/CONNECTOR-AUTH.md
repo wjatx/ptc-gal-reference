@@ -1,6 +1,6 @@
-# CONNECTOR-AUTH — resolving a connector's live credential broker-side (#173/#175, PTC Phase 3a)
+# CONNECTOR-AUTH — resolving a connector's live credential broker-side (#79, PTC Phase 3a)
 
-> **Status: contract (2026-07-11; extended for #175 IAM scoping, and for #237 remote header
+> **Status: contract (2026-07-11; extended for IAM scoping, and for remote header
 > delivery 2026-07-26).** Contract-tier per `docs/contract-vs-reference.md`: this document
 > is the normative words, `safe_agents/broker/schemas/connector_auth.py` (`AuthStrategy`,
 > `ConnectorAuth`, `HeaderSource`) is the consumer-facing config surface,
@@ -10,11 +10,11 @@
 > conformance suite. `examples/oauth_api/` is the reference OAuth consumer and
 > `examples/oauth_remote_mcp/` the reference REMOTE-MCP one — instantiations of the non-static seam,
 > not the contract. Companion to `broker/SCHEMAS.md` (the `AgentManifest` block this
-> extends) and the `connector_providers`/`connector_secrets` seam (sa#141/#164) it sits beside.
+> extends) and the `connector_providers`/`connector_secrets` seam it sits beside.
 
 ## What this is — and what it is not
 
-Before #173 a connector's credential was a single **static secret string**: the Doer computed a leaf
+Originally a connector's credential was a single **static secret string**: the Doer computed a leaf
 name (`connector_secrets`, or the default leaf == tool name) and did `secrets.fetch_secret(leaf)`,
 handing the result to the connector. That is the right shape for a static API key. It is the *wrong*
 shape for the credentials real backends actually use — an OAuth access token minted from a refresh
@@ -22,7 +22,7 @@ token, an STS-assumed role, the broker's own ambient IAM identity.
 
 Connector-auth generalizes credential resolution from a string into a pluggable **strategy** the
 broker invokes **per call, at execute time**. `static_secret` is the degenerate case and is
-byte-for-byte the pre-#173 behavior; the non-static strategies resolve a *live* credential.
+byte-for-byte the original behavior; the non-static strategies resolve a *live* credential.
 
 It is **not** a new grant, a new decision verb, or a taint mechanism. Which strategy resolves a
 credential says nothing about whether a call is *allowed* — the PEP has already decided that. This
@@ -36,7 +36,7 @@ obtained without the agent ever seeing it."
 even that. Long-lived material stays inside the strategy: `OAuthRefresh` reads the *refresh token*
 from the secrets store and returns a short-lived *access token* — the refresh token never leaves the
 broker, never reaches the connector, never reaches the agent. "The agent holds no credentials" is the
-floor; #173 widens *what a credential is* (a static string → a rotated token → an assumed role)
+floor; #79 widens *what a credential is* (a static string → a rotated token → an assumed role)
 without widening *who holds it*. A strategy that handed the agent (or even logged) the long-lived
 secret would break the floor.
 
@@ -44,17 +44,17 @@ secret would break the floor.
 URL it can reach. A **local-exec** connector (a CLI wrapper, an MCP-stdio server, a subprocess)
 extends "egress" from *the network* to *any effect the broker identity can cause* on the host or in
 the cloud account. Confinement therefore generalizes from URL-scoping to **IAM-scoping + an OS
-sandbox** (the IAM-scoping half is `assumed_role` + `capability_iam`, #175 — see below). Two
+sandbox** (the IAM-scoping half is `assumed_role` + `capability_iam` — see below). Two
 structural consequences, load-bearing for any
 connector regardless of auth strategy:
 
 - **No raw command/query/URL passthrough.** A connector exposes narrow, *classified* capabilities
   (`aws.ec2_terminate`, `db.get_customer(id)`), never `aws.execute(<cmd>)` or `db.query(<sql>)`. A
   free-form-input connector is a broker bypass — it lets the agent smuggle an unclassified effect
-  through a classified op. The ToolOp table (#171) classifies the *op*; a passthrough arg defeats that
+  through a classified op. The ToolOp table classifies the *op*; a passthrough arg defeats that
   classification.
 - **The broker identity is the blast radius.** With `ambient_identity`/`assumed_role`, the credential
-  *is* an identity, not a secret; scope that identity to exactly the declared capability (#175), never
+  *is* an identity, not a secret; scope that identity to exactly the declared capability, never
   the broker's full role.
 
 ## The seam
@@ -65,9 +65,9 @@ Three parts, each at an existing composition point:
    `ConnectorAuth = { strategy: AuthStrategy, params: dict[str,str], env_map: dict[str,str],
    header_map: dict[str, HeaderSource] }`.
    Keyed by connector **tool name**. An absent entry means `static_secret`, so the empty block is
-   the pre-#173 behavior exactly. `params` is a string map of **leaf names, URLs, client ids —
-   never secret VALUES**. `env_map` (#221) is the spawn-time DELIVERY declaration for MCP child
-   processes and `header_map` (#237) the per-connect one for REMOTE MCP servers (see the two
+   the original behavior exactly. `params` is a string map of **leaf names, URLs, client ids —
+   never secret VALUES**. `env_map` is the spawn-time DELIVERY declaration for MCP child
+   processes and `header_map` the per-connect one for REMOTE MCP servers (see the two
    delivery sections below); each is refused on the other's transport, and on any non-MCP tool, as
    dead config at manifest load.
 
@@ -89,7 +89,7 @@ Three parts, each at an existing composition point:
 |---|---|---|---|
 | `static_secret` | the secret leaf, verbatim | the leaf value itself | shipped (default, unchanged) |
 | `oauth_refresh` | a minted OAuth access token | the refresh token + client secret (secret leaves) | shipped |
-| `assumed_role` | STS-assumed role credentials (an `AssumedRoleCredential` bundle) | the role trust / broker identity | **shipped (#175)** |
+| `assumed_role` | STS-assumed role credentials (an `AssumedRoleCredential` bundle) | the role trust / broker identity | **shipped** |
 | `ambient_identity` | the broker's own IAM identity (no secret) | the broker workload identity | **reserved** — not implemented |
 
 A manifest selecting a **reserved** strategy fails loudly at broker build with
@@ -108,10 +108,10 @@ exist so a consumer can declare intent and a base PR only adds the factory, not 
 
 The token exchange (the refresh-grant HTTP POST) is an **injectable** `TokenFetcher` — the default is
 a stdlib urllib POST; conformance tests inject a fake so they run without a network. v1 mints fresh
-per call (stateless, always-correct); a TTL-aware cache is a connector-lifecycle follow-on (#173.2,
-deferred).
+per call (stateless, always-correct); a TTL-aware cache is a connector-lifecycle follow-on
+(deferred).
 
-#### `assumed_role` params (#175)
+#### `assumed_role` params
 
 | param | required | meaning |
 |---|---|---|
@@ -125,9 +125,9 @@ The assume-role call is an **injectable** `RoleAssumer` (the default is a boto3 
 conformance tests inject a fake so they run without AWS). `assumed_role` reads **no secret leaf** — the
 credential is an assumed *identity*, not a stored string — and resolves an `AssumedRoleCredential`
 bundle (`safe_agents.connectors.AssumedRoleCredential`: `access_key_id` + `secret_access_key` +
-`session_token` + informational `expiration`). Fresh per call (stateless; a TTL cache is #173.2).
+`session_token` + informational `expiration`). Fresh per call (stateless; a TTL cache is the deferred connector-lifecycle follow-on).
 
-## Per-capability IAM scoping (#175)
+## Per-capability IAM scoping
 
 `assumed_role` is only half the story. Doctrine 2 says an identity's blast radius is whatever that
 identity can do, so the identity must be **scoped to exactly the declared capability**. The scope is a
@@ -151,15 +151,15 @@ Three seams, each at an existing composition point:
    load).
 2. **Provision (the deploy).** The CDK (`infra/lib/`) reads `capability_iam` and provisions **one role
    per capability** scoped to exactly those actions+resources and trusting the broker identity, without
-   disturbing the broker's own `<agent>/connectors/*` secret scoping (sa#139).
+   disturbing the broker's own `<agent>/connectors/*` secret scoping.
 3. **Assume (broker-side, per call).** The `assumed_role` strategy STS-assumes that role at execute time
    and hands the connector the short-lived bundle — never the broker's own identity, never a long-lived
    key. **An out-of-scope action is denied by IAM, not by the broker.**
 
 `ambient_identity` remains reserved: it is the deliberate *un*-scoped escape hatch (the broker's full
-role), the opposite of what #175 is for — so it is not implemented alongside the scoping feature.
+role), the opposite of what IAM scoping is for — so it is not implemented alongside the scoping feature.
 
-## Spawn-time delivery — MCP child env injection (#221)
+## Spawn-time delivery — MCP child env injection
 
 Execute-time resolution (part 3 above) assumes the connector consumes the credential **per call**.
 A natively-constructed MCP server (`McpServerDecl` spawn config, `prototype/mcp_construction.py`)
@@ -181,7 +181,7 @@ sees it; an empty `env_map` resolves no credential at all. A credential that can
 (missing field, non-JSON, a non-string bundle like `assumed_role`'s) refuses the spawn rather than
 spawning a partially-configured child.
 
-## Per-connect delivery — remote MCP header injection (#237)
+## Per-connect delivery — remote MCP header injection
 
 Spawn-time delivery answers "the credential must be in the child's environment." A **remote**
 (streamable-HTTP) MCP server has no child, so the same question has a different answer: the
@@ -227,7 +227,7 @@ wrong transport.
 ## Conformance clauses
 
 - **C1 — static is unchanged.** With an empty or absent `connector_auth`, every tool resolves via
-  `StaticSecret`, i.e. `secrets.fetch_secret(secret_name)` — byte-for-byte the pre-#173 path.
+  `StaticSecret`, i.e. `secrets.fetch_secret(secret_name)` — byte-for-byte the original path.
 - **C2 — no passthrough of long-lived material.** A non-static strategy reads its long-lived material
   from the secrets store and returns only the short-lived resolved credential; the connector receives
   the resolved credential, never the long-lived material.
@@ -240,21 +240,21 @@ wrong transport.
 - **C5 — no raw passthrough (doctrine 1).** No strategy exposes the credential to the agent surface;
   the Doer redaction (`doer.py`) still covers a connector that embeds it in an exception — including
   every sensitive field of a bundle credential, not just a single string.
-- **C6 — assumed_role reads no secret + resolves a bundle (#175).** `assumed_role` fetches no secret
+- **C6 — assumed_role reads no secret + resolves a bundle.** `assumed_role` fetches no secret
   leaf (an identity is not a stored secret); it resolves an `AssumedRoleCredential` via the injected
   `RoleAssumer` and the connector receives that bundle, never the broker's own identity.
-- **C7 — a declared scope is assumed (#175).** A `capability_iam` tool MUST select `assumed_role` in
+- **C7 — a declared scope is assumed.** A `capability_iam` tool MUST select `assumed_role` in
   `connector_auth`; a scope no strategy assumes is dead config and is rejected at manifest load.
-- **C8 — the scoped role bounds the blast radius (#175).** The deploy provisions a role scoped to
+- **C8 — the scoped role bounds the blast radius.** The deploy provisions a role scoped to
   exactly `capability_iam[tool]`; an action outside that scope is denied by IAM at execute time, not by
   the broker. (Proven by `examples/scoped_s3/` + the infra synth tests.)
-- **C9 — spawn-time env injection is allowlisted, disjoint, and unlogged (#221).** For a spawnable MCP
+- **C9 — spawn-time env injection is allowlisted, disjoint, and unlogged.** For a spawnable MCP
   tool, the credential resolves at child spawn (lazily, per spawn, broker-side) and reaches the child
   ONLY through the declared `env_map` (unmapped fields never cross); the credential half and the static
   spawn env are disjoint at manifest load; a credential that cannot satisfy the map refuses the spawn;
   the merged environment is never logged and never crosses to the agent. `env_map` on a non-spawnable
   tool is refused at manifest load.
-- **C10 — per-connect header injection is allowlisted, re-resolved, and unlogged (#237).** For a
+- **C10 — per-connect header injection is allowlisted, re-resolved, and unlogged.** For a
   REMOTE MCP tool, the credential resolves broker-side once per CONNECT and reaches the server ONLY
   through the declared `header_map` (an unmapped credential field never crosses); a credential that
   cannot satisfy the map refuses the connect; header values are never logged and never cross to the
@@ -266,9 +266,10 @@ wrong transport.
 ## Deferred (this contract's edges)
 
 - **`ambient_identity` — the un-scoped escape hatch.** The broker's own full IAM role (no secret). The
-  deliberate opposite of #175's scoping and not implemented alongside it; a reserved enum name that
+  deliberate opposite of IAM scoping and not implemented alongside it; a reserved enum name that
   fails loudly at build until a base PR adds the factory.
-- **#173.2 — connector lifecycle.** `open()`/`close()`/session handling for pooled or stateful
+- **Connector lifecycle.** `open()`/`close()`/session handling for pooled or stateful
   backends (MCP handshakes, DB pools, subprocesses), and a TTL-aware token cache — now tracked as
-  #221 Phase 3 (child-death recovery, shutdown ordering, token cache). (Phase 3b #174 itself landed —
-  `broker/MCP-HOST.md`; its spawn-time credential delivery is the C9 clause above.)
+  the MCP-host child-lifecycle work (child-death recovery, shutdown ordering, token cache).
+  (The MCP host itself landed — `broker/MCP-HOST.md`; its spawn-time credential
+  delivery is the C9 clause above.)

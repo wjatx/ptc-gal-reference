@@ -50,7 +50,7 @@ reach, and has correspondingly less for it to protect. Say which posture a claim
 
 The reference implementation's default local seed path is that case, with one part that is not
 excused by posture: the grant it writes carries `promotedBy` and an evidence reference as hardcoded
-literals (#372, open). Bypassing a boundary that is not there is a posture statement; recording that
+literals (#27, open). Bypassing a boundary that is not there is a posture statement; recording that
 a human reviewed something is a false entry in authority state at any posture.
 
 ## The two objects

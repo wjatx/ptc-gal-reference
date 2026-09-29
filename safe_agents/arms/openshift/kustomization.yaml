@@ -53,7 +53,7 @@ configMapGenerator:
       # Phase 5. peer-receiver.py is a SCRIPT, not a leg — it rides here for the
       # same reason the others do, so the peer needs no image of its own.
       - peer-receiver.py
-      # #154. The unbrokered baseline — the control for every refusal in this arm.
+      # The unbrokered baseline — the control for every refusal in this arm.
       - cluster-demo-baseline.sh
       - cluster-demo-admit.sh
       - cluster-demo-taint.sh

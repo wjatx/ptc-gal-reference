@@ -1,5 +1,5 @@
 """Envelope seed — canonicalizes an agent yaml's `envelope:` block into the
-EnvelopeStore (Phase 3 Slice A of the broker-destub epic, sa#136).
+EnvelopeStore (Phase 3 Slice A of the broker-destub epic).
 
 Config-as-code (agents/<name>.yaml) stays the authorship source; this module
 is the seed step that turns the authored `envelope:` block into the validated

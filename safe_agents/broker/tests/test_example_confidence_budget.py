@@ -1,4 +1,4 @@
-"""Tests for the confidence_budget worked example (#184).
+"""Tests for the confidence_budget worked example.
 
 The confidence sibling of `test_iam_scoping.py`'s `TestScopedS3ExampleManifest`:
 proves the `examples/confidence_budget/` consumer parses into an `AgentManifest`, its

@@ -1,4 +1,4 @@
-"""restricted_mcp_server — the missileer archetype for MCP hosts (#174).
+"""restricted_mcp_server — the missileer archetype for MCP hosts.
 
 A deliberately small MCP server: a read-only ledger surface exposing EXACTLY two
 tools, `get_entry` and `list_entries`. There is no append, no delete, no admin

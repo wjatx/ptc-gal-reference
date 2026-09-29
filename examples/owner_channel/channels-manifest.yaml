@@ -1,4 +1,4 @@
-# owner-channel/channels-manifest.yaml — FICTIONAL example consumer (sa#176 owner channel).
+# owner-channel/channels-manifest.yaml — FICTIONAL example consumer (owner channel).
 #
 # The channels analogue of the broker AgentManifests in this directory: it wires the
 # inbound airlock ENTIRELY as config. Unlike webhook-peer (where a PEER agent POSTs a
@@ -14,7 +14,7 @@
 # The receiver's provenance zone, stamped onto every accepted envelope at gate 8.
 zone: channels
 
-# The owner adapter (sa#176): the human owner proves authenticity with a shared secret
+# The owner adapter: the human owner proves authenticity with a shared secret
 # token in this header (the token itself lives in Secrets Manager, never in the
 # manifest). `kind: owner` selects OwnerInboundAdapter via ADAPTER_REGISTRY; the default
 # (kind absent) stays the signed-webhook adapter, so this is an explicit opt-in.

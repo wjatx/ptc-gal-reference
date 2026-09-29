@@ -1,6 +1,6 @@
 # registry — capability-scoped tool registry and agent catalog
 
-> **Status: design pending.** This directory is a scaffold. Epic: registry & governance (sa#10).
+> **Status: design pending.** This directory is a scaffold. Epic: registry & governance.
 
 The broker serves each agent a capability-scoped tool list — the agent cannot see a tool it was
 not granted. This directory owns the mechanism that makes that true: the registry that maps

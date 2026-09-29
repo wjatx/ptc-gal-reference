@@ -19,7 +19,7 @@
 # No baked BROKER_MANIFEST — the deploy passes
 # `-c brokerManifestPath=/app/examples/embedded_agent/manifest.yaml`, which the
 # task definition injects as BROKER_MANIFEST (an unset one refuses at boot on the
-# durable arm, #205).
+# durable arm).
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 

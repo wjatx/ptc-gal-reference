@@ -1,6 +1,6 @@
 # Environment ownership — who may touch what, and when
 
-> **Status: binding convention (sa#111).** The mechanism below is already encoded in
+> **Status: binding convention.** The mechanism below is already encoded in
 > `infra/lib/environment.ts`; this document makes the *ownership* rules explicit so nobody
 > discovers them by tearing down someone else's floor.
 
@@ -45,7 +45,7 @@ The `Environment` type is a closed three-value enum, not parameterized per consu
 in `production` works today because there is exactly one. When a second real consumer adopts the
 SDK, it needs its own identity — either a per-agent resource-naming convention inside
 `production`/`staging`, or per-consumer environments/accounts. Decide *then*, but know the enum is
-the constraint (tracked in sa#111's discussion; related: the consumer still resolves the platform's
+the constraint (related: the consumer still resolves the platform's
 `/safe-agents/{environment}/...` SSM paths, so "its own floor" is currently the same CDK app).
 
 ## Checklist before any live platform run

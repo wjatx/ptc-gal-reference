@@ -1,4 +1,4 @@
-"""moto-backed tests for LedgerConnector — the ledger.append durable sink (sa#131).
+"""moto-backed tests for LedgerConnector — the ledger.append durable sink.
 
 Unlike test_telegram_connector.py (live API, skipped without credentials), the
 ledger sink is S3, so the REAL connector code runs against **moto** (``mock_aws``)

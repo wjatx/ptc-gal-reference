@@ -1,4 +1,4 @@
-"""Grant integrity + ownership CI policy test table (sa#4, issue #62).
+"""Grant integrity + ownership CI policy test table.
 
 Asserts that the grant lifecycle safety properties from ARCHITECTURE.md
 §pre-deployment-checklist and broker/grant-lifecycle.md hold across all
@@ -143,7 +143,7 @@ FAILING_METRICS = ActionClassMetrics(
 )
 PREDICATE_CONFIG = dict(window_n=100, min_observations=10, threshold=0.05)
 
-# sa#57 evidence terms passing every predicate gate (budget knob unset = OFF)
+# Evidence terms passing every predicate gate (budget knob unset = OFF)
 EVIDENCE_CONFIG = dict(
     artifact=ConfidenceArtifact(
         confidence=0.9,
@@ -234,14 +234,14 @@ def _propose(**overrides):
 
 
 # ---------------------------------------------------------------------------
-# Auditor-row helpers (#62) — build in-memory AuditDatasets for run_audit
+# Auditor-row helpers — build in-memory AuditDatasets for run_audit
 # ---------------------------------------------------------------------------
 
 _RECORD_TS = "2026-07-01T00:00:00+00:00"
 
 
 def _hashed_grant(**overrides) -> Grant:
-    """A Grant as stored (integrity lives at item level since #246 — the grant
+    """A Grant as stored (integrity lives at item level under the stored-bytes basis — the grant
     itself carries no hash; _audit_dataset supplies the stored bytes + HMAC)."""
     return _make_grant(**overrides)
 
@@ -280,7 +280,7 @@ def _audit_dataset(grants=(), records=(), proposals=(), envelopes=()) -> AuditDa
     for item in records:
         record, signature = item if isinstance(item, tuple) else (item, None)
         # raw_data carries the canonical stored bytes — what the store writes
-        # and what signature verification digests verbatim (#246 re-shape C).
+        # and what signature verification digests verbatim (stored-bytes re-shape C).
         entries.append(
             AuditedRecord(
                 record=record,
@@ -411,7 +411,7 @@ def _row_hash_integrity() -> IntegrityRow:
         result = store.get_grant(PRINCIPAL, ACTION_CLASS)
         assert result.quarantined is True, "tampered hash must trigger quarantine"
         assert result.quarantine_reason is not None
-        # Tampered bytes are never parsed (#246); the raw bytes ride for audit
+        # Tampered bytes are never parsed; the raw bytes ride for audit
         assert result.grant is None
         assert result.raw_data is not None
 
@@ -423,7 +423,7 @@ def _row_hash_covers_all_fields() -> IntegrityRow:
 
     def positive():
         # After put_grant, the item-level hash equals the HMAC over the stored
-        # bytes — storage and basis are the same serialization (#246)
+        # bytes — storage and basis are the same serialization
         store = InMemoryGrantStore(hmac_key=HMAC_KEY)
         store.put_grant(_make_grant(), session=None)
         result = store.get_grant(PRINCIPAL, ACTION_CLASS)
@@ -770,7 +770,7 @@ def _row_dead_grant_report() -> IntegrityRow:
 def _row_ledger_counterpart() -> IntegrityRow:
     """Every grant coordinate has a bootstrap- or promotion-typed ledger record —
     every level was earned through the ceremony ledger (seeds emit bootstrap
-    records since #123)."""
+    records since the ceremony commands landed)."""
 
     def positive():
         dataset = _audit_dataset(grants=[_hashed_grant()], records=[_ledger_record()])
@@ -794,7 +794,7 @@ def _row_ledger_counterpart() -> IntegrityRow:
 def _row_level_ledger_consistent() -> IntegrityRow:
     """grant.level never exceeds the ledger-derived level (the chronologically-
     last record's toLevel). A grant BELOW its ledger is not an unaccounted
-    RAISE, so this rule stays silent on it; since #255 it is the separate,
+    RAISE, so this rule stays silent on it; it is now the separate,
     waivable LEVEL_DROP_RECORDED finding (see _row_level_drop_recorded)."""
 
     _LEDGER = [
@@ -809,7 +809,7 @@ def _row_level_ledger_consistent() -> IntegrityRow:
 
     def positive():
         # Grant AT the ledger-derived level is clean; grant BELOW it is never
-        # this rule's finding (it is LEVEL_DROP_RECORDED's, #255)
+        # this rule's finding (it is LEVEL_DROP_RECORDED's)
         dataset = _audit_dataset(
             grants=[_hashed_grant(level=AutonomyLevel.on_loop)], records=_LEDGER
         )
@@ -842,7 +842,7 @@ def _row_record_signature_verifies() -> IntegrityRow:
     """Every promotion-typed record carries a DSSE envelope verify_record
     confirms; other record types are exempt (only ratify installs the signing
     store). The rule verifies AUTHENTICITY, not the truth of the proposer's
-    asserted predicate fields (#193/#174 land their measurement)."""
+    asserted predicate fields (evidence labeling and the MCP host land their measurement)."""
 
     _PROMOTION = _ledger_record(
         "promotion",
@@ -955,7 +955,7 @@ def _row_quarantined_no_raise() -> IntegrityRow:
         # A quarantined (stored-bytes-mismatched) grant sitting ABOVE its
         # ledger-derived level: flagged as unaccounted authority AND reported
         # for attention. Built as a raw dataset entry — the tamper lives at
-        # the item layer (#246), not on the Grant schema.
+        # the item layer, not on the Grant schema.
         grant = _make_grant(level=AutonomyLevel.out_of_loop)
         quarantined_entry = AuditedGrant(
             grant=grant,
@@ -989,7 +989,7 @@ def _row_quarantined_no_raise() -> IntegrityRow:
 
 def _row_demotion_record_dedupe() -> IntegrityRow:
     """A record-only repeat breach lands exactly ONE demotion record per UTC
-    day (#191): the second same-day pass returns "deduped" with zero writes."""
+    day: the second same-day pass returns "deduped" with zero writes."""
 
     def _record_only_setup():
         # Grant already at its lastSafeLevel — every demotion pass is record-only
@@ -1060,9 +1060,9 @@ def _row_demotion_record_dedupe() -> IntegrityRow:
 
 def _row_grant_envelope_in_force() -> IntegrityRow:
     """A grant's envelopeHash matches the stored in-force envelope for its
-    principal (#201). A mismatched grant is broker-quarantined on every call
-    (sa#122) — operationally dead — yet HMAC-clean, so only this rule sees it
-    (the #199 incident shape)."""
+    principal. A mismatched grant is broker-quarantined on every call
+    — operationally dead — yet HMAC-clean, so only this rule sees it
+    (the stale-envelope incident shape)."""
 
     def positive():
         dataset = _audit_dataset(
@@ -1151,7 +1151,7 @@ def test_violation_is_detected(row: IntegrityRow) -> None:
 #
 # `channels/SIGNING.md` states the canonical rule once, for the whole platform:
 # **sorted keys, no whitespace, ASCII**. Every stored-bytes integrity basis
-# (#246) has to obey it, because those bytes become a WIRE format the moment a
+# has to obey it, because those bytes become a WIRE format the moment a
 # second implementation — a normative spec, a non-Python verifier, a
 # re-implemented ceremony leg — recomputes the HMAC or digest from the spec
 # instead of from this code.

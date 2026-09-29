@@ -1,4 +1,4 @@
-"""discovery.py — the connect-time two-key admission gate as a PURE function (#174).
+"""discovery.py — the connect-time two-key admission gate as a PURE function.
 
 Discovery is untrusted input: an MCP server names its own tools and can change
 any of them between connections (MCP-HOST.md). This module decides, for every
@@ -171,7 +171,7 @@ def _classify_advertised(
         or (read.row is not None and read.row.status is RegistryStatus.QUARANTINED)
     ):
         # M13/M6: a row the store served quarantined is never authoritative.
-        # Checked BEFORE row-presence: since #246 an HMAC-quarantined read
+        # Checked BEFORE row-presence: an HMAC-quarantined read
         # carries row=None (tampered bytes are never parsed), and it must still
         # surface as QUARANTINED, never blur into DECLARED.
         return ToolVerdict(
@@ -303,7 +303,7 @@ def evaluate_discovery(
             )
 
     # Pass 2 — admitted rows the server stopped advertising (absence is drift).
-    # An HMAC-quarantined read carries row=None since #246, so quarantine keeps
+    # An HMAC-quarantined read carries row=None, so quarantine keeps
     # a coordinate in this pass — only a genuinely-absent, unquarantined read
     # is skipped.
     for (server_id, tool_name), read in registry_reads.items():

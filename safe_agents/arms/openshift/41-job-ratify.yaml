@@ -46,7 +46,7 @@ spec:
             - { name: BROKER_CEREMONY_IDENTITY, value: serviceaccount }
             - { name: BROKER_STORE, value: sqlite }
             - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
-            # The #203 split — read-WRITE here. This is the identity the grant
+            # The maker/checker write split — read-WRITE here. This is the identity the grant
             # key space belongs to.
             - { name: BROKER_SQLITE_GRANTS_PATH, value: /var/lib/broker-grants/grants.db }
             - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
@@ -65,7 +65,7 @@ spec:
           volumeMounts:
             - { name: store, mountPath: /var/lib/broker, subPath: work }
             - { name: store, mountPath: /var/lib/broker-grants, subPath: grants }
-            # The #310 split — read-only, even here. Write access to the grant
+            # The audit-tape partition — read-only, even here. Write access to the grant
             # key space does not carry write access to the tape that records
             # what was done with it.
             - { name: store, mountPath: /var/lib/broker-audit, subPath: audit, readOnly: true }
@@ -82,7 +82,7 @@ spec:
             secretName: safe-agents-issuer
             # No defaultMode: the mode is not ours to choose. The kubelet ORs
             # 0440 into whatever is requested whenever an fsGroup is in force,
-            # and restricted-v2 always assigns one (#282, verified 8/8).
+            # and restricted-v2 always assigns one (verified 8/8).
         - name: issuer-private
           emptyDir:
             medium: Memory

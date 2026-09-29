@@ -1,4 +1,4 @@
-"""SDK-free conformance suite for the MCP child lifecycle — M17–M21 (#221 P3).
+"""SDK-free conformance suite for the MCP child lifecycle — M17–M21.
 
 The lifecycle clauses (MCP-HOST.md §"Child lifecycle") are contract-tier and
 none of their logic touches the `mcp` SDK: `SupervisedStdioHost` drives a

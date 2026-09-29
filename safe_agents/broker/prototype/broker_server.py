@@ -1,4 +1,4 @@
-"""broker_server.py — local-Mac prototype of the broker's tool-call API (sa#98).
+"""broker_server.py — local-Mac prototype of the broker's tool-call API.
 
 Run on your Mac:   python3 -m safe_agents.broker.prototype.broker_server      (from the repo root)
 Then in another terminal:   python3 -m safe_agents.broker.prototype.fake_agent
@@ -11,10 +11,10 @@ What this IS:
 
   Every agent-specific value — principal, granted action classes, connectors, the
   per-run cap, the risk envelope — is read from an ``AgentManifest`` (broker-debaking
-  P2, sa#113), NOT baked into this module. ``build_runtime(manifest)`` consumes it;
+  P2), NOT baked into this module. ``build_runtime(manifest)`` consumes it;
   the checked-in default is ``example_manifest.yaml`` (override with BROKER_MANIFEST).
 
-What is REAL here (sa#39/#98 — the local/Mac arm made real):
+What is REAL here (the local/Mac arm made real):
   - Stores: BROKER_STORE=dynamo uses the real DynamoStore / DynamoIntentStore /
     DynamoDBGrantStore against DynamoDB Local (same code as AWS). The PIP reads the
     grant (presence + level) from the grant store and the cap-budget fact from the
@@ -28,7 +28,7 @@ What is REAL here (sa#39/#98 — the local/Mac arm made real):
     (github.whoami), AlpacaConnector (alpaca.read), and TelegramConnector
     (notify.send), all real, live calls.
 
-Backend selection (sa#36 — the SAME image runs local OR on AWS Fargate, chosen purely
+Backend selection (the SAME image runs local OR on AWS Fargate, chosen purely
 by env). Three INDEPENDENT switches; see safe_agents/arms/fargate/BROKER_ENV.md for the full
 AWS-mode contract:
 
@@ -48,7 +48,7 @@ AWS-mode contract:
 
 What is still NOT real here:
   - No model-inference proxy here (the :8443 CONNECT proxy is already solved by
-    model-proxy-stub.py / #97). This prototype is only the *tool-call* surface.
+    model-proxy-stub.py). This prototype is only the *tool-call* surface.
   - BROKER_STORE=memory keeps in-memory stores + FakeSecretsProvider + InMemorySink
     so the surface constructs with no AWS / Keychain / network (CI + quick smoke).
   - All three wired connectors (github, alpaca, notify) are real, live calls — no
@@ -93,7 +93,7 @@ from safe_agents.broker.prototype.boot_config import (
     DEFAULT_COUNTER_CAP,
     DEFAULT_MANIFEST_PATH,
     DEV_HMAC_KEY,
-    BrokerConfigError as BrokerConfigError,  # re-exported (#205 R5 extraction)
+    BrokerConfigError as BrokerConfigError,  # re-exported (boot_config extraction)
     is_dynamo_arm,
     load_agent_manifest as load_agent_manifest,  # re-exported
     load_named_manifest,
@@ -144,10 +144,10 @@ from safe_agents.broker.taint import build_trust_map
 
 logger = logging.getLogger(__name__)
 
-# The #205 named-config-or-refuse boot seam lives in boot_config.py (extracted for
+# The named-config-or-refuse boot seam lives in boot_config.py (extracted for
 # size, R5); this module re-exports the public names so existing import surfaces
 # (`from broker_server import BrokerConfigError, load_agent_manifest, ...`) keep
-# working. The private-name aliases are the pre-#205 spelling.
+# working. The private-name aliases are the original spelling.
 _DEFAULT_MANIFEST_PATH = DEFAULT_MANIFEST_PATH
 _DEFAULT_COUNTER_CAP = DEFAULT_COUNTER_CAP
 _DEV_HMAC_KEY = DEV_HMAC_KEY
@@ -176,7 +176,7 @@ def _resolve_granted_classes(manifest: AgentManifest) -> list[str]:
 def _require_principal(manifest: AgentManifest) -> Principal:
     """Return ``manifest.principal`` or fail loudly if the manifest omits it.
 
-    The broker has NO default principal (de-baking P2, sa#113) — a manifest without
+    The broker has NO default principal (de-baking P2) — a manifest without
     a ``principal:`` block cannot build a runtime and must not silently default one.
     """
     if manifest.principal is None:
@@ -196,7 +196,7 @@ def _make_grant(action_class: str, principal: Principal, envelope_hash: str) -> 
             "level": AutonomyLevel.on_loop,
             # The real in-force envelope hash — the grant is issued UNDER this
             # envelope, so it must match what the PIP verifies against at decision
-            # time (a mismatch quarantines the grant, sa#122).
+            # time (a mismatch quarantines the grant).
             "envelopeHash": envelope_hash,
             "promotedBy": "human-reviewer",
             "evidence": "proto-evidence-ref",
@@ -233,12 +233,12 @@ class _PrefixedSecrets:
 
     With BROKER_SECRET_PREFIX set, ``fetch_secret("github")`` resolves to
     ``"<prefix>/connectors/github"`` — matching the brokerRole IAM grant on
-    ``*/connectors/*`` (sa#11 Identity stack). Without a prefix the name passes
+    ``*/connectors/*`` (the Identity stack). Without a prefix the name passes
     through unchanged, so a flat secret id still works.
 
     The input is always treated as a leaf, whether it comes from the default
     ``leaf == tool-name`` mapping or from a manifest ``connector_secrets`` override
-    (sa#164): an override value of ``"track-feed-token"`` fetches
+   : an override value of ``"track-feed-token"`` fetches
     ``"<prefix>/connectors/track-feed-token"``, NOT the bare value. This is why a
     ``connector_secrets`` value must be a bare leaf, never a pre-prefixed path —
     doing so would double the prefix. Keeping it a leaf also keeps the fetched id
@@ -298,7 +298,7 @@ def _make_pip(
     enforcement.scoped_counter_key (principal + tool.op + UTC day), which is what
     makes caps per-principal per-op DAILY budgets rather than global lifetime spend.
 
-    sa#137 — three read-gating knobs are threaded from the envelope (all defaulted so
+    Three read-gating knobs are threaded from the envelope (all defaulted so
     the older 4-arg callers keep working):
       - ``trusted_read_sources``: source ids whose external reads are trusted; the PIP
         sets ``read_source_trusted`` for a read whose ``connector:{tool}.{op}`` id is
@@ -310,7 +310,7 @@ def _make_pip(
         runs twice per request and MUST stay side-effect-free); the PEP does the single
         metered increment after a successful read.
 
-    #184 — the ``confidence_knob`` (``Envelope.confidence``) drives two more facts,
+    The ``confidence_knob`` (``Envelope.confidence``) drives two more facts,
     both read-only:
       - ``confidence_below_bar = not meets_bar(call.confidence, confidence_knob)`` — the
         per-call bar (None knob ⇒ always meets ⇒ never below-bar, OFF).
@@ -321,15 +321,15 @@ def _make_pip(
     ``in_force_hash`` is the real content-hash of the envelope currently in force
     (``compute_envelope_hash(manifest.envelope)``). The PIP verifies each grant's
     ``envelopeHash`` against it: a grant issued under a DIFFERENT envelope is
-    quarantined (sa#122), reusing the same signal the HMAC-mismatch path uses.
+    quarantined, reusing the same signal the HMAC-mismatch path uses.
 
     The PIP is PURE (no I/O beyond the injected stores, no logging/audit): a
     quarantined grant is not surfaced here but reported UP via the returned Facts
     (quarantined / quarantine_reason). The PEP owns surfacing it exactly once
-    (sa#124) — the pip is invoked twice per request (initial decision + enforce()
+    — the pip is invoked twice per request (initial decision + enforce()
     premise revalidation), so any emit here would double-log every tamper event.
 
-    #255 — certification term (GAL §6.7.6). ``grant_level`` is the grant's
+    Certification term (GAL §6.7.6). ``grant_level`` is the grant's
     EFFECTIVE level at the evaluation instant (``grants.term.effective_level``):
     once a grant's ``certifiedUntil`` has passed it acts at ``lastSafeLevel``
     whether or not the lapse writer has run — an idle grant nobody sweeps is the
@@ -347,14 +347,14 @@ def _make_pip(
         # A quarantined grant (HMAC mismatch) is never authoritative — treat as
         # absent for the PDP, but carry the quarantine SIGNAL up on the Facts so
         # the PEP can distinguish it from a merely-ungranted capability and surface
-        # it loudly at its single detection point (sa#124).
+        # it loudly at its single detection point.
         grant = result.grant if not result.quarantined else None
         quarantined = result.quarantined
         quarantine_reason = result.quarantine_reason
 
-        # sa#122 — envelope-hash verification. An HMAC-clean grant whose
+        # Envelope-hash verification. An HMAC-clean grant whose
         # ``envelopeHash`` does not match the envelope now in force was issued under
-        # a different (e.g. changed/rotated) envelope. Reuse the sa#124 quarantine
+        # a different (e.g. changed/rotated) envelope. Reuse the loud-quarantine
         # signal — treat it as absent AND report the mismatch up so the PEP surfaces
         # it once and denies. No new decision path: same Facts.quarantined channel.
         if grant is not None and grant.envelopeHash != in_force_hash:
@@ -367,7 +367,7 @@ def _make_pip(
 
         grant_present = grant is not None
         # When no grant, level is unused (rule 1 denies on grant_present); default safe.
-        # With a grant: the EFFECTIVE level at this instant (#255) — a passed
+        # With a grant: the EFFECTIVE level at this instant — a passed
         # certification term acts at lastSafeLevel before any lapse is written.
         grant_level = (
             effective_level(grant, _now()) if grant is not None else AutonomyLevel.in_loop
@@ -404,7 +404,7 @@ def _make_pip(
             and enforcement_store.read_counter(tree_draw.key) >= tree_draw.cap
         )
 
-        # sa#137 — read-gating facts. Computing them unconditionally is fine; the
+        # Read-gating facts. Computing them unconditionally is fine; the
         # read-path rules key on manifest.effect=="read", so they are inert for writes.
         trusted = trusted_read_sources or []
         read_source_trusted = f"connector:{call.tool}.{call.op}" in trusted
@@ -432,12 +432,12 @@ def _make_pip(
                     )
                     query_egress_breached = spent_bytes >= query_egress_budget
 
-        # #184 — below-bar fact: the deterministic bar predicate over the (already
+        # Below-bar fact: the deterministic bar predicate over the (already
         # validated) artifact on the call. A None knob/bar ⇒ meets_bar True ⇒ never
         # below-bar (OFF). Read-only.
         confidence_below_bar = not meets_bar(call.confidence, confidence_knob)
 
-        # #184 — cumulative error-budget breach. Was hardcoded False since the scaffold
+        # Cumulative error-budget breach. Was hardcoded False since the scaffold
         # (rules 2/3 latent); now real when the knob sets a tolerance: read the
         # …:error_budget counter the PEP meters and compare. Read-only — same
         # side-effect-free discipline as the query-bytes read above.
@@ -477,7 +477,7 @@ _VALID_ENVELOPE_LOAD_MODES = ("manifest", "store")
 
 
 def _resolve_envelope_load_mode() -> str:
-    """Resolve where the in-force risk envelope comes from (sa#136 Slice B).
+    """Resolve where the in-force risk envelope comes from.
 
     ``BROKER_ENVELOPE_LOAD`` is the canonical control, default ``manifest``:
       - ``manifest`` — derive the in-force envelope from ``manifest.envelope``: the
@@ -515,7 +515,7 @@ _VALID_GRANT_LOAD_MODES = ("seed", "read", "skip")
 
 
 def _resolve_grant_load_mode() -> str:
-    """Resolve the grant-load mode from env (sa#36 Phase C1).
+    """Resolve the grant-load mode from env.
 
     ``BROKER_GRANT_LOAD`` is the canonical control, default ``seed``:
       - ``seed`` — the LOCAL/Mac arm: write each grant then read it back (one process
@@ -590,8 +590,8 @@ def build_runtime(
 
     Every agent-specific value — principal, granted action classes, connectors, the
     per-run counter cap — comes from ``manifest`` (an AgentManifest), never from a
-    module constant (de-baking P2, sa#113). The SAME image runs unchanged on the
-    local/Mac arm or on AWS Fargate; only the environment differs (sa#36). The three
+    module constant (de-baking P2). The SAME image runs unchanged on the
+    local/Mac arm or on AWS Fargate; only the environment differs. The three
     backend switches are orthogonal:
 
       1. Stores  — BROKER_STORE=memory (default) | dynamo. In dynamo mode each store
@@ -600,11 +600,11 @@ def build_runtime(
          passes the three separate table names; both reuse the same DynamoStore code.
       2. Audit   — BROKER_AUDIT_BUCKET -> S3 Object Lock; else BROKER_AUDIT_PATH ->
          local hash-chained file; else in-memory.
-      3. Secrets — BROKER_SECRETS selects from a CLOSED catalog (#248,
+      3. Secrets — BROKER_SECRETS selects from a CLOSED catalog (
          boot_config.resolve_secrets_arm): secretsmanager -> AWS Secrets Manager;
          dir -> one file per secret leaf under BROKER_SECRETS_DIR (the container
          shape); file -> 0600 JSON blob at BROKER_SECRETS_FILE; fake -> in-memory
-         fakes. Unset keeps the pre-#248 implicit resolution (the path variable
+         fakes. Unset keeps the original implicit resolution (the path variable
          selects the arm); an UNRECOGNIZED value refuses rather than falling
          through to fakes.
 
@@ -630,7 +630,7 @@ def build_runtime(
     principal = _require_principal(manifest)
     granted_classes = _resolve_granted_classes(manifest)
 
-    # #171 — the per-agent ToolOp table travels IN the manifest, not a base global.
+    # The per-agent ToolOp table travels IN the manifest, not a base global.
     # The broker resolves every (tool, op) against this table; the base composition
     # path names no op. A grant for a class with no matching tool_ops entry is inert
     # (no table entry ⇒ the PEP denies the call), so the manifest must classify every
@@ -643,7 +643,7 @@ def build_runtime(
     # out-of-band FIRST by broker.prototype.seed_envelope). A missing envelope raises
     # EnvelopeNotFoundError and fails the boot — the same fail-closed posture
     # BROKER_GRANT_LOAD="read" takes on a missing grant. Everything envelope-derived
-    # below (hash, cap, the sa#137 knobs) is taken from this ONE envelope, so there is
+    # below (hash, cap, the read-gating knobs) is taken from this ONE envelope, so there is
     # never a mixed derivation. In the default 'manifest' mode this is manifest.envelope
     # exactly as before. principal / grant_classes / connectors stay manifest-sourced.
     envelope_load_mode = _resolve_envelope_load_mode()
@@ -676,13 +676,13 @@ def build_runtime(
         envelope = manifest.envelope
         print("[broker] envelope load mode: manifest")
 
-    # The real content-hash of the risk envelope in force (sa#122). Computed
+    # The real content-hash of the risk envelope in force. Computed
     # DYNAMICALLY from the in-force envelope — every seeded grant is issued
     # under it, the PIP verifies grants against it, and it is stamped into every
     # AuditRecord. No literal placeholder anywhere.
     in_force_hash = compute_envelope_hash(envelope)
 
-    # Per-op counter cap from the envelope. #205 (F4, boot_config.resolve_counter_cap):
+    # Per-op counter cap from the envelope. Named-or-refuse (boot_config.resolve_counter_cap):
     # the generic fallback is honored only when NO granted class is write-effect —
     # an envelope governing granted writes must NAME its daily cap. The refusal
     # message is envelope-source-aware: a store-loaded envelope is fixed by
@@ -691,31 +691,31 @@ def build_runtime(
         envelope, granted_classes, optable, principal, envelope_load_mode
     )
 
-    # sa#137 — read-gating knobs from the SAME envelope. trusted_read_sources drives
+    # Read-gating knobs from the SAME envelope. trusted_read_sources drives
     # both the PIP's rung-gate fact and the PEP's taint-skip (one list, both halves);
     # max_query_bytes / query_egress_budget bound the query-string exfil channel.
     trusted_read_sources = envelope.trusted_read_sources
     max_query_bytes = envelope.max_query_bytes
     query_egress_budget = envelope.query_egress_budget
 
-    # sa#160 — approval-queue de-amplification knob from the SAME envelope. None
+    # Approval-queue de-amplification knob from the SAME envelope. None
     # (unset) = OFF: the PEP hold path is byte-identical to before.
     approval_queue = envelope.approval_queue
 
-    # #184 — calibrated-uncertainty knob from the SAME in-force envelope. None (unset)
+    # Calibrated-uncertainty knob from the SAME in-force envelope. None (unset)
     # = OFF: no below-bar gate, no error-budget metering. Threaded to both the PIP (the
     # below-bar + breach facts it derives) and the runtime (the single metered write).
     confidence_knob = envelope.confidence
 
     # Connectors resolve by NAME against the manifest's connector_providers first,
     # then the base registry (connector_registry.py) — the one sanctioned injection
-    # seam (sa#141). An unknown name fails closed (UnknownConnectorError); a broken
+    # seam. An unknown name fails closed (UnknownConnectorError); a broken
     # provider fails closed too (ConnectorProviderError). Provider paths come ONLY
     # from the image-baked manifest object — the envelope store loads an Envelope,
     # which has no provider/import-path field, so store contents can never reach
     # this argument.
     #
-    # #221: names whose mcp_servers declaration carries spawn config are NATIVE —
+    # Names whose mcp_servers declaration carries spawn config are NATIVE —
     # excluded here and constructed by build_mcp_connectors below (after the
     # secrets provider exists, since spawn-time credential resolution needs it).
     # The manifest validator has already refused a native name that also has a
@@ -726,7 +726,7 @@ def build_runtime(
         providers=manifest.connector_providers,
     )
 
-    # Grant-store HMAC key (#205 F2, boot_config.resolve_hmac_key). The fixed dev
+    # Grant-store HMAC key (boot_config.resolve_hmac_key). The fixed dev
     # key is honored ONLY on the local/memory arm; the real-store arm must NAME the
     # key the ceremony writes with (the write side, grants/_commands_common.py,
     # already refuses; this restores read/write symmetry).
@@ -740,7 +740,7 @@ def build_runtime(
     enforcement_store: object
     intent_store: object
     grant_store: object
-    # Resolved BEFORE any store is constructed so the #205 F5 refusal
+    # Resolved BEFORE any store is constructed so the boot refusal
     # (seed-at-boot on the durable local arm) fires before the sqlite boot
     # sweep can even bootstrap the database schema — fail toward touching
     # nothing, never toward a half-initialized durable trust store.
@@ -763,16 +763,16 @@ def build_runtime(
 
         db_path = resolve_sqlite_db_path()
         enforcement_store = SqliteEnforcementStore(db_path)
-        # Same key surface as the grant store (#349): the intent rows carry an
+        # Same key surface as the grant store: the intent rows carry an
         # HMAC over their stored frozen-call bytes, verified before any release.
         intent_store = SqliteIntentStore(db_path, hmac_key=hmac_key)
-        # The grant space is the checker's (#203). This process reads it and —
+        # The grant space is the checker's. This process reads it and —
         # under BROKER_GRANT_LOAD=read, the deployed mode — never writes it, so
         # it takes the same read-only mount the maker does. `seed` mode still
         # writes, and would refuse loudly on a read-only mount rather than
         # silently seeding nothing.
         grant_store = SqliteGrantStore(hmac_key=hmac_key, **sqlite_grants_open_options())
-        # Bounded-lag privacy sweep, NOT correctness (sa#213): DynamoDB gets
+        # Bounded-lag privacy sweep, NOT correctness: DynamoDB gets
         # expired-item deletion from its TTL daemon; sqlite has no daemon, so
         # the boot sweep is where an expired intent's payload stops lingering
         # at rest. approve() still checks each intent's expiry predicate at
@@ -819,7 +819,7 @@ def build_runtime(
     audit_path = os.environ.get("BROKER_AUDIT_PATH")
     if audit_bucket:
         audit_prefix = os.environ.get("BROKER_AUDIT_PREFIX", "audit/")
-        # Resume the S3 chain on startup (sa#104): read the MAX existing
+        # Resume the S3 chain on startup: read the MAX existing
         # audit/*.json key + its record hash so a restarted long-lived broker
         # continues the SAME contiguous, verify_chain-valid tape instead of
         # resetting seq to 0 (which would collide with existing objects under
@@ -863,7 +863,7 @@ def build_runtime(
             f"secretsmanager (region={configured_region}, prefix={secret_prefix or '<none>'})"
         )
     elif secrets_arm == "dir":
-        # #248 — one file per secret leaf, the shape every container platform
+        # One file per secret leaf, the shape every container platform
         # projects. BROKER_SECRET_PREFIX is deliberately NOT composed here: the
         # mount root plays the prefix's role, and a prefixed name would no longer
         # be a leaf (DirSecretsProvider refuses one).
@@ -892,7 +892,7 @@ def build_runtime(
 
     print(f"[broker] store backend: {store_label}")
     print(f"[broker] audit sink: {audit_label}; secrets: {secrets_label}")
-    # #205 (F3, boot_config.require_named_real_backends): a REAL (dynamo) store
+    # Named-or-refuse (boot_config.require_named_real_backends): a REAL (dynamo) store
     # paired with a non-durable audit sink or fake credentials is never a
     # sanctioned combination. Was a warn-and-continue; now a refusal at boot.
     require_named_real_backends(audit_label, secrets_label)
@@ -914,17 +914,17 @@ def build_runtime(
         grant_store, grant_load_mode, principal, granted_classes, in_force_hash
     )
 
-    # Secret-leaf mapping (sa#141): manifest connector_secrets overrides the default
+    # Secret-leaf mapping: manifest connector_secrets overrides the default
     # leaf == tool-name mapping (empty dict preserves the old behavior). The value is a
     # leaf; when `secrets` is a _PrefixedSecrets it resolves under <prefix>/connectors/
-    # (sa#164) — so the override is a bare leaf, not a pre-prefixed secret id.
+    # — so the override is a bare leaf, not a pre-prefixed secret id.
     connector_secret_names = dict(manifest.connector_secrets)
-    # Credential-resolution strategies (#173): compile the manifest connector_auth
+    # Credential-resolution strategies (#79): compile the manifest connector_auth
     # block into a per-tool CredentialProvider. An empty block yields an empty map,
     # so every tool falls back to StaticSecret in the Doer — byte-for-byte the old
     # behavior. A malformed/unimplemented strategy fails loudly here, at broker build.
     credential_strategies = build_credential_strategies(manifest.connector_auth)
-    # #221 — native MCP connectors, constructed HERE (not at the resolve_connectors
+    # Native MCP connectors, constructed HERE (not at the resolve_connectors
     # site) because spawn-time credential resolution needs the secrets provider and
     # the compiled strategies above. Construction is AWS-free and lazy; the child
     # spawns (and its credential resolves) at first dispatch on the connector's
@@ -972,7 +972,7 @@ def build_runtime(
         approval_queue=approval_queue,
         confidence_knob=confidence_knob,
         on_demotion_signal=on_demotion_signal,
-        # #212 — the manifest-named counter period: image-baked, authority-shaping,
+        # The manifest-named counter period: image-baked, authority-shaping,
         # threaded to BOTH the PEP (writer) and the PIP (reader) from this ONE field
         # so the two can never bucket at different periods.
         counter_period=manifest.counter_period,
@@ -992,17 +992,17 @@ def build_runtime(
 
 # The default manifest is a checked-in example artifact (behavior-preserving; see
 # example_manifest.yaml), NOT a real consumer's own manifest. Point elsewhere with
-# BROKER_MANIFEST=/path/to/manifest.yaml. #205: the example-manifest fallback is
+# BROKER_MANIFEST=/path/to/manifest.yaml. The example-manifest fallback is
 # honored ONLY on the local/memory arm; the real-store arm (BROKER_STORE=dynamo)
 # refuses a defaulted manifest — an implicit fallback manifest is a wrong-authority
-# mint (#197/#199; docs/config-provenance.md).
+# mint (docs/config-provenance.md).
 #
-# LOAD-ONCE: unlike the (pre-#205) import-time load, the manifest is resolved
+# LOAD-ONCE: unlike the original import-time load, the manifest is resolved
 # LAZILY on first use — so importing this module never touches the manifest file
 # or refuses — but the first successful resolution is CACHED as the real module
 # attribute ``_MANIFEST``. One process, one manifest object: every consumer (the
 # server boot, the grants ceremony's grant classes AND its envelope hash) sees the
-# SAME bytes, never two loads of a file that changed in between (the #199 shape).
+# SAME bytes, never two loads of a file that changed in between (the wrong-authority-mint shape).
 # Tests monkeypatch.setattr the materialized attribute exactly as before.
 
 
@@ -1023,7 +1023,7 @@ def resolve_manifest() -> AgentManifest:
 
 def __getattr__(name: str):  # PEP 562 — lazy, load-once module attribute
     """``broker_server._MANIFEST`` materialized on first access via
-    ``resolve_manifest`` (#205): loading at import time both forced a load
+    ``resolve_manifest``: loading at import time both forced a load
     store-mode ceremonies never need and froze the env read; loading per-access
     broke the one-consistent-object invariant. On the dynamo arm with
     BROKER_MANIFEST unset, access RAISES BrokerConfigError (never a proxy)."""
@@ -1055,8 +1055,8 @@ def _wire_result(result):
     """Marshal a connector result for the JSON wire.
 
     Delegates to the ONE marshal (``runtime.connector``): this boundary found
-    the need first (#221's floor drill), enforce()'s audit path found it second
-    (#247's local drill), and a third copy would have been the point at which
+    the need first (the MCP floor drill), enforce()'s audit path found it second
+    (a later local drill), and a third copy would have been the point at which
     the two could drift.
     """
     return marshal_connector_result(result)
@@ -1106,13 +1106,13 @@ class _Handler(BaseHTTPRequestHandler):
             tool=payload["tool"],
             op=payload["op"],
             args=payload.get("args", {}),
-            # #184 — the raw confidence artifact (a dict), validated by handle_request;
+            # The raw confidence artifact (a dict), validated by handle_request;
             # the broker never trusts its shape. Absent key ⇒ None ⇒ no artifact.
             confidence=payload.get("confidence"),
             idempotency_key=payload.get("idempotency_key"),
         )
         # No turn_context is passed: the runtime threads its OWN broker-held turn
-        # across every /call (sa#136), so taint from an external read in one request
+        # across every /call, so taint from an external read in one request
         # rides into a later request's write. The agent cannot supply a turn_context
         # over HTTP, and its idempotency_key no longer sets the turn id, so it cannot
         # launder taint by declaring a fresh turn.
@@ -1147,7 +1147,7 @@ def main() -> None:
     host = os.environ.get("BROKER_HOST", "127.0.0.1")
     port = int(os.environ.get("BROKER_PORT", "8080"))
     # SINGLE-THREADED, and this is a correctness requirement rather than a
-    # simplification. It was `ThreadingHTTPServer` until #250 Phase 4 put a real
+    # simplification. It was `ThreadingHTTPServer` until the OpenShift arm work put a real
     # second workload in front of it, which is when the mismatch finally bit.
     #
     # The runtime it serves is documented as NOT thread-safe by design -- see

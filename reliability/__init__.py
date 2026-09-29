@@ -1,7 +1,7 @@
 """
 reliability — assert-the-artifact / loud-failure pattern library.
 
-Base platform package for sa#6 (reliability & testing). Agent-agnostic.
+Base platform package for reliability & testing. Agent-agnostic.
 
 Public API:
     assert_artifact(predicate, label, *, component, observed)

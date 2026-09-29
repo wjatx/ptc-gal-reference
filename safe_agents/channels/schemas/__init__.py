@@ -1,4 +1,4 @@
-"""channels.schemas — the EventTrigger envelope and its sub-types (sa#74).
+"""channels.schemas — the EventTrigger envelope and its sub-types.
 
 See channels/SCHEMAS.md for the authoritative field-by-field contract.
 """

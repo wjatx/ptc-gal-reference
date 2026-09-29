@@ -1,4 +1,4 @@
-"""Opt-in LOCAL proof for the #221 Phase-1 Alpaca paper drill (examples/alpaca_paper_drill).
+"""Opt-in LOCAL proof for the Alpaca paper drill (examples/alpaca_paper_drill).
 
 Lives HERE (not in examples/) because a live proof legitimately reaches into
 broker internals (build_runtime, TurnContext, the registry) and examples/ is
@@ -31,7 +31,7 @@ table; every other store is the memory arm):
      two independent layers that must both fail open for an order to escape.
   6. **Finding-flood discipline** — the ~66 UNLISTED findings surface as ERROR
      logs exactly ONCE per refresh (M5 at volume), not per call.
-  7. **Lifecycle (#221 P3)** — SIGKILL the real server mid-session: the next
+  7. **Lifecycle** — SIGKILL the real server mid-session: the next
      dispatch is the TYPED `McpChildDeathError` promptly (M17); the drill
      manifest declares no respawn block, so the failure is sticky (M19 OFF
      path), and `close()` still reaps the whole child tree (M20).
@@ -152,7 +152,7 @@ def test_alpaca_paper_drill_local_proof(monkeypatch, caplog, tmp_path, capsys):
     monkeypatch.setenv("BROKER_SECRETS_FILE", str(secrets_file))
     monkeypatch.setenv("MCP_REGISTRY_TABLE_NAME", _TABLE)
     # One NAMED key for both sides: the ceremony writes and the broker reads
-    # under BROKER_HMAC_KEY (the #205 discipline — the ceremony refuses to run
+    # under BROKER_HMAC_KEY (the named-config-or-refuse discipline — the ceremony refuses to run
     # on the dev-key fallback).
     monkeypatch.setenv("BROKER_HMAC_KEY", "alpaca-drill-local-hmac")
     for var in ("BROKER_STORE", "BROKER_ENVELOPE_LOAD", "BROKER_GRANT_LOAD",
@@ -342,7 +342,7 @@ def test_alpaca_paper_drill_local_proof(monkeypatch, caplog, tmp_path, capsys):
                 == n_findings
             ), "UNLISTED findings re-surfaced per call — M5 discipline broken at volume"
 
-            # --- 7. Lifecycle (#221 P3, M17/M19) against the REAL server -----
+            # --- 7. Lifecycle (M17/M19) against the REAL server --------------
             # SIGKILL the pinned server's process tree mid-session: the next
             # dispatch is the TYPED death error, promptly; the drill manifest
             # declares no respawn block, so the failure is sticky — the OFF

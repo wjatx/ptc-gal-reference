@@ -1,5 +1,5 @@
 """
-ec2-woken arm — the inbound airlock wake path for a sleeping EC2 agent box (sa#34).
+ec2-woken arm — the inbound airlock wake path for a sleeping EC2 agent box.
 
 An event-driven WAKE mechanism, agent-agnostic and broker-centric:
 
@@ -8,7 +8,7 @@ An event-driven WAKE mechanism, agent-agnostic and broker-centric:
 The guardrail Lambda is an untrusted-input taint boundary that holds NO connector
 credentials — it only screens (shared-token header, owner allow-list, message-id dedup,
 injection screen, env-driven intent classify) and, on pass, enqueues + wakes the box.
-The broker is NOT in this stack; it lives on the EC2 box (sa#98). The channel adapter
+The broker is NOT in this stack; it lives on the EC2 box. The channel adapter
 (concrete channel → normalized {owner, message_id, text}) lives in a consuming agent's
 manifest inbound: block, out of scope here.
 

@@ -1,15 +1,15 @@
 """
-EC2 arm tests — acceptance criteria for sa#33 + sa#85.
+EC2 arm tests — acceptance criteria for the EC2 arm and its S3-bundle delivery.
 
 All tests are AWS-free: AWS calls go through FakeAWS (no live boto3 needed).
 
-Acceptance criteria (original three from sa#33, plus three new from sa#85):
+Acceptance criteria (the original three, plus three added for S3-bundle delivery):
 
   1. User-data renders correctly from manifest params
        - All {{key}} markers are replaced with the supplied values.
        - The harness-coupling block is clearly delimited (markers present).
        - The template contains no hardcoded agent names.
-       - [sa#85] The template contains no internet-dependent steps
+       -  The template contains no internet-dependent steps
          (no yum/dnf, npm install-from-internet, or git-clone-from-internet).
 
   2. Pipeline dry-run for agents/smoke-ec2.yaml shows ec2 provision→deploy→smoke
@@ -23,15 +23,15 @@ Acceptance criteria (original three from sa#33, plus three new from sa#85):
        - The broker role's resource pattern DOES cover */connectors/* (verified
          against BROKER_CONNECTOR_KEYS_RESOURCE_PATTERN from provision.py).
 
-  4. [sa#85] AMI looked up by tag, newest wins
+  4.  AMI looked up by tag, newest wins
        - ec2_provision calls describe_images filtered by safe-agents:ami=base.
        - When multiple images match, the one with the highest ami-version is used.
 
-  5. [sa#85] RunInstances retries on the IAM profile-not-ready error
+  5.  RunInstances retries on the IAM profile-not-ready error
        - FakeAWS raises IamProfileNotReadyError N times then succeeds.
        - ec2_provision returns a valid instance ID despite the initial failures.
 
-  6. [sa#85] Tagging and two-identity split unchanged
+  6.  Tagging and two-identity split unchanged
        - Standard tag set (Project/Environment/Agent/ManagedBy) still applied.
        - agentSG (not brokerSG) still used.
 """
@@ -67,8 +67,8 @@ TEST_STUB_DIR = AGENTS_DIR / "test-stub"
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
-# sa#85: repo and deploy_key_secret removed — prebuilt-AMI model uses S3 bundle.
-# sa#35: broker_dns / agent_runs_table / region added — the converged two-box model writes them
+# Removed repo and deploy_key_secret — prebuilt-AMI model uses S3 bundle.
+# Added broker_dns / agent_runs_table / region — the converged two-box model writes them
 # into /etc/safe-agents/agent.env for run-brokered.sh (broker SERVICE round-trip + run record).
 _VALID_PARAMS = {
     "name": "my-agent",
@@ -110,7 +110,7 @@ def fake_aws_ec2() -> FakeAWS:
         "arn:aws:kms:us-east-1:123456789012:key/abcd-1234-cmk",
     )
     aws.seed_ssm_param(f"/safe-agents/{env}/broker-service-dns", "broker.safe-agents.local")
-    # sa#85: prebuilt base AMI (replaces the public AL2023 SSM parameter lookup).
+    # Prebuilt base AMI (replaces the public AL2023 SSM parameter lookup).
     aws.seed_image(
         "ami-0fakebaseami001",
         {"safe-agents:ami": "base", "safe-agents:ami-version": "20241201-01"},
@@ -143,7 +143,7 @@ class TestUserDataRendering:
     def test_harness_coupling_block_delimiters_present(self) -> None:
         """The HARNESS-COUPLING BLOCK START/END markers must bracket the harness reference.
 
-        sa#85: the CLI is pre-baked in the base AMI, so there is no npm install here.
+        The CLI is pre-baked in the base AMI, so there is no npm install here.
         The block still references claude-code (as the pre-installed binary) and fetches
         the OAuth token — both must appear inside the delimited region.
         """
@@ -191,7 +191,7 @@ class TestUserDataRendering:
             render_user_data(incomplete)
 
     def test_user_data_no_internet_steps(self) -> None:
-        """The template must contain no internet-dependent commands (sa#85).
+        """The template must contain no internet-dependent commands.
 
         The prebuilt-AMI model pulls code from S3 (VPC endpoint) and fetches secrets
         via the Secrets Manager VPC endpoint. No package managers or git-from-internet
@@ -225,10 +225,10 @@ class TestUserDataRendering:
         params_b = dict(_VALID_PARAMS, name="agent-beta")
         assert render_user_data(params_a) != render_user_data(params_b)
 
-    # -- sa#88 hardening tests ------------------------------------------------
+    # -- S3 bundle hardening tests --------------------------------------------
 
     def test_user_data_has_set_x(self) -> None:
-        """user-data.sh.tmpl must enable execution tracing with 'set -x' (sa#88).
+        """user-data.sh.tmpl must enable execution tracing with 'set -x'.
 
         set -x writes every command to the log before executing it, so that a
         bootstrap failure is never silent — the log always shows which line died.
@@ -239,7 +239,7 @@ class TestUserDataRendering:
         )
 
     def test_user_data_has_err_trap(self) -> None:
-        """user-data.sh.tmpl must set a trap on ERR so failures are never silent (sa#88)."""
+        """user-data.sh.tmpl must set a trap on ERR so failures are never silent."""
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
         content = template_path.read_text(encoding="utf-8")
         assert "trap" in content and "ERR" in content, (
@@ -247,7 +247,7 @@ class TestUserDataRendering:
         )
 
     def test_user_data_writes_failure_marker_on_error(self) -> None:
-        """user-data.sh.tmpl must write a failure marker file when the ERR trap fires (sa#88).
+        """user-data.sh.tmpl must write a failure marker file when the ERR trap fires.
 
         The marker lets post-boot inspection detect a bootstrap death without
         reading the full log (e.g. SSM agent checks for the .FAILED file).
@@ -260,7 +260,7 @@ class TestUserDataRendering:
         )
 
     def test_user_data_s3_bundle_key_matches_bundle_constant(self) -> None:
-        """S3 key convention in user-data must match BUNDLE_CURRENT_KEY from bundle.py (sa#88).
+        """S3 key convention in user-data must match BUNDLE_CURRENT_KEY from bundle.py.
 
         The bundle is uploaded under agents/<name>/current/bundle.tar.gz by bundle.py;
         user-data must pull from exactly that path or the instance boots without code.
@@ -277,7 +277,7 @@ class TestUserDataRendering:
         )
 
     def test_user_data_extracts_bundle_to_agent_dir(self) -> None:
-        """user-data.sh.tmpl must extract the bundle into /opt/agents/<name> (sa#88)."""
+        """user-data.sh.tmpl must extract the bundle into /opt/agents/<name>."""
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
         content = template_path.read_text(encoding="utf-8")
         # The AGENT_DIR variable is set to /opt/agents/${AGENT_NAME}; verify it exists.
@@ -289,7 +289,7 @@ class TestUserDataRendering:
         )
 
     def test_user_data_enables_and_starts_systemd_timer(self) -> None:
-        """user-data.sh.tmpl must enable + start the agent's systemd timer (sa#88)."""
+        """user-data.sh.tmpl must enable + start the agent's systemd timer."""
         template_path = Path(__file__).parent.parent / "user-data.sh.tmpl"
         content = template_path.read_text(encoding="utf-8")
         assert "systemctl enable" in content and ".timer" in content, (
@@ -540,7 +540,7 @@ class TestTwoIdentitySeparation:
     def test_ec2_provision_uses_isolated_agent_subnet_and_endpoint_sg(
         self, fake_aws_ec2: FakeAWS
     ) -> None:
-        """Converged two-box model (sa#35, Option A): the box runs in the ISOLATED agent subnet on
+        """Converged two-box model (Option A): the box runs in the ISOLATED agent subnet on
         the agent SG (egress = broker SG only) + the endpoint SG (AWS interface endpoints) — the
         same placement the proven ec2-woken box uses. There is NO co-located model-proxy, so the
         old broker-subnet placement is gone; the subnet has no NAT and the agent SG permits only the
@@ -596,7 +596,7 @@ class TestTwoIdentitySeparation:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 4 (sa#85): AMI lookup by tag, newest wins
+# Criterion 4: AMI lookup by tag, newest wins
 # ---------------------------------------------------------------------------
 
 class TestAmiTagLookup:
@@ -669,7 +669,7 @@ class TestAmiTagLookup:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 5 (sa#85): RunInstances retries on IAM profile-not-ready error
+# Criterion 5: RunInstances retries on IAM profile-not-ready error
 # ---------------------------------------------------------------------------
 
 class TestIamRaceRetry:
@@ -714,7 +714,7 @@ class TestIamRaceRetry:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 6 (sa#88): AMI component gaps — awscli + baked harness
+# Criterion 6: AMI component gaps — awscli + baked harness
 # ---------------------------------------------------------------------------
 
 # Canonical harness path: the value phases.py _smoke_remote SSM-execs.
@@ -736,7 +736,7 @@ _USER_DATA_PATH = (
 
 
 class TestAmiComponentContent:
-    """component-base.yaml must close the two deployed-bootstrap gaps found in sa#88.
+    """component-base.yaml must close the two deployed-bootstrap gaps found in S3 bundle hardening.
 
     Gap 1 — AWS CLI: user-data.sh.tmpl calls 'aws s3 cp' and
       'aws secretsmanager get-secret-value'. The CLI must be in the base AMI or
@@ -777,7 +777,7 @@ class TestAmiComponentContent:
         """
         component_content = _COMPONENT_PATH.read_text(encoding="utf-8")
         # Org-agnostic on purpose: this pinned `Third-Ralph/safe-agents` until
-        # the repo moved (#290), after which it would have passed regardless of
+        # the repo moved, after which it would have passed regardless of
         # what the component cloned.
         assert not re.search(
             r"github\.com[:/][\w.-]+/safe-agents", component_content
@@ -840,7 +840,7 @@ class TestAmiComponentContent:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 7 (sa#90): ensure_foundation idempotency
+# Criterion 7: ensure_foundation idempotency
 # ---------------------------------------------------------------------------
 
 class TestEnsureFoundation:
@@ -935,7 +935,7 @@ class TestEnsureFoundation:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 8 (sa#90): SSM Online wait — success and loud-failure paths
+# Criterion 8: SSM Online wait — success and loud-failure paths
 # ---------------------------------------------------------------------------
 
 class TestSsmOnlineWait:
@@ -1048,7 +1048,7 @@ class TestSsmOnlineWait:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 9 (sa#90): verify phase
+# Criterion 9: verify phase
 # ---------------------------------------------------------------------------
 
 class TestVerifyPhase:
@@ -1175,7 +1175,7 @@ class TestVerifyPhase:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 10 (sa#90): bundle CLI uploads both bundles
+# Criterion 10: bundle CLI uploads both bundles
 # ---------------------------------------------------------------------------
 
 class _FakeS3:
@@ -1302,7 +1302,7 @@ class TestBundleCli:
 
 
 # ---------------------------------------------------------------------------
-# Clean-start precondition gate (sa#90)
+# Clean-start precondition gate
 # ---------------------------------------------------------------------------
 
 class TestCleanStartGate:

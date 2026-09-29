@@ -1,6 +1,6 @@
 # `arms/openshift` — the cluster arm
 
-**Epic:** #250 (OpenShift as a deployment substrate). **Phases 2–5:** get the ceremony arc
+**Epic:** OpenShift as a deployment substrate. **Phases 2–5:** get the ceremony arc
 running in a pod, prove the store survives the pod, put a second workload on the other side
 of a boundary and show what it cannot reach — then demonstrate the two claims that do not
 need a wrapped agent.
@@ -11,13 +11,13 @@ back. This README is the run instruction; the brief is the covering note.
 
 This arm deploys the broker to OpenShift and runs the same ceremony arc the Mac and the
 podman container run. It owns no new mechanism: the store is the sqlite arm, the secrets are
-the `dir` arm (#248), the ceremony identity is the ServiceAccount arm of the #226 catalog.
+the `dir` arm, the ceremony identity is the ServiceAccount arm of the identity catalog.
 What the cluster adds is *boundaries we orchestrate rather than implement* — SCC, RBAC, mount
 topology, and a volume that outlives the process.
 
 ## Run it
 
-This section is written to be completed unaided (#157). If a step turns out to be missing or
+This section is written to be completed unaided. If a step turns out to be missing or
 wrong, the README is what is broken — fix or file it here, never by bending the drill to match
 a thin README.
 
@@ -149,23 +149,23 @@ That is the point rather than an inconvenience: a pod cannot hold both halves.
 
 | leg | ServiceAccount | shows |
 |---|---|---|
-| `safe-agents-bootstrap` | `safe-agents-checker` | creates the grant store, because a read-only open cannot create the file it opens and the maker's mount is read-only (#203) |
+| `safe-agents-bootstrap` | `safe-agents-checker` | creates the grant store, because a read-only open cannot create the file it opens and the maker's mount is read-only |
 | `safe-agents-propose` | `safe-agents-maker` | identity derived by **round-trip** (`SelfSubjectReview`); the solo arm **refused** because a real identity exists here; **HTTP 403** reading the issuer Secret and **HTTP 403** creating a pod that would mount it; then proposes, and its own ratify attempt dies at the signing gate |
 | `safe-agents-ratify` | `safe-agents-checker` | the only pod with the key mounted: seeds, ratifies, and verifies the record names **two distinct ServiceAccounts** with `attestation: None`; then proves **M7** by proposing and ratifying as one credential *while holding the key*, so the signing gate cannot mask the identity check |
 | `safe-agents-serve` | `safe-agents-broker` | serves the ratified grant holding **neither** ceremony credential and no signing key; the only leg that writes the audit tape, and it verifies the chain it wrote |
-| `safe-agents-tamper` | `safe-agents-maker` | truncate, append, unlink and replace the tape the serve leg just wrote — **four for four refused by the kernel** with EROFS *named*, then the chain re-verified byte-identical (#310) |
+| `safe-agents-tamper` | `safe-agents-maker` | truncate, append, unlink and replace the tape the serve leg just wrote — **four for four refused by the kernel** with EROFS *named*, then the chain re-verified byte-identical |
 | `safe-agents-peer` | `safe-agents-peer` | the peer airlock endpoint `peer.publish` posts to — reachable from the **broker pod alone** |
 | `safe-agents-demo-*` | maker / checker | a SECOND admission through the same ceremony, so demonstration 2 has an untrusted read to be tainted by |
 | `safe-agents-demo-sandbox` | `safe-agents-agent` | **demonstration 1** — the agent authors and runs a program its sandbox permits, and the broker refuses every forbidden call in it |
 | `safe-agents-demo-taint` | `safe-agents-agent` | **demonstration 2** — the same `peer.publish` allowed on a clean turn and held on a tainted one |
 | `safe-agents-agent` | `safe-agents-agent` | holds **nothing** — no mount, no Secret, no RoleBinding. External egress dropped, the broker Secret refused **403**, the pod that would mount it refused **403**, and a brokered call through the broker executes anyway (Phase 4) |
-| `safe-agents-demo-baseline` | `safe-agents-agent` | **the control (#154)** — the agent spawns the ledger server itself and calls the *unadmitted* tool with no broker in the path. It **works**. The identical call through the broker is refused, while a different one executes |
+| `safe-agents-demo-baseline` | `safe-agents-agent` | **the control** — the agent spawns the ledger server itself and calls the *unadmitted* tool with no broker in the path. It **works**. The identical call through the broker is refused, while a different one executes |
 | `safe-agents-posture` (not shipped in this tree) | `safe-agents-agent` | **Phase 6.1** — a posture report generated *inside* a pod, in cluster vocabulary, and asserted to report the egress and RBAC refusals as **`unknown`** rather than claiming them |
 
 ### The control, and why it has to run at 10b
 
 Every other leg here shows something being **refused**. None of them shows that anything was ever
-at risk — which is what **#304** names: every proof in this repo is a drill we designed to pass, and
+at risk — which is the **independent-assurance** gap: every proof in this repo is a drill we designed to pass, and
 a drill in which the harm never occurs demonstrates a system saying no, not that the no mattered.
 
 `cluster-demo-baseline.sh` is that control. Same pod, same SCC, same egress policy, same tool —
@@ -217,7 +217,7 @@ credit for a proof it did not run.
 ### The audit tape is a third subPath, not a file in the working half
 
 One `ReadWriteOnce` claim, three subPaths: `work/` (writable by every leg — it is how they hand
-work to each other), `grants/` (checker-writable, #203), `audit/` (broker-writable, #310). A
+work to each other), `grants/` (checker-writable), `audit/` (broker-writable). A
 mount is read-only per *container*, not per volume, which is why one claim carries three
 different postures.
 
@@ -315,7 +315,7 @@ one broker-held turn, from the agent pod:
 Same op, same args shape, same credential, same grant. The only thing that changed is
 what the turn had read. **The order is forced and that is the property, not a
 convenience:** taint is monotone and the broker-held turn is one per principal across
-every `/call` (sa#136), rolling over only via `new_turn()` — an agent that could roll
+every `/call`, rolling over only via `new_turn()` — an agent that could roll
 its own turn would launder taint by declaring a fresh one.
 
 A2 is the control. Without it the escalation proves nothing, because a `peer.publish`
@@ -328,9 +328,9 @@ indistinguishable **to the subject of the test**.
 Be precise about *why*, because the obvious explanation is out of date. `RequireApproval` **does**
 carry a `reason` field now (`broker/schemas/decision.py:77`), and the PDP populates it. What is
 still missing is the **`/call` HTTP response path** — the drill reads `reason` off the response
-body, and the broker does not put it there. So this is a transport gap, not the schema gap **#316**
-was filed for; #316's item 1 is done and the issue is partly satisfied. The drill carries a tripwire
-for exactly this (`cluster-demo-taint.sh`: *"reason field populated — #316 may be fixed; tighten this
+body, and the broker does not put it there. So this is a transport gap, not a schema gap, and whether
+the reason should reach the agent's reply at all is the open question in **#116**. The drill carries a tripwire
+for exactly this (`cluster-demo-taint.sh`: *"reason field populated — #116 may be fixed; tighten this
 check"*), and it did **not** fire in the current capture.
 
 The *tape* is no longer silent, and this README understated it until 2026-07-29. Since the
@@ -358,14 +358,14 @@ no sender-class mapping, no dedupe, no screening — those are `examples/webhook
 the channels epic. It exists so the allowed branch lands somewhere real, because an
 allow that quietly fails to execute is indistinguishable in effect from a deny.
 
-**The published envelope is agent-authored (#315).** `stamp_outbound` — the seam that
+**The published envelope is agent-authored (#15).** `stamp_outbound` — the seam that
 would derive the outbound hop's label from the broker-held turn's taint — has no runtime
 caller, so the provenance chain the receiver prints proves nothing and the receiver says
 so on every request. This demonstration rests on the **verdict**, which never reads the
 envelope.
 
 **Demonstration 3 — a ceremony leg cannot forge or erase another leg's records** is leg
-four (`cluster-tamper.sh`, #310): four kernel refusals against a populated tape, with the
+four (`cluster-tamper.sh`): four kernel refusals against a populated tape, with the
 limit printed beside the PASS.
 
 **Demonstration 1 — the sandbox permits, the broker refuses.** Three acts. Act 0 proves
@@ -376,7 +376,7 @@ forbidden calls **through that program**: `ledger.delete_entry` and `payments.tr
 both denied by the broker with the mechanism named — `no manifest entry for <tool>.<op>` —
 and both perfectly legal as far as the SCC and the NetworkPolicy are concerned.
 
-`deny` populates `reason` (unlike `require_approval`, #316), so unlike demonstration 2
+`deny` populates `reason` (unlike `require_approval`, #116), so unlike demonstration 2
 this one **can** assert which control fired by name.
 
 **The venue is the POD's own isolation** — SCC and NetworkPolicy — not an OpenShell box
@@ -394,7 +394,7 @@ NetworkPolicy can express "may read entries, may not delete them". And the dange
 **absent** from the ledger server rather than denied — the missileer archetype — so the
 deny is the second line of defence and the first is that there is no delete tool at all.
 
-## Negative proofs assert the MECHANISM (#312)
+## Negative proofs assert the MECHANISM
 
 `negative-proof.sh` is sourced by the legs. `np_refuse` demands three things, not one: the
 attempt did not succeed, it failed, and it failed **for the stated reason** — a refusal whose
@@ -405,7 +405,7 @@ control at all.
 
 That last rule has teeth because the omission recurs: a pod that can do nothing refuses
 everything and proves nothing. The four hand-rolled instances it replaced had all three
-failure modes between them — the #310 tamper leg checked only exit codes, so a read-only
+failure modes between them — the audit-tape tamper leg checked only exit codes, so a read-only
 *root* filesystem would have printed PASS four times.
 
 `negative-proof-selftest.sh` runs on a laptop in a second and asserts the helper **fails when
@@ -427,17 +427,17 @@ worth doing, and it has not been done.
 
 **The issuer key's `0600` mode is not what protects it here.** A projected Secret volume under
 an fsGroup gets `0440` OR-ed into whatever `defaultMode` was requested — verified 8/8 across
-requested modes on OpenShift 4.20.29 (#282). The mode is not the operator's to choose, so
-`_read_local_key_file`'s check (#226) can never pass on the projection, and `cluster-ratify.sh`
+requested modes on OpenShift 4.20.29. The mode is not the operator's to choose, so
+`_read_local_key_file`'s check can never pass on the projection, and `cluster-ratify.sh`
 stages a private 0600 copy on a memory-backed volume instead. That copy is a **compatibility
-shim, not a control**: #226 models a multi-user host, and in a pod the boundary protecting the
+shim, not a control**: the local identity arm models a multi-user host, and in a pod the boundary protecting the
 key is the pod — SCC, RBAC on the `Secret`, and mount topology.
 
 **`maker != checker` is not enforced by RBAC on the store, and is not on AWS either.** The
 backstop on both substrates is the *signing key* plus a *write split*: MakerRole carries zero
 `secretsmanager` statements ("Deliberately NO `*/issuer/*` — the maker cannot sign a record",
 `infra/lib/identity-stack.ts`), and here the issuer `Secret` is mounted into the ratifying pod
-alone. Since #203 closed (2026-07-28) that is **prevention for signing AND prevention for
+alone. Since the maker/checker write split landed (2026-07-28) that is **prevention for signing AND prevention for
 writes** — the older "detection for writes" formulation is retired. The grant key space
 (`GRANT#`/`RECORD#`/`TOOLDEF#`/`TOOLREC#`) is its own sqlite file on a read-only mount here and
 `LeadingKeys`-confined on AWS, so the maker cannot write the row at all rather than writing an
@@ -467,7 +467,7 @@ feeding model context from a new untrusted source until it has a row and adversa
 This repo has stronger *mechanism* (`broker/TAINT.md`, `channels/SCREENING.md` — taint here is
 broker-held and non-strippable, where their untrusted labels never reach the envelope check),
 and it has no per-channel register with owners and a shipping gate; this drill does not
-substitute for one. The concession is deliberate [#250 Phase 6, work item 4]: an artifact that
+substitute for one. The concession is deliberate [Phase 6, work item 4]: an artifact that
 names what its neighbours do better is easier to trust about what it claims for itself.
 
 ## Files
@@ -489,7 +489,7 @@ names what its neighbours do better is easier to trust about what it claims for 
   applying them alongside the agent Job would leave a window in which the pod runs
   unconstrained, and a drill that passes in that window has proven nothing.
 
-- `54-job-demo-baseline.yaml` / `cluster-demo-baseline.sh` — the control (#154). Agent SA, agent
+- `54-job-demo-baseline.yaml` / `cluster-demo-baseline.sh` — the control. Agent SA, agent
   pod label, `workingDir: /app` so `-m examples.restricted_mcp_server.server` resolves. No new
   grant, secret or mount: a stdio child has no network surface for the egress policy to allow and
   needs no credential, which is the restrict-by-construction archetype paying off in the leg that

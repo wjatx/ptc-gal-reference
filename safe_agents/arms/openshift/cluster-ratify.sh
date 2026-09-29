@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# cluster-ratify.sh — the CHECKER half of the ceremony (#250 Phase 3).
+# cluster-ratify.sh — the CHECKER half of the ceremony (Phase 3).
 #
 # Runs under ServiceAccount `safe-agents-checker`, in a different pod from the
 # maker, and is the only leg into which the issuer signing Secret is mounted.
@@ -10,7 +10,7 @@
 # Which is exactly the guarantee the cloud floor has, and no more:
 # infra/lib/identity-stack.ts gives MakerRole zero secretsmanager statements
 # ("Deliberately NO */issuer/* — the maker cannot sign a record") while its
-# UpdateItem "can technically upsert a GRANT# item" (#203, open on both
+# UpdateItem "can technically upsert a GRANT# item" (open on both
 # substrates). Prevention for signing, detection for writes.
 set -euo pipefail
 
@@ -39,7 +39,7 @@ ok "identity derived from the cluster, never asserted"
 
 say "0b. the #282 shim — a private copy of the projected issuer key"
 # A projected Secret under an fsGroup gets 0440 OR-ed into whatever defaultMode
-# was requested, unconditionally, so #226's check can never pass on the
+# was requested, unconditionally, so the issuer-key mode check can never pass on the
 # projection itself. A compatibility shim, NOT a control: in a pod the boundary
 # protecting this key is the pod, not the file mode.
 printf '   projected: %s\n' "$(stat -L -c 'mode=%a owner=%u:%g' "$PROJECTED_KEY")"
@@ -49,7 +49,7 @@ export ISSUER_SIGNING_KEY_FILE="$PRIVATE_KEY"
 ok "issuer key staged 0600, owned by uid $(id -u)"
 
 say "1. the grant store this leg may write, and the maker could not"
-# `seed` moved to leg 0 (cluster-bootstrap.sh) with the #203 write split: the
+# `seed` moved to leg 0 (cluster-bootstrap.sh) with the maker/checker write split: the
 # maker mounts this file read-only, and a read-only open cannot create it, so
 # the store has to exist before the maker's leg runs. The reasoning that put
 # seeding under the signing identity is unchanged — it simply argued for a
@@ -81,7 +81,7 @@ ok "$SERVER_ID/$ADMIT_TOOL ADMITTED"
 
 say "4. what the signed record says about who ran this"
 # The GRANT store, not the working store: TOOLREC# is checker-writable key space
-# and moved with the #203 split. Reading the old path here would find no rows and
+# and moved with the write split. Reading the old path here would find no rows and
 # report a perfectly good ceremony as broken.
 python3 - "$GRANTS_DB" <<'PY' || die "the record does not carry two real identities"
 import json
@@ -96,7 +96,7 @@ if not rows:
     print("   no admission record found", file=sys.stderr)
     sys.exit(1)
 
-# The stored-bytes basis (#246): the record is a canonical JSON STRING under
+# The stored-bytes basis: the record is a canonical JSON STRING under
 # "data", and those exact bytes are what the DSSE signature covers.
 attrs = json.loads(rows[0][2])
 record = json.loads(attrs["data"])

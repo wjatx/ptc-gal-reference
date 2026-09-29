@@ -1,4 +1,4 @@
-"""EventTrigger — the normalized inbound/outbound signal envelope (sa#74).
+"""EventTrigger — the normalized inbound/outbound signal envelope.
 
 One record type at two seams (publish and consume); see channels/SCHEMAS.md
 for the authoritative field-by-field contract. This module is the canonical
@@ -225,7 +225,7 @@ class EventTrigger(BaseModel):
         (channels/SCHEMAS.md §C3). `sender_class` is updated only when the
         argument is provided; omitting it leaves an existing value intact
         rather than clearing it, since sender_class is receiver-owned (§C4)
-        and only the trust-mapping gate (#81) should set it explicitly.
+        and only the trust-mapping gate should set it explicitly.
         """
         updates: dict = {"provenance": [*self.provenance, entry]}
         if sender_class is not None:

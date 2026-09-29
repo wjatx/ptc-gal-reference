@@ -1,6 +1,6 @@
-"""test_channels_debake.py — the sa#139 no-base-literals invariant, for channels.
+"""test_channels_debake.py — the no-base-literals invariant, for channels.
 
-sa#176 adds ``owner.py``, a *transport-generic* base adapter (the human-as-owner
+The owner channel adds ``owner.py``, a *transport-generic* base adapter (the human-as-owner
 channel). Transport-generic is the whole point: which concrete transport an owner
 speaks — Telegram, Slack, a bot token, a chat id — is CONSUMER config carried in a
 manifest, never a literal in the base package. This guard keeps that real, mirroring

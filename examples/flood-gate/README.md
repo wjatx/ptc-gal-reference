@@ -36,7 +36,7 @@ authored without baking in a false, world-state-blind assumption.
 
 This example was `stock-trading/` until 2026-07-20. The **domain** changed; the archetype did
 not. There are now *real* trading consumers — a consumer agent in its own repo,
-[`../alpaca_paper_drill/`](../alpaca_paper_drill/), and the brokerage work under #221 — and a
+[`../alpaca_paper_drill/`](../alpaca_paper_drill/), and the MCP brokerage work — and a
 fictional trading skeleton beside them invited the reading that it was their stand-in. It was
 not. The domain of a polarity archetype is chosen for **rhetorical clarity of the polarity**
 and asserts no correspondence to any real consumer; see [`../README.md`](../README.md).

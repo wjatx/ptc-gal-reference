@@ -1,4 +1,4 @@
-"""Tests for the Envelope artifact + canonical hash (sa#135).
+"""Tests for the Envelope artifact + canonical hash.
 
 Covers:
   1. Hash stability across serialize -> load -> re-hash, and hash sensitivity

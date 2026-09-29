@@ -1,5 +1,5 @@
 """
-Tests for the OpenShell sandbox run model + policy (sa#92).
+Tests for the OpenShell sandbox run model + policy.
 
 Acceptance criteria (all AWS-free and OpenShell-free):
 

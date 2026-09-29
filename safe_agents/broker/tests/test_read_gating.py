@@ -1,6 +1,6 @@
-"""sa#137 exit predicate — read rung-gating + cap + query-exfil bound.
+"""Read rung-gating + cap + query-exfil bound.
 
-Before sa#137 the PDP's rule 2 (``read_allow_by_scope``) waved through ANY granted
+Originally the PDP's rule 2 (``read_allow_by_scope``) waved through ANY granted
 read regardless of grant rung and BEFORE the cap rule, so ``default_level: in-loop``
 on a read gated nothing and reads were uncapped; the agent-composed ``search.query``
 string also egressed to the provider unbounded (a covert exfil channel). This suite
@@ -14,7 +14,7 @@ proves the four closures:
   4. an over-cap / over-budget query string is denied before it egresses;
   and the load-bearing regression guard: a TRUSTED read does not self-taint the turn
   (so a later external write is not escalated) while an UNTRUSTED read still does
-  (sa#134/136 preserved).
+  (taint self-ingestion and broker-owned turn identity preserved).
 
 The engine-level tests drive the pure ``decide()`` with crafted Facts; the PIP tests
 drive the real ``_make_pip`` (byte-length + counter derivation); the runtime tests
@@ -58,7 +58,7 @@ CREDENTIAL = json.dumps({"provider": "tavily", "api_key": "test-key"})
 
 # This suite exercises search.query/notify.send (both in CATALOG) plus two domain
 # writes (calendar.create_event, payments.transfer) removed from the base CATALOG by
-# #171 — a local table carrying their old classifications for the fallback-rule matrix.
+# the ToolOp classification work — a local table carrying their old classifications for the fallback-rule matrix.
 _OPTABLE = ToolOpTable([
     *CATALOG,
     ToolOp(tool="calendar", op="create_event", effect="write", external=False, reversible=True),
@@ -300,7 +300,7 @@ def test_pep_meters_egress_bytes_after_successful_read(fake_urlopen):
 
 
 def test_untrusted_read_taints_and_escalates_next_write(fake_urlopen):
-    """sa#134/136 preserved: with no trusted_read_sources, the external read
+    """Taint self-ingestion and turn identity preserved: with no trusted_read_sources, the external read
     self-taints the turn, so a later external write escalates to require_approval."""
     fake_urlopen.payload = {"results": []}
     sink = InMemorySink()
@@ -346,7 +346,7 @@ def test_trusted_read_does_not_taint_and_next_write_is_not_escalated(fake_urlope
 @pytest.mark.parametrize(
     "description, call, facts_kwargs",
     [
-        # read rung-gate (sa#137): in-loop external read from an untrusted source.
+        # read rung-gate: in-loop external read from an untrusted source.
         ("read_rung_gate", _call("search", "query"), {"grant_level": AutonomyLevel.in_loop}),
         # in_loop_write: an in-loop internal write.
         (

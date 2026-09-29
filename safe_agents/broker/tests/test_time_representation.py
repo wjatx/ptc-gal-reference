@@ -1,4 +1,4 @@
-"""Time-representation unit tests (sa#213, class B) — how timestamps are
+"""Time-representation unit tests (class B) — how timestamps are
 encoded and compared across the platform's several ts-bearing surfaces:
 
   - the PromotionRecord ledger sort key (grants/store.py's ``_item_key``),

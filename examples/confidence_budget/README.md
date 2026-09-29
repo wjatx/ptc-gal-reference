@@ -1,4 +1,4 @@
-# confidence_budget — the calibrated-uncertainty knob, worked (#184, Pillar 4)
+# confidence_budget — the calibrated-uncertainty knob, worked (Pillar 4)
 
 A **fictional** reference consumer for `Envelope.confidence` — the confidence bar and
 per-UTC-day error budget of `broker/EVIDENCE.md`. It is the worked example behind the

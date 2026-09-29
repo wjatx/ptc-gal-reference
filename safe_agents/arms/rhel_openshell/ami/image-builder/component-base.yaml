@@ -7,7 +7,7 @@ schemaVersion: 1.0
 #
 # Bakes the exact internet-dependent toolchain the RHEL box installs at boot today
 # (user-data.sh.tmpl root essentials + bootstrap.sh autonomous 'always' steps), so
-# the deployed box — placed in the ISOLATED no-NAT agent subnet (sa#35) — needs no
+# the deployed box — placed in the ISOLATED no-NAT agent subnet — needs no
 # internet to complete boot:
 #   - SSM agent            (user-data.sh.tmpl step 1; RHEL AMIs omit it)
 #   - AWS CLI v2 (x86_64)  (user-data.sh.tmpl step 4; RHEL AMIs omit it)
@@ -18,7 +18,7 @@ schemaVersion: 1.0
 #
 # The bake runs in CI where the RHUI repos (RHEL marketplace AMIs are RHUI-entitled)
 # and the internet are reachable. NONE of these installs run over the network at agent
-# runtime — that is the whole point of sa#109.
+# runtime — that is the whole point of the prebuilt AMI.
 #
 # RHEL-specific invariants (do NOT break these):
 #   - nftables is ALREADY present on the RHEL 9 marketplace AMI and is the NAT tool the

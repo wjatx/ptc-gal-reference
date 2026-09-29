@@ -57,10 +57,10 @@ __all__ = [
     "AuditRecord",
     "Budgets",
     "PromotionRecord",
-    # envelope artifact (sa#135) — pipeline-validated; broker consumption is sa#122
+    # envelope artifact — pipeline-validated; broker consumption is the store-loaded envelope path
     "Envelope",
     "compute_envelope_hash",
-    # evidence contract (#184) — constructed confidence, blast derivation, demotion
+    # evidence contract — constructed confidence, blast derivation, demotion
     "Confidence",
     "ConfidenceArtifact",
     "ConfidenceEvidence",
@@ -75,7 +75,7 @@ __all__ = [
     "error_budget_draw",
     "DemotionSignal",
     "CorroborationRecord",
-    # broker-facing typed manifest (broker-debaking P1, sa#113) — envelope + broker blocks
+    # broker-facing typed manifest (broker-debaking P1) — envelope + broker blocks
     "AgentManifest",
     # decision variants
     "Allow",
@@ -88,13 +88,13 @@ __all__ = [
     "ToolOp",
     "Taint",
     "Session",
-    # connector auth-strategy config (#173) — how the broker resolves a credential
+    # connector auth-strategy config (#79) — how the broker resolves a credential
     "AuthStrategy",
     "ConnectorAuth",
     "HeaderSource",
-    # per-capability IAM scoping (#175) — the deploy-consumed minimal IAM per capability
+    # per-capability IAM scoping — the deploy-consumed minimal IAM per capability
     "CapabilityIam",
-    # MCP tool-registry schemas (#174) — two-key admission of a discovered MCP tool
+    # MCP tool-registry schemas — two-key admission of a discovered MCP tool
     "McpRespawnPolicy",
     "McpServerDecl",
     "McpServerSnapshot",

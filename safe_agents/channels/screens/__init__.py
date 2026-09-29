@@ -1,4 +1,4 @@
-"""channels.screens — reference-tier injection screens for gate 7 (sa#152).
+"""channels.screens — reference-tier injection screens for gate 7.
 
 **Reference-tier** per docs/contract-vs-reference.md. The normative screening
 contract is channels/SCREENING.md and the typed seam is `channels.screening`;

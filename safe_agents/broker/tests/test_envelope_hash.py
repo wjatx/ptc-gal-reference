@@ -1,4 +1,4 @@
-"""Tests for sa#122 — the real envelope hash wired into decisions + audit.
+"""Tests for the real envelope hash wired into decisions + audit.
 
 Retires the ``stub-envelope-hash`` / ``proto-envelope-hash`` placeholders. Two
 things are now real and verified end-to-end:
@@ -7,7 +7,7 @@ things are now real and verified end-to-end:
      actually in force* — ``compute_envelope_hash(manifest.envelope)`` — not a
      literal placeholder.
   2. A grant whose ``envelopeHash`` does not match the in-force envelope is
-     QUARANTINED at decision time, reusing the same sa#124 loud-surface-once path
+     QUARANTINED at decision time, reusing the same loud-surface-once path
      the HMAC-mismatch case uses (one ERROR log + one deny AuditRecord, then deny).
 
 The hash is computed dynamically from the envelope throughout, so these tests do
@@ -116,7 +116,7 @@ def test_pip_matching_envelope_hash_is_not_quarantined():
 def test_pip_envelope_hash_mismatch_quarantines():
     """A grant issued under envelope A but verified against in-force B is quarantined
     (treated as absent) with a distinct envelope-mismatch reason — reusing the
-    sa#124 Facts.quarantined channel, no new decision path."""
+    Facts.quarantined channel, no new decision path."""
     store = _seed_store("notify.send", _HASH_A)
     pip = _make_pip(store, InMemoryStore(), _COUNTER_CAP, in_force_hash=_HASH_B)
 
@@ -165,7 +165,7 @@ def test_allowed_call_stamps_real_envelope_hash_into_audit():
 
 def test_envelope_mismatch_surfaces_quarantine_and_denies(caplog):
     """A grant issued under envelope A driven through the full pipeline while envelope
-    B is in force: the sa#124 LOUD path fires once (ERROR log + one deny AuditRecord
+    B is in force: the LOUD quarantine path fires once (ERROR log + one deny AuditRecord
     naming the envelope-hash mismatch) and the call denies."""
     sink = InMemorySink()
     runtime = _runtime(_seed_store("notify.send", _HASH_A), _HASH_B, sink)
@@ -225,7 +225,7 @@ def test_build_runtime_seeds_grants_under_manifest_envelope_hash(monkeypatch):
         principal=PRINCIPAL,
         grant_classes=["notify.send"],
         connectors=["notify"],
-        # #205: a granted write class must NAME its daily cap — a caps-less
+        # Named-config-or-refuse: a granted write class must NAME its daily cap — a caps-less
         # envelope would be refused at build_runtime.
         envelope=Envelope.model_validate(
             {"polarity": "abstain", "caps": {"actions_per_utc_day": 25}}

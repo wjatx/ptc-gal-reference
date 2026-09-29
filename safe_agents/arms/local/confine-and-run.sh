@@ -8,7 +8,7 @@
 # Every step is asserted; the script exits non-zero if ANY assertion fails.
 #
 # SA_BROKER_HOST: the broker's address. Either another container's IP on a private network
-# (two-container topology, #98) or host.containers.internal (broker-as-host-process). Both work:
+# (two-container topology) or host.containers.internal (broker-as-host-process). Both work:
 # this resolves the current path to it before blackholing everything else.
 set -uo pipefail
 

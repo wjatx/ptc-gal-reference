@@ -6,7 +6,7 @@ import { publish } from './naming';
 
 /**
  * One capability's declared IAM scope — the deploy-side mirror of the runtime's
- * `capability_iam: {tool: {actions, resources}}` manifest block (safe-agents #175). The broker's
+ * `capability_iam: {tool: {actions, resources}}` manifest block. The broker's
  * `assumed_role` CredentialProvider strategy STS-assumes this role at execute time, so the blast
  * radius of a compromised tool call is exactly `actions` on exactly `resources` — nothing else.
  */
@@ -35,8 +35,8 @@ export interface CapabilityRolesProps {
 
 /**
  * CapabilityRoles — provisions one IAM role per declared capability, each scoped to EXACTLY its
- * spec's actions+resources and assumable ONLY by the broker's task role (safe-agents #175, the
- * deploy half of the `assumed_role` CredentialProvider strategy landed in #173).
+ * spec's actions+resources and assumable ONLY by the broker's task role (the
+ * deploy half of the `assumed_role` CredentialProvider strategy).
  *
  * With no capabilities (the default: no `capabilityRoles` context), this construct creates nothing
  * — a no-op that must not change any existing stack's synth output.

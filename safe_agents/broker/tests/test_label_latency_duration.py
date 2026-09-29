@@ -1,8 +1,8 @@
-"""Grant.labelLatency is a VALIDATED ISO-8601 duration (sa#214, whenever-backed).
+"""Grant.labelLatency is a VALIDATED ISO-8601 duration (whenever-backed).
 
-This file supersedes the sa#213 landmine pin (test_label_latency_opaque.py):
+This file supersedes the trigger-range landmine pin (test_label_latency_opaque.py):
 the field now refuses at construction instead of accepting anything. The
-accepted grammar is pinned here as the conformance row sa#214 asked for:
+accepted grammar is pinned here as a conformance row:
 parseable ISO-8601 duration, nonnegative, no calendar-ambiguous year/month
 units (a month has no deterministic length as a time span; weeks/days are
 exact and allowed). The value is validated but NEVER normalized — grant

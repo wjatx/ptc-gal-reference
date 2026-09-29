@@ -8,14 +8,14 @@ connector execution to.
 Exports:
     SecretsProvider       — Protocol the Doer depends on.
     RotatableSecretsProvider — the write-capable variant a rotating credential
-                              needs (#238); a strictly larger authority, so it is
+                              needs; a strictly larger authority, so it is
                               a separate protocol arms opt into.
     FakeSecretsProvider   — deterministic in-memory map; AWS-free for tests.
     LocalFileSecretsProvider — reads credentials from a 0600 JSON file on disk;
                               the local arm's real provider (no AWS, no boto3).
     DirSecretsProvider    — reads each credential from its OWN file under a
                             directory; the shape every container platform
-                            projects (#248).
+                            projects.
     LazyBotoSecretsProvider — lazy boto3 Secrets Manager impl for deployment;
                               boto3 is not imported until the first fetch call.
 """
@@ -44,7 +44,7 @@ class SecretsProvider(Protocol):
 @runtime_checkable
 class RotatableSecretsProvider(Protocol):
     """A SecretsProvider that can also WRITE a leaf back — the capability a
-    rotating credential requires (#238).
+    rotating credential requires.
 
     Deliberately a SEPARATE protocol, not a method on ``SecretsProvider``: writing
     is a strictly larger authority than reading, most arms neither need nor should
@@ -125,13 +125,13 @@ _BYTE_ORDER_MARKS: tuple[tuple[bytes, str], ...] = (
 
 class DirSecretsProvider:
     """Reads each credential from its OWN file under a directory — one file per
-    secret leaf, the shape every container platform projects (#248).
+    secret leaf, the shape every container platform projects.
 
     A Kubernetes/OpenShift mounted ``Secret``, a CSI Secrets Store volume, Podman's
     ``/run/secrets`` and systemd credentials all present exactly this layout: the
     secret's keys become filenames under one directory, each file holding one value.
     So this arm needs no adapter and — importantly — publishes no naming FORMAT of
-    its own: the filename IS the existing secret leaf (``connector_secrets``, sa#164),
+    its own: the filename IS the existing secret leaf (``connector_secrets``),
     the same leaf the Secrets Manager arm resolves under ``<prefix>/connectors/``.
     The mount directory plays the prefix's role, which is why this arm ignores
     BROKER_SECRET_PREFIX rather than composing with ``_PrefixedSecrets``.
@@ -280,7 +280,7 @@ class LazyBotoSecretsProvider:
         region rather than failing. Left as None, boto3 resolves AWS_REGION,
         AWS_DEFAULT_REGION, the shared config and then the instance/task
         metadata, and raises NoRegionError when none of them answer — the
-        named-or-refuse posture of #205, using the SDK's own mechanism rather
+        named-config-or-refuse posture, using the SDK's own mechanism rather
         than a second one bolted on top.
         """
         self._region_name = region_name

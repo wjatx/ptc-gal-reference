@@ -4,7 +4,7 @@ All tests are AWS-free: no boto3, no moto, no network. The pure computation
 functions are exercised directly; the InMemorySubGrantStore provides the
 persistence fake.
 
-Acceptance criteria from #54:
+Acceptance criteria:
   1. Attenuation test — sub-grant for email.draft only; sub-agent attempting
      email.send is denied (not in sub-grant scope).
   2. Cap attenuation test — sub-grant spendCap ≤ parent remaining at creation,

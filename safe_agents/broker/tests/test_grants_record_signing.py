@@ -1,4 +1,4 @@
-"""Promotion-record DSSE signing conformance (lifecycle Phase 4, adopts #181).
+"""Promotion-record DSSE signing conformance (lifecycle Phase 4, adopts Layer A signing).
 
 Proves the pure `record_signing` module: sign → verify round-trips, and every
 forgery mode fails closed with its own reason — a tampered record field, a

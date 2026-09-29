@@ -1,4 +1,4 @@
-# owner-channel/channels-manifest-gal-development.yaml — the GAL terminal-proof (sa#4)
+# owner-channel/channels-manifest-gal-development.yaml — the GAL terminal-proof
 # DEVELOPMENT-floor cutover variant. Identical to channels-manifest-development.yaml
 # except every route and the one trust-map row point at the FRESH principal
 # `gal-terminal-agent` (the trust map forbids duplicate (channel_type, channel_identity)
@@ -30,7 +30,7 @@ trust_map:
   # example must therefore never carry a real address — copying this file with
   # someone else's identity in it grants that person the owner surface. There is
   # no env substitution in the manifest loader today, so this is a literal edit
-  # at deploy time (see #302 for making it a deploy-bound value).
+  # at deploy time (making it a deploy-bound value is an open item).
     channel_identity: "owner@example.com"
     principal: gal-terminal-agent
     sender_class: owner

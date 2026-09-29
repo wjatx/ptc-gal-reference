@@ -147,12 +147,12 @@ text can re-enter a later turn looking like established context, which is the re
 paper's CoT Forgery exploits from outside. Our answer is filter-on-write: the broker stamps
 provenance and taint at write time so a tainted source cannot write untainted memory. Its status in
 our own words is **"designed, not built"** (`docs/deterministic-gate.md:58-66`), scoped to the memory
-epic **#75**. No new issue; this is existing deferred work, and the paper is a reason to weight it.
+epic. No new issue; this is existing deferred work, and the paper is a reason to weight it.
 
 ## 7. Non-actions
 
 - **No issues filed.** Nothing here passes the cleanroom test as a new gap. The one live surface
-  (#75) was already open and already scoped.
+  was already open and already scoped.
 - **No change to gate 7.** See §6.
 - **No adoption of the paper's remedy direction.** Representation-level role separation is
   model-vendor work. It sits below our floor and we do not build it.
@@ -241,7 +241,7 @@ and none of them would fire on any of the three observations.
   Grooming a promotion needs no tainted turn. Every prompt in 9.2 was clean, and a promotion
   predicate that rewards a clean behavioral history is structurally the same credit mechanism 9.2
   exploits, so the mitigation was keyed on the wrong signal in a normative SHOULD of a filed spec.
-  Corrected in `0.2.2-draft` (#342), which separates tainted from untainted grooming and names
+  Corrected in `0.2.2-draft`, which separates tainted from untainted grooming and names
   maker≠checker ratification rather than the predicate as what bounds the second. `docs/GAL.md` §10
   synced.
 - **`docs/friction-doctrine.md:76-91` frames forced abstention as an injection consequence.** The
@@ -249,20 +249,20 @@ and none of them would fire on any of the three observations.
   human*, not abstention" (`:78`), and right that the fix is a deterministic liveness contract that
   judges *that* the agent went silent and never *why* (`:88-91`). 9.3 is that failure with no poison
   in it. The mechanism still catches it, because a timestamp comparison does not care about cause,
-  but the doctrine's stated trigger is narrower than its own mechanism. Open as **#343**.
+  but the doctrine's stated trigger is narrower than its own mechanism. Open as **#145**.
 - **`ptc-gal-standards/PTC-SPEC.md:752-760` inherits the same framing** in the residual-risk section, where the
   cost of tightening is otherwise stated well: "Every floor here answers a **poisoned input** by
   escalating or refusing." 9.3 was an agent that escalated nothing and refused everything, with no
-  poisoned input anywhere in it. Open as **#343**, deliberately split from #342 so a GAL bump and a
+  poisoned input anywhere in it. Left open, deliberately split from the GAL item so a GAL bump and a
   PTC bump do not ride one pass.
 
 Worth recording what our taint model does and does not reach here. Broker-side self-ingestion
-(sa#134) taints a turn from a successful external connector **read**, which is a real source with a
+ taints a turn from a successful external connector **read**, which is a real source with a
 real moment (`broker/TAINT.md:83-86`). The agent's own prior output re-entering as apparent
 authority has no such moment, is not covered, and has no test. That is not a gate defect, since the
 gate never trusts model output in the first place, and 9.1 and 9.3 both left the gate untouched.
 It is a reason to be careful about the *claim*: our answer to self-ingestion is scoped to connector
-reads, and the memory half that would extend it is still #75.
+reads, and the memory half that would extend it is still deferred.
 
 The general form, which is the part worth carrying: **context accumulation is a state change with
 no event to key on.** Taint has a source and can be stamped at ingest. Grooming and wedging have no

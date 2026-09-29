@@ -1,7 +1,7 @@
 # oauth_api/manifest.yaml — FICTIONAL example consumer for the oauth_refresh
-# credential strategy (#173, PTC Phase 3a — connector-auth-strategy seam).
+# credential strategy (#79, PTC Phase 3a — connector-auth-strategy seam).
 #
-# Before #173, EVERY connector's credential was a single static secret string: the
+# Originally, EVERY connector's credential was a single static secret string: the
 # Doer fetched a leaf and handed it to the connector verbatim. Real OAuth-protected
 # APIs use short-lived access tokens minted from a broker-held refresh token — this
 # example proves that path end to end.
@@ -39,7 +39,7 @@ grant_classes:
 connectors:
   - api
 
-# ── Consumer-supplied connector (the sa#141 seam) ──────────────────────────────
+# ── Consumer-supplied connector (the connector-injection seam) ─────────────────
 # oauth_api's "api" is this example's own connector, not a base connector: the
 # provider path is imported / zero-arg instantiated / protocol-checked at
 # build_runtime, fail-closed. Honored ONLY from this image-baked file — the
@@ -51,11 +51,11 @@ connector_providers:
 # token (never a value, never a full id) — this is also the default leaf the
 # oauth_refresh strategy reads if `refresh_token_leaf` were omitted from params
 # below. Declared explicitly here for clarity; resolved under the broker secret
-# prefix (`<prefix>/connectors/api-refresh-token`, sa#164).
+# prefix (`<prefix>/connectors/api-refresh-token`).
 connector_secrets:
   api: "api-refresh-token"
 
-# ── Per-connector credential-resolution strategy (#173) ───────────────────────
+# ── Per-connector credential-resolution strategy (#79) ───────────────────────
 # Selects oauth_refresh: the broker reads the refresh token from the
 # `refresh_token_leaf` secret leaf, exchanges it at `token_url`, and hands the
 # connector the minted access token. `params` is a string map of leaf names /
@@ -68,7 +68,7 @@ connector_auth:
       client_id: "example-client"
       refresh_token_leaf: "api-refresh-token"
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 # The broker resolves each granted (tool, op) against THIS table; the base names
 # no op. A read, external (the API is outside the broker's trust boundary),
 # egress-bounded by the query argument — mirrors missileer's search.query entry.

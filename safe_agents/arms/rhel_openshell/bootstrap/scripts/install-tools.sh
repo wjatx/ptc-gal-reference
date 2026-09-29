@@ -20,7 +20,7 @@ fi
 
 log "Installing system packages..."
 
-# Offline guard (sa#109): the prebuilt AMI bakes the whole core toolchain (the
+# Offline guard: the prebuilt AMI bakes the whole core toolchain (the
 # devel libs ride along with these command-providing packages), and the box sits
 # in the isolated no-NAT subnet where dnf/EPEL are unreachable — even the EPEL
 # repolist probe can hang or fail there. Only touch the repos + dnf when one of

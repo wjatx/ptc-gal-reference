@@ -1,4 +1,4 @@
-"""grants.reviewers — reference-tier evidence reviewers for the checker seam (sa#58).
+"""grants.reviewers — reference-tier evidence reviewers for the checker seam.
 
 **Reference-tier** per docs/contract-vs-reference.md. The normative contract is
 `CheckerProtocol` in grants/ceremony.py (findings-attach-NEVER-gate); the

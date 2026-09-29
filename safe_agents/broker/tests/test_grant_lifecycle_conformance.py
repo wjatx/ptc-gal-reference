@@ -1,4 +1,4 @@
-"""Conformance suite for the grant lifecycle (#60/#59/#55) — clauses L1–L8.
+"""Conformance suite for the grant lifecycle — clauses L1–L8.
 
 Contract-tier surface requires a conformance suite (`docs/contract-vs-reference.md`);
 this is it, certifying `broker/grant-lifecycle.md` (the normative state machine),
@@ -156,7 +156,7 @@ def _proposal(
         window_n=30,
         min_observations=10,
         threshold=0.05,
-        # sa#57 evidence terms passing every predicate gate (budget knob unset)
+        # Evidence terms passing every predicate gate (budget knob unset)
         artifact=ConfidenceArtifact(
             confidence=0.9,
             error_prob=0.1,

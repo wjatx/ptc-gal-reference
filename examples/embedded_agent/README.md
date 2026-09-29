@@ -29,7 +29,7 @@ audit tape:
 The framing line is a standing ruling [maintainer, 2026-07-24]: *"The product wrapper wraps agents you don't control;
 agents you build can use the broker directly."* The second half was undemonstrable as a library —
 the imports it needs were forbidden by the consumer-boundary guard and the constructor lived in a
-directory named `prototype/`. #266 ruled the surface; this example is what turns that ruling from
+directory named `prototype/`. A public-API-surface ruling fixed the surface; this example is what turns that ruling from
 an assertion into something you can run.
 
 The gate that had been blocking it was **"no consumer needs it yet"** — self-sealing reasoning for
@@ -117,4 +117,4 @@ agent receives a deny. Any placeholder string will do.
 - `docs/posture-ladder.md` — the posture vocabulary the limits above are stated in.
 - [`missileer/`](../missileer/) — the same `connector_providers` seam, used to prove the opposite
   move: absence rather than refusal.
-- #266 (this example), #106 (the installable-SDK thread it advances).
+- The public-API-surface ruling (this example), and the installable-SDK thread it advances.

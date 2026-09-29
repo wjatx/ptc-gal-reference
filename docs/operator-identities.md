@@ -11,7 +11,7 @@ this doc is the operator's how-to.
 | Function | Command | Identity | Gate context |
 |---|---|---|---|
 | propose | `grants.commands propose` | **MakerRole** | `makerTrustedPrincipals` |
-| ratify / reject / acknowledge | `grants.commands ratify…` | **CheckerRole** (#202) | `checkerTrustedPrincipals` |
+| ratify / reject / acknowledge | `grants.commands ratify…` | **CheckerRole** | `checkerTrustedPrincipals` |
 | seed / re-seed (bootstrap) | `grants.commands seed/re-seed` | **PromotionRole** (operator gate) | `promotionTrustedPrincipals` |
 | tighten (voluntary, any level → in-loop) | `grants.commands tighten` | **PromotionRole** (operator gate) | `promotionTrustedPrincipals` |
 | demotion runner + term lapse (drills / out-of-band) | `grants.runner` | **DemotionRole** (operator gate) | `demotionTrustedPrincipals` |
@@ -39,7 +39,7 @@ Notes:
   holding only one reports `RECORD_ROLE_UNRESOLVED` against the other role's records rather than
   passing them. See `RECORD_SIGNING_EPOCH` below.
 - MakerRole writes via **conditional UpdateItem only** (the proposal store's append idiom — a
-  PutItem-shaped first cut was IAM-denied live), and since #203 that UpdateItem is
+  PutItem-shaped first cut was IAM-denied live), and since the maker/checker write split that UpdateItem is
   **`LeadingKeys`-confined to `PROPOSAL#*` / `TOOLPROP#*`** on the grants and mcp-registry
   tables. Maker-mint is now structurally impossible rather than condition-guarded: a `GRANT#`
   or `TOOLDEF#` write is refused by IAM before any store condition is evaluated (proven live on
@@ -50,7 +50,7 @@ Notes:
 - Maker≠checker is credential separation (GAL §8): propose under MakerRole, ratify under
   CheckerRole — two ARNs the ceremony compares; the proposer cannot mint the checker's.
 - **The keyed audit has two invocations, both floor-proven.** `python -m
-  safe_agents.broker.grants.audit_command --table <name> [--json]` landed 2026-07-26 (#252) as the
+  safe_agents.broker.grants.audit_command --table <name> [--json]` landed 2026-07-26 as the
   operator/programmatic path and is the one a wrapper's `posture` command shells out to; its first
   live run was
   2026-08-05 against `safe-agents-development-grants` under AuditorRole (keyed, verify-keys,
@@ -114,7 +114,7 @@ Public key material in a `SecureString` buys nothing and breaks the audit.
 The zone is not decoration: it is baked into the DSSE statement as attribution
 (`record_signing.py`, `predicate.signer.zone`), so `resolve_signer_for_role` **refuses** a key
 source with no zone rather than defaulting one — *"a signer a verifier cannot resolve or attribute
-is a misconfiguration, never a silent default"*. A key_id with no key source refuses too (#196):
+is a misconfiguration, never a silent default"*. A key_id with no key source refuses too:
 half-configured signing never degrades to an unsigned record.
 
 **Give each role its own key_id.** `resolve_record_key_resolvers` refuses at cold start if any
@@ -214,7 +214,7 @@ in five IAM **trust policies** for anyone but its author, and this block is mean
 copy-pasted. The same `sts get-caller-identity` call is already THE GUARD above.
 
 > ⚠️ **All five contexts, every time. A missing one degrades silently, and in two different
-> ways** (#309). `trustedPrincipalsFromContext` returns `[]` when its key is unset, and unset is
+> ways** (#112). `trustedPrincipalsFromContext` returns `[]` when its key is unset, and unset is
 > indistinguishable from empty. What happens next depends on which role you dropped, so do not
 > carry the blanket "it deletes the role" version of this warning — it is true for three of the
 > five and wrong for the other two:
@@ -230,7 +230,7 @@ copy-pasted. The same `sts get-caller-identity` call is already THE GUARD above.
 >   and per the guard at the top of this doc a failed assume from an admin baseline falls back to
 >   admin, which is the exact hazard the gate exists to close.
 >
-> Until #309 lands, the protections are: pass all five, and **read `cdk diff` for
+> Until #112 lands, the protections are: pass all five, and **read `cdk diff` for
 > resource-level removals before deploying** — capture it with `> file 2>&1`, because cdk writes
 > the diff to stderr and a plain `> file` yields an empty file that any grep passes vacuously.
 > A MakerRole-only change shows exactly one resource: `[~] AWS::IAM::Policy

@@ -1,9 +1,9 @@
 # agents/smoke-rhel-openshell.yaml — deployment manifest for the RHEL+OpenShell arm smoke test.
 #
-# Purpose: proves the rhel-openshell arm adapter (sa#91) end-to-end
+# Purpose: proves the rhel-openshell arm adapter end-to-end
 # provision → deploy → smoke in the development environment. Targets the
 # test-stub agent (runner-contract reference implementation) so smoke runs
-# without a real Claude session. The coordinator runs the live deploy (#93);
+# without a real Claude session. The coordinator runs the live deploy;
 # CI uses --dry-run.
 #
 # The pipeline reads this file with:

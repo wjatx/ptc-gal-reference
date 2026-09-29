@@ -263,7 +263,7 @@ class TestClaimLifecycle:
         assert stored.error is None
 
     def test_deny_releases_the_claim(self) -> None:
-        """#148 holds: a deny executed nothing, so it leaves NO record at all —
+        """Only executed outcomes survive: a deny executed nothing, so it leaves NO record at all —
         not an executed one to replay, and not a claim to block the retry."""
         store = InMemoryStore()
         store.try_increment_counter(COUNTER_KEY, CAP, CAP)  # cap at ceiling → deny
@@ -413,7 +413,7 @@ class TestPreLifecycleRows:
         assert executor.effects == 0
 
     def test_legacy_deny_row_is_evicted_and_the_key_is_reclaimed(self) -> None:
-        """The #148 self-heal survives the claim: a stale non-executed record is
+        """The idempotency self-heal survives the claim: a stale non-executed record is
         neither replayed nor left to block the claim — it is deleted, the key is
         claimed fresh, and the retry's executed outcome settles it."""
         store = InMemoryStore()

@@ -1,4 +1,4 @@
-# Containerfile.broker — the #221 Phase-2 floor-drill CONSUMER broker image.
+# Containerfile.broker — the MCP-brokerage floor-drill CONSUMER broker image.
 #
 # The consumer-image-layer pattern (docs/broker-image-cutover.md): the agent-
 # agnostic base broker image + this drill's files, nothing else. One image
@@ -25,7 +25,7 @@
 # No ENTRYPOINT/CMD override — the base broker server entrypoint is inherited.
 # No baked BROKER_MANIFEST — the task definition injects
 # BROKER_MANIFEST=/app/examples/alpaca_paper_drill/manifest.yaml (an unset one
-# fails loudly at boot, #205).
+# fails loudly at boot).
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 

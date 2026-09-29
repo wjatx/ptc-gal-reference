@@ -1,4 +1,4 @@
-"""CLI plumbing for the grant-ceremony command surface (grants/commands.py, #123).
+"""CLI plumbing for the grant-ceremony command surface (grants/commands.py).
 
 Argparse wiring plus the store / manifest / envelope-hash resolution main()
 binds — split out so commands.py stays the readable ceremony surface. Nothing
@@ -25,7 +25,7 @@ from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger, Pr
 
 def _build_proposal_store(table_name: str | None):
     """Proposal store on the selected arm, under the SAME HMAC key seam as
-    runner._build_stores (#247)."""
+    runner._build_stores."""
     hmac_key = _ceremony_hmac_key()
     if resolve_store_arm() == "sqlite":
         from safe_agents.broker.grants.sqlite_ceremony_stores import (  # noqa: PLC0415
@@ -40,7 +40,7 @@ def _build_proposal_store(table_name: str | None):
 
 
 def _build_ack_store(table_name: str | None):
-    """Acknowledgment store (#196) on the selected arm, co-located with the grants.
+    """Acknowledgment store on the selected arm, co-located with the grants.
 
     No HMAC seam on either arm: an acknowledgment's integrity is its REQUIRED
     issuer DSSE signature — the audit applies nothing that does not verify.
@@ -63,9 +63,9 @@ def _resolve_envelope_hash(principal: Principal, table_name: str | None) -> str:
     """The in-force envelope hash, honoring BROKER_ENVELOPE_LOAD like seed_grants:
     'store' reads the seeded envelope for this principal (seed_envelope must have
     run first); the default 'manifest' hashes the manifest's envelope block —
-    but ONLY when the manifest's principal IS ``principal`` (#199): stamping a
+    but ONLY when the manifest's principal IS ``principal``: stamping a
     ceremony under a different manifest's envelope mints a grant the broker
-    quarantines on first exercise (sa#122), so a mismatch is refused, never
+    quarantines on first exercise, so a mismatch is refused, never
     guessed."""
     # Keep the broker_server import side-effect-free, exactly as seed_grants does.
     with grant_load_suppressed():
@@ -133,7 +133,7 @@ def _manifest_context(table_name: str | None):
 
     # The load-once manifest: the SAME object _resolve_envelope_hash's manifest
     # mode hashes, so grant classes and envelope hash can never come from two
-    # different reads of the manifest file (#199's dead-grant shape).
+    # different reads of the manifest file (the dead-grant shape).
     _MANIFEST = resolve_manifest()
     principal = _require_principal(_MANIFEST)
     granted_classes = _resolve_granted_classes(_MANIFEST)

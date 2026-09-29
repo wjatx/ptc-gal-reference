@@ -1,4 +1,4 @@
-"""trackfeed_connector.py — missileer's CONSUMER-OWNED connector (sa#141 proof).
+"""trackfeed_connector.py — missileer's CONSUMER-OWNED connector (connector-injection seam proof).
 
 This is the worked example of the one sanctioned injection seam: the manifest's
 ``connector_providers`` names this class by dotted path

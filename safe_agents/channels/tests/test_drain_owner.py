@@ -1,11 +1,11 @@
-"""sa#176 — the drain-side human-as-owner approval fork conformance.
+"""The drain-side human-as-owner approval fork conformance.
 
 Independent suite for the ``_process_record`` owner fork (channels/drain/handler.py).
 Mirrors test_drain_handler.py's harness (fake BrokerRuntime via the ``_build_runtime``
 seam, spy Receiver via the real provider loader), extended with a runtime that also
 records ``approve_intent``/``reject_intent`` so the fork is observable.
 
-Targets (from the sa#176 design answers Q3):
+Targets (from the owner-channel design answers Q3):
   4   owner COMMAND -> normal agent turn (NOT the approval fork); no owner auto-allow.
   5a  owner /approve -> release path (approve_intent); receiver path NOT taken.
   5b  approval-shaped payload from a NON-owner class -> does NOT fork (forge-safety):
@@ -259,7 +259,7 @@ def test_non_owner_approval_shaped_payload_does_not_fork(wired, sender_class):
     assert runtime.requests == [_ProbeRequest()]
 
 
-# --- #193 Phase 6c — owner /flag forks to flag_intent ------------------------
+# --- Owner /flag forks to flag_intent ----------------------------------------
 
 def test_owner_flag_forks_to_flag_intent(wired):
     body = _owner_body(

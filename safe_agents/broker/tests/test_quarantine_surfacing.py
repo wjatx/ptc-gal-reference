@@ -1,4 +1,4 @@
-"""Tests for sa#124 — quarantined-grant surfacing at the PEP's single detection point.
+"""Tests for quarantined-grant surfacing at the PEP's single detection point.
 
 Today a quarantined grant (HMAC mismatch — tampering, mis-seeded key, or key-
 rotation drift) was silently downgraded to "absent": the deny that followed

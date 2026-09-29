@@ -1,5 +1,5 @@
 """
-EC2 arm — always-on EC2 compute (Arm 1, sa#33).
+EC2 arm — always-on EC2 compute (Arm 1).
 
 Public surface the pipeline uses:
     render_user_data                      — render user-data.sh.tmpl from manifest params

@@ -1,6 +1,6 @@
 # agents/smoke-woken.yaml — deployment manifest for a smoke-deploy of the ec2-woken arm.
 #
-# Purpose: proves the ec2-woken inbound airlock arm (sa#34) — the event-driven wake path
+# Purpose: proves the ec2-woken inbound airlock arm — the event-driven wake path
 # for a sleeping EC2 agent box. The airlock stack (HTTP API → guardrail Lambda → SQS +
 # StartInstances) is deployed from this manifest's inbound: block. CI runs --dry-run;
 # the coordinator runs the live deploy + guardrail probe.

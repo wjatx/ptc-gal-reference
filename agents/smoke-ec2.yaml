@@ -1,6 +1,6 @@
 # agents/smoke-ec2.yaml — deployment manifest for a smoke-deploy of the EC2 arm.
 #
-# Purpose: proves the EC2 arm adapter (sa#33) end-to-end — provision → deploy →
+# Purpose: proves the EC2 arm adapter end-to-end — provision → deploy →
 # smoke — in the development environment. Targets the test-stub agent (the
 # runner-contract reference implementation) so the smoke runs without a real
 # Claude session. The coordinator runs the live deploy; CI uses --dry-run.

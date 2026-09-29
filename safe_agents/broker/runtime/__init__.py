@@ -19,7 +19,7 @@ Public API:
   SecretsProvider  — Protocol for credential fetch (injected into Doer).
   FakeSecretsProvider          — in-memory fake for tests.
   LocalFileSecretsProvider     — reads creds from a 0600 JSON file (local arm).
-  DirSecretsProvider           — one file per secret leaf under a mount dir (#248).
+  DirSecretsProvider           — one file per secret leaf under a mount dir.
   LazyBotoSecretsProvider      — lazy boto3 Secrets Manager for deployment.
   Connector        — Protocol for connector tools (held only by the Doer).
   StubConnector    — deterministic stub for tests; records calls.
@@ -77,7 +77,7 @@ __all__ = [
     "AssumedRoleCredential",
     "StubConnector",
     "ConnectorCall",
-    # credential-resolution strategies (#173, #175)
+    # credential-resolution strategies (#79)
     "CredentialProvider",
     "StaticSecret",
     "OAuthRefresh",

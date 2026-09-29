@@ -1,4 +1,4 @@
-"""Crash-tolerance and thread-safety tests for FileAuditSink (sa#102).
+"""Crash-tolerance and thread-safety tests for FileAuditSink.
 
 Covers the two hardening fixes for the local-file audit sink:
   1. Torn write on crash — a partial, unterminated final JSON line must not block
@@ -177,7 +177,7 @@ def test_concurrent_appends_in_memory_chain_valid():
 
 
 # ---------------------------------------------------------------------------
-# 3. Multi-process safety (#301) — the gateway and a release CLI share one tape
+# 3. Multi-process safety — the gateway and a release CLI share one tape
 # ---------------------------------------------------------------------------
 #
 # Threads are not the hard case here. On the local floor the writers are separate
@@ -247,7 +247,7 @@ def test_concurrent_processes_produce_valid_chain(tmp_path):
 
 
 def test_second_process_release_does_not_break_a_live_sink(tmp_path):
-    """The exact #301 shape: a live gateway sink, a release from another process.
+    """The exact multi-process-sink shape: a live gateway sink, a release from another process.
 
     The gateway holds its sink open across the release (it is a long-lived stdio
     server), so its cached counters go stale. Its next append must still land on

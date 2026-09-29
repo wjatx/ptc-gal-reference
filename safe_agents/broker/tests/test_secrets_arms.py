@@ -1,8 +1,8 @@
-"""test_secrets_arms.py — #248: the BROKER_SECRETS closed catalog + the `dir` arm.
+"""test_secrets_arms.py — the BROKER_SECRETS closed catalog + the `dir` arm.
 
 Two things land together here, and the second is why the first was a prerequisite:
 
-  * **The catalog.** Before #248 there was no validation at all — two independent
+  * **The catalog.** Originally there was no validation at all — two independent
     sites tested ``BROKER_SECRETS == "secretsmanager"`` and fell through to
     BROKER_SECRETS_FILE and then to FAKE CREDENTIALS. One typo booted green on
     fakes while the operator believed Secrets Manager was in force, which is the
@@ -12,7 +12,7 @@ Two things land together here, and the second is why the first was a prerequisit
   * **The `dir` arm.** One file per secret leaf — the shape a Kubernetes/OpenShift
     mounted Secret, a CSI Secrets Store volume, Podman's /run/secrets and systemd
     credentials all project. The prerequisite for the openshift epic's Phase 1
-    container floor (#249).
+    container floor.
 
 Every test is AWS-free: the secretsmanager arm is only ever *selected* here, never
 fetched from (LazyBotoSecretsProvider does not import boto3 until first fetch).
@@ -256,7 +256,7 @@ class TestSecretsArmCatalog:
     def test_unrecognized_value_refuses(
         self, monkeypatch: pytest.MonkeyPatch, typo: str
     ) -> None:
-        # The regression this catalog exists for: pre-#248 each of these fell
+        # The regression this catalog exists for: before the catalog each of these fell
         # through to the file provider or, with no file named, to FAKE credentials.
         monkeypatch.setenv("BROKER_SECRETS", typo)
         with pytest.raises(BrokerConfigError, match="not a recognized secrets arm"):
@@ -325,14 +325,14 @@ class TestBrokerBootSelectsTheArm:
     def test_memory_arm_default_is_unchanged(
         self, capsys, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The friendly dev default survives #248 byte-for-byte."""
+        """The friendly dev default survives the catalog byte-for-byte."""
         runtime, _ = build_runtime(_manifest())
         assert runtime is not None
         assert "secrets: fake" in capsys.readouterr().out
 
 
 class TestMcpCommandsSelectTheSameArm:
-    """The second resolution site. Pre-#248 it re-derived the arm with its own
+    """The second resolution site. Before the catalog it re-derived the arm with its own
     `== "secretsmanager"` test; the two sites disagreeing about which backend is
     in force is exactly what the catalog prevents."""
 

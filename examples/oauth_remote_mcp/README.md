@@ -1,4 +1,4 @@
-# oauth_remote_mcp — reference REMOTE MCP credential-delivery consumer (#237)
+# oauth_remote_mcp — reference REMOTE MCP credential-delivery consumer
 
 Proves the last unwired seam in the MCP host: a **vendor-hosted** MCP server that
 requires bearer auth, reached through the broker with the credential resolved

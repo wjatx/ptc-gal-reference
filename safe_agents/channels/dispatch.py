@@ -1,4 +1,4 @@
-"""channels.dispatch — the in-memory, transport-free reference airlock dispatcher (sa#80).
+"""channels.dispatch — the in-memory, transport-free reference airlock dispatcher.
 
 **Reference-tier** per docs/contract-vs-reference.md (channels/ADAPTERS.md
 §"Status"): this module exists so the gate-ordering clauses in
@@ -104,7 +104,7 @@ def dispatch(
     # dedupe, or screen budget, so a forged chain is the cheapest thing to reject
     # (the same reasoning that puts expiry ahead of the budget gates). The drop
     # reason is the verification reason verbatim, a closed DropReason vocabulary.
-    # Evidence-of-check (sa#161 Phase A1): a *successful* gate 3.5 verification
+    # Evidence-of-check (for the campaign watchdog): a *successful* gate 3.5 verification
     # is what any later drop/verdict record in this call may cite as
     # `chain_verified`/`signer_key_id` — a failed or skipped verification
     # keeps every later record at its default (unverified), never asserting a

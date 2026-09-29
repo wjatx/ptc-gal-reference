@@ -1,4 +1,4 @@
-# restricted_mcp_server — restrict-by-construction (the missileer archetype, #174)
+# restricted_mcp_server — restrict-by-construction (the missileer archetype)
 
 A **fictional** example MCP server that makes the strongest MCP control visible: a
 bespoke server exposing **only** safe tools, so the dangerous op is **absent, not
@@ -68,17 +68,17 @@ python -m pytest examples/restricted_mcp_server/ -q
 A real deployment supplies its own manifest via `BROKER_MANIFEST` and lives in its
 own repo; this exists to demonstrate the archetype by construction.
 
-## Running as a consumer of the broker (#219)
+## Running as a consumer of the broker
 
 The example is deployable end-to-end, not just declarative:
 
-- **Native construction (#221)** — the manifest's `mcp_servers.ledger` block
+- **Native construction** — the manifest's `mcp_servers.ledger` block
   declares the spawn config (`command: python3`, `-m` the server module), and
   `build_runtime` composes the base `McpConnector` + `stdio_host_factory` +
   the admitted-tool registry itself — no consumer provider class at all. The
   server runs as a stdio **child process of the broker task** — no separate
   service — behind the two-key admission gate, reading the registry named by
-  `MCP_REGISTRY_TABLE_NAME` under the broker's own HMAC key. (The pre-#221
+  `MCP_REGISTRY_TABLE_NAME` under the broker's own HMAC key. (The original
   `provider.py` that hand-rolled this wiring is retired; a consumer today
   ships only its server, manifest, and image layer.)
 - **`Containerfile.broker`** — the consumer image layer (base broker image +

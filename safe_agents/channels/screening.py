@@ -1,4 +1,4 @@
-"""channels.screening — the typed injection-screen seam (sa#43).
+"""channels.screening — the typed injection-screen seam.
 
 See channels/SCREENING.md for the normative contract; this module is the
 typed encoding. The screen is the one model-judged gate in the airlock
@@ -71,7 +71,7 @@ class ScreenRecord(BaseModel):
     for both pass and refuse when the caller opts into a verdict sink
     (`dispatch.dispatch`'s `verdicts` param); the sink ships OFF by default.
 
-    `chain_verified`/`signer_key_id` are evidence-of-check (sa#161 Phase A1,
+    `chain_verified`/`signer_key_id` are evidence-of-check (per the campaign watchdog and
     the `sig:pass` provenance-hop precedent in `channels/SIGNING.md`): they
     let an off-path watchdog attribute this screen verdict at the
     authentication strength the airlock actually verified. `signer_key_id`

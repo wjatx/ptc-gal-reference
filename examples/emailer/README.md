@@ -1,10 +1,10 @@
 # emailer — a fictional A2A *sender* (the outbound half of the driving case)
 
 A **fictional** example consumer demonstrating the outbound channels seam,
-`peer.publish` (`channels/PUBLISH.md`, sa#156). Where `webhook-peer/` supplies the
+`peer.publish` (`channels/PUBLISH.md`). Where `webhook-peer/` supplies the
 **receiver** airlock (a `ChannelsManifest`), this one supplies the **sender**: a broker
 `AgentManifest` granting exactly one outbound capability, `peer.publish`, and the
-consumer-owned `peer` connector that transports it. Together they are the sa#8 driving
+consumer-owned `peer` connector that transports it. Together they are the agent-to-agent driving
 case end to end — email-agent → example-agent — with the boundary the platform exists to
 enforce running between them.
 
@@ -29,7 +29,7 @@ properties, none of which the agent can subvert:
   the standing `tainted_external_write` cut → `require_approval`. The abstain-safe polarity
   makes that gate the *safe* outcome (P2).
 
-## The `peer` connector (now a base builtin, #172)
+## The `peer` connector (now a base builtin)
 
 The `peer` connector ships in the base SDK as `safe_agents.connectors.PeerConnector`:
 `peer.publish` speaks our own protocol to our own airlock (EventTrigger, `/inbound`, the
@@ -41,7 +41,7 @@ This example just *names* it — it resolves from the base registry, no provider
 connectors:
   - peer
 connector_secrets:
-  peer: "peer-example-agent"     # a LEAF (sa#164): resolves under <prefix>/connectors/
+  peer: "peer-example-agent"     # a LEAF: resolves under <prefix>/connectors/
 ```
 
 Its class is base, but the secret + endpoint stay consumer-supplied (they vary per

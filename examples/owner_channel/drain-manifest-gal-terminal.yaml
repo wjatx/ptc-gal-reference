@@ -1,5 +1,5 @@
 # owner-channel/drain-manifest-gal-terminal.yaml — the GAL terminal-proof FRESH principal
-# (sa#4 epic close). Identical in shape and envelope to drain-manifest.yaml; the ONLY
+# (autonomy epic close). Identical in shape and envelope to drain-manifest.yaml; the ONLY
 # deltas are the principal identity and the receiver that pairs with it
 # (gal_terminal_receiver.py). Fresh on purpose: the terminal proof drills the whole grant
 # lifecycle from bootstrap on a grant with no drill-scarred history (GAL §12).
@@ -24,15 +24,15 @@ grant_classes:
 connectors:
   - ledger
 
-# ── Consumer-supplied secret mapping (sa#141 seam; sa#164 bare-leaf rule) ─────
+# ── Consumer-supplied secret mapping (connector-injection seam; bare-leaf rule) ───
 connector_secrets:
   ledger: "ledger-owner-example"
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 tool_ops:
   - {tool: ledger, op: append, effect: write, external: false, reversible: true}
 
-# ── Counter period (#212) — the time-scale knob, hour-bucketed HERE ───────────
+# ── Counter period — the time-scale knob, hour-bucketed HERE ───────────
 # This fresh-principal manifest is the development-speed lifecycle example: with
 # utc-hour, evidence windows / caps / dwell all bucket per UTC hour, so the full
 # GAL arc (accumulate → propose → promote → breach → demote → re-climb) runs in
@@ -47,7 +47,7 @@ counter_period: utc-hour
 envelope:
   polarity: abstain
   caps:
-    # The honest spelling under counter_period: utc-hour (#212) — 100 appends
+    # The honest spelling under counter_period: utc-hour — 100 appends
     # per UTC HOUR here. Same field as actions_per_utc_day (validation alias;
     # canonical dump key unchanged, so the envelope hash never churns on the
     # spelling).

@@ -48,8 +48,8 @@ class Transform(BaseModel):
     carried through byte-for-byte (`pdp/engine.py`, pinned by
     `test_pdp.py::test_transform_passes_args_through_byte_for_byte`). The base redacts
     no field and clamps no value. `spec/PTC-SPEC.md` §PTC-25 requires the argument half
-    too and marks it NOT YET IMPLEMENTED here (tracking #358), so this is a gap against
-    the spec rather than the whole of the verb (#273, #353).
+    too and marks it NOT YET IMPLEMENTED here (tracking #16), so this is a gap against
+    the spec rather than the whole of the verb.
     The agent does not get to re-issue the original.
     """
 
@@ -78,7 +78,7 @@ class RequireApproval(BaseModel):
     # Abstain have always carried this; require_approval was the odd verb out, so
     # the reason survived only inside renderedForHuman's prose and the durable
     # AuditRecord read `reason: null` — the tape could show that a call was held
-    # and not say what held it (#300).
+    # and not say what held it.
     reason: str | None = None
 
 

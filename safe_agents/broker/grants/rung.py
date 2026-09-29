@@ -1,8 +1,8 @@
-"""Autonomy rung state machine (sa#60).
+"""Autonomy rung state machine.
 
 Validates and orchestrates transitions between the three supervision rungs
 (in-loop / on-loop / out-of-loop). This module is pure logic with no
-DynamoDB dependency. It composes the ceremony (#58) and demotion (#59)
+DynamoDB dependency. It composes the ceremony and demotion
 without duplicating their bodies.
 
 Public API
@@ -246,7 +246,7 @@ def is_eligible_for_promotion(
             config supplied by the caller; never hardcoded.
         min_dwell: minimum wall-clock time the grant must have held its
             current level. Caller-supplied config, like min_clean_runs. To
-            express dwell in counter periods (#212), pass
+            express dwell in counter periods, pass
             ``n * enforcement.period_step(manifest.counter_period)`` — real
             time still elapses; only the bucket size is period-relative.
         now: the evaluation instant; injectable for tests. Defaults to the
@@ -365,7 +365,7 @@ class RungStateMachine:
         triggering demotion). The level is not changed; no PromotionRecord is
         written (no level change occurred).
 
-        Write discipline mirrors tighten_to_in_loop (#190 — the old blind put
+        Write discipline mirrors tighten_to_in_loop (the old blind put
         let a re-ratifier silently overwrite a demotion that raced in between
         its read and write, RAISING the level with no ceremony and no record):
         guarded re-read (not-found, quarantined, and concurrently-modified each
@@ -391,7 +391,7 @@ class RungStateMachine:
             )
 
         # Guarded re-read, mirroring tighten_to_in_loop. Quarantine is checked
-        # FIRST: a quarantined read carries grant=None (#246 — tampered bytes
+        # FIRST: a quarantined read carries grant=None (tampered bytes
         # are never parsed), so the not-found check would otherwise mislabel a
         # tamper as absence.
         current = self._grant_store.get_grant(grant.principal, grant.actionClass)
@@ -408,7 +408,7 @@ class RungStateMachine:
             )
         if current.grant != grant:
             # Content equality is the staleness check under the stored-bytes
-            # basis (#246): identical fields ⇒ identical canonical bytes.
+            # basis: identical fields ⇒ identical canonical bytes.
             raise GrantUpdateConflictError(
                 f"grant {grant.principal.agentId}/{grant.actionClass} was "
                 "modified since it was read; re-read and retry"
@@ -528,13 +528,13 @@ class RungStateMachine:
         write; in particular a quarantined grant is NEVER written over (that
         would launder the tampered state under a fresh valid hash). The
         lowered grant and its tightening-typed PromotionRecord then commit as
-        ONE atomic unit (#244, write_record_and_grant): a failed unit leaves
+        ONE atomic unit (write_record_and_grant): a failed unit leaves
         the grant at its prior level with no ledger hole, and the error
         surfaces loudly for the caller to retry.
 
         Args:
             grant: the grant as last read from the store; content equality
-                against the guarded re-read is the staleness check (#246).
+                against the guarded re-read is the staleness check.
             requested_by: who asked for the tightening. Recorded as both
                 proposedBy and ratifiedBy — maker ≠ checker is not enforced
                 for tightening (narrowing autonomy needs no second party).
@@ -574,7 +574,7 @@ class RungStateMachine:
             )
 
         # Guarded re-read, mirroring apply_demotion. Quarantine is checked
-        # FIRST: a quarantined read carries grant=None (#246 — tampered bytes
+        # FIRST: a quarantined read carries grant=None (tampered bytes
         # are never parsed), so the not-found check would otherwise mislabel a
         # tamper as absence.
         current = self._grant_store.get_grant(grant.principal, grant.actionClass)
@@ -591,7 +591,7 @@ class RungStateMachine:
             )
         if current.grant != grant:
             # Content equality is the staleness check under the stored-bytes
-            # basis (#246): identical fields ⇒ identical canonical bytes.
+            # basis: identical fields ⇒ identical canonical bytes.
             raise GrantUpdateConflictError(
                 f"grant {grant.principal.agentId}/{grant.actionClass} was "
                 "modified since it was read; re-read and retry"
@@ -626,7 +626,7 @@ class RungStateMachine:
             ts=effective_ts,
             attestation=attestation_for(requested_by),
         )
-        # Atomic record+grant (#244): the tightening and its ledger record
+        # Atomic record+grant: the tightening and its ledger record
         # commit together or not at all — a failed unit leaves the grant at
         # its prior level with no ledger hole; the caller retries. The record
         # is ISSUER-signed when the ceremony has a signer (GAL-SPEC §6.10:

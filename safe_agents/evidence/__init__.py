@@ -1,4 +1,4 @@
-"""safe_agents.evidence — reference-tier confidence constructors (#184).
+"""safe_agents.evidence — reference-tier confidence constructors.
 
 Honest reference implementations behind the closed `ConfidenceMethod` catalog
 (`broker/EVIDENCE.md`): one construction each for self-consistency, ensemble, and

@@ -3,11 +3,11 @@
 Turns `stamp_outbound`'s provenance from *asserted* into *authenticated*. The
 sending broker signs the chain-as-it-leaves-its-zone with its workload identity;
 a receiving airlock verifies the signature and quarantines a forged or unsigned
-chain (mirroring the grant-HMAC loud-quarantine, sa#124). This is what lets a
+chain (mirroring the grant-HMAC loud-quarantine). This is what lets a
 receiver trust a cross-broker lineage without trusting the transport, and is the
 gate that moves the §9 rung (see docs/PTC.md, docs/tce-signing-shape.md).
 
-Shape (decided in docs/tce-signing-shape.md, #170), name-agnostic:
+Shape (decided in docs/tce-signing-shape.md), name-agnostic:
 
   * The signature is over a **DSSE** pre-authentication encoding (PAE) of an
     **in-toto-style statement**: ``subject`` = the payload digest the envelope
@@ -46,7 +46,7 @@ from safe_agents.channels.schemas import ChainSignature, EventTrigger, Provenanc
 
 # The DSSE payloadType and in-toto statement/predicate type URIs. Name-agnostic
 # (no PTC/TCE) pending the maintainer's LF naming pass; the predicate type is versioned so a
-# future normative wire schema (#178) can bump it.
+# future normative wire schema can bump it.
 DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json"
 STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
 PREDICATE_TYPE = "https://safe-agents.dev/provenance-chain/v1"
@@ -76,9 +76,9 @@ class ChainVerifyResult:
     ``reason`` is one of the ``SIGNATURE_*`` / ``SIGNER_UNKNOWN`` constants on
     failure, else None. On failure the airlock quarantines the chain and drops —
     never treats an unverified chain as authoritative (mirrors the grant-HMAC
-    quarantine, sa#124).
+    quarantine).
 
-    ``signer_key_id``/``signer_zone`` are evidence-of-check (sa#161 Phase A1,
+    ``signer_key_id``/``signer_zone`` are evidence-of-check (per the campaign watchdog and
     the ``sig:pass`` provenance-hop precedent in ``channels/SIGNING.md``): on
     success they name the signer of the FULL-COVER signature — the sending
     broker's commitment to the chain as it left its zone — so a downstream
@@ -331,7 +331,7 @@ def _verify_one(
 def verify_chain(envelope: EventTrigger, key_resolver: KeyResolver) -> ChainVerifyResult:
     """Verify every chain signature and require full coverage of the chain.
 
-    Fails closed (mirrors grant-HMAC, sa#124):
+    Fails closed (mirrors grant-HMAC):
 
       * no signatures at all → ``SIGNATURE_MISSING``;
       * a signer whose ``key_id`` the resolver doesn't know → ``SIGNER_UNKNOWN``;

@@ -1,4 +1,4 @@
-# The checker half of the Phase 5 admission (#250 Phase 5).
+# The checker half of the Phase 5 admission.
 #
 # Its own file so the driver can order it strictly after the propose half — the same
 # reason the Phase 3 legs are split. A proposal must exist before it can be burned,
@@ -33,14 +33,14 @@ spec:
             - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
             - { name: BROKER_SECRETS, value: dir }
             - { name: BROKER_SECRETS_DIR, value: /run/connector-secrets }
-            # The #226 issuer-key check refuses a group/other-readable file, and a
+            # The local identity arm's issuer-key check refuses a group/other-readable file, and a
             # projected Secret volume under an fsGroup gets 0440 OR-ed in regardless of
-            # defaultMode (#282) — so the check can never pass on the projection.
+            # defaultMode — so the check can never pass on the projection.
             #
             # ISSUER_SIGNING_KEY_FILE is NOT set here: the script stages a private 0600
             # copy and exports the
             # path itself, exactly as cluster-ratify.sh does. Pointing this at the
-            # projection would fail #226's mode check; pointing it at the staging dir
+            # projection would fail the issuer-key mode check; pointing it at the staging dir
             # before the copy exists would fail more confusingly.
             - { name: PROJECTED_KEY, value: /run/issuer-projected/issuer.pem }
             - { name: PRIVATE_KEY, value: /run/issuer-private/issuer.pem }

@@ -54,10 +54,10 @@ install step succeeded. cloud-init then marks user-data failed (`cloud-init stat
 `error`, `scripts_user` WARNING) and the outer trap prints `BOOTSTRAP FAILED`. The
 interactive profile masks it (test true → exit 0), which is why the dev-box never hit it.
 Fix: end the script with an explicit `exit 0` (and prefer a real `if … fi` over a trailing
-bare conditional). The sa#35 live capstone surfaced this; a unit test now asserts the last
+bare conditional). The two-box live capstone surfaced this; a unit test now asserts the last
 statement is `exit 0`.
 
-## netns + broker-proxy confinement: the two live unknowns resolved *positively* (sa#35)
+## netns + broker-proxy confinement: the two live unknowns resolved *positively*
 
 The autonomous netns model (`agent-netns-setup.service` + `broker-model-proxy.service`,
 the agent exec'd via `ip netns exec agent-ns runuser -w … -u dev`) was live-validated on a

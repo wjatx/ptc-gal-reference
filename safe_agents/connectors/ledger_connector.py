@@ -1,4 +1,4 @@
-"""LedgerConnector — the durable brief/ledger sink for the ledger.append grant (sa#131).
+"""LedgerConnector — the durable brief/ledger sink for the ledger.append grant.
 
 The first shared *durable-write* connector: "persist this artifact durably" is
 domain-invariant (identical for a trading agent and a dashboard agent), so it lives

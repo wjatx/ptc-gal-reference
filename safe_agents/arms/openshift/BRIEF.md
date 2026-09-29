@@ -127,8 +127,8 @@ corroborates the differential, from a mount no agent pod has" — the held call'
 `reason=tainted external write`.
 *Limits:* the *agent-facing* response carries an empty `reason`, so the four rules that could
 have escalated it are indistinguishable to the subject of the test — a transport gap on the
-`/call` response path (#316's remaining half). And the *published envelope is agent-authored*: the seam that
-would broker-stamp outbound provenance has no runtime caller (#315), the receiver says so on
+`/call` response path (#116's remaining half). And the *published envelope is agent-authored*: the seam that
+would broker-stamp outbound provenance has no runtime caller (#15), the receiver says so on
 every request, and this demonstration therefore rests on the **verdict**, which never reads the
 envelope. The peer receiver is deliberately a bare endpoint — transport token plus schema
 validation, no trust map, no screening.
@@ -169,15 +169,15 @@ though the attempt failed. The helper is itself self-tested to fail when it shou
 3. **The audit tamper answer for a compromised broker is unbuilt.** A broker that rewrites its
    own tape is currently undetectable here: the chain is unkeyed and the broker is the writer.
    The designed remedy — a witness leg recording periodic chain heads to a volume the broker
-   cannot mount, detection never prevention — exists as a resolved design and zero code (#336).
+   cannot mount, detection never prevention — exists as a resolved design and zero code (#125).
 4. **The cloud floor's WORM has never been observed refusing anything.** The S3 Object Lock
    tier this arm's tamper leg points at as the durable answer is GOVERNANCE mode, durable
    environments only; the development environment sets no default retention at all; the CI gate
    asserts the *configuration* (in both polarities, mutation-tested) — and no drill anywhere
-   has ever attempted the delete and been refused (#334). A synth assertion is not an observed
+   has ever attempted the delete and been refused (#144). A synth assertion is not an observed
    refusal.
 5. **Outbound provenance is not broker-stamped.** `stamp_outbound` has no runtime caller
-   (#315), so the provenance chain the peer prints proves nothing, and the receiver says so on
+   (#15), so the provenance chain the peer prints proves nothing, and the receiver says so on
    every request.
 6. **The credential half of the bypass story** (see claim 5's limit), **two humans** (see claim
    1's limit), and **real harm** — the blast radius throughout is a fictional ledger.

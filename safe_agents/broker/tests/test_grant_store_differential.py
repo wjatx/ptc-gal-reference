@@ -125,7 +125,7 @@ class MemoryBackend:
         return _NotARecordStore()
 
     def tamper_grant_data(self) -> None:
-        # #246: items are {"data": str, "grantHash": str}; tamper the stored
+        # Stored-bytes shape: items are {"data": str, "grantHash": str}; tamper the stored
         # data STRING, like the other backends.
         item = self.grants._store[(_principal_key(PRINCIPAL), ACTION_CLASS)]
         item["data"] = item["data"].replace(EVIDENCE, "tampered-evidence")
@@ -231,7 +231,7 @@ class SqliteBackend:
 
 class DynamoBackend:
     name = "dynamo"
-    supports_record_signature = False  # DynamoDBPromotionRecordStore has no read seam (#245)
+    supports_record_signature = False  # DynamoDBPromotionRecordStore has no read seam (#99)
     pairing_error_match = "DynamoDBPromotionRecordStore"
 
     REGION = "us-east-1"
@@ -478,7 +478,7 @@ class TestRecordConformance:
 
 
 # ===========================================================================
-# write_record_and_grant (#244) — the failure-injection set, every backend
+# write_record_and_grant — the failure-injection set, every backend
 # ===========================================================================
 
 

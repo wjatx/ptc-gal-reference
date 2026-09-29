@@ -1,10 +1,10 @@
-"""Tests for the autonomy rung state machine (sa#60).
+"""Tests for the autonomy rung state machine.
 
 All tests are AWS-free: InMemoryGrantStore and InMemoryPromotionRecordStore
 replace DynamoDB; the optional reviewer seam ships OFF (None) except where a
 test exercises its record-only semantics.
 
-Coverage — 6 transition types (per issue #60 acceptance criteria):
+Coverage — 6 transition types:
 
   3 valid "upward" (promotion + lateral):
     1. in-loop  -> on-loop         legal; ceremony accepts
@@ -77,7 +77,7 @@ PASSING_METRICS = ActionClassMetrics(
 )
 PREDICATE_CONFIG = dict(window_n=50, min_observations=10, threshold=0.05)
 
-# sa#57 evidence terms passing every predicate gate (budget knob unset = OFF)
+# Evidence terms passing every predicate gate (budget knob unset = OFF)
 EVIDENCE_CONFIG = dict(
     artifact=ConfidenceArtifact(
         confidence=0.9,
@@ -514,7 +514,7 @@ class TestMachineReRatify:
         with pytest.raises(TransitionError, match="ratifier_id"):
             machine.re_ratify(grant, evidence_bundle="evidence", ratifier_id="")
 
-    # --- #190 retrofit: guarded re-read + hash-conditioned write (no blind put) ---
+    # --- Conditional-write retrofit: guarded re-read + hash-conditioned write (no blind put) ---
 
     def test_re_ratify_not_found_raises(self):
         """Re-ratification cannot create a grant (the blind put could)."""
@@ -538,7 +538,7 @@ class TestMachineReRatify:
             machine.re_ratify(stored, evidence_bundle="fresh", ratifier_id="bob")
 
     def test_re_ratify_concurrent_modification_raises_conflict(self):
-        """#190: a demotion landing between the re-ratifier's read and write must
+        """A demotion landing between the re-ratifier's read and write must
         surface as a conflict — never be silently overwritten (which would RAISE
         the level with no ceremony and no record)."""
         grant = make_grant(level=AutonomyLevel.on_loop, lastSafeLevel=AutonomyLevel.in_loop)
@@ -676,7 +676,7 @@ class TestMachineDemote:
 
 
 class _FailingRecordStore(InMemoryPromotionRecordStore):
-    """put_record always raises — the atomic unit must cancel wholly (#244)."""
+    """put_record always raises — the atomic unit must cancel wholly."""
 
     def put_record(self, record, session=None, signature=None):
         raise RuntimeError("ledger unavailable")
@@ -773,7 +773,7 @@ class TestMachineTighten:
         assert record_store.records == []
 
     def test_tighten_failed_record_leg_writes_nothing(self):
-        """Atomic record+grant (#244): a failed ledger leg cancels the whole
+        """Atomic record+grant: a failed ledger leg cancels the whole
         unit — the grant stays at its prior level with no ledger hole, and
         the caller retries."""
         grant = make_grant(level=AutonomyLevel.out_of_loop, lastSafeLevel=AutonomyLevel.on_loop)

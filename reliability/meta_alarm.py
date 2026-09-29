@@ -1,7 +1,7 @@
 """
 meta_alarm — page-semantics helpers for watchdog processes.
 
-Implements the sa#29 standard: a watchdog that exits 1 on failure is
+Implements the meta-alarm standard: a watchdog that exits 1 on failure is
 indistinguishable from a broken watchdog process unless the two signals
 are explicitly separated. This module codifies that separation.
 

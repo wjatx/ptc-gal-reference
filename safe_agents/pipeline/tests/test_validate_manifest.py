@@ -1,5 +1,5 @@
 """
-Tests for manifest extended validation (sa#41).
+Tests for manifest extended validation (#53).
 
 Covers:
   1. Valid manifest (with polarity, broker_connector_keys) passes
@@ -313,12 +313,12 @@ def test_run_pipeline_missing_polarity_aborts_at_preflight(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------------------
-# 13. schedule block (sa#115)
+# 13. schedule block
 # ---------------------------------------------------------------------------
 
 def test_no_schedule_key_loads_fine_with_schedule_none(tmp_path: Path) -> None:
     """A manifest with no 'schedule:' key loads fine; manifest.schedule is None
-    (backward compat — every pre-sa#115 manifest)."""
+    (backward compat — every manifest predating the schedule block)."""
     data = _base_manifest()
     manifest = load_manifest(_write_manifest(tmp_path, data))
     assert manifest.schedule is None

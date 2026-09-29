@@ -1,11 +1,11 @@
-"""sa#176 — OwnerInboundAdapter + owner-channel dispatch conformance.
+"""OwnerInboundAdapter + owner-channel dispatch conformance.
 
 Independent conformance suite for the human-as-owner inbound adapter. Mirrors
 the webhook-adapter unit idiom (test_webhook_adapter.py) for gates 1-3 and the
 dispatch-driven idiom (test_adapters.py::test_screen_pass_changes_nothing) for
 the full gate run. The drain-side approval fork lives in test_drain_owner.py.
 
-Targets (from the sa#176 design answers Q3):
+Targets (from the owner-channel design answers Q3):
   1  mapped address + trusted identity -> all gates -> stamped, sender_class owner
   2  unmapped address -> principal_mismatch at gate 5
   3  unknown identity -> unmapped (distinct from target 2)

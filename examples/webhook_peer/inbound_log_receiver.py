@@ -1,13 +1,13 @@
-"""inbound_log_receiver.py — webhook-peer's CONSUMER-OWNED drain Receiver (sa#166).
+"""inbound_log_receiver.py — webhook-peer's CONSUMER-OWNED drain Receiver.
 
-webhook-peer is now BOTH the airlock (receiver) consumer for the sa#8 A2A driving
+webhook-peer is now BOTH the airlock (receiver) consumer for the A2A driving
 case AND, with this file, a drain consumer: the worked example of an
 airlock-accepted peer envelope draining end-to-end to a ledger. The image-baked
 ``CHANNELS_DRAIN_RECEIVER`` names this class by dotted path
 (``examples.webhook_peer.inbound_log_receiver:InboundLogReceiver``) and the drain
 worker imports, zero-arg instantiates, and protocol-checks it — the same
 fail-closed injection discipline as missileer's ``duty_log_receiver.py`` and the
-sa#141 connector seam.
+connector-injection seam.
 
 The consumer writes ONLY against public surfaces: the ``Receiver`` protocol
 (``safe_agents.channels.drain.receiver``) and the ``EventTrigger`` schema

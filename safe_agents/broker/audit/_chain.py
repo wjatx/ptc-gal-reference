@@ -22,14 +22,14 @@ from ._sink import AuditSink
 # still correct (it just serialises across sinks). Every shipped sink exposes ``lock``.
 _FALLBACK_LOCK = threading.Lock()
 
-# #198 — receipt fields are hash-covered ONLY when present: absent (None) fields are
+# Receipt fields are hash-covered ONLY when present: absent (None) fields are
 # omitted from the hashed dict, so every pre-receipts record recomputes byte-for-byte,
 # while STRIPPING a present receipt field breaks the chain like any other mutation.
 _RECEIPT_FIELDS = ("intentId", "storedCallDigest", "resultDigest")
 
 
 def _hashable_fields(record_fields: dict) -> dict:
-    """Filter record_fields to what hash_record covers (#198 back-compat rule).
+    """Filter record_fields to what hash_record covers (approval-receipts back-compat rule).
 
     The SINGLE filter both emit() and verify_chain() call, so the two cannot drift.
     """

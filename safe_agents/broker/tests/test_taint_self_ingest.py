@@ -1,4 +1,4 @@
-"""sa#134 exit predicate — broker-side taint self-ingestion.
+"""Broker-side taint self-ingestion.
 
 The PEP's ``_executor`` closure (safe_agents/broker/runtime/pep.py) ingests a
 synthetic ``connector:<tool>.<op>`` source into the shared TurnContext

@@ -1,4 +1,4 @@
-"""sa#152 — the Lambda handler end-to-end against hand-rolled AWS fakes.
+"""The Lambda handler end-to-end against hand-rolled AWS fakes.
 
 Drives the whole binding (manifest → secrets → build_airlock → dispatch → SQS)
 with fakes injected through the handler's boto3 seam factories. Proves the

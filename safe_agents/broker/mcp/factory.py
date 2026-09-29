@@ -1,14 +1,14 @@
-"""factory.py — the supervised host factories for ``McpConnector`` (#219, #221 P3).
+"""factory.py — the supervised host factories for ``McpConnector``.
 
 The loop-affinity contract (``connectors/mcp_connector.py``) requires a real
 session-backed ``McpHost`` to arrive as an async FACTORY invoked on the
 connector's own loop, with the session's async context held open inside one
 long-lived driver task — the SDK's anyio task-group / cancel-scope must be
-entered and exited in the same task. Until #219 that driver-task idiom lived
+entered and exited in the same task. Originally that driver-task idiom lived
 only in the test suite; this module is the packaged reference a manifest's
 native construction composes.
 
-Since #221 Phase 3 the factory yields a **supervised** host that owns the
+The factory yields a **supervised** host that owns the
 session's whole lifecycle per the MCP-HOST.md lifecycle clauses:
 
   * **M17 — typed death.** Death of the child/session or its transport — at
@@ -16,7 +16,7 @@ session's whole lifecycle per the MCP-HOST.md lifecycle clauses:
     carrying the server id and the real cause (``__cause__``), promptly.
     Never the connector's generous call-timeout backstop (the naive idiom
     surfaced every spawn failure as a bare 30s ``TimeoutError`` with the
-    cause lost — the #219 Leg-1 finding), and never a raw transport internal
+    cause lost — the stdio drill's Leg-1 finding), and never a raw transport internal
     as the API.
   * **M18 — a reconnect is a new discovery.** Every spawn constructs a fresh
     ``McpHost`` and runs ``refresh()`` before the host is served, so a
@@ -84,7 +84,7 @@ logger = logging.getLogger(__name__)
 # a remote server has no child whose environment to set.
 EnvProvider = Callable[[], Awaitable[Optional[dict]]]
 
-# The remote dual (#237, M25) — invoked once per CONNECT on the connector's
+# The remote dual (M25) — invoked once per CONNECT on the connector's
 # loop, so the credential half is re-resolved fresh on every reconnect. That
 # re-resolution is not a convenience: an expired access token surfaces as an
 # httpx-family death, so reconnect IS how re-auth happens, and a provider (not
@@ -99,7 +99,7 @@ _DRIVER_SETTLE_S = 1.0
 
 # Hard deadline on one death's whole respawn burst (sleeps + spawn attempts).
 # The schema bounds only max_attempts × backoff; real spawn time is unbounded
-# (a cold uvx spawn is slow — the #219 drill pre-warmed the cache for exactly
+# (a cold uvx spawn is slow — the stdio drill pre-warmed the cache for exactly
 # this reason), and a burst that outlives the connector's 30s backstop would
 # surface as the bare TimeoutError M17 exists to kill. Kept under that
 # backstop; on expiry the burst is cancelled and the failure is typed.
@@ -408,7 +408,7 @@ class SupervisedMcpHost:
         brand-new discovery snapshot (M18). ``_open_client`` is entered inside
         the driver, so whatever per-spawn resolution it performs re-runs on
         every spawn. A connect/refresh failure is delivered to the awaiting
-        caller immediately as the real exception (the #219 Leg-1 hardening);
+        caller immediately as the real exception (the stdio drill's Leg-1 hardening);
         a death AFTER ready is recorded for the next call to surface typed.
         """
         loop = asyncio.get_running_loop()

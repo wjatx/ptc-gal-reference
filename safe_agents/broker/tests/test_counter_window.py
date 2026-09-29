@@ -1,10 +1,10 @@
-"""Multi-period evidence-window reads on the scoped counter seam (#193, #212).
+"""Multi-period evidence-window reads on the scoped counter seam.
 
-Before #193, read_counter was a single-period point read, so a ceremony
+Originally, read_counter was a single-period point read, so a ceremony
 ``window_n`` silently meant "the current period only". read_counter_window walks
-the bucket-keyed coordinates so ``min_observations`` means what it says. #212
-generalized the bucket from UTC-day to a manifest-named period; the utc-day
-default must stay byte-for-byte the pre-#212 key.
+the bucket-keyed coordinates so ``min_observations`` means what it says. The
+counter-period work generalized the bucket from UTC-day to a manifest-named
+period; the utc-day default must stay byte-for-byte the original key.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ class TestReadCounterWindow:
 
 
 class TestCounterPeriods:
-    """#212 — the time-scale knob on the one key derivation."""
+    """Counter period — the time-scale knob on the one key derivation."""
 
     def test_day_default_is_byte_for_byte_pre_212(self) -> None:
         # THE back-compat invariant: the default (period unset) key is exactly

@@ -1,4 +1,4 @@
-"""sa#155 — live smoke against the deployed development drain worker.
+"""Live smoke against the deployed development drain worker.
 
 Opt-in: set DRAIN_LIVE_SMOKE=1 with AWS credentials for the development account
 (the same env-gated idiom as test_airlock_live.py). Queue URL, log group, ledger
@@ -13,7 +13,7 @@ airlock POST therefore reaches the drain as a principal_mismatch terminal-drop, 
 it cannot drive the happy path. The airlock->queue hop is a separate seam already
 proven by test_airlock_live.py; this smoke drives the drain seam — parse, expiry,
 principal check, ingest-before-act, receiver, brokered ledger.append — from its
-real input boundary, missileer's own dedicated accepted-events queue (sa#166 split
+real input boundary, missileer's own dedicated accepted-events queue (the webhook-drain work split
 the airlock-fed queue in two: webhook-peer's drain now eats
 ``channel-accepted-queue-url``, missileer's drain eats
 ``channel-accepted-missileer-queue-url``).

@@ -1,4 +1,4 @@
-"""Remote MCP credential delivery over a REAL wire (#237, MCP-HOST.md M25,
+"""Remote MCP credential delivery over a REAL wire (MCP-HOST.md M25,
 CONNECTOR-AUTH C10).
 
 The definition-of-done proof for remote credential delivery, run against the
@@ -463,7 +463,7 @@ def test_snapshot_authenticates_to_a_remote_server(toy_server, tmp_path, monkeyp
     """The operator ceremony's FIRST step works against an authenticated
     vendor-hosted server.
 
-    Regression pin for a real gap: #237 shipped `header_map` into the RUNTIME
+    Regression pin for a real gap: remote header injection shipped `header_map` into the RUNTIME
     (`SupervisedStreamableHttpHost._open_client`) but left the operator command
     surface's `_discover_tool_defs` connecting to a remote decl with no headers
     at all. Since `snapshot` is pre-admission and every later remote ceremony
@@ -551,7 +551,7 @@ def _brokered_read(tool: str, op: str):
 
 
 def test_doer_does_not_resolve_a_credential_for_a_connector_that_takes_none():
-    """Regression pin for #238, found live against a real brokerage.
+    """Regression pin for a double credential resolution, found live against a real brokerage.
 
     A single brokered MCP call used to resolve the credential TWICE: once in
     `Doer.execute` for every tool it runs, and again in the host's per-CONNECT

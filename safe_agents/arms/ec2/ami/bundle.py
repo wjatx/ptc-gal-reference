@@ -279,7 +279,7 @@ _DEFAULT_RHEL_BOOTSTRAP_DIR: Path = (
 )
 
 # The RHEL box-side runner dir: safe_agents/arms/rhel_openshell/box/ (the converged run-brokered.sh,
-# sa#35). Bundled ALONGSIDE bootstrap/ into the same rhel-bootstrap tarball so the box pulls one
+# from the two-box convergence). Bundled ALONGSIDE bootstrap/ into the same rhel-bootstrap tarball so the box pulls one
 # bundle at boot. Mirrors the EC2 arm's box/ dir; delivered via the S3 gateway endpoint.
 _DEFAULT_RHEL_BOX_DIR: Path = (
     Path(__file__).parent.parent.parent / "rhel_openshell" / "box"
@@ -290,7 +290,7 @@ _DEFAULT_RHEL_BOX_DIR: Path = (
 _DEFAULT_EC2_BOOTSTRAP_DIR: Path = Path(__file__).parent.parent / "bootstrap"
 
 # The always-on EC2 box-side runner dir: safe_agents/arms/ec2/box/ (the converged run-brokered.sh,
-# sa#35). Bundled ALONGSIDE bootstrap/ into the same ec2-bootstrap tarball so the box pulls one
+# from the two-box convergence). Bundled ALONGSIDE bootstrap/ into the same ec2-bootstrap tarball so the box pulls one
 # bundle at boot. Mirrors the ec2-woken box/ dir; delivered via the S3 gateway endpoint.
 _DEFAULT_EC2_BOX_DIR: Path = Path(__file__).parent.parent / "box"
 
@@ -310,7 +310,7 @@ def bundle_rhel_bootstrap(
     box_dir: Path | None = None,
     excludes: frozenset[str] | None = None,
 ) -> bytes:
-    """Create an in-memory tar.gz bundle of the rhel_openshell/bootstrap/ + box/ dirs (sa#35).
+    """Create an in-memory tar.gz bundle of the rhel_openshell/bootstrap/ + box/ dirs.
 
     The archive root is ``rhel-bootstrap`` so it extracts cleanly:
 
@@ -398,7 +398,7 @@ def upload_rhel_bootstrap(
 
 
 # ---------------------------------------------------------------------------
-# EC2 bootstrap bundle (ec2/bootstrap/ → S3 at boot, sa#97)
+# EC2 bootstrap bundle (ec2/bootstrap/ → S3 at boot)
 # ---------------------------------------------------------------------------
 
 # Stable key (not versioned), mirroring the rhel-bootstrap bundle: the EC2 boot
@@ -413,7 +413,7 @@ def bundle_ec2_bootstrap(
     box_dir: Path | None = None,
     excludes: frozenset[str] | None = None,
 ) -> bytes:
-    """Create an in-memory tar.gz bundle of the ec2/bootstrap/ + ec2/box/ dirs (sa#35).
+    """Create an in-memory tar.gz bundle of the ec2/bootstrap/ + ec2/box/ dirs.
 
     The archive root is ``ec2-bootstrap`` so it extracts cleanly:
 
@@ -471,7 +471,7 @@ def upload_ec2_bootstrap(
     *,
     s3: S3PutClient | None = None,
 ) -> dict:
-    """Upload the ec2-bootstrap bundle to the deploy bucket at its stable key (sa#97).
+    """Upload the ec2-bootstrap bundle to the deploy bucket at its stable key.
 
     Like the rhel-bootstrap bundle there is no versioned copy — the key is stable so
     the boot script always fetches the current platform release:
@@ -701,7 +701,7 @@ def main(argv: list[str] | None = None) -> None:
     bootstrap_result = upload_rhel_bootstrap(bootstrap_bytes, environment=args.environment)
     print(f"  s3://{bootstrap_result['bucket']}/{bootstrap_result['key']}")
 
-    # -- EC2 bootstrap bundle (sa#97) ------------------------------------------
+    # -- EC2 bootstrap bundle ------------------------------------------
     print(f"Bundling ec2-bootstrap: {ec2_bootstrap_dir} ...")
     ec2_bootstrap_bytes = bundle_ec2_bootstrap(ec2_bootstrap_dir)
     print(f"  ec2-bootstrap bundle size: {len(ec2_bootstrap_bytes):,} bytes")

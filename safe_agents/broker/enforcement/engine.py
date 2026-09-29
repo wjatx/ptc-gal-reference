@@ -34,7 +34,7 @@ execution. It provides:
                           compensation or escalation.
   5. HITL gate          — for require_approval decisions the ledger entry
                           is NOT committed until a human approves (that
-                          approval path is issue #47); the entry waits as
+                          approval path is the approval flow); the entry waits as
                           "uncommitted" representing the held intent.
 
 The executor callback is optional so the enforcement layer can be tested
@@ -97,7 +97,7 @@ def enforce(
         effect and settled after it. A prior executed outcome replays without
         re-executing; a claim another caller still holds, or one whose executor
         failed, is refused with a deny. Only executed outcomes (allow/transform)
-        survive as records (#148); a deny/abstain/require_approval releases the
+        survive as records; a deny/abstain/require_approval releases the
         claim, so a retry re-evaluates against fresh facts. Pass None to skip
         idempotency deduplication entirely, which also skips the claim.
     counter_key:
@@ -154,12 +154,12 @@ def enforce(
     """
 
     # ------------------------------------------------------------------
-    # Step 1 — idempotency claim (executed outcomes ONLY replay — #148)
+    # Step 1 — idempotency claim (executed outcomes ONLY replay)
     #
     # Read, then CLAIM. The read answers the three settled cases: an executed
     # allow/transform replays; a claim someone else holds is refused; a failed
     # claim is refused as an uncertain outcome. A stored non-executed outcome
-    # (deny/abstain/require_approval) is a pre-#148 record — no step here writes
+    # (deny/abstain/require_approval) is a legacy record — no step here writes
     # one any more — or one written by a not-yet-updated broker. It must not
     # replay: the refusal was time-dependent, and replaying it forever defeats
     # the retry semantics the key exists for. Delete it so the table self-heals
@@ -283,7 +283,7 @@ def enforce(
     #
     # allow / transform  → call executor, then commit the ledger entry.
     # require_approval   → HITL gate: ledger stays "uncommitted" until a
-    #                      human approves via the approval flow (#47).
+    #                      human approves via the approval flow.
     # deny / abstain     → no side effect; still commit the WAL so the
     #                      record of refusal is durable.
     # ------------------------------------------------------------------
@@ -319,7 +319,7 @@ def enforce(
 
     elif effective.kind == "require_approval":
         # HITL gate: the ledger entry waits as "uncommitted".
-        # The approval flow (#47) will commit it once a human approves.
+        # The approval flow will commit it once a human approves.
         # The entry itself is the durable "draft and hold" record.
         pass
 
@@ -328,7 +328,7 @@ def enforce(
         store.commit_ledger(entry_id, _now_iso())
 
     # ------------------------------------------------------------------
-    # Step 6 — settle the claim (executed outcomes ONLY survive — #148)
+    # Step 6 — settle the claim (executed outcomes ONLY survive)
     # Transition the in_flight claim to executed, carrying the final decision AND
     # the connector result, so a future replay with the same key returns the same
     # outcome (result included) without re-executing. result_json is None unless
@@ -343,7 +343,7 @@ def enforce(
     # forever and defeat the retry semantics a deterministic idempotency key is
     # chosen for. So those RELEASE the claim instead, and a retry re-enters
     # premise revalidation above; duplicate require_approval holds are
-    # de-amplified by the approval-queue dedup knob (sa#160), not by this record.
+    # de-amplified by the approval-queue dedup knob, not by this record.
     # ------------------------------------------------------------------
     if claimed_key is not None:
         if effective.kind in ("allow", "transform"):
@@ -406,7 +406,7 @@ def _settled_outcome(
         may or may not have landed. REFUSE, and say what the operator has to do,
         because no local state can settle that question.
       executed allow/transform — replay the stored outcome verbatim.
-      anything else — a pre-#148 non-executed record. Not settled: return None so
+      anything else — a legacy non-executed record. Not settled: return None so
         the caller deletes it and claims the key afresh.
     """
     if stored.status == "in_flight":
@@ -484,7 +484,7 @@ def _fail_claim(store: EnforcementStore, key: str, error: str) -> None:
 def _release_claim(store: EnforcementStore, key: str) -> None:
     """Drop this call's claim so the key is retryable.
 
-    Used for the non-executed outcomes (#148) and for a fault before any side
+    Used for the non-executed outcomes and for a fault before any side
     effect could have happened. Guarded for the fault path: a store error here
     must not replace the exception that caused it, and the cost of a leaked claim
     is a refused retry, never a double effect.

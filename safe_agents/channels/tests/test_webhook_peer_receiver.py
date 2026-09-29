@@ -1,4 +1,4 @@
-"""sa#166 — the worked peer-agent-inbound drain consumer (examples/webhook_peer).
+"""The worked peer-agent-inbound drain consumer (examples/webhook_peer).
 
 The drain conformance suite (test_drain_handler.py) proves the worker's side of
 the contract; test_example_receiver.py proves missileer's always-tainted

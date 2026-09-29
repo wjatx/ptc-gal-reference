@@ -1,4 +1,4 @@
-"""fake_agent.py — exercises the broker tool-call round-trip locally (sa#98 prototype).
+"""fake_agent.py — exercises the broker tool-call round-trip locally.
 
 Run the server first:   python3 -m safe_agents.broker.prototype.broker_server
 Then:                   python3 -m safe_agents.broker.prototype.fake_agent

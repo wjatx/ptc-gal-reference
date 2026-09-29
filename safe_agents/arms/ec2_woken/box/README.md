@@ -1,4 +1,4 @@
-# ec2-woken box — the wake → drain → run → sleep loop (sa#98)
+# ec2-woken box — the wake → drain → run → sleep loop
 
 This directory is the **box side** of the ec2-woken arm: the confined EC2 agent box that the
 inbound airlock (`../airlock.yaml`, `../provision.py`) wakes. Where the airlock decides *whether

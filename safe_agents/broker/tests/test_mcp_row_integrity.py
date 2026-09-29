@@ -1,9 +1,9 @@
-"""The registry row's integrity basis is the STORED BYTES (#246 re-shape A; MCP-HOST.md M22).
+"""The registry row's integrity basis is the STORED BYTES (MCP-HOST.md M22).
 
-Successor to the #223 M22 suite. That suite pinned a VALUE-BASED basis
+Successor to the original M22 suite. That suite pinned a VALUE-BASED basis
 (`exclude_none` over the flat row's non-`hash` fields) whose whole purpose was
 to keep parse-then-re-serialize verification stable under additive Optional
-widening. #246 retires the workaround by removing its cause: the row nests the
+widening. This basis retires the workaround by removing its cause: the row nests the
 ratified definition (`RegisteredTool.tool_def`), the in-payload `hash` slot is
 gone, and the integrity slot is the item-level `rowHash` — an HMAC over the
 stored `data` string verbatim (`canonical_row_payload`, the mcp/proposals.py /
@@ -12,10 +12,10 @@ evolution can never fire a tamper alarm — integrity indicts tampering, never
 evolution.
 
 NOTE: every golden row-HMAC value in this file is RE-PINNED DELIBERATELY — the
-basis moved with #246 re-shape A (in-payload value-basis -> item-level
-stored-bytes), so pre-#246 pinned literals do not carry over. A pre-#246 flat
+basis moved with the stored-bytes re-shape (in-payload value-basis -> item-level
+stored-bytes), so earlier pinned literals do not carry over. A legacy flat
 row neither verifies (different basis) nor parses (different shape) under the
-new code; the migration is the dev-floor re-vet (5 rows, per #246).
+new code; the migration is the dev-floor re-vet (5 rows).
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from safe_agents.broker.schemas.mcp_registry import (
 
 HMAC_KEY = b"test-hmac-key"
 
-# Golden pin over the NEW basis — RE-PINNED with #246 re-shape A (the basis
+# Golden pin over the NEW basis — RE-PINNED with the stored-bytes re-shape (the basis
 # moved from the flat row's exclude_none value dump to the stored bytes of the
 # nested-row canonical payload). If this moves, every floor row quarantines:
 # treat a diff here as a far-jump, not a test update.
@@ -85,7 +85,7 @@ class TestStoredBytesBasis:
         order/whitespace) still verifies when its rowHash covers those exact
         bytes — proving the read path never re-serializes the parsed model to
         re-derive the basis. This is the property that makes the basis immune
-        to schema evolution (#246)."""
+        to schema evolution."""
         row = _row()
         # Same JSON content, deliberately not the canonical form.
         noncanonical = json.dumps(
@@ -102,7 +102,7 @@ class TestStoredBytesBasis:
         assert result.tool is not None and result.tool.tool_def.title == "Get ledger entry"
 
     def test_pre_246_flat_item_reads_quarantined_never_raises(self) -> None:
-        """A pre-#246 item (flat payload with the in-payload hash slot, rowHash
+        """A legacy item (flat payload with the in-payload hash slot, rowHash
         computed under the retired value basis) fails the stored-bytes HMAC and
         is served QUARANTINED with tool=None — never parsed, never a crash.
         The sanctioned recovery is the re-vet migration, not a compat parse."""
@@ -123,7 +123,7 @@ class TestStoredBytesBasis:
         store = MemoryToolRegistry(hmac_key=HMAC_KEY)
         store._rows[("ledger", "get_entry")] = {
             "data": legacy_payload,
-            "rowHash": "0" * 64,  # the old value-basis HMAC, wrong under #246
+            "rowHash": "0" * 64,  # the old value-basis HMAC, wrong under the new basis
         }
         result = store.get_tool("ledger", "get_entry")
         assert result.quarantined

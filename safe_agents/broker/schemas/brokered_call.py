@@ -37,7 +37,7 @@ class ToolOp(BaseModel):
     # autonomously (rules 6/10); a tainted turn requires approval regardless (rule 7). The
     # name is shorthand for "recoverable"; absent for reads (not applicable).
     reversible: bool | None = None
-    # sa#137 — the name of the arg whose value egresses to an external provider (the
+    # Read-gating — the name of the arg whose value egresses to an external provider (the
     # covert-exfil channel; e.g. "query" for search.query). Code-resident, never
     # model-supplied. When set, the PIP bounds that arg's UTF-8 byte length against
     # Envelope.max_query_bytes / query_egress_budget and the PEP meters cumulative
@@ -90,7 +90,7 @@ class BrokeredCall(BaseModel):
     session: Session
     ts: str
     # The typed constructed-confidence artifact attached to this proposed action
-    # (#184). Optional: None when the agent supplied none — meets_bar treats a
+    #. Optional: None when the agent supplied none — meets_bar treats a
     # missing artifact as below-bar ONLY when a bar is configured, and the
     # error-budget draw treats it as error_prob=1.0 (the probability ceiling,
     # not an invented domain number) so omission can never dodge the budget.

@@ -1,4 +1,4 @@
-"""sa#152 — ChannelsManifest / build_airlock conformance.
+"""ChannelsManifest / build_airlock conformance.
 
 Covers the friction-doctrine defaults (screen OFF, empty trust map ⇒ everything
 drops), the loud failure for an enabled-but-unregistered screen kind, and a YAML

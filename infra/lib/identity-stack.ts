@@ -18,7 +18,7 @@ import { importValue, publish } from './naming';
  * physically encode the core invariants: the agent holds no connector credentials (#1) and the
  * broker runs under a separate IAM identity (#3).
  *
- * Implements sa#15. Gates on StateStack (#14) — role policies are scoped to the table / bucket /
+ * Gates on StateStack — role policies are scoped to the table / bucket /
  * KMS ARNs StateStack exports (dependency wired in the entrypoint). No Secret resources are
  * created here; the broker's scoped read access to the <agent>/connectors/* ARN pattern is
  * modeled via IAM policy. Concrete secrets are added per-agent later.
@@ -109,7 +109,7 @@ export class IdentityStack extends Stack {
       }),
     );
 
-    // DynamoDB — MCP admitted-tool registry (#174): READ ONLY. The McpHost reads admitted
+    // DynamoDB — MCP admitted-tool registry: READ ONLY. The McpHost reads admitted
     // TOOLDEF# rows at discovery time to two-key-admit an (server_id, tool_name); it never
     // writes them. Mirrors "the broker cannot write grants" — the admission ceremony
     // (safe_agents/broker/mcp/commands.py) is the registry's only writer, and this read-only
@@ -137,7 +137,7 @@ export class IdentityStack extends Stack {
       }),
     );
 
-    // DynamoDB — counters ONLY: DeleteItem (idempotency eviction, #148). Two uses, both on
+    // DynamoDB — counters ONLY: DeleteItem (idempotency eviction). Two uses, both on
     // IDEM# items. A stored NON-EXECUTED outcome (deny/abstain/require_approval) is evicted on
     // read so the key becomes recordable again once a retry actually executes — leaving it would
     // block put-if-absent and force every later retry to re-execute. And enforce() RELEASES its
@@ -165,8 +165,8 @@ export class IdentityStack extends Stack {
 
     // S3 audit bucket: PutObject + GetObject on objects, ListBucket on the bucket. No
     // DeleteObject — tamper-evidence rests on Object Lock/WORM plus the hash chain, NOT on
-    // read-denial. GetObject is REQUIRED to resume the chain on restart (sa#132): the sink
-    // lists keys to find the max sequence number (sa#104), then must READ that record's
+    // read-denial. GetObject is REQUIRED to resume the chain on restart: the sink
+    // lists keys to find the max sequence number, then must READ that record's
     // body to compute the previous hash for the next link — a broker task cycle with
     // records present and no GetObject crash-loops at startup. The broker reading records
     // it wrote itself is not an exfiltration channel; "cannot tamper" still holds.
@@ -186,7 +186,7 @@ export class IdentityStack extends Stack {
     );
 
     // KMS: generate data key + encrypt for audit writes; Decrypt because the chain-resume
-    // GetObject (sa#132) reads an SSE-KMS object — S3 decrypts server-side on the caller's
+    // GetObject reads an SSE-KMS object — S3 decrypts server-side on the caller's
     // KMS permissions.
     brokerRole.addToPolicy(
       new PolicyStatement({
@@ -196,7 +196,7 @@ export class IdentityStack extends Stack {
       }),
     );
 
-    // S3 ledger bucket (sa#131): PutObject ONLY. This bucket has no Object Lock — it is the
+    // S3 ledger bucket: PutObject ONLY. This bucket has no Object Lock — it is the
     // agent's durable ledger/brief copy, not the tamper-evident audit chain — so IAM is the
     // sole append-only enforcement: no Delete*, no PutObjectAcl, no GetObject, and no
     // ListBucket (the audit sink lists keys only to resume its hash chain; the ledger has no
@@ -227,8 +227,8 @@ export class IdentityStack extends Stack {
     // Distinct roles so each can be independently rotated, monitored, and audited.
     // Operator assumability (context-gated OFF, the shared idiom — see DemotionRole below):
     // seed / re-seed are the bootstrap ceremony ops that legitimately run under THIS role, and
-    // before this gate they ran as raw admin (or via temp trust surgery, the pre-#202 pain).
-    // The gate is ADDITIVE to the service-principal deployment binding. #203 later moves
+    // before this gate they ran as raw admin (or via temp trust surgery, the pre-gate pain).
+    // The gate is ADDITIVE to the service-principal deployment binding. The write split later moves
     // seed/re-seed off PromotionRole entirely (the LeadingKeys write split); until then this
     // is the sanctioned operator path.
     const promotionPrincipals = trustedPrincipalsFromContext(this, 'promotionTrustedPrincipals');
@@ -272,7 +272,7 @@ export class IdentityStack extends Stack {
     );
 
     // Secrets Manager: the ISSUER signing key only, under the */issuer/* namespace. The grant
-    // issuer signs each PromotionRecord (DSSE, the #181 machinery) with its own Ed25519 identity —
+    // issuer signs each PromotionRecord (DSSE, the Layer A signing machinery) with its own Ed25519 identity —
     // deliberately a SEPARATE key from the broker's chain-signing key: the broker cannot sign
     // promotions, symmetric with "the broker cannot write grants". The namespace split is the
     // enforcement: promotion reads */issuer/*, broker reads */connectors/*, and neither can read
@@ -308,10 +308,10 @@ export class IdentityStack extends Stack {
     // lower-never-mint / append-only guarantees are enforced by the store's ConditionExpressions
     // (attribute_exists for grant updates, attribute_not_exists for ledger appends); IAM narrows
     // what a compromised runner could reach rather than proving the invariant.
-    // Operator assumability (context-gated OFF, the #202 idiom): the runner's deployment
+    // Operator assumability (context-gated OFF, the maker≠checker idiom): the runner's deployment
     // binding is a service task, but drills and out-of-band operator runs must execute under
     // THIS role — not fall back to an ambient admin when an assume fails silently (the
-    // 2026-07-14 #192 drill ran its demotion as CLI_User for exactly that reason). When the
+    // 2026-07-14 demotion drill ran its demotion as CLI_User for exactly that reason). When the
     // `demotionTrustedPrincipals` context names IAM principal ARNs, they are ADDED to the
     // trust policy alongside the service principals — additive, never replacing the
     // deployment binding. Unset ⇒ the default synth stays byte-for-byte service-only.
@@ -391,7 +391,7 @@ export class IdentityStack extends Stack {
       }),
     );
 
-    // ── 4b. checkerRole — the standing ratifier identity (#202; OPTIONAL, context-gated OFF) ──────
+    // ── 4b. checkerRole — the standing ratifier identity (OPTIONAL, context-gated OFF) ──────
     // Synthesized ONLY when the `checkerTrustedPrincipals` context names at least one IAM
     // principal ARN — the default synth stays byte-for-byte five roles. Retires the per-ceremony
     // trust-policy surgery on PromotionRole (a real privilege window whose revocation is
@@ -456,7 +456,7 @@ export class IdentityStack extends Stack {
         }),
       );
 
-      // MCP admitted-tool registry (#174): admit-ratify burns the TOOLPROP# proposal, appends
+      // MCP admitted-tool registry: admit-ratify burns the TOOLPROP# proposal, appends
       // the TOOLREC# admission record, and writes the TOOLDEF# row — ALL via conditional
       // update_item (registry.py: "writes go through update_item under a ConditionExpression").
       // Unlike CheckerRole's grants statement above, deliberately NO PutItem — the MCP store
@@ -485,7 +485,7 @@ export class IdentityStack extends Stack {
     // */connectors/*. First-use note: the initial cut granted PutItem instead and IAM denied
     // the live propose — the conformance row pins the corrected shape.
     //
-    // The maker-cannot-mint write split (#203), closing the caveat this comment used to
+    // The maker-cannot-mint write split, closing the caveat this comment used to
     // carry. Until now UpdateItem on the shared table could technically upsert a GRANT#
     // item and the store's ConditionExpressions were the only guard — detection, not
     // prevention. The reads and the write are now SEPARATE statements so the write can be
@@ -502,7 +502,7 @@ export class IdentityStack extends Stack {
     // checker writes GRANT#/RECORD#/TOOLDEF#/TOOLREC#. A maker attempting a GRANT# upsert
     // is now refused by IAM before the store's condition is ever evaluated.
     //
-    // The sqlite half of #203 achieves the same property by a different mechanism — a
+    // The sqlite half of the write split achieves the same property by a different mechanism — a
     // filesystem has no per-identity access control, so there the grant space moves to its
     // own database file on a read-only mount and the KERNEL refuses. Same property, two
     // substrates, deliberately not a shared abstraction.
@@ -557,14 +557,14 @@ export class IdentityStack extends Stack {
         }),
       );
 
-      // MCP admitted-tool registry (#174): the admit-propose leg writes the HMAC'd TOOLPROP#
+      // MCP admitted-tool registry: the admit-propose leg writes the HMAC'd TOOLPROP#
       // proposal item via a CONDITIONAL update_item (attribute_not_exists — the same append
       // idiom as the grants PROPOSAL# store; safe_agents/broker/mcp/proposals.py). GetItem +
       // Query read the current row for the propose-time re-vet check. Deliberately NO PutItem
       // — same reasoning as the grants proposal statement above: an unconditional overwrite
       // would let a maker mint a row outright.
       //
-      // Split for the same #203 reason as the grants table: the re-vet READ must see the
+      // Split for the same write-split reason as the grants table: the re-vet READ must see the
       // current TOOLDEF# row, so reads stay unconditioned while the write is confined to
       // TOOLPROP#. A maker can no longer upsert a TOOLDEF# row and admit a tool outright,
       // which is the MCP twin of minting a grant.
@@ -624,7 +624,7 @@ export class IdentityStack extends Stack {
 
       // The audit resolves the grants table from the stack export (its documented
       // interface); without this the role forces the GRANTS_AUDIT_TABLE_NAME bypass —
-      // found live in the sa#4 terminal proof. ListExports is unscopeable read-only
+      // found live in the autonomy terminal proof. ListExports is unscopeable read-only
       // metadata (the API supports only '*').
       auditorRole.addToPolicy(
         new PolicyStatement({
@@ -655,7 +655,7 @@ export class IdentityStack extends Stack {
         }),
       );
 
-      // The issuer AND evaluator PUBLIC verify keys (#194) — the same two parameters the CI
+      // The issuer AND evaluator PUBLIC verify keys — the same two parameters the CI
       // watcher reads. An audit must verify EVERY record type it walks, so it needs both key
       // sets: issuer keys for promotion/bootstrap/tightening, evaluator keys for demotion/lapse.
       // Reading both is not a hole in the signing split — these are PUBLIC keys, and verifying is
@@ -680,7 +680,7 @@ export class IdentityStack extends Stack {
     }
 
     // ── 5. watcherRole — GitHub Actions OIDC watcher (read-only) ────────────────────────────────────
-    // Assumed by the safe-agents#140 liveness watcher and the #62 grants-integrity audit running in
+    // Assumed by the liveness watcher and the grants-integrity audit running in
     // GitHub Actions, not by compute principals — it trusts the account's existing GitHub OIDC
     // provider, scoped to this repo. Read-only: Query on agent-runs, Scan/GetItem on grants, plus
     // Decrypt (no GenerateDataKey) on the tables CMK, since the watcher only ever reads records
@@ -726,7 +726,7 @@ export class IdentityStack extends Stack {
     );
 
     // DynamoDB — grants table: READ ONLY (Scan for the full-table audit sweep, GetItem for spot
-    // reads). The #62 grants-integrity audit counts in-force grants against the ceremony ledger,
+    // reads). The grants-integrity audit counts in-force grants against the ceremony ledger,
     // so the auditing identity must be structurally unable to write the table it judges — no
     // Put/Update/Delete, same rule as the demotion runner's counters read. It also deliberately
     // does NOT get the broker HMAC key (the secrets namespace split): CI runs the KEYLESS audit
@@ -747,7 +747,7 @@ export class IdentityStack extends Stack {
       }),
     );
 
-    // SSM — the issuer AND evaluator verify-keys parameters (#194): each signer's PUBLIC Ed25519
+    // SSM — the issuer AND evaluator verify-keys parameters: each signer's PUBLIC Ed25519
     // keys by key_id, so the grants audit can run RECORD_SIGNATURE_VERIFIES read-only over every
     // record type in the ledger (issuer keys verify promotion/bootstrap/tightening, evaluator
     // keys verify demotion/lapse). Deliberately Parameter Store, not Secrets Manager: verify keys
@@ -769,7 +769,7 @@ export class IdentityStack extends Stack {
     );
 
     // ── 6. campaignWatcherRole — GitHub Actions OIDC campaign watchdog (read-only) ──────────────────
-    // Assumed by the sa#161 scheduled campaign-watchdog GitHub Actions runner — the SAME OIDC trust
+    // Assumed by the scheduled campaign-watchdog GitHub Actions runner — the SAME OIDC trust
     // idiom as watcherRole above (this account's GitHub OIDC provider, scoped to the subjects the
     // `githubOidcSubjects` context names), unconditional like watcherRole (no operator-trust gate). A
     // separate role rather than widening watcherRole: its read surface is different (it correlates
@@ -810,7 +810,7 @@ export class IdentityStack extends Stack {
     );
 
     // CloudWatch Logs — read-only, scoped to exactly the two log groups the watchdog correlates
-    // against: the broker service's decision log and the airlock's structured events (the sa#153
+    // against: the broker service's decision log and the airlock's structured events (the
     // handler_error/screen_error silent-failure signals) — never a `/safe-agents/${env}/*`
     // wildcard. FilterLogEvents is the primary cross-stream correlation call; DescribeLogStreams +
     // GetLogEvents are the read-only companions needed to page a specific stream.
@@ -861,7 +861,7 @@ function githubOidcSubjectsFromContext(scope: Construct): string[] {
 /**
  * Parse a `<x>TrustedPrincipals` context value (string, comma-separated string, or string[])
  * into a clean list of IAM principal ARNs. The shared idiom behind the operator-assumability
- * gates (#202 checkerTrustedPrincipals, #192 demotionTrustedPrincipals): unset or empty means
+ * gates (checkerTrustedPrincipals, demotionTrustedPrincipals): unset or empty means
  * the gate is OFF and the default synth is unchanged.
  */
 function trustedPrincipalsFromContext(scope: Construct, key: string): string[] {

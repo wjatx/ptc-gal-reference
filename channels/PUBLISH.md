@@ -1,4 +1,4 @@
-# PUBLISH — the outbound seam (agent-to-agent `peer.publish`) (sa#156)
+# PUBLISH — the outbound seam (agent-to-agent `peer.publish`)
 
 > **Status: contract (2026-07-09).** Contract-tier per `docs/contract-vs-reference.md`: this
 > document is the normative words, the base `peer.publish` manifest entry
@@ -7,7 +7,7 @@
 > `safe_agents/channels/tests/test_publish.py` is the conformance suite. The reference `peer`
 > connector — the one wire binding — is **reference-tier** and lives in `examples/` (a consumer
 > owns the endpoint and shared secret; the base names neither). The driving use case is the A2A
-> agreement on sa#8 (email-agent → a consumer agent, 2026-07-08): the sender's broker publishes; the
+> agreement (email-agent → a consumer agent, 2026-07-08): the sender's broker publishes; the
 > receiver treats it as an ordinary sender at its airlock (`channels/TRUST-MAPPING.md`).
 
 ## What `peer.publish` is — and what it is not
@@ -59,7 +59,7 @@ ToolOp(tool="peer", op="publish", effect="write", external=True, reversible=True
   wants a stricter floor tightens it in its `Envelope` — the base never forces approval on every
   publish, which would make autonomous A2A impossible.
 - The **`peer` connector** that actually POSTs to a peer's airlock is consumer-supplied via the
-  sa#141 injection seam (`connector_providers` / `connector_secrets`), because its endpoint URL and
+  connector-injection seam (`connector_providers` / `connector_secrets`), because its endpoint URL and
   shared secret vary per deployment. The base names no peer, no URL, no secret. The reference
   implementation is `examples/…/peer_connector.py`.
 
@@ -144,7 +144,7 @@ an external write on a tainted turn, so the broker gates it to `require_approval
   receiver runs unchanged (`channels/TRUST-MAPPING.md`, `channels/ADAPTERS.md`).
 - **P7 — transport-neutral.** No clause here closes over a wire technology; the endpoint and
   signature scheme are the connector's own business and live only in reference-tier text.
-- **P8 — lineage, not a collapsed taint bit** (#168, PTC §8). A fresh origination carries the turn's
+- **P8 — lineage, not a collapsed taint bit** (PTC §8). A fresh origination carries the turn's
   ingested taint sources (`TurnContext.to_taint().sources`) into the outbound chain as `untrusted`
   origin hops — the receiver re-derives taint from the actual source under its own map, and a human
   sees the origin. Sources already carried by a preserved inbound chain are not duplicated. This is
@@ -162,15 +162,15 @@ an external write on a tainted turn, so the broker gates it to `require_approval
 | P8 | `TestOutboundCarriesIngestedSources` — `test_fresh_origination_carries_real_source_as_origin_hop` · `test_relay_does_not_duplicate_sources_already_in_chain` · `test_receiver_rederives_taint_from_real_source` |
 | P7 | the absence of any transport field is the contract text itself |
 
-<!-- assumption-tested 2026-08-06 — P2 HOLDS (rule-11 disable → allow, absence of a publish rule confirmed); P4 HOLDS at the stamp layer (both tests mutation-verified); sender-side wiring is caller contract until #315 -->
+<!-- assumption-tested 2026-08-06 — P2 HOLDS (rule-11 disable → allow, absence of a publish rule confirmed); P4 HOLDS at the stamp layer (both tests mutation-verified); sender-side wiring is caller contract until #15 -->
 
 
 ## Relationships
 
-- `channels/SCHEMAS.md` (sa#74) — the `EventTrigger` this seam constructs; the publish seam is named
+- `channels/SCHEMAS.md` — the `EventTrigger` this seam constructs; the publish seam is named
   there. `stamp_outbound` is the sender-side mirror of `stamp_inbound`.
-- `channels/TRUST-MAPPING.md` (sa#81) — §"The one-way rule — sender side" is the sender-side clause
+- `channels/TRUST-MAPPING.md` — §"The one-way rule — sender side" is the sender-side clause
   P3 encodes; the receiver-side derivation is unchanged.
 - `broker/TAINT.md` §5 — the `tainted_external_write` floor P2 rides on; no new rule.
 - `broker/SCHEMAS.md` — `peer.publish` is a `ToolOp`; the broker schemas the outbound call fills.
-- `examples/` — the reference `peer` connector (the one wire binding), consumer-owned via sa#141.
+- `examples/` — the reference `peer` connector (the one wire binding), consumer-owned via the connector-injection seam.

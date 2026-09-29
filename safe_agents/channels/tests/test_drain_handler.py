@@ -1,4 +1,4 @@
-"""sa#155 — the drain worker conformance suite (channels/DRAIN.md).
+"""The drain worker conformance suite (channels/DRAIN.md).
 
 Drives the SQS Lambda handler end-to-end with a fake BrokerRuntime injected
 through the ``_build_runtime`` seam and a spy Receiver injected through the

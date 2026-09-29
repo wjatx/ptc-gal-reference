@@ -74,14 +74,14 @@ Part 11 of the philosophy doc). It writes a `PromotionRecord` and updates the `G
    be a **signed promotion predicate authored in advance** rather than a per-instance act — its
    stringency and ceremony scaling to blast radius. **High-blast action classes are always ratified
    per-instance by a human**; the pre-authored predicate may stand in only below that threshold
-   (locked 2026-07-11, epic sa#4; `docs/GAL.md` §5).
+   (locked 2026-07-11, autonomy epic; `docs/GAL.md` §5).
 3. **The evidence must be sound.** Gathered where deployment conditions are *covered*. A thin
    observed-accuracy count over an irreversible action is an **unsound** predicate and must be
    rejected.
 4. **The Grant's `level` rises**, `promotedBy` / `evidence` / `ts` / `envelopeHash` are stamped, and
    the `PromotionRecord` is appended.
 
-An **optional LLM evidence reviewer** (sa#58, shipped 2026-07-12) may review the evidence bundle
+An **optional LLM evidence reviewer** (shipped 2026-07-12) may review the evidence bundle
 during the ceremony — a different model family than the maker's, so the pair shares no blind spot.
 It is friction-side instrumentation under the surface-vs-decide rule (`docs/deterministic-gate.md`):
 its closed-vocabulary findings are **recorded** on the ceremony result and the PromotionRecord's
@@ -156,17 +156,17 @@ but not compact) and were pinned before the spec was filed —
 Moving the canonical form is a **ceremony-bearing migration, never an edit** — but not for the
 reason intuition supplies, and the difference decides which command you reach for. A pre-change row
 does **not** quarantine: its HMAC covers the bytes as stored and verification digests those bytes
-verbatim, so it reads clean forever (that is #246 working). What is wrong with it is narrower — its
+verbatim, so it reads clean forever (that is stored-bytes integrity working). What is wrong with it is narrower — its
 stored bytes are not the canonical serialization of the grant they encode, which nothing here checks
 and a spec-driven second implementation certainly will. So `re-seed` is the WRONG tool: it re-stamps
 only an envelope-hash mismatch, and a serialization change does not move the envelope hash. The
-migration is the #246 archive → delete → `seed` shape. `docs/grant-canonicalization-runbook.md` is
+migration is the stored-bytes-migration archive → delete → `seed` shape. `docs/grant-canonicalization-runbook.md` is
 the operator's how-to.
 
-## The audit instrument — and dispositioning what it finds (#201 / #196, 2026-07-14)
+## The audit instrument — and dispositioning what it finds (2026-07-14)
 
-The read-only grants audit (`grants/audit.py`, #62) is the instrument that tells an operator when
-authority state is wrong. Two hardenings came out of the #199 incident (a ceremony minted a grant
+The read-only grants audit (`grants/audit.py`) is the instrument that tells an operator when
+authority state is wrong. Two hardenings came out of the wrong-authority-mint incident (a ceremony minted a grant
 under a silently-substituted envelope — quarantine-dead from ratification, green on the audit):
 
 Since the second signing role landed, the audit's signature scope is set by an explicit **epoch
@@ -180,13 +180,13 @@ all-types requirement is not being enforced. The instant the epoch's own validit
 an explicit input, never derived from the records — an epoch dated in the future would exempt every
 row ever written, so it is a violation (`RECORD_SIGNING_EPOCH_VALID`), not a quiet pass.
 
-- **`GRANT_ENVELOPE_IN_FORCE` (#201).** Every grant's `envelopeHash` is compared to the stored
+- **`GRANT_ENVELOPE_IN_FORCE`.** Every grant's `envelopeHash` is compared to the stored
   in-force envelope for its principal (recomputed via the same load path the broker uses at boot —
   a plain content hash, so the keyless posture holds). A mismatch is a grant the broker quarantines
   on every call: operationally dead, HMAC-clean, invisible to every other rule. The remedy is
   `re-seed`. The rule fires expectedly after any far-jump redeploy — that is it working, and it is
   why the acknowledgment ceremony ships beside it.
-- **The acknowledgment ceremony (#196).** A TRUE finding whose remediation is deferred (honest
+- **The acknowledgment ceremony.** A TRUE finding whose remediation is deferred (honest
   history, a coordinated-window fix) is dispositioned by `acknowledge` — a **ceremony artifact,
   never a config toggle**: a signed record appended to the same append-only table, NEVER a mutation
   of the flagged item (that is the thing the audit exists to catch). It binds the rule, the
@@ -204,9 +204,9 @@ row ever written, so it is a violation (`RECORD_SIGNING_EPOCH_VALID`), not a qui
 Relatedly, half-configured signing (`ISSUER_SIGNING_KEY_ID` or `EVALUATOR_SIGNING_KEY_ID` without
 its role's key source) now **refuses** — the ceremony commands on the issuer side, and the demotion
 runner on the evaluator side (exit 2) — instead of degrading to an unsigned record. That is the
-#190 fail-toward-less-authority polarity applied to config, and it holds for both roles because
+fail-toward-less-authority polarity applied to config, and it holds for both roles because
 both resolve through one parameterized code path (`grants/issuer_keys.py`), so neither can drift
-into a weaker rule than the other. Fully-unconfigured signing gets the same polarity (#205):
+into a weaker rule than the other. Fully-unconfigured signing gets the same polarity:
 `ratify` **refuses** to store an unsigned PromotionRecord — writing nothing (no record, no grant
 mutation; the proposal stays pending) — unless the operator passes an explicit `--allow-unsigned`,
 which stores the record UNSIGNED with a loud warning. `acknowledge` refuses unsigned outright, with
@@ -266,19 +266,19 @@ Exactly four deterministic conditions trip demotion (`Grant.demotionTriggers`):
    across runs (no outcome labels needed at action time). A systematic shift, or anomalously high
    confidence on novel inputs, sets `stale`, which **voids the conformal threshold** and trips
    demotion. (`tool-broker-sketch.md` §"Confidence gating".) The runner derives the trigger from
-   a stale `ConfidenceArtifact` as given (#192); the drift detector that SETS the flag stays
-   consumer/reference-tier (#65).
+   a stale `ConfidenceArtifact` as given; the drift detector that SETS the flag stays
+   consumer/reference-tier (#59).
 2. **`corroboration_failure`.** A premise or input failed its quorum of independent sources (k-of-n,
    none stale, provenance valid; physical/market sanity bounds count as the cheapest independent
    source). Failed corroboration pushes toward `abstain` and trips demotion — never toward `allow`.
    (`tool-broker-sketch.md` §"Corroboration".) The quorum result is the typed
-   `CorroborationRecord` (broker/EVIDENCE.md, #192); the runner derives the trigger from it
+   `CorroborationRecord` (broker/EVIDENCE.md); the runner derives the trigger from it
    deterministically (`agreeing < k`) — the corroboration pass that produces the record is
    consumer-side, like the drift detector behind trigger 1.
 3. **`budget_breach`.** An atomic durable counter — error, a spend cap, escalation, or fallback —
    blew its bound for the period. (`Budgets`, `SCHEMAS.md` §5.)
-4. **`false_action`.** An authenticated owner flagged an executed op as wrong (the `/flag` verb,
-   #193): the runner re-derives the trigger from the durable `false_action` counter — never from
+4. **`false_action`.** An authenticated owner flagged an executed op as wrong (the `/flag` verb
+   of the evidence-labeling pipeline): the runner re-derives the trigger from the durable `false_action` counter — never from
    the message — and a single flag suffices. The ease gradient points downward: it should be
    easier to get demoted in this system than to overcome its safeguards. Like every non-floor
    bound this trigger **ships OFF** — it fires only for grants that list it in
@@ -306,7 +306,7 @@ alongside the `AuditRecord`. This supersedes the earlier no-record exemption (Ph
 `docs/GAL.md` §3) — the asymmetry that matters stays: widening requires recorded *human approval*;
 narrowing requires no human at all.
 
-## Lapse — a certification has a term (#255, GAL §6.7.6)
+## Lapse — a certification has a term (GAL §6.7.6)
 
 Every demotion trigger asserts that something was *observed*. None fires when nothing happens, so a
 grant promoted long ago whose agent has since sat idle has no path down. A **term** is what forces
@@ -348,7 +348,7 @@ that authority to be re-justified.
   EVALUATOR role (`RECORD_SIGNATURE_VERIFIES`) — required from the record-signing epoch on, and
   checked-if-present before it; one naming a trigger cannot parse and is an
   `UNPARSEABLE_ITEM` finding; a grant that sits below its ledger-derived level with no record for
-  the drop is `LEVEL_DROP_RECORDED` (waivable, for pre-#244 history where demotion wrote the grant
+  the drop is `LEVEL_DROP_RECORDED` (waivable, for pre-atomic-write history where demotion wrote the grant
   first). `GRANT_TERM_RATIFIED` (un-waivable) holds the grant's term to the one on its latest
   promotion record: the term enforced must be the term the checker ratified.
 

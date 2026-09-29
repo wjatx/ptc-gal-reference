@@ -1,4 +1,4 @@
-"""client.py — the thin reference MCP client (#174, reference-tier).
+"""client.py — the thin reference MCP client (reference-tier).
 
 One honest instantiation over the official `mcp` python SDK. It does exactly
 three things and no more (MCP-HOST.md, "the thin MCP client"):
@@ -53,7 +53,7 @@ def _tool_def_from_sdk(server_id: str, sdk_tool: Any) -> McpToolDef:
     names so this helper needs no SDK import and stays trivially testable.
 
     The remaining fields (title/outputSchema/icons/annotations/meta/execution)
-    are advertised metadata — SIGNED since #223 when present — read via
+    are advertised metadata — SIGNED when present — read via
     `getattr(..., None)` so an older/newer SDK lacking one degrades to `None`
     ("not advertised", which contributes nothing to the hash) rather than
     raising. Any pydantic-model value (or list of them, for `icons`) is
@@ -120,7 +120,7 @@ async def connect_stdio(
 
     ``cwd``/``env`` are plain process plumbing (module resolution, PYTHONPATH).
     A provided ``env`` OVERLAYS the SDK's minimal default environment rather
-    than replacing it (#221) — the SDK would otherwise spawn the child with
+    than replacing it — the SDK would otherwise spawn the child with
     ONLY the given dict, silently dropping ``PATH``/``HOME`` and breaking
     PATH-resolved commands; ``env=None`` (or ``{}``) spawns with the untouched
     minimal default, never the parent's full environment. Values are never
@@ -128,7 +128,7 @@ async def connect_stdio(
     this argument — the ONE sanctioned credential injector is the broker's own
     native construction path (``prototype/mcp_construction.py``), which
     resolves the credential broker-side at spawn time via the
-    CredentialProvider catalog + ``connector_auth.env_map`` (#173/#221); the
+    CredentialProvider catalog + ``connector_auth.env_map`` (#79); the
     agent never sees the merged environment.
     """
     # Lazy SDK import — the only runtime dependency on the optional extra.
@@ -174,7 +174,7 @@ async def connect_streamable_http(
     # Lazy SDK import — the only runtime dependency on the optional extra.
     # `streamable_http_client` (mcp>=1.25) takes no `headers`: HTTP settings
     # move to an injected httpx.AsyncClient, which is why migrating and
-    # delivering credentials were ONE change (#237), not two. The client is
+    # delivering credentials were ONE change, not two. The client is
     # built by the SDK's own factory so MCP's defaults (follow_redirects, the
     # 30s/300s-SSE timeouts) stay the SDK's to choose rather than ours to
     # re-hardcode; if a future SDK moves it, this import fails LOUDLY at

@@ -1,7 +1,7 @@
 """Credential-resolution strategies — the pluggable seam between a connector tool
-and its LIVE credential (#173).
+and its LIVE credential (#79).
 
-Before #173 the Doer resolved a connector's credential as one static secret string:
+Originally the Doer resolved a connector's credential as one static secret string:
 ``secrets.fetch_secret(leaf)``. Real backends need more — an OAuth access token
 minted from a broker-held refresh token, an STS-assumed role, the broker's own
 ambient identity. This module generalizes credential resolution into a pluggable
@@ -22,11 +22,11 @@ base has not implemented fails loudly at broker build, never silently.
 
 Exports:
     CredentialProvider          — the Protocol the Doer depends on.
-    StaticSecret                — the default; identical to the pre-#173 behavior.
+    StaticSecret                — the default; identical to the original behavior.
     OAuthRefresh                — broker-held refresh token → minted access token;
                                   the refresh token never leaves the broker.
     AssumedRole                 — STS-assume a per-capability scoped role at execute
-                                  time (#175); the connector runs with short-lived
+                                  time; the connector runs with short-lived
                                   role credentials whose blast radius == the role's
                                   declared IAM scope, never the broker's own identity.
     build_credential_strategies — compile a manifest connector_auth block into a
@@ -71,7 +71,7 @@ class CredentialProvider(Protocol):
     all — its credential is an assumed identity, not a stored string).
 
     The resolved ``Credential`` is a plain ``str`` for the string strategies and an
-    ``AssumedRoleCredential`` bundle for ``assumed_role`` (#175). Whatever the shape,
+    ``AssumedRoleCredential`` bundle for ``assumed_role``. Whatever the shape,
     only the resolved credential crosses into the connector; long-lived material
     (a refresh token, a role's trust) stays broker-side.
     """
@@ -82,7 +82,7 @@ class CredentialProvider(Protocol):
 
 
 class StaticSecret:
-    """The default strategy — byte-for-byte the pre-#173 behavior.
+    """The default strategy — byte-for-byte the original behavior.
 
     Fetches the single secret leaf the Doer computed and returns it verbatim. This is
     the degenerate case the whole seam generalizes: a Doer with no strategy for a tool
@@ -123,7 +123,7 @@ class _TokenRequest:
 @dataclass(frozen=True)
 class _TokenGrant:
     """What a refresh grant returns. ``rotated_refresh_token`` is the successor
-    the authorization server issued, when it issues one (#238).
+    the authorization server issued, when it issues one.
 
     The fetcher used to return a bare ``access_token`` string, which silently
     DISCARDED any rotated refresh token — and a vendor that rotates invalidates
@@ -216,7 +216,7 @@ class OAuthRefresh:
     access token (doctrine #1: no raw passthrough of long-lived material).
 
     v1 mints fresh per call (stateless, always-correct — no token cache to invalidate).
-    A TTL-aware cache is a connector-lifecycle follow-on (#173.2, deferred).
+    A TTL-aware cache is a connector-lifecycle follow-on (#79, deferred).
 
     Params (in ``ConnectorAuth.params``):
         token_url           (required) — the OAuth token endpoint.
@@ -329,7 +329,7 @@ class OAuthRefresh:
           anyway" would hand back one working call and leave a destroyed
           credential behind — the next call fails with an opaque
           ``invalid_grant`` and nothing connects it to this moment. That exact
-          silence cost an hour of misdiagnosis when it was found (#238).
+          silence cost an hour of misdiagnosis when it was found.
         * **The write itself failed.** Same reasoning; the successor is lost.
 
         Nothing here interpolates a token into a message.
@@ -436,7 +436,7 @@ def _boto3_role_assumer(request: _AssumeRoleRequest) -> AssumedRoleCredential:
 
 
 class AssumedRole:
-    """Assume a per-capability scoped IAM role at execute time via STS (#175).
+    """Assume a per-capability scoped IAM role at execute time via STS.
 
     The role is provisioned by the deploy (``infra/lib/``, CDK) scoped to exactly the
     capability's declared IAM (``AgentManifest.capability_iam``) and trusting the broker
@@ -446,7 +446,7 @@ class AssumedRole:
     IAM, not by the broker (doctrine 2: the credential is an identity; scope it).
 
     No secret leaf is read — the credential is the assumed role, minted fresh per call
-    (stateless; a TTL cache is the #173.2 lifecycle follow-on). Long-lived material (the
+    (stateless; a TTL cache is the lifecycle follow-on, #79). Long-lived material (the
     role's trust) stays in IAM, never crosses into the connector (doctrine 1).
 
     Params (in ``ConnectorAuth.params``):
@@ -537,7 +537,7 @@ def build_credential_strategies(
 
     Called once at broker build. A tool absent from the returned map falls back to
     ``StaticSecret`` in the Doer, so the empty block yields an empty map and the
-    pre-#173 behavior. An unimplemented or malformed strategy raises
+    original behavior. An unimplemented or malformed strategy raises
     CredentialStrategyError here — a loud boot failure, not a per-call surprise.
     """
     strategies: dict[str, CredentialProvider] = {}

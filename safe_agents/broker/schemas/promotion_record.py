@@ -10,7 +10,7 @@ Five record types share one ledger (see SCHEMAS.md §7):
                    the ceremony (seed_grants retires to bootstrap-only).
 - ``tightening`` — voluntary any-level → in-loop move; always permitted, no
                    ceremony, no trigger.
-- ``lapse``      — a certification term expired (GAL §6.7.6, #255): the grant
+- ``lapse``      — a certification term expired (GAL §6.7.6): the grant
                    fell to its lastSafeLevel because nothing renewed it. Written
                    by the same system evaluator identity as demotion, but it is
                    NOT a demotion: triggeredBy stays empty, because a lapse is
@@ -36,7 +36,7 @@ class PromotionRecord(BaseModel):
     """One append-only ledger record of a grant level change.
 
     Invariants enforced here (field shape only, per recordType):
-    - certifiedUntil (#255) is non-null ONLY on a promotion record: the
+    - certifiedUntil is non-null ONLY on a promotion record: the
                   ratified certification term is set by the ceremony and by
                   nothing else, so no other record type may carry one.
     - promotion:  proposedBy must differ from ratifiedBy (maker ≠ checker);
@@ -83,8 +83,8 @@ class PromotionRecord(BaseModel):
     proposedBy: str
     # checker — must differ from maker on the promotion path
     ratifiedBy: str
-    # How the two ceremony identities were established (#226). None — the
-    # field's absence from every record written before #226, and its shape on
+    # How the two ceremony identities were established. None — the
+    # field's absence from every record written before the solo identity arm, and its shape on
     # the cloud floor — means two IAM-backed STS credential ARNs: the maker's
     # credentials cannot mint the checker's. "solo-local" means ONE operator
     # held both, as two local roles with no IAM between them. The record must
@@ -100,7 +100,7 @@ class PromotionRecord(BaseModel):
     # demotion-typed only
     demotionReason: Literal["failing", "pending-evidence"] | None = None
     ts: str
-    # promotion-typed only (#255, GAL §6.7.6): the certification term the checker
+    # promotion-typed only (GAL §6.7.6): the certification term the checker
     # RATIFIED, the same value written onto the raised Grant.certifiedUntil. An
     # explicit UTC instant (the Grant's parser), stored verbatim. None = the
     # promotion set no term. OMITTED from the canonical (stored and signed) bytes

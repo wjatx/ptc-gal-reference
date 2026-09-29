@@ -9,7 +9,7 @@
 # This is a broker-facing AgentManifest (broker/schemas/manifest.py, extra="forbid").
 # grant_classes name base action classes; connector names resolve against the
 # manifest's connector_providers FIRST, then the base registry — this example also
-# exercises the one sanctioned injection seam (sa#141) by supplying its own `search`
+# exercises the one sanctioned injection seam by supplying its own `search`
 # connector implementation (see trackfeed_connector.py).
 
 # ── Principal (fictional) ─────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ connectors:
   - ledger
   - notify
 
-# ── Consumer-supplied connector + secret mapping (the sa#141 seam) ────────────
+# ── Consumer-supplied connector + secret mapping (the connector-injection seam) ───
 # missileer's "search" is its own track-feed query, not the base SearchConnector:
 # the provider path is imported / zero-arg instantiated / protocol-checked at
 # build_runtime, fail-closed. Honored ONLY from this image-baked file — the
@@ -42,7 +42,7 @@ connectors:
 # Doer fetches the leaf `track-feed-token` instead of the default leaf `search`. That
 # leaf is resolved under the broker secret prefix — with
 # BROKER_SECRET_PREFIX=safe-agents/development it becomes
-# `safe-agents/development/connectors/track-feed-token` (sa#164). Declare a bare leaf,
+# `safe-agents/development/connectors/track-feed-token`. Declare a bare leaf,
 # never a pre-prefixed path, so the manifest stays env-agnostic and inside the
 # `<prefix>/connectors/*` IAM grant.
 connector_providers:
@@ -50,7 +50,7 @@ connector_providers:
 connector_secrets:
   search: "track-feed-token"
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 # The broker resolves each granted (tool, op) against THIS table; the base names no
 # op. Copied from the base copyable CATALOG (safe_agents.broker.manifest.CATALOG).
 tool_ops:

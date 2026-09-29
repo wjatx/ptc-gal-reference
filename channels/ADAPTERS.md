@@ -1,4 +1,4 @@
-# ADAPTERS — the channel-adapter interface and the airlock gate ordering (sa#80)
+# ADAPTERS — the channel-adapter interface and the airlock gate ordering
 
 > **Status: contract (2026-07-08), with one named reference component.** Contract-tier per
 > `docs/contract-vs-reference.md`: this document and `safe_agents/channels/adapters.py` (the
@@ -80,7 +80,7 @@ from the identical wire field via the identical canonicalization (`SignedWebhook
 share that construction, not a case either reference adapter can trip.
 
 **Supersession (2026-07-08).** `normalize` replaces the earlier sketch's `extract_payload(request)
--> bytes`: with the EventTrigger contract in place (sa#74), handing raw bytes forward would re-open
+-> bytes`: with the EventTrigger contract in place, handing raw bytes forward would re-open
 the unparsed-payload seam the envelope exists to close.
 
 ## OutboundAdapter
@@ -97,7 +97,7 @@ when the broker issues `require_approval`, the Intent's `renderedForHuman` is pu
 `deliver`, and the human's response comes back through the *inbound* airlock, authenticated to the
 human, routed to the broker's Intent resolver, never to the agent (`channels/README.md`).
 
-**The approval-return contract (sa#176).** The inbound leg of that out-of-band path is the owner
+**The approval-return contract.** The inbound leg of that out-of-band path is the owner
 `/approve <intent_id> yes|no` reply. The owner adapter's `normalize` classifies it into an
 approval-kind payload — `{"kind": "approval", "intent_id": …, "decision": "yes"|"no"}` — and the
 drain worker forks on `sender_class == "owner" AND payload.kind == "approval"` to the broker's
@@ -137,13 +137,13 @@ reasons.
 | 5 | **trust-map** (`resolve`; principal match) | drop: `unmapped` / `principal_mismatch` | unmapped senders get no further processing at all |
 | 6 | dedupe on `(sender.channel_identity, event_id)` | silent no-op | after trust-map so only mapped senders can write the dedupe store; before the screen so replays cannot drain the screening budget |
 | 7 | **injection screen** (`channels/SCREENING.md`, injected) | drop: `screen_refused` | the one model-judged gate — it may refuse or pass, never bless (one-way rule 3) |
-| 8 | **taint stamp** (`stamp_inbound`, #81) | — (cannot fail) | appends the receiver's provenance entry, sets `sender_class` overwriting any wire value |
+| 8 | **taint stamp** (`stamp_inbound`) | — (cannot fail) | appends the receiver's provenance entry, sets `sender_class` overwriting any wire value |
 | 9 | emit — exactly one stamped EventTrigger per dedupe key | — | SCHEMAS C1 |
 
 Two clauses ride the ordering:
 
 - **The screen is injected, not owned.** The dispatcher takes the screen as an injected callable;
-  its semantics are `channels/SCREENING.md` (sa#43). A dispatcher must function with a null screen
+  its semantics are `channels/SCREENING.md`. A dispatcher must function with a null screen
   (pass-through) — screening strictness is consumer policy per `docs/friction-doctrine.md`; the
   *position* of the gate is contract.
 - **The stamped envelope must reach the turn.** Whoever dispatches the emitted EventTrigger to a
@@ -177,7 +177,7 @@ principal ever synthesized**.
 
 ## The named inbound cases
 
-- **Peer-agent (the new case, sa#8).** `verify_token` verifies the sending zone's transport
+- **Peer-agent (the new case).** `verify_token` verifies the sending zone's transport
   signature; `extract_identity` returns the peer's publisher identity; `normalize` validates the
   wire EventTrigger as-is. The payload is already parsed — the sending zone did that work — and its
   provenance (e.g. `email:example-vendor.com · untrusted`) rides through untouched until the receiver
@@ -187,7 +187,7 @@ principal ever synthesized**.
   airlock. The owner mapping lives in consumer config (`ChannelTrustMap`), never in base source —
   this is the re-derivation of the proven consumer-agent airlock pattern without its owner/Telegram
   hardcoding (`channels/README.md` §Inbound).
-- **Owner (the human-as-owner case, sa#176).** The owner sends a **raw command**
+- **Owner (the human-as-owner case).** The owner sends a **raw command**
   (e.g. `/trader buy AAPL`, or an approval reply `/approve <intent_id> yes|no`) over an authenticated
   transport — not a full envelope like a peer — so `normalize` **constructs** a fresh-chain
   `EventTrigger`, stamping one seed provenance hop. The command's leading whitespace token is the
@@ -217,7 +217,7 @@ principal ever synthesized**.
 Everything in this section is **reference-tier** — named here and only here, never in contract
 clauses:
 
-- **Peer transit:** SQS or EventBridge between zones (the sa#8 comment's binding). The queue is
+- **Peer transit:** SQS or EventBridge between zones (the agent-to-agent channels decision's binding). The queue is
   dumb transport; every property that matters — authenticity, dedupe, taint — is enforced at the
   receiving airlock, so a substituted transport changes nothing above.
 - **Webhook channels:** API Gateway + Lambda in front of the dispatcher; the DynamoDB dedupe table
@@ -249,7 +249,7 @@ clauses:
 
 <!-- assumption-tested 2026-08-06 — gate-3-before-3.5 ordering HOLDS (reorder mutation red, no masking); by-construction binding HOLDS for the two reference adapters (normalize mutation red); both dead citations in this table re-pointed same run -->
 
-The owner cases (sa#176) are proven across three suites — the owner adapter +
+The owner cases are proven across three suites — the owner adapter +
 dispatch (`test_owner_adapter.py`), the drain fork (`test_drain_owner.py`), and
 the out-of-band release seam (`safe_agents/broker/tests/test_out_of_band_approval.py`,
 `safe_agents/broker/tests/test_release_revalidation.py`):
@@ -269,12 +269,12 @@ the out-of-band release seam (`safe_agents/broker/tests/test_out_of_band_approva
 
 ## Relationships
 
-- `channels/SCHEMAS.md` (sa#74) — the envelope every gate operates on.
-- `channels/TRUST-MAPPING.md` (sa#81) — gates 5 and 8; the DropRecord type.
-- `channels/SCREENING.md` (sa#43) — gate 7's standard; injected here, owned there.
-- sa#82 — multi-channel routing; deferred until a second live channel exists, and deliberately not
+- `channels/SCHEMAS.md` — the envelope every gate operates on.
+- `channels/TRUST-MAPPING.md` — gates 5 and 8; the DropRecord type.
+- `channels/SCREENING.md` — gate 7's standard; injected here, owned there.
+- Multi-channel routing — deferred until a second live channel exists, and deliberately not
   designed here.
-- sa#176 — the owner inbound case, the adapter-selection seam, and the addressing doctrine above;
+- The owner channel — the owner inbound case, the adapter-selection seam, and the addressing doctrine above;
   the N-principal admission fan (per-principal config selection inside the one handler, keyed by the
   normalized principal) stays a follow-up, unbuilt until a second live consumer agent exists.
 - `core/arms.md` — the wake mechanism the emitted EventTrigger triggers differs per arm; the

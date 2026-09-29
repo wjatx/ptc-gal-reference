@@ -1,4 +1,4 @@
-"""#62 — opt-in read-only audit of the DEPLOYED grants table.
+"""Opt-in read-only audit of the DEPLOYED grants table.
 
 Opt-in: set GRANTS_AUDIT_LIVE=1 with AWS credentials for the target account
 (the same env-gated idiom as test_airlock_live.py). The table name resolves
@@ -18,7 +18,7 @@ Two modes, decided by what the invoking identity holds:
 
 RECORD_SIGNATURE_VERIFIES runs when ISSUER_VERIFY_KEYS_PARAM names the SSM
 parameter holding the issuer's PUBLIC keys ({key_id: public_key_pem} JSON —
-issuer_keys.resolve_issuer_verify_keys, the #194 read-only seam; deliberately
+issuer_keys.resolve_issuer_verify_keys, the verify-keys read-only seam; deliberately
 Parameter Store, not Secrets Manager, so the watcher keeps reading no secrets
 at all). Unset, the rule lands in skipped_rules and is asserted skipped —
 same loud-and-exact discipline as the HMAC rules. A set-but-unresolvable
@@ -85,7 +85,7 @@ def test_live_grants_table_audit_is_clean(live):
     # Same key sourcing + encoding as the demotion runner's _build_stores:
     # BROKER_HMAC_KEY env, utf-8 encoded; absent/empty = keyless mode.
     hmac_key = os.environ.get("BROKER_HMAC_KEY", "").encode() or None
-    # Read-only issuer verify keys (#194): None when ISSUER_VERIFY_KEYS_PARAM
+    # Read-only issuer verify keys: None when ISSUER_VERIFY_KEYS_PARAM
     # is unset; a set-but-unresolvable parameter raises and fails the run.
     record_key_resolver = resolve_issuer_verify_keys()
 
@@ -105,7 +105,7 @@ def test_live_grants_table_audit_is_clean(live):
         f"{len(report.acknowledged)} acknowledged; "
         f"skipped_rules={sorted(report.skipped_rules)}"
     )
-    # Acknowledged findings (#196) are annotations, never silence: print each
+    # Acknowledged findings are annotations, never silence: print each
     # so a green-with-annotations dispatch shows exactly what was waived.
     for entry in report.acknowledged:
         print(

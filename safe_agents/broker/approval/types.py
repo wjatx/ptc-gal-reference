@@ -45,7 +45,7 @@ class NotifierEvent:
 
 @dataclass(frozen=True)
 class IntentView:
-    """Read-only description of a held Intent, for an approver to look at (#301).
+    """Read-only description of a held Intent, for an approver to look at.
 
     The WYSIWYE half that is not execution: before releasing a held call a human
     has to SEE it, and every approval surface — the channels owner-adapter, the

@@ -1,10 +1,10 @@
-"""duty_log_receiver.py — missileer's CONSUMER-OWNED drain Receiver (sa#155 proof).
+"""duty_log_receiver.py — missileer's CONSUMER-OWNED drain Receiver (drain-worker seam proof).
 
 This is the worked example of the drain's receiver seam (channels/DRAIN.md): the
 image-baked ``CHANNELS_DRAIN_RECEIVER`` names this class by dotted path
 (``examples.missileer.duty_log_receiver:DutyLogReceiver``) and the drain worker
 imports, zero-arg instantiates, and protocol-checks it — the same fail-closed
-injection discipline as the sa#141 connector seam this example already carries
+injection discipline as the connector-injection seam this example already carries
 (``trackfeed_connector.py``). The base ships the protocol, never an
 implementation: what an accepted envelope *means* is consumer code, and this
 file is that meaning for missileer.

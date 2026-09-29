@@ -1,4 +1,4 @@
-# The agent leg (#250 Phase 4) — the pod the whole phase is about.
+# The agent leg (Phase 4) — the pod the whole phase is about.
 #
 # Read this spec for what is ABSENT. There is no PVC mount, so the store, the grant
 # key space and the audit tape are not reachable from here at any permission level.

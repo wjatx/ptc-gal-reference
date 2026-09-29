@@ -10,7 +10,7 @@
 # needs the ceremony and the broker running concurrently, that is a
 # store-contract question, not a storage-class one.
 #
-# ONE claim, THREE subPaths (#203, #310). The asymmetry is per-volumeMount, which
+# ONE claim, THREE subPaths. The asymmetry is per-volumeMount, which
 # is why one ReadWriteOnce claim is enough — a mount is read-only per container,
 # not per volume, and the kernel enforces it regardless of file ownership.
 #
@@ -19,9 +19,9 @@
 #            in every leg, and deliberately so — this is the half the legs use to
 #            hand work to each other.
 #   grants/  the checker-writable key space (GRANT#/RECORD#/TOOLDEF#/TOOLREC#).
-#            Read-only in the maker and serve pods (#203).
+#            Read-only in the maker and serve pods.
 #   audit/   the audit tape. Read-write in the BROKER pod alone; read-only in all
-#            three ceremony legs (#310).
+#            three ceremony legs.
 #
 # `audit/` is its own subPath and not a file in `work/` for a reason worth
 # stating, because the two-subPath version looked fine: the tape used to live in
@@ -35,7 +35,7 @@
 # What this does NOT buy: it does not defend the tape against the broker itself.
 # The one identity that must write the tape can also rewrite it, and no mount
 # topology fixes that — only off-device append-only durability does (S3 Object
-# Lock on the cloud floor; deliberately not taken here, #310).
+# Lock on the cloud floor; deliberately not taken here).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

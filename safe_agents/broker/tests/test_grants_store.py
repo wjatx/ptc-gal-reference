@@ -1,8 +1,8 @@
-"""Tests for the grant store client (sa#55).
+"""Tests for the grant store client.
 
 Coverage:
 - Round-trip read/write preserves all fields (InMemoryGrantStore).
-- STORED-BYTES basis (#246): the stored data string IS the HMAC basis;
+- STORED-BYTES basis: the stored data string IS the HMAC basis;
   verification never re-serializes, so a byte-divergent-but-intact item still
   reads clean and a tampered item quarantines with grant=None.
 - Schema validation rejects a Grant missing ownerId.
@@ -14,7 +14,7 @@ Coverage:
   REQUIRED (the legacy fallback is retired).
 - DynamoDBPromotionRecordStore: RECORD# item layout, append-only condition,
   RecordAlreadyExistsError on a key collision.
-- Record ts canonical validation (#191): both put_record implementations
+- Record ts canonical validation: both put_record implementations
   reject a 'Z'-suffixed, naive, non-UTC-offset, or unparseable ts with
   RecordTimestampFormatError before any write; list_records' ts_prefix
   narrows to sk values beginning with the prefix (the runner's same-day read).
@@ -66,7 +66,7 @@ TEST_KEY = b"test-hmac-key-for-tests"
 
 
 def make_grant(**overrides) -> Grant:
-    """Build a valid Grant (integrity lives at the store's item level, #246)."""
+    """Build a valid Grant (integrity lives at the store's item level)."""
     return Grant(**{**GRANT_BASE, **overrides})
 
 
@@ -98,7 +98,7 @@ def test_verification_uses_stored_bytes_not_reserialization():
     """An item whose data bytes differ from today's canonical re-serialization
     (here: non-sorted key order) but whose grantHash matches THOSE bytes reads
     back clean — verification HMACs the stored bytes verbatim and never
-    re-serializes (#246: schema evolution can never false-tamper old items)."""
+    re-serializes (schema evolution can never false-tamper old items)."""
     import json as _json
 
     store = InMemoryGrantStore(hmac_key=TEST_KEY)
@@ -196,7 +196,7 @@ def test_hash_mismatch_sets_quarantine_flag():
     result = store.get_grant(PRINCIPAL, "email.send")
     assert result.quarantined is True
     assert result.quarantine_reason is not None
-    # Tampered bytes are never parsed (#246): grant is None, bytes ride raw_data.
+    # Tampered bytes are never parsed: grant is None, bytes ride raw_data.
     assert result.grant is None
     assert result.raw_data is not None
 
@@ -294,7 +294,7 @@ def test_dynamo_round_trip_via_mock():
     assert item["pk"].startswith("GRANT#")
     assert item["sk"].startswith("CLASS#")
     # The stored bytes ARE the basis: data is the canonical payload and the
-    # item-level grantHash is the HMAC over exactly those bytes (#246).
+    # item-level grantHash is the HMAC over exactly those bytes.
     assert item["data"] == canonical_grant_payload(make_grant())
     assert item["grantHash"] == _hmac_payload(item["data"], TEST_KEY)
 
@@ -330,7 +330,7 @@ def test_dynamo_get_quarantines_on_hash_mismatch():
         result = store.get_grant(PRINCIPAL, "email.send")
 
     assert result.quarantined is True
-    assert result.grant is None  # tampered bytes are never parsed (#246)
+    assert result.grant is None  # tampered bytes are never parsed
     assert result.raw_data == item["data"]  # bytes ride for audit
 
 
@@ -375,7 +375,7 @@ def test_inmemory_update_grant_never_creates():
 
 
 def test_update_grant_requires_prev_raw_data():
-    """prev_raw_data=None refuses BEFORE any store access (#246: the legacy
+    """prev_raw_data=None refuses BEFORE any store access (the legacy
     fallback is retired; failing toward writing nothing)."""
     store = InMemoryGrantStore(hmac_key=TEST_KEY)
     store.put_grant(make_grant(), session=None)
@@ -456,7 +456,7 @@ def test_dynamo_update_grant_conditions_on_hash_and_bytes():
 
 
 def test_dynamo_update_grant_requires_prev_raw_data():
-    """prev_raw_data=None refuses BEFORE any AWS call (#246)."""
+    """prev_raw_data=None refuses BEFORE any AWS call."""
     store = _make_dynamo_store()
     mock_session = MagicMock()
     mock_table = MagicMock()
@@ -574,7 +574,7 @@ def test_inmemory_record_store_append_only():
 
 
 # ---------------------------------------------------------------------------
-# Record ts canonical validation — reject, never normalize (#191)
+# Record ts canonical validation — reject, never normalize
 # ---------------------------------------------------------------------------
 
 
@@ -627,7 +627,7 @@ def test_canonical_ts_accepted_by_both_stores():
 
 
 # ---------------------------------------------------------------------------
-# list_records ts_prefix — the runner's same-day dedupe read (#191)
+# list_records ts_prefix — the runner's same-day dedupe read
 # ---------------------------------------------------------------------------
 
 

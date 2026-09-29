@@ -35,13 +35,13 @@ grant_classes:
 # ── Connectors (names only; resolved against the base registry) ───────────────
 # build_runtime resolves each name against connector_registry.py's base map. This
 # is the by-name seam only — consumer-supplied implementations + secret injection
-# are the deferred sa#113 design pass, not built here.
+# are the deferred AgentManifest design pass, not built here.
 connectors:
   - github
   - search
   - notify
 
-# ── Tool operations (consumer-owned classifications, #171) ────────────────────
+# ── Tool operations (consumer-owned classifications) ────────────────────
 # The broker resolves every (tool, op) against THIS table — the base holds no op
 # names. Each entry classifies one op once (effect/external/reversible/egress_arg);
 # copied from the base copyable CATALOG (safe_agents.broker.manifest.CATALOG).

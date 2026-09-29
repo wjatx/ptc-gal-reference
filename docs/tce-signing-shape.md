@@ -1,8 +1,8 @@
-# The outbound trust-context signing shape — a design note (#170)
+# The outbound trust-context signing shape — a design note
 
 > **Status: design note — decide, don't build.** This note lands the *shape* decision for signing the
 > outbound trust-context envelope (the "TCE" of `docs/PTC.md` §6, name provisional pending the
-> maintainer's standards-body naming pass). No code ships here; the build is Phase 4 of the PTC epic (#167). Contract/floor tiering per
+> maintainer's standards-body naming pass). No code ships here; the build is Phase 4 of the PTC epic. Contract/floor tiering per
 > `docs/contract-vs-reference.md` is decided when the build lands, not here.
 >
 > Companion to `docs/PTC.md` §6 (Layer A — signing) and §7 (content model), `channels/PUBLISH.md`
@@ -20,7 +20,7 @@ broker asserted a hop. PTC §9 makes this the binding constraint on autonomy: a 
 moves the rung.
 
 This note decides the **signing shape** — the envelope format and what identity the signature keys on.
-It does **not** decide the wire schema of the chain itself (that is the normative spec, #178, held for
+It does **not** decide the wire schema of the chain itself (that is the normative spec, held for
 naming clearance), nor implement verification (Phase 4), nor solve propagation-through-transform (the
 banked §8 problem — a signature proves *who signed*, never that taint was correctly propagated).
 
@@ -83,13 +83,13 @@ The two live at different layers of §7 (index vs. content) and the format follo
 - **Unblocks Phase 4** (TCE signing build): the shape is settled, so the build is "implement the DSSE
   statement over the existing chain + broker-keyed signing + airlock verification," not a fresh format
   bake-off.
-- **Unblocks sa#161** (the campaign watchdog): it needs trustworthy cross-broker lineage, which is
+- **Unblocks the campaign watchdog**: it needs trustworthy cross-broker lineage, which is
   exactly what a verified DSSE chain provides.
 - **Moves the §9 rung:** once the airlock verifies signatures and rejects forged/unsigned chains,
   a live-brokerage `trade.place` can come off in-loop to require-approval (the rung-tracks-provenance
   rule).
-- **Still open (not this note):** the chain wire schema (#178, held for naming), the Cedar/OPA PDP
-  expression (#177), and — permanently out of signing's reach — propagation-through-transform (§8).
+- **Still open (not this note):** the chain wire schema (held for naming), the Cedar/OPA PDP
+  expression, and — permanently out of signing's reach — propagation-through-transform (§8).
   A signature is necessary for cross-mesh trust and sufficient for *non-repudiation of who asserted a
   hop*; it is never sufficient for *correctness of the assertion*.
 

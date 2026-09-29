@@ -1,4 +1,4 @@
-"""Deterministic demotion evaluator (sa#59).
+"""Deterministic demotion evaluator.
 
 Fires when a grant's demotionTriggers conditions are breached. No model is
 consulted — demotion is automatic and deterministic. Fast demotion is a
@@ -14,7 +14,7 @@ Public API:
         -> tuple[Grant, PromotionRecord]
 
 apply_demotion appends a demotion-typed PromotionRecord to the ceremony ledger
-(SCHEMAS.md §7) in the same atomic unit as the lowered grant (#244). The record
+(SCHEMAS.md §7) in the same atomic unit as the lowered grant. The record
 is signed by the EVALUATOR identity when one is configured — a second signing
 role, never the issuer's key, because an evaluator that could sign promotions
 would collapse the ceremony boundary (GAL §6.7.2, §6.10).
@@ -291,7 +291,7 @@ def apply_demotion(
     # --- consistent re-read: distinguishes not-found from conflict cheaply ---
     current = store.get_grant(grant.principal, grant.actionClass)
     if current.quarantined:
-        # Checked FIRST: a quarantined read carries grant=None (#246 —
+        # Checked FIRST: a quarantined read carries grant=None (stored-bytes integrity —
         # tampered bytes are never parsed), so the not-found check below
         # would otherwise mislabel a tamper as absence and invite a re-seed
         # over the evidence.
@@ -307,7 +307,7 @@ def apply_demotion(
         )
     if current.grant != grant:
         # Content equality IS the staleness check under the stored-bytes basis
-        # (#246): identical fields ⇒ identical canonical bytes ⇒ the decision's
+        #: identical fields ⇒ identical canonical bytes ⇒ the decision's
         # premises still hold.
         raise DemotionConflictError(
             f"grant {grant.principal.agentId}/{grant.actionClass} was modified "
@@ -366,7 +366,7 @@ def apply_demotion(
         ts=effective_ts,
     )
 
-    # Atomic record+grant (#244): the old grant-first ordering (fail toward
+    # Atomic record+grant: the old grant-first ordering (fail toward
     # the lowered level, at the cost of a possible ledger hole) is superseded —
     # a failed unit leaves BOTH untouched and the runner retries with a fresh
     # read. The conditional grant leg is the real atomicity guard, not the

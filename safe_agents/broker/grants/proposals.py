@@ -1,4 +1,4 @@
-"""Durable promotion-proposal store (#123).
+"""Durable promotion-proposal store.
 
 propose and ratify are separate CLI invocations by different identities —
 maker ≠ checker is structural (broker/grant-lifecycle.md) — so a
@@ -187,9 +187,9 @@ def proposal_to_json(proposal: "PromotionProposal") -> str:
             else None
         ),
     }
-    # #255: the term is part of the ratified content, so it is inside the
+    # The certification term is part of the ratified content, so it is inside the
     # HMAC'd payload when set — and OMITTED when None, so a no-term proposal
-    # serializes to exactly the pre-#255 bytes.
+    # serializes to exactly the pre-term bytes.
     if proposal.certified_until is not None:
         payload["certified_until"] = proposal.certified_until
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
@@ -218,9 +218,9 @@ def proposal_from_json(data: str) -> "PromotionProposal":
         last_safe_level=AutonomyLevel(payload["last_safe_level"]),
         metrics=ActionClassMetrics(**payload["metrics"]),
         window_n=payload["window_n"],
-        # Defaults when absent: a proposal stored before #193 has no window key
+        # Defaults when absent: a proposal stored before windowed evidence has no window key
         # and must still load and ratify (its metrics were today-only anyway); a
-        # pre-#212 proposal spelled the span "window_days" (always day-period).
+        # pre-counter-period proposal spelled the span "window_days" (always day-period).
         window_periods=payload.get("window_periods", payload.get("window_days", 1)),
         period=payload.get("period", "utc-day"),
         min_observations=payload["min_observations"],
@@ -238,7 +238,7 @@ def proposal_from_json(data: str) -> "PromotionProposal":
             if payload["error_budget"] is not None
             else None
         ),
-        # Absent on every proposal stored before #255 (and on no-term ones).
+        # Absent on every proposal stored before the certification term (and on no-term ones).
         certified_until=payload.get("certified_until"),
     )
 

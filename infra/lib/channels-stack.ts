@@ -17,7 +17,7 @@ import { FoundationStackProps } from './foundation-props';
 import { importValue, publish, resourceName } from './naming';
 
 /**
- * ChannelsStack — the inbound airlock for the channels contracts (sa#152, epic sa#8): a single
+ * ChannelsStack — the inbound airlock for the channels contracts: a single
  * `POST /inbound` HTTP endpoint that fronts a Lambda running the gate pipeline
  * (`safe_agents.channels.airlock.handler.handler`). An accepted EventTrigger is handed to the
  * broker path via SQS; a refused/dropped one is written as a DropRecord to the audit bucket. The
@@ -90,7 +90,7 @@ export class ChannelsStack extends Stack {
     // (`safe_agents/channels/keys.py::resolve_verification_keys` returns None on an unset ARN).
     const verifyKeysArn = this.node.tryGetContext('channelsVerifyKeysArn') as string | undefined;
 
-    // -c channelsDrainImageTag=<tag|digest> — the drain worker image (sa#155). This tag IS the
+    // -c channelsDrainImageTag=<tag|digest> — the drain worker image. This tag IS the
     // drain's phase gate: unset (the default), the drain Lambda + event source are not created and
     // the stack synthesizes exactly as before — only the drain ECR repo exists so the image can be
     // pushed before the tag is first supplied (the airlock's two-phase-bringup pattern, with the
@@ -123,7 +123,7 @@ export class ChannelsStack extends Stack {
       );
     }
 
-    // -c channelsMissileerDrainImageTag=<tag|digest> — the SECOND drain consumer (sa#166): its own
+    // -c channelsMissileerDrainImageTag=<tag|digest> — the SECOND drain consumer: its own
     // queue, own log group, own audit-chain prefix, so two consumers never compete on one queue or
     // fork one hash chain. Same phase-gate posture as channelsDrainImageTag: unset (the default),
     // neither the missileer queue nor its drain are created.
@@ -185,7 +185,7 @@ export class ChannelsStack extends Stack {
           lifecycleRules: [{ maxImageCount: 10, description: 'Keep the last 10 airlock images' }],
         });
 
-    // ── ECR repository (drain worker image, sa#155) ───────────────────────────────────────────────
+    // ── ECR repository (drain worker image) ───────────────────────────────────────────────
     // Created unconditionally (even while channelsDrainImageTag is unset) so the drain image can be
     // pushed BEFORE the tag is first supplied — the same repo-before-function bringup order as the
     // airlock's.
@@ -215,7 +215,7 @@ export class ChannelsStack extends Stack {
       visibilityTimeout: Duration.seconds(360),
     });
 
-    // ── SQS accepted-event queue — missileer drain (sa#166) ──────────────────────────────────────────
+    // ── SQS accepted-event queue — missileer drain ──────────────────────────────────────────
     // A SECOND consumer's own queue so it never competes with webhook-peer's `acceptedQueue` — the
     // drain's S3 audit sink resumes a hash chain by prefix, and two drains sharing one queue would
     // interleave messages from both consumers onto whichever runtime happened to poll them. Created
@@ -274,7 +274,7 @@ export class ChannelsStack extends Stack {
           removalPolicy: removalPolicyFor(env),
         });
 
-    // ── Silent-failure alarms (sa#153) ────────────────────────────────────────────────────────────
+    // ── Silent-failure alarms ────────────────────────────────────────────────────────────
     // The airlock answers 200-always by design, so its two failure modes are invisible to callers:
     // `handler_error` (an unexpected exception — the message dropped hard) and `screen_error` (the
     // classifier screen failing closed — 100% drop when persistent). Metric filters lift both
@@ -461,7 +461,7 @@ export class ChannelsStack extends Stack {
 
     publish(this, env, 'airlock-url', stage.url);
 
-    // ── Drain worker(s) (sa#155, two-consumer split sa#166) ───────────────────────────────────────
+    // ── Drain worker(s) (two-consumer split) ──────────────────────────────────────────────────────
     // The worker-side half of the airlock (channels/DRAIN.md §"Reference binding"): drains an
     // accepted queue, builds an ephemeral in-process BrokerRuntime per message, ingests the
     // envelope's provenance chain into the broker-held turn, then hands the envelope to the
@@ -639,7 +639,7 @@ export class ChannelsStack extends Stack {
       }),
     );
 
-    // S3 audit bucket: append + chain-resume, the brokerRole's exact posture (sa#132) — GetObject
+    // S3 audit bucket: append + chain-resume, the brokerRole's exact posture — GetObject
     // and ListBucket exist ONLY so the audit sink can re-hash the last record; no DeleteObject.
     drainRole.addToPolicy(
       new PolicyStatement({
@@ -663,7 +663,7 @@ export class ChannelsStack extends Stack {
       }),
     );
 
-    // S3 ledger bucket: PutObject ONLY, the brokerRole's exact posture (sa#131) — the drain
+    // S3 ledger bucket: PutObject ONLY, the brokerRole's exact posture — the drain
     // runtime wires the same connectors the broker does (the worked-example receiver's action is
     // ledger.append), and the append-only invariant is IAM-enforced: no Delete*, no Get, no List.
     drainRole.addToPolicy(
@@ -785,7 +785,7 @@ export class ChannelsStack extends Stack {
 }
 
 /**
- * Substrate shared by every drain consumer (sa#166): identical across drains — the isolation
+ * Substrate shared by every drain consumer: identical across drains — the isolation
  * between consumers is the queue passed to `addDrain` plus each call's own `auditPrefix`, not any
  * of these fields.
  */

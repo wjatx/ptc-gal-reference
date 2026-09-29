@@ -1,4 +1,4 @@
-"""Tests for the MCP tool-registry schemas (#174).
+"""Tests for the MCP tool-registry schemas.
 
 Coverage:
   1. compute_tool_def_hash determinism + sensitivity — every one of the four
@@ -11,14 +11,14 @@ Coverage:
      free-text MCP tool refuses; a structured one passes; a non-MCP source is
      left untouched.
   5. RegisteredTool happy path + closed status enum.
-  6. McpServerDecl stdio spawn config (#221) — accessories require command,
+  6. McpServerDecl stdio spawn config — accessories require command,
      empty command refuses, namespace-only declaration is byte-for-byte
      back-compat.
-  7. AgentManifest spawn-wiring coherence (#221) — a spawnable server must be
+  7. AgentManifest spawn-wiring coherence — a spawnable server must be
      wired in `connectors`, may not collide with `connector_providers`, and
      `connector_auth.env_map` is legal only for a spawnable server with target
      env vars disjoint from the static spawn env.
-  8. McpServerDecl streamable-http remote config (#221 Phase 4, MCP-HOST.md
+  8. McpServerDecl streamable-http remote config (MCP-HOST.md
      M21) — url well-formedness, loopback-only plain-http, transport/config
      coherence (command and url mutually exclusive), and respawn legal with
      either command or url but not neither.
@@ -109,7 +109,7 @@ class TestToolDefHash:
     def test_golden_hash_legacy_equivalence_pin(self):
         """Hard-coded literal for the metadata-less baseline `_tool_def()`.
 
-        This is the SAME literal the pre-#223 four-field basis produced —
+        This is the SAME literal the original four-field basis produced —
         DELIBERATELY. The widened signed set excludes None fields from the
         canonical payload, so a definition advertising nothing beyond the four
         core fields hashes byte-identically to the legacy basis: the far-jump
@@ -119,7 +119,7 @@ class TestToolDefHash:
         the None-exclusion property changed — both are far-jumps that
         quarantine admitted rows, never side effects.
 
-        Re-derived independently for #223 (hand-built canonical JSON, not
+        Re-derived independently for the widened set (hand-built canonical JSON, not
         routed through compute_tool_def_hash) and confirmed unchanged.
         """
         assert (
@@ -128,10 +128,10 @@ class TestToolDefHash:
         )
 
     def test_golden_hash_widened_set_pin(self):
-        """Hard-coded literal for the fully-populated definition — the #223 pin.
+        """Hard-coded literal for the fully-populated definition — the widened-set pin.
 
         Every advertised field rides the signed set, so populating the six
-        metadata fields yields a DIFFERENT hash than the baseline (pre-#223
+        metadata fields yields a DIFFERENT hash than the baseline (before the widening
         they were display-only and this fixture hashed to the legacy literal).
         The literal was derived independently of compute_tool_def_hash: the
         canonical JSON (sorted keys, compact separators, ASCII) of all ten
@@ -162,7 +162,7 @@ class TestToolDefHash:
         ],
     )
     def test_each_metadata_field_changes_the_hash(self, field, value):
-        """#223: every advertised field is signed — appearing IS drift."""
+        """Every advertised field is signed — appearing IS drift."""
         assert compute_tool_def_hash(_tool_def(**{field: value})) != compute_tool_def_hash(
             _tool_def()
         )
@@ -170,14 +170,14 @@ class TestToolDefHash:
     def test_metadata_value_change_changes_the_hash(self):
         """The motivating case: an annotation flip (readOnlyHint ->
         destructiveHint) with everything else identical must break the hash —
-        pre-#223 this exact change was undetectable."""
+        before the widening this exact change was undetectable."""
         a = _tool_def(annotations={"readOnlyHint": True})
         b = _tool_def(annotations={"readOnlyHint": False, "destructiveHint": True})
         assert compute_tool_def_hash(a) != compute_tool_def_hash(b)
 
     def test_metadata_fields_default_to_none(self):
         """None (not {}/"") is the honest 'server advertised nothing' default —
-        and since #223 also the value that contributes nothing to the hash
+        and since the widening also the value that contributes nothing to the hash
         (None and absent are indistinguishable in the model, so the hash
         collapses them too; an empty container, by contrast, is an ADVERTISED
         value and hashes)."""
@@ -253,7 +253,7 @@ class TestTwoKeyCompleteness:
             )
 
     def test_empty_mcp_servers_is_back_compat(self):
-        """The default empty block imposes nothing (byte-for-byte pre-#174)."""
+        """The default empty block imposes nothing (byte-for-byte back-compat)."""
         manifest = AgentManifest.model_validate(
             {
                 "envelope": {"polarity": "abstain"},
@@ -315,7 +315,7 @@ class TestStructuredOnlyTrust:
 
 class TestRegisteredTool:
     def test_happy_path(self):
-        # #246 re-shape A: the row NESTS the ratified definition; the flat
+        # Stored-bytes re-shape: the row NESTS the ratified definition; the flat
         # field mirror and the in-payload hash slot are gone (the integrity
         # slot is the item-level rowHash, outside the model).
         tool_def = _tool_def()
@@ -345,7 +345,7 @@ class TestRegisteredTool:
             )
 
     def test_pre_246_flat_row_does_not_parse(self):
-        # A pre-#246 flat row (definition fields at top level) is REFUSED by
+        # A legacy flat row (definition fields at top level) is REFUSED by
         # this model — the migration is the dev-floor re-vet, never a
         # dual-shape compat parse.
         with pytest.raises(ValueError):
@@ -364,7 +364,7 @@ class TestRegisteredTool:
 
 
 # ---------------------------------------------------------------------------
-# 6. Stdio spawn config (#221)
+# 6. Stdio spawn config
 # ---------------------------------------------------------------------------
 
 
@@ -381,7 +381,7 @@ class TestSpawnConfig:
         assert decl.command == "weather-mcp-server"
 
     def test_namespace_only_declaration_is_back_compat(self):
-        """No spawn fields → the pre-#221 shape, nothing new required."""
+        """No spawn fields → the original shape, nothing new required."""
         decl = McpServerDecl(tools=[McpToolDecl(tool_name="forecast")])
         assert decl.command is None
         assert decl.args == [] and decl.env == {} and decl.cwd is None
@@ -408,7 +408,7 @@ class TestSpawnConfig:
 
 
 # ---------------------------------------------------------------------------
-# 7. Spawn-wiring coherence (#221)
+# 7. Spawn-wiring coherence
 # ---------------------------------------------------------------------------
 
 
@@ -450,7 +450,7 @@ class TestSpawnWiring:
             )
 
     def test_namespace_only_server_needs_no_connectors_entry(self):
-        """A declaration WITHOUT command imposes no wiring (pre-#221 back-compat)."""
+        """A declaration WITHOUT command imposes no wiring (back-compat)."""
         manifest = AgentManifest.model_validate(
             _spawnable_manifest(
                 connectors=[],
@@ -490,7 +490,7 @@ class TestSpawnWiring:
 
 
 # ---------------------------------------------------------------------------
-# 8. Streamable-http remote config (#221 Phase 4, MCP-HOST.md M21)
+# 8. Streamable-http remote config (MCP-HOST.md M21)
 # ---------------------------------------------------------------------------
 
 
@@ -537,7 +537,7 @@ class TestStreamableHttpConfig:
         assert decl.command is None
 
     def test_existing_stdio_and_namespace_only_declarations_still_valid(self):
-        """Adding streamable-http must not disturb the pre-#221 stdio/namespace shapes."""
+        """Adding streamable-http must not disturb the existing stdio/namespace shapes."""
         stdio = McpServerDecl(
             tools=[McpToolDecl(tool_name="forecast")],
             command="weather-mcp-server",
@@ -638,7 +638,7 @@ class TestStreamableHttpConfig:
             McpServerDecl(tools=[McpToolDecl(tool_name="forecast")], **kwargs)
 
     def test_respawn_on_namespace_only_declaration_refuses(self):
-        """Existing behavior (pre-#221 Phase 4), kept covered under the split validator."""
+        """Existing behavior (before streamable-http), kept covered under the split validator."""
         with pytest.raises(ValueError, match="without 'command' or 'url'"):
             McpServerDecl(
                 tools=[McpToolDecl(tool_name="forecast")],

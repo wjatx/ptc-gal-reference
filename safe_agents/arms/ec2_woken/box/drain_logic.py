@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-drain_logic.py — pure, testable helpers for the ec2-woken box drain loop (sa#98).
+drain_logic.py — pure, testable helpers for the ec2-woken box drain loop.
 
 The drain loop (drain.sh) is deliberately thin bash; every decision that benefits from being
 deterministic and unit-testable lives here as a pure function, mirroring how the airlock's

@@ -42,7 +42,7 @@ spec:
             - { name: BROKER_CEREMONY_IDENTITY, value: serviceaccount }
             - { name: BROKER_STORE, value: sqlite }
             - { name: BROKER_SQLITE_PATH, value: /var/lib/broker/broker.db }
-            # The #203 write split. This pod mounts the grant store READ-ONLY,
+            # The maker/checker write split. This pod mounts the grant store READ-ONLY,
             # so the refusal on a GRANT#/TOOLDEF# write is the kernel's, not a
             # check of ours. The flag below only tells the store to OPEN it
             # read-only — it grants nothing when cleared, because clearing it on
@@ -52,7 +52,7 @@ spec:
             - { name: BROKER_MANIFEST, value: /app/examples/restricted_mcp_server/manifest.yaml }
             - { name: BROKER_SECRETS, value: dir }
             - { name: BROKER_SECRETS_DIR, value: /run/connector-secrets }
-            # Deliberately NO BROKER_AUDIT_PATH (#310). All four legs used to set
+            # Deliberately NO BROKER_AUDIT_PATH. All four legs used to set
             # it; three of them never construct an audit sink at all — only
             # `broker_server.build_runtime` does, and the ceremony commands
             # (`grants.commands`, `mcp.commands`) do not call it. Leaving the
@@ -69,7 +69,7 @@ spec:
             # for records nothing writes.
             - { name: BROKER_GRANT_LOAD, value: read }
             # Deliberately NO ISSUER_SIGNING_KEY_* of any kind: this pod cannot
-            # sign, and half-configured signing REFUSES anyway (#201).
+            # sign, and half-configured signing REFUSES anyway.
             - name: BROKER_HMAC_KEY
               valueFrom:
                 secretKeyRef: { name: safe-agents-hmac, key: hmac-key }
@@ -82,12 +82,12 @@ spec:
             # with grants.
             #
             # This used to claim "this pod writes audit.jsonl". It does not, and has
-            # not since #310: the tape lives on its own subPath, this leg mounts it
+            # not since the audit-tape partition: the tape lives on its own subPath, this leg mounts it
             # read-only, and the ceremony legs no longer set BROKER_AUDIT_PATH at all.
             # Corrected 2026-07-29.
             - { name: store, mountPath: /var/lib/broker, subPath: work }
             - { name: store, mountPath: /var/lib/broker-grants, subPath: grants, readOnly: true }
-            # The #310 split — read-only here. Nothing in this leg reads or
+            # The audit-tape partition — read-only here. Nothing in this leg reads or
             # writes it; it is mounted so the tamper leg's claim is about the
             # SAME topology every ceremony pod runs under, rather than a
             # special-cased pod built to be refused.

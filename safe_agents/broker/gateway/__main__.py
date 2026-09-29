@@ -10,7 +10,7 @@ Configuration comes from the environment exactly as the HTTP mouth's does — th
 manifest from `BROKER_MANIFEST`, the backends from `BROKER_STORE` / `BROKER_SECRETS`
 / the audit variables — so the gateway introduces no second config surface. On a
 durable store arm an unnamed manifest REFUSES rather than falling back to the
-checked-in example (`boot_config.resolve_manifest_path`, #197/#199): a defaulted
+checked-in example (`boot_config.resolve_manifest_path`): a defaulted
 manifest silently substitutes another agent's principal, grants and envelope, and
 `docs/config-provenance.md` is why that must fail loudly.
 

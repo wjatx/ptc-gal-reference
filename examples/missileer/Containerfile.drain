@@ -19,7 +19,7 @@
 ARG DRAIN_BASE_IMAGE
 FROM ${DRAIN_BASE_IMAGE}
 
-# The consumer package: the manifest, the Receiver, and the sa#141 connector it
+# The consumer package: the manifest, the Receiver, and the injected connector it
 # references. Preserved at examples/missileer/ so both the receiver dotted path
 # and the manifest's connector_providers path resolve at /var/task (on sys.path).
 COPY examples/missileer ./examples/missileer

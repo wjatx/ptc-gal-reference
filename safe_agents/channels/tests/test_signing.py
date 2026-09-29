@@ -460,7 +460,7 @@ def test_sig_pass_evidence_recorded(signer_and_resolver):
 
 
 # ---------------------------------------------------------------------------
-# sa#161 Phase A1 — evidence-of-check: verify_chain populates signer identity
+# Evidence-of-check: verify_chain populates signer identity
 # ---------------------------------------------------------------------------
 
 

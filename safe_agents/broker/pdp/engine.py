@@ -23,7 +23,7 @@ Rule table — evaluated in priority order, first match wins:
   14. supervised_write_allow       — on-loop / out-of-loop write: allow (guards above passed)
   (fallback)                      — default-deny: write with no permitting rule matched
 
-Reads (sa#137): the former blanket ``read_allow_by_scope`` (old rule 2) is gone. A
+Reads: the former blanket ``read_allow_by_scope`` (old rule 2) is gone. A
 read now flows through the query-exfil deny, the in-loop rung-gate (routed through the
 single polarity seam ``_approval_or_deny``), and the SHARED capacity budget before
 ``read_allow`` grants it — so a read is rung-gated, capped, and egress-bounded, not
@@ -66,7 +66,7 @@ def _intent_id(call: BrokeredCall) -> str:
 
     "Same call" means the same BrokeredCall, ``ts`` included, and nothing relies on
     more than that. A retried call is never the same call: enforce() releases the
-    idempotency claim on a hold (#148), so the retry is re-materialized with a fresh
+    idempotency claim on a hold, so the retry is re-materialized with a fresh
     ``ts`` and held under a fresh id. Collapsing identical holds onto one id is the
     approval-queue dedup knob's job (``dedup_intent_id``), not this function's.
 
@@ -112,7 +112,7 @@ def _approval(call: BrokeredCall, reason: str) -> RequireApproval:
     return RequireApproval(
         kind="require_approval",
         # Carried as a FIELD as well as inside the render, so the audit tape can
-        # state why a call was held without a reader parsing prose (#300).
+        # state why a call was held without a reader parsing prose.
         reason=reason,
         renderedIntent=RenderedIntent(
             id=_intent_id(call),
@@ -130,7 +130,7 @@ def _approval_or_deny(call: BrokeredCall, facts: Facts, reason: str) -> Decision
 
     THE single polarity seam. Every rule that must fall back when it cannot act
     autonomously (in-loop write, tainted/irreversible external write, and the
-    sa#137 in-loop external read rung-gate) routes through HERE — no caller may
+    in-loop external read rung-gate) routes through HERE — no caller may
     bake its own require_approval-vs-deny fallback. The polarity-design workstream
     will make this dispatch on ``Envelope.polarity`` (abstain-is-safe vs
     positive-safe-action) at this one point; keeping the fallback centralized is
@@ -171,9 +171,9 @@ RULES: list[Rule] = [
     ),
     # 2. Error budget breached, escalation channel still available.
     #    Surface to a human rather than silently proceeding or denying.
-    #    Write-scoped (sa#137): the error budget is Σ(error_prob × blast_radius); a read
+    #    Write-scoped: the error budget is Σ(error_prob × blast_radius); a read
     #    carries no blast radius, so it does not draw the error budget (test_pdp B4). Before
-    #    sa#137 rule 2 (read_allow_by_scope) short-circuited every read above this rule, so
+    #    read-gating, rule 2 (read_allow_by_scope) short-circuited every read above this rule, so
     #    error-budget was write-only in PRACTICE; deleting that short-circuit means reads
     #    would otherwise fall into these rules, so the effect guard makes that write-scoping
     #    explicit and preserves the read behavior exactly. Write OUTCOMES are unchanged
@@ -204,8 +204,8 @@ RULES: list[Rule] = [
             kind="deny", reason="error budget breached; escalation budget exhausted"
         ),
     ),
-    # 4-5. Constructed confidence below the configured bar (#184). Write-scoped: the
-    #    bar gates ACTS, never reads — a read gates at its rung (sa#137) and carries
+    # 4-5. Constructed confidence below the configured bar. Write-scoped: the
+    #    bar gates ACTS, never reads — a read gates at its rung and carries
     #    no blast radius, so it is not routed here (the effect=="write" guard mirrors
     #    rules 2/3). This pair mirrors the error-budget pair exactly: below-bar is the
     #    PER-CALL gate (does THIS action clear the bar), the error budget is the
@@ -214,7 +214,7 @@ RULES: list[Rule] = [
     #    an abstain-is-safe polarity; the polarity-design workstream will centralize
     #    that dispatch at the _approval_or_deny seam (see its docstring). The base ships
     #    the WIRING here, never the polarity — baking a below-bar polarity default in
-    #    is the latent safety bug CLAUDE.md forbids (#184).
+    #    is the latent safety bug CLAUDE.md forbids.
     Rule(
         name="confidence_below_bar_escalate",
         predicate=lambda c, f: (
@@ -240,7 +240,7 @@ RULES: list[Rule] = [
             reason="constructed confidence below bar; escalation budget exhausted",
         ),
     ),
-    # 6. Read: query-egress bound exceeded (sa#137). The agent-composed query string
+    # 6. Read: query-egress bound exceeded. The agent-composed query string
     #    egresses to the search provider — a covert exfil channel. Deny before the read
     #    executes when it breaches either the per-call byte cap (max_query_bytes) or the
     #    per-period cumulative budget (query_egress_budget). Ordered before the rung-gate
@@ -253,7 +253,7 @@ RULES: list[Rule] = [
         ),
         action=lambda c, f: Deny(kind="deny", reason="query egress bound exceeded"),
     ),
-    # 7. Read: in-loop external read rung-gate (sa#137). An in-loop grant means every
+    # 7. Read: in-loop external read rung-gate. An in-loop grant means every
     #    action needs a human; that must bind reads too, not only writes — an external
     #    read pulls untrusted content across a trust boundary. A read whose source is in
     #    the consumer's trusted_read_sources set (read_source_trusted) or held at on/
@@ -269,7 +269,7 @@ RULES: list[Rule] = [
         ),
         action=lambda c, f: _approval_or_deny(c, f, "in-loop external read requires approval"),
     ),
-    # 8. Capacity / rate budget breached. Reads now draw this cap too (sa#137): the
+    # 8. Capacity / rate budget breached. Reads now draw this cap too: the
     #    former read_allow_by_scope short-circuited before this rule, leaving reads
     #    uncapped — deleting it routes reads through here.
     Rule(

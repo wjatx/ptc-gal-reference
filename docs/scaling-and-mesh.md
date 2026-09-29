@@ -15,7 +15,7 @@ is what makes people say "a full stack per agent" (an overstatement):
 | Class | Examples | Cost of one more agent |
 |---|---|---|
 | **Shared mechanism** | broker/airlock/drain *code*, the seven schemas, KMS keys, network, the audit + ledger *buckets* | zero |
-| **Config + isolation namespaces** | principal identity, Envelope (polarity/caps/allowlists), AgentManifest (grants/connectors), connector-credential leaves, the audit/ledger *prefix*, the grants/counters/intents *rows* (already principal-scoped — the sa#146 scoped counters key on principal) | a row and a namespace |
+| **Config + isolation namespaces** | principal identity, Envelope (polarity/caps/allowlists), AgentManifest (grants/connectors), connector-credential leaves, the audit/ledger *prefix*, the grants/counters/intents *rows* (already principal-scoped — the scoped counters key on principal) | a row and a namespace |
 | **Per-agent runtime AWS resources** | the inbound **queue** + the **drain** Lambda | one queue + one Lambda + one prefix |
 
 The honest one-liner is therefore **shared substrate + per-agent config + a small fixed set of
@@ -30,7 +30,7 @@ The drain is **single-principal by construction** (channels/DRAIN.md D5): it bui
 sink *resumes a tamper-evident hash chain* under one prefix — two runtimes resuming one prefix fork
 the chain. Those two facts together mean two listening agents need **separate queues** (a second ESM
 on one queue would let the drains compete, each terminal-dropping the other's principal) and
-**separate audit prefixes**. That is exactly why standing up a second listening consumer (sa#166)
+**separate audit prefixes**. That is exactly why standing up a second listening consumer
 adds a queue + a drain rather than a second event-source mapping.
 
 ## The topology choice: isolated drains vs. a multiplexed drain
@@ -45,7 +45,7 @@ Per-agent drains are one topology, not a law. Because the agent is config, the b
   in-Lambda discipline rather than an AWS boundary).
 
 Which one you pick is a per-deployment risk call — strong isolation vs. resource count — and it is
-the deferred sa#82 "routing" territory. Nothing in the base forecloses either.
+the deferred "routing" territory. Nothing in the base forecloses either.
 
 ## The A2A mesh: the edge is free, the mesh is not
 
@@ -76,17 +76,17 @@ already flags. Named so "mesh for free" stays honestly scoped:
 - **Multi-hop provenance authenticity (the biggest gap).** A→B→C: the airlock authenticates the
   *immediate* sender (shared-secret token → `sender_class`). The chain records that the signal
   passed through B, but C cannot cryptographically verify the *origin* was A and not something B
-  minted. Taint rides the chain; taint ≠ authenticated origin. This is the substrate under sa#161.
+  minted. Taint rides the chain; taint ≠ authenticated origin. This is the substrate under the deferred campaign watchdog.
 - **N×N trust-map governance.** Each listener curates its own allowlist — no mesh-level curator.
   Who approves a new edge at 50 agents is an operational surface, not a mechanism gap.
 - **Cycles / cascade amplification.** A mesh can loop; one injection can fan out across edges. The
-  availability epic de-amplifies an approval-queue *flood at one node* (sa#159/160); a *campaign
-  across nodes* watchdog is the deferred sa#161.
-- **Discovery / routing.** How B addresses C is static config today (sa#82).
+  availability epic de-amplifies an approval-queue *flood at one node*; a *campaign
+  across nodes* watchdog is deferred.
+- **Discovery / routing.** How B addresses C is static config today.
 
 **Recommendation.** Do not build a mesh *subsystem* now. At the current agent count it is YAGNI, and
 mesh machinery ahead of a real second consumer would violate the repo's own floor-first doctrine
 (`docs/friction-doctrine.md`). Keep taking the free bilateral edge; treat the four items above as the
-known backlog (two already have issues — sa#82, sa#161 — and multi-hop provenance authenticity is
-the substrate to state explicitly under sa#161) so we do not sleepwalk past the multi-hop-authenticity
+known backlog (two are already deferred work — routing, the campaign watchdog — and multi-hop provenance authenticity is
+the substrate to state explicitly under the watchdog) so we do not sleepwalk past the multi-hop-authenticity
 cliff.

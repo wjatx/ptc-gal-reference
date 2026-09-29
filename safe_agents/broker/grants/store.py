@@ -7,8 +7,8 @@ co-located in the grants table as RECORD# items (SCHEMAS.md §7).
 Design notes:
 - The client does NOT manage IAM role assumption. Callers supply the boto3
   Session carrying the appropriate role (promotion role, demotion role, etc.).
-  Which role is appropriate is the ceremony's job (#58), not ours.
-- STORED-BYTES integrity basis (#246, the mcp/proposals.py idiom): the grant is
+  Which role is appropriate is the ceremony's job, not ours.
+- STORED-BYTES integrity basis (the mcp/proposals.py idiom): the grant is
   serialized ONCE (canonical_grant_payload), that exact string is stored as the
   item's data AND HMAC'd into the item-level grantHash attribute — the hash
   lives at item level ONLY, never inside the payload. On read the stored bytes
@@ -22,7 +22,7 @@ Design notes:
   tampered bytes are evidence, not a Grant, and are NEVER parsed or served as
   authoritative. Callers must check quarantined BEFORE not-found.
 - Table name for DynamoDB is read from GRANTS_TABLE_NAME env var, ImportValue'd
-  from the infra stack (sa#11). Never hardcoded.
+  from the infra stack. Never hardcoded.
 """
 
 from __future__ import annotations
@@ -143,7 +143,7 @@ def validate_record_ts(ts: str) -> None:
 def canonical_grant_payload(grant: Grant) -> str:
     """The ONE serialization of a grant — what gets stored AND what gets HMAC'd.
 
-    Storage and the integrity basis must be the same bytes (#246, the
+    Storage and the integrity basis must be the same bytes (the
     mcp/proposals.py idiom). When they diverge, verification has to
     re-serialize the parsed model, which silently re-derives the basis from
     whatever the model class looks like *today* — so any additive schema
@@ -168,9 +168,9 @@ def canonical_grant_payload(grant: Grant) -> str:
     ``channels.signing`` already used; all three now agree.
     """
     payload = grant.model_dump(mode="json")
-    # certifiedUntil (#255) is OMITTED when None, so a grant with no term
+    # certifiedUntil is OMITTED when None, so a grant with no term
     # serializes to exactly the bytes it did before the field existed: every
-    # canonical payload a pre-#255 writer produced is reproduced byte for byte
+    # canonical payload a pre-term writer produced is reproduced byte for byte
     # by this one (pinned in test_grant_term_lapse.py). The stored-bytes basis
     # already verifies old rows verbatim; this keeps a RE-serialization of an
     # unchanged no-term grant identical too, so nothing that compares
@@ -294,7 +294,7 @@ def _read_result_from_item(
 
 
 def _require_prev_raw_data(prev_raw_data: str | None) -> None:
-    """update_grant's prev_raw_data is required since #246 (no legacy fallback)."""
+    """update_grant's prev_raw_data is required (the legacy fallback is retired)."""
     if prev_raw_data is None:
         raise ValueError(
             "update_grant requires prev_raw_data (the stored bytes from the "
@@ -348,7 +348,7 @@ class GrantStore(Protocol):
         data bytes equal prev_raw_data (both from the caller's guarded re-read,
         GrantReadResult.stored_hash / .raw_data). prev_raw_data is REQUIRED —
         supplying None is a ValueError, failing toward writing nothing (the
-        pre-#246 legacy-item fallback is retired; every item carries grantHash
+        legacy-item fallback is retired; every item carries grantHash
         after the re-shape B re-seed).
 
         The attribute_exists(pk) ConditionExpression is what makes this
@@ -371,7 +371,7 @@ class GrantStore(Protocol):
         signature: dict | None = None,
         expected: GrantReadResult | None = None,
     ) -> None:
-        """Append the ledger record AND write the grant as ONE atomic unit (#244).
+        """Append the ledger record AND write the grant as ONE atomic unit.
 
         The grants mirror of the MCP registry's ``admit_tool_with_record``:
         either BOTH legs commit or NOTHING is written, closing the
@@ -494,7 +494,7 @@ class InMemoryGrantStore:
         signature: dict | None = None,
         expected: GrantReadResult | None = None,
     ) -> None:
-        """Atomic record+grant write (#244) — check BOTH legs, then commit both.
+        """Atomic record+grant write — check BOTH legs, then commit both.
 
         Mirrors MemoryToolRegistry.admit_tool_with_record: every condition is
         validated without mutation first, so a failing leg cancels the whole
@@ -533,14 +533,14 @@ class InMemoryGrantStore:
 class DynamoDBGrantStore:
     """DynamoDB-backed grant store.
 
-    Table name: read from GRANTS_TABLE_NAME env var (ImportValue from infra/sa#11).
+    Table name: read from GRANTS_TABLE_NAME env var (ImportValue from the infra/ stacks).
     Callers supply a boto3 Session for writes — this client never assumes roles.
 
     Item layout:
         pk  = "GRANT#<agentId>#<skill>#<user>#<tier>"
         sk  = "CLASS#<actionClass>"
         data = the canonical grant payload (canonical_grant_payload) — the
-            stored bytes ARE the integrity basis (#246)
+            stored bytes ARE the integrity basis
         grantHash = HMAC over the data bytes, at item level ONLY (the hash is
             not inside the payload); the sole integrity slot.
     """
@@ -584,7 +584,7 @@ class DynamoDBGrantStore:
     def _build_item(self, grant: Grant) -> dict:
         """The stored item shape shared by put_grant and create_grant.
 
-        Serialize once; the stored data string IS the HMAC basis (#246).
+        Serialize once; the stored data string IS the HMAC basis.
         """
         payload = canonical_grant_payload(grant)
         return {
@@ -633,7 +633,7 @@ class DynamoDBGrantStore:
         of the data payload alone (hash attribute untouched) landing between a
         guarded re-read and this write would pass a hash-only condition and be
         silently overwritten, destroying the tamper evidence. prev_raw_data is
-        REQUIRED — the pre-#246 legacy-item fallback (items written before
+        REQUIRED — the legacy-item fallback (items written before
         grantHash existed) is retired; every item carries grantHash after the
         re-shape B re-seed.
 
@@ -715,12 +715,12 @@ class DynamoDBGrantStore:
         signature: dict | None = None,
         expected: GrantReadResult | None = None,
     ) -> None:
-        """Atomic record+grant write (#244): ONE Update-only TransactWriteItems.
+        """Atomic record+grant write: ONE Update-only TransactWriteItems.
 
         Both legs' expressions come from the SAME builders the single-item
         writes use, so this path cannot drift from put_record/create_grant/
         update_grant semantics. Update-only means the ceremony and demotion
-        identities need only dynamodb:UpdateItem (the #244 feasibility claim,
+        identities need only dynamodb:UpdateItem (the atomic record+grant feasibility claim,
         exercised live by the MCP twin 2026-07-24).
         """
         from botocore.exceptions import ClientError  # lazy, like boto3
@@ -864,10 +864,10 @@ class DynamoDBPromotionRecordStore:
         """UpdateExpression/names/values (plain) for the append-only record leg.
 
         Shared by put_record and DynamoDBGrantStore.write_record_and_grant so
-        the transact path cannot drift from single-write semantics (#244).
+        the transact path cannot drift from single-write semantics.
         The stored data is the CANONICAL record payload — the same bytes the
         DSSE signature binds, so verification digests the stored string
-        verbatim (#246 re-shape C).
+        verbatim (stored-bytes re-shape C).
         """
         from safe_agents.broker.grants.record_signing import canonical_record_payload
 

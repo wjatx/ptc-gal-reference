@@ -1,4 +1,4 @@
-"""Tests for the out-of-band approval seam — BrokerRuntime.approve_intent / reject_intent (sa#176).
+"""Tests for the out-of-band approval seam — BrokerRuntime.approve_intent / reject_intent.
 
 These are the FIRST production callers of the broker's approve()/reject() engine: the
 "full release path" the channels drain worker invokes when an authenticated owner
@@ -209,7 +209,7 @@ class TestApproveIntent:
 
 
 # ---------------------------------------------------------------------------
-# Intent-row tamper refusal (#349) — a store rewrite between hold and release
+# Intent-row tamper refusal — a store rewrite between hold and release
 # ---------------------------------------------------------------------------
 
 
@@ -217,7 +217,7 @@ def _tamper_frozen_call(intent_store: InMemoryIntentStore, intent_id: str, args:
     """Rewrite the frozen call inside the STORED bytes, as an A4 store-write
     attacker would: args replaced, the payload re-serialized in the exact
     canonical form the store uses. Every unkeyed field is recomputed
-    consistently — which is why an unkeyed stored digest (#349 option 2) would
+    consistently — which is why an unkeyed stored digest would
     not refuse this row; only the broker-held HMAC key does."""
     item = intent_store._items[intent_id]
     payload = json.loads(item["data"])
@@ -228,7 +228,7 @@ def _tamper_frozen_call(intent_store: InMemoryIntentStore, intent_id: str, args:
 
 
 class TestIntentTamperQuarantine:
-    """#349 — the release path verify-then-parses the stored intent bytes.
+    """The release path verify-then-parses the stored intent bytes.
 
     Before this fix approve_intent executed the stored materializedRequest with
     no row-integrity check: a rewrite between hold and release EXECUTED, with
@@ -239,7 +239,7 @@ class TestIntentTamperQuarantine:
     EVIL_ARGS = {"amount": 999999, "to": "acct-attacker"}
 
     def test_approve_refuses_tampered_intent_without_executing(self, caplog):
-        """The core #349 claim: tampered stored bytes → the release REFUSES,
+        """The core claim: tampered stored bytes → the release REFUSES,
         the Doer never runs, and the surfacing names the integrity mechanism."""
         runtime, sink, stubs, intent_store = _payments_runtime()
         intent_id = _materialize_held_intent(runtime, intent_store)
@@ -256,7 +256,7 @@ class TestIntentTamperQuarantine:
         # Never auto-repaired, never transitioned: the evidence stays in place.
         assert intent_store._items[intent_id]["status"] == "pending"
         # Loud + recorded: one tamper-evident audit record naming the mechanism
-        # (mirroring the sa#124 grant-quarantine surfacing), one ERROR log.
+        # (mirroring the loud grant-quarantine surfacing), one ERROR log.
         quarantine_records = [
             r for r in sink.records() if r.reason and "intent quarantined" in r.reason
         ]
@@ -359,7 +359,7 @@ class TestRejectIntent:
 
 
 # ---------------------------------------------------------------------------
-# The cross-principal confused-deputy guard (sa#176 M1)
+# The cross-principal confused-deputy guard
 # ---------------------------------------------------------------------------
 
 
@@ -397,7 +397,7 @@ def _put_foreign_intent(store: InMemoryIntentStore, intent_id: str, agent_id: st
 
 
 class TestReceipts:
-    """#198 — durable approval binding + effect receipts on the audit chain.
+    """Durable approval binding + effect receipts on the audit chain.
 
     The core claim: intentId joins a hold to its release across the intent TTL, and
     hold-side == release-side storedCallDigest makes executed==approved byte-provable
@@ -417,7 +417,7 @@ class TestReceipts:
         assert hold.resultDigest is None  # nothing executed yet
 
     def test_release_record_binds_to_hold(self):
-        """The #198 core assertion: release.storedCallDigest == hold.storedCallDigest,
+        """The core assertion: release.storedCallDigest == hold.storedCallDigest,
         plus approvedBy (the latent gap-A sub-bug: never stamped on this path before)
         and the effect receipt over the connector's actual result."""
         runtime, sink, _, intent_store = _payments_runtime()
@@ -525,7 +525,7 @@ class _FlagRaisingStore:
 
 
 class TestFlagIntent:
-    """#193 Phase 6c — flag_intent, the first writer of the false_action counter."""
+    """flag_intent, the first writer of the false_action counter."""
 
     def test_flags_executed_intent(self):
         """A clean flag on an executed intent returns FLAGGED_BY_OWNER_REASON, no execution."""
@@ -544,7 +544,7 @@ class TestFlagIntent:
     def test_flag_meters_on_execution_day_across_midnight(self):
         """The false_action counter lands on the op's EXECUTION UTC day (executedAt), not
         the HOLD day — a hold that spans UTC-midnight otherwise back-dates the flag one day
-        off the observation it offsets (#193 finding 4)."""
+        off the observation it offsets."""
         grants = [_make_grant("payments.transfer", level=AutonomyLevel.on_loop)]
         connectors = {"payments": StubConnector(result={"tx_id": "tx-released"})}
         intent_store = InMemoryIntentStore()
@@ -606,7 +606,7 @@ class TestFlagIntent:
 
     def test_clean_flag_emits_pii_safe_attribution_log(self, caplog):
         """flag_intent does not persist flagged_by, so it emits a PII-safe structured log
-        (digested identity + day) for attribution (#193 finding 7)."""
+        (digested identity + day) for attribution."""
         import json as _json
 
         runtime, _, _, intent_store = _payments_runtime()
@@ -631,13 +631,13 @@ class TestFlagIntent:
 
     def test_utc_bucket_of_treats_naive_timestamp_as_utc(self):
         """A tz-naive timestamp is UTC, not broker-local: near midnight `.astimezone`
-        on a naive datetime would shift the bucket (#193 finding 6)."""
+        on a naive datetime would shift the bucket."""
         # 00:10 UTC belongs to the 14th; a naive value must not be read as local.
         assert _utc_bucket_of("2026-07-14T00:10:00") == "20260714"
         # tz-aware still respected.
         assert _utc_bucket_of("2026-07-14T00:10:00+00:00") == "20260714"
         assert _utc_bucket_of("2026-07-13T23:50:00Z") == "20260713"
-        # #212 — the hour period buckets the same instants at hour granularity.
+        # The utc-hour counter period buckets the same instants at hour granularity.
         assert _utc_bucket_of("2026-07-14T00:10:00", "utc-hour") == "20260714T00"
         assert _utc_bucket_of("2026-07-13T23:50:00Z", "utc-hour") == "20260713T23"
 

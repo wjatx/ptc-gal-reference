@@ -1,11 +1,11 @@
 # arms/rhel_openshell/ami — prebuilt RHEL 9 base-AMI bakery
 
-This directory owns the **prebuilt-AMI bootstrap model** (sa#109) for the `rhel-openshell`
+This directory owns the **prebuilt-AMI bootstrap model** for the `rhel-openshell`
 arm. It mirrors the EC2 arm's bakery (`arms/ec2/ami`), adapted for RHEL 9 x86_64.
 
 ## Why prebuilt AMI instead of boot-time internet install
 
-The RHEL two-box arm places the box in the **isolated agent subnet** (sa#35) — no NAT, no
+The RHEL two-box arm places the box in the **isolated agent subnet** — no NAT, no
 internet route; only the S3 gateway endpoint and the broker/AWS interface endpoints are
 reachable. But RHEL's `user-data.sh.tmpl` + `bootstrap.sh` install their toolchain at boot
 over the internet (SSM agent, AWS CLI, `dnf` core tools, Node.js, and `claude` via **npm** —
@@ -62,7 +62,7 @@ Every baked AMI carries these tags (set by `dist-config.json`):
 
 `rhel_openshell_provision` selects the **newest self-owned AMI** tagged
 `safe-agents:ami=base-rhel` (via `_resolve_base_ami`). When no bake exists it falls back to the
-RHEL 9 marketplace AMI (Red Hat owner `309956199498` + name filter) — the pre-sa#109 behavior,
+RHEL 9 marketplace AMI (Red Hat owner `309956199498` + name filter) — the behavior before the prebuilt AMI,
 which only completes bootstrap in a subnet with egress.
 
 ## Baking the base AMI

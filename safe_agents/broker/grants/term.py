@@ -1,4 +1,4 @@
-"""grants.term — the certification term, judged against an explicit instant (#255).
+"""grants.term — the certification term, judged against an explicit instant.
 
 GAL §6.7.6: a grant MAY carry a term (``Grant.certifiedUntil``). Once the term
 has passed, the level it certified is no longer certified and the grant lapses

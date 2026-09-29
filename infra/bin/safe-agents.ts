@@ -45,13 +45,13 @@ const channels = new ChannelsStack(app, stackName(environment, 'Channels'), { en
 // its role policies to State's exported ARNs. Network and State are independent (parallelizable).
 identity.addDependency(state);
 
-// ComputeStack (sa#36 Fargate arm) imports from all three foundation layers: Network (VPC/subnets/
+// ComputeStack (the Fargate arm) imports from all three foundation layers: Network (VPC/subnets/
 // SGs), State (tables/audit bucket), Identity (brokerRole). It deploys last.
 compute.addDependency(network);
 compute.addDependency(state);
 compute.addDependency(identity);
 
-// ChannelsStack (sa#152 airlock) imports only State (dedupe table, audit bucket + CMKs) — it owns
+// ChannelsStack (the channels airlock) imports only State (dedupe table, audit bucket + CMKs) — it owns
 // its own execution role and runs outside the VPC, so it touches neither Network nor Identity.
 channels.addDependency(state);
 

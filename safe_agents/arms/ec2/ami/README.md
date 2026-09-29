@@ -1,6 +1,6 @@
 # arms/ec2/ami — base AMI bakery + S3 agent-code delivery
 
-This directory owns the **prebuilt-AMI bootstrap model** (sa#84) for the always-on EC2 arm.
+This directory owns the **prebuilt-AMI bootstrap model** for the always-on EC2 arm.
 
 ## Why prebuilt AMI instead of cloud-init internet bootstrap
 
@@ -188,7 +188,7 @@ Minimal inline policy:
 The pipeline itself needs `imagebuilder:*` plus the EC2 permissions to launch, stop, and snapshot
 the build instance. Use the AWS managed policy `AWSImageBuilderFullAccess` or a scoped equivalent.
 The infra CDK stack (`infra/`) will own these roles when the Image Builder resources are integrated
-there (tracked in sa#84).
+there.
 
 ## HARNESS-COUPLING note
 

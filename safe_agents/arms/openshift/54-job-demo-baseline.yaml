@@ -1,4 +1,4 @@
-# The unbrokered baseline (#154) — the control for every refusal in this arm.
+# The unbrokered baseline — the control for every refusal in this arm.
 #
 # Runs under the AGENT ServiceAccount with the agent's pod label, so it is bound by
 # the same SCC and the same default-deny egress policy as the workload whose

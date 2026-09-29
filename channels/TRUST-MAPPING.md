@@ -1,10 +1,10 @@
-# TRUST-MAPPING — the inbound trust-mapping framework (sa#81)
+# TRUST-MAPPING — the inbound trust-mapping framework
 
 > **Status: contract (2026-07-08).** Contract-tier per `docs/contract-vs-reference.md`: this
 > document is the normative words, `safe_agents/channels/trust_map.py` is the typed encoding, and
 > `safe_agents/channels/tests/test_trust_map.py` is the conformance suite. It consumes the
-> EventTrigger envelope (`channels/SCHEMAS.md`, sa#74) and is consumed by the airlock gate ordering
-> (`channels/ADAPTERS.md`, sa#80). Where the map's *values* live (YAML in a consumer repo, a config
+> EventTrigger envelope (`channels/SCHEMAS.md`) and is consumed by the airlock gate ordering
+> (`channels/ADAPTERS.md`). Where the map's *values* live (YAML in a consumer repo, a config
 > store) is reference-tier — the base defines only the shape and the lookup semantics.
 
 ## What trust-mapping is — and the axis it never touches
@@ -15,7 +15,7 @@ has addressed this agent — who is that, and what may the receiver *do* about i
 never by model judgment, never by content inspection.
 
 It deliberately does **not** answer "is the content safe?". Authenticity and content trust are
-orthogonal axes, and the driving use case (sa#8) exercises both at once: a consumer agent's airlock
+orthogonal axes, and the driving use case exercises both at once: a consumer agent's airlock
 can be *certain* the signal came from the email-agent (authenticity: verified) while the payload
 *remains* untrusted content that originated in an inbound email (taint: inherited from the
 provenance chain). Verified authenticity raises the action surface; it never cleans the payload.
@@ -113,7 +113,7 @@ interface ChannelTrustMap {
 }
 interface TrustMapEntry {
   channel_type: string             // matches EventTrigger.sender.channel_type
-  channel_identity: string         // the NORMALIZED transport identity (normalization is the adapter's job, #80)
+  channel_identity: string         // the NORMALIZED transport identity (normalization is the adapter's job)
   principal: string                // the principal this identity may address
   sender_class: "owner" | "peer-agent" | "external"
 }
@@ -123,7 +123,7 @@ interface TrustMapEntry {
 // ingest_chain(envelope, turn_context, receiver_map) — feeds every provenance source into the
 //   broker-held turn: a source counts as trusted only when its chain label is "trusted" AND the
 //   receiver's InputTrustMap trusts it (the label floor, consequence 2 — the canonical bridge the
-//   dispatcher uses; #74's C5 clause is satisfied through this seam)
+//   dispatcher uses; the EventTrigger C5 clause is satisfied through this seam)
 ```
 
 - **`resolve` is a deterministic, config-derived, exact-match lookup.** No wildcards, no regex, no
@@ -158,7 +158,7 @@ interface DropRecord {
 Only `unmapped` and `principal_mismatch` drops are emitted by this framework's gate; the other
 reasons belong to sibling gates in the fixed ordering (`channels/ADAPTERS.md` §"Gate ordering") —
 the record type is defined once, here. The optional `detail` field is `channels/SCREENING.md`'s
-addition (sa#43): a validator-enforced closed-vocabulary code so the drop log can say *why* a gate
+addition: a validator-enforced closed-vocabulary code so the drop log can say *why* a gate
 refused without ever carrying content-derived prose. A deduplicated replay is a silent no-op, not a drop: replays
 are expected transport behavior, and recording each one would let a replaying adversary flood the
 drop log.
@@ -168,7 +168,7 @@ drop log.
 | Clause | Test (`test_trust_map.py`) |
 |---|---|
 | resolve maps all three classes deterministically | `test_resolve_maps_each_sender_class` |
-| unmapped → `None`, no downstream call | `test_unmapped_identity_resolves_none` — the no-screen-call ordering assertion lands with the #80 dispatch suite |
+| unmapped → `None`, no downstream call | `test_unmapped_identity_resolves_none` — the no-screen-call ordering assertion lands with the dispatch suite |
 | map config validates; duplicate keys rejected | `test_trust_map_config_validates` · `test_duplicate_identity_keys_rejected` |
 | stamp appends exactly one receiver entry | `test_stamp_inbound_appends_receiver_entry` |
 | receiver owns `sender_class` (SCHEMAS C4) | `test_stamp_inbound_overwrites_wire_sender_class` |
@@ -179,12 +179,12 @@ drop log.
 
 ## Relationships
 
-- `channels/SCHEMAS.md` (sa#74) — the envelope this framework stamps; §Taint carries the shared
+- `channels/SCHEMAS.md` — the envelope this framework stamps; §Taint carries the shared
   one-way language.
-- `channels/ADAPTERS.md` (sa#80) — where this gate sits in the fixed ordering (after transport
+- `channels/ADAPTERS.md` — where this gate sits in the fixed ordering (after transport
   verification and schema check, before the injection screen).
-- **`channels/SCREENING.md` (sa#43) — the injection-screening standard — stays the sibling gate,
-  not part of this framework.** #81 owns *identity → authorization* (provenance-based,
-  deterministic); #43 owns the *content screen* and the provenance-category reconciliation. The
+- **`channels/SCREENING.md` — the injection-screening standard — stays the sibling gate,
+  not part of this framework.** This framework owns *identity → authorization* (provenance-based,
+  deterministic); the screening standard owns the *content screen* and the provenance-category reconciliation. The
   boundary rule they share is consequence 3 above: a screen refuses or passes, never blesses.
 - `broker/TAINT.md` — the floor; `TurnContext.ingest_source` is where both maps' judgments land.

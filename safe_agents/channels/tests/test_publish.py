@@ -1,4 +1,4 @@
-"""sa#156 exit predicate — the peer.publish outbound-seam conformance suite.
+"""The peer.publish outbound-seam conformance suite.
 
 Each test proves one clause from channels/PUBLISH.md §"Conformance"; the mapping
 table lives there. Two layers:
@@ -142,7 +142,7 @@ class TestOutboundProvenanceIsBrokerStamped:
 
 
 # ---------------------------------------------------------------------------
-# P3 (lineage) — ingested sources ride the chain, not a collapsed taint bit (#168)
+# P3 (lineage) — ingested sources ride the chain, not a collapsed taint bit
 # ---------------------------------------------------------------------------
 
 class TestOutboundCarriesIngestedSources:

@@ -7,7 +7,7 @@ Two implementations here (a third, SqliteIntentStore, lives in sqlite_store.py):
 
 The Protocol is the contract; callers depend only on it.
 
-STORED-BYTES integrity basis (#349, the grants/store.py #246 idiom): the intent's
+STORED-BYTES integrity basis (the intent-row HMAC, the grants/store.py stored-bytes idiom): the intent's
 FROZEN half — id, materializedRequest, renderedForHuman, expiry, ts — is
 serialized ONCE (canonical_intent_payload), that exact string is stored as the
 item's ``data`` attribute AND HMAC'd into the item-level ``intentHash``
@@ -22,7 +22,7 @@ Unlike the grants stores (which RETURN a quarantine result for the ceremony's
 conditional-update flow), get_intent RAISES QuarantinedIntentError on a
 verification failure. The intent Protocol's ``Intent | None`` contract has many
 callers, and a tamper surfaced as None would read as "not found" — the silent
-drop #349 forbids. An exception fails toward LESS authority by construction:
+drop the intent-row HMAC forbids. An exception fails toward LESS authority by construction:
 an oblivious caller propagates loudly instead of executing.
 
 The HMAC key is injected at store construction from the same surface the
@@ -39,19 +39,19 @@ from typing import Mapping, Protocol, runtime_checkable
 
 from safe_agents.broker.schemas import BrokeredCall, Intent
 
-# How long an EXECUTED intent is retained past its approval-window TTL (#193 Phase 6c).
+# How long an EXECUTED intent is retained past its approval-window TTL (evidence labeling).
 # A pending intent's TTL is the short approval window; once it executes, the item must
 # survive long enough for an after-the-fact owner /flag review — an executed intent that
 # auto-deleted at the approval TTL is unflaggable. This extends the TTL at the executed
 # transition. The durable LONG-TERM referent of an executed op stays the audit record
-# (#204); this is only the /flag review window, so a week, not forever.
+# (#83); this is only the /flag review window, so a week, not forever.
 EXECUTED_INTENT_RETENTION_DAYS = 7
 
 # The one status put_intent refuses to overwrite (#39). A pending intent is a
 # live hold that a human may be looking at; replacing it would make approving
 # its id release a different call. Resolved intents (approved, rejected,
 # expired, executed, refused) may be overwritten, because the approval-queue
-# dedup path (sa#160) re-holds identical content under the same id once the
+# dedup path re-holds identical content under the same id once the
 # earlier hold has resolved.
 PENDING_STATUS = "pending"
 
@@ -77,14 +77,14 @@ class IntentAlreadyPendingError(Exception):
 
 
 class QuarantinedIntentError(Exception):
-    """Read refused: the stored intent bytes failed HMAC verification (#349).
+    """Read refused: the stored intent bytes failed HMAC verification.
 
     An A4 attacker (store write access) who rewrites the frozen call between
     hold and release must never get the rewritten call executed. The stored
     bytes are untrusted evidence — never parsed, never served, never
     auto-repaired — and every caller's refusal fails toward less authority:
     the action simply does not run. Surfacing loudly is the runtime's job
-    (pep.py mirrors the sa#124 grant-quarantine surfacing).
+    (pep.py mirrors the loud grant-quarantine surfacing).
     """
 
     def __init__(self, intent_id: str, reason: str) -> None:
@@ -96,7 +96,7 @@ class QuarantinedIntentError(Exception):
 def canonical_intent_payload(intent: Intent) -> str:
     """The ONE serialization of an intent's frozen half — stored AND HMAC'd.
 
-    Storage and the integrity basis must be the same bytes (#246): serialize
+    Storage and the integrity basis must be the same bytes: serialize
     once, store this exact string, HMAC this exact string, and on read HMAC
     the stored bytes verbatim without ever re-serializing — so additive schema
     growth never makes an intact old row read as tampered.
@@ -128,7 +128,7 @@ def _hmac_payload(payload: str, hmac_key: bytes) -> str:
 def intent_item_attrs(intent: Intent, hmac_key: bytes) -> dict:
     """The stored item attrs shared by every backend's put path.
 
-    Serialize once; the stored ``data`` string IS the HMAC basis (#246/#349).
+    Serialize once; the stored ``data`` string IS the HMAC basis.
     """
     payload = canonical_intent_payload(intent)
     attrs: dict = {
@@ -208,7 +208,7 @@ class IntentStore(Protocol):
         """Retrieve the intent by ID, or None if not found.
 
         Raises QuarantinedIntentError when the stored bytes fail HMAC
-        verification (#349) — tampered bytes are never parsed or returned.
+        verification — tampered bytes are never parsed or returned.
         """
         ...
 
@@ -328,7 +328,7 @@ class DynamoIntentStore:
 
       Intent items:
         pk = "INTENT#{intent_id}"  sk = "v0"
-        data = str                 (canonical frozen-half payload — the #349 HMAC basis:
+        data = str                 (canonical frozen-half payload — the intent HMAC basis:
                                     id + materializedRequest + renderedForHuman + expiry + ts)
         intentHash = str           (HMAC-SHA-256 over the exact stored data bytes)
         status = str               ("pending" | "approved" | "rejected" | "expired" |
@@ -391,7 +391,7 @@ class DynamoIntentStore:
         item = resp.get("Item")
         if item is None:
             return None
-        # Verify-then-parse over the STORED bytes (#349) — the shared helper,
+        # Verify-then-parse over the STORED bytes — the shared helper,
         # so all three backends quarantine identically.
         return intent_from_item(intent_id, item, self._hmac_key)
 
@@ -418,14 +418,14 @@ class DynamoIntentStore:
             expr_values[":approved_by"] = approved_by
         if executed_at is not None:
             # Stamp executedAt AND extend the TTL so the executed intent survives its
-            # short approval window for the after-the-fact /flag review (#193 Phase 6c).
+            # short approval window for the after-the-fact /flag review (evidence labeling).
             # The TTL derives from executed_at itself — the retention window is 7 days
             # past EXECUTION (the same anchor the /flag false_action back-write keys
             # off), so ttl == executedAt + retention holds structurally, not just when
-            # this write races the caller's clock inside one second (sa#213 pin).
+            # this write races the caller's clock inside one second (trigger-range pin).
             executed_dt = datetime.fromisoformat(executed_at.replace("Z", "+00:00"))
             if executed_dt.tzinfo is None:
-                # A tz-naive timestamp is UTC, never broker-local (#193 finding 6).
+                # A tz-naive timestamp is UTC, never broker-local (an evidence-labeling finding).
                 executed_dt = executed_dt.replace(tzinfo=timezone.utc)
             new_ttl = int(
                 (executed_dt + timedelta(days=EXECUTED_INTENT_RETENTION_DAYS)).timestamp()

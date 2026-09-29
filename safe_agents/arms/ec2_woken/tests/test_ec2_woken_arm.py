@@ -1,5 +1,5 @@
 """
-ec2-woken arm tests — acceptance criteria for sa#34 (inbound airlock wake path).
+ec2-woken arm tests — acceptance criteria for the inbound airlock wake path.
 
 All tests are AWS-free: read-side AWS calls go through FakeAWS; the SAM deploy/delete
 step is an injected fake recorder (no `sam` CLI, no cloud). Mirrors

@@ -120,7 +120,7 @@ def _run_script(
     """subprocess.run that converts crashes into failed results.
 
     A missing/non-executable script or a hung script is a CONTRACT FAILURE, not
-    an infrastructure crash (sa#130): both are returned as a synthetic non-zero
+    an infrastructure crash: both are returned as a synthetic non-zero
     CompletedProcess so every caller's existing returncode handling reports a
     failed check instead of the whole harness dying mid-pipeline.
     """

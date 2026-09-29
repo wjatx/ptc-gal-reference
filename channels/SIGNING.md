@@ -1,4 +1,4 @@
-# SIGNING — authenticating the outbound provenance chain (PTC Phase 4, #170/#167)
+# SIGNING — authenticating the outbound provenance chain (PTC Phase 4)
 
 > **Status: contract (2026-07-10).** Contract-tier per `docs/contract-vs-reference.md`: this document
 > is the normative words, `safe_agents/channels/signing.py` (the DSSE statement, PAE, `ChainSigner`,
@@ -7,7 +7,7 @@
 > The boto3 cold-start key resolution (`safe_agents/channels/keys.py`) and the airlock deploy binding
 > are **reference-tier** — one instantiation of the verify seam, not the contract. The **taint floor
 > is unchanged** (`broker/TAINT.md`): signing authenticates *who asserted a hop*, it does not replace
-> source-based taint. Implements the shape decided in `docs/tce-signing-shape.md` (#170); companion to
+> source-based taint. Implements the shape decided in `docs/tce-signing-shape.md`; companion to
 > `channels/PUBLISH.md` (the unsigned outbound seam this signs).
 
 ## What signing is — and what it is not
@@ -28,7 +28,7 @@ unsigned one is (`broker/TAINT.md`, `channels/TRUST-MAPPING.md`).
 **Name-agnostic.** The "PTC" / "TCE" names of `docs/PTC.md` are provisional pending the maintainer's
 standards-body naming pass and appear in **no code, schema, or wire constant** here. The DSSE `payloadType`, in-toto
 `_type`, and versioned `predicateType` URIs (`safe_agents/channels/signing.py`) are the only stable
-identifiers; the predicate type is versioned so the normative wire schema (#178) can bump it.
+identifiers; the predicate type is versioned so the normative wire schema can bump it.
 
 ## The signing shape
 
@@ -47,7 +47,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   adapters' own `_canonical_identity`). Canonical JSON (sorted keys, no whitespace, ASCII) so sign
   and verify agree byte-for-byte; DSSE PAE binds the `payloadType` so a signature cannot be replayed
   under a different type.
-  **Why `sender_channel_identity` is bound (sa#161 residual, 2026-07-18).** `EventTrigger
+  **Why `sender_channel_identity` is bound (campaign-watchdog residual, 2026-07-18).** `EventTrigger
   .dedupe_key()` is `(sender.channel_identity, event_id)`, and `sender.channel_identity` is
   agent/wire-authored. Before this field joined the bound set, a captured signed envelope could be
   replayed with a mutated sender claim — landing a fresh dedupe key, and, pre-dedupe, a fresh
@@ -62,8 +62,8 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   requires a signature's `zone` to equal the top hop it covers. Inbound signatures are **not** carried
   onward: a relay re-packages a fresh payload/`event_id`/`principal`, so an upstream broker's
   signature (over its own envelope) could never verify against the downstream one. The upstream *hops*
-  still ride as lineage (#168); attributing each intermediate signer *across* a relay needs nested
-  per-hop attestations and is **deferred to the normative spec (#178)**.
+  still ride as lineage; attributing each intermediate signer *across* a relay needs nested
+  per-hop attestations and is **deferred to the normative spec**.
 
 ## Signing clauses
 
@@ -82,7 +82,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   The signature's own `key_id`/`zone` are bound into the signed bytes and the verifier requires the
   `zone` to equal the top hop it covers, so attribution within the envelope cannot be forged or
   relabelled. Inbound signatures are not carried across a relay (it re-packages the envelope);
-  cross-relay per-signer attribution is deferred to the normative spec (#178).
+  cross-relay per-signer attribution is deferred to the normative spec.
 - **S3 — broker-keyed, the agent never signs.** The private key is the broker's workload identity,
   resolved at cold start from Secrets Manager (`keys.resolve_signer`, `BROKER_SIGNING_KEY_SECRET_ARN`
   → PEM, `BROKER_SIGNING_KEY_ID` → `key_id`) and injected into `stamp_outbound` as the `signer`
@@ -94,7 +94,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   chain (the sending broker did not commit to the hop it just added → `SIGNATURE_INVALID`). Every
   present signature must verify — a valid full-cover signature does not excuse a forged prefix
   signature riding alongside it. A failure drops and quarantines, mirroring the grant-HMAC loud
-  quarantine (sa#124); it authenticates lineage but does **not** clean taint — the receiver still
+  quarantine; it authenticates lineage but does **not** clean taint — the receiver still
   applies its own trust map and re-derives taint from the chain (`broker/TAINT.md`,
   `channels/TRUST-MAPPING.md`).
 - **S5 — ships OFF (friction doctrine).** With no verification-keys ARN configured
@@ -140,7 +140,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 | Clause | Test (`test_signing.py`) |
 |---|---|
 | S1 (shape) | `test_valid_signed_chain_verifies` · `test_tampered_payload_fails_closed` · `test_payload_swap_with_pinned_digest_fails_closed` · `test_replay_with_fresh_event_id_or_extended_expiry_fails_closed` |
-| S1b (`sender_channel_identity` bound — sa#161 residual closure) | `test_mutated_sender_after_signing_fails_verify_chain` · `test_mutated_sender_replay_fails_verification_no_second_attributed_record` · `test_sign_verify_round_trip_with_non_canonical_sender_spelling` · `test_relay_resign_binds_the_relays_own_sender_not_the_inbounds` |
+| S1b (`sender_channel_identity` bound — campaign-watchdog residual closure) | `test_mutated_sender_after_signing_fails_verify_chain` · `test_mutated_sender_replay_fails_verification_no_second_attributed_record` · `test_sign_verify_round_trip_with_non_canonical_sender_spelling` · `test_relay_resign_binds_the_relays_own_sender_not_the_inbounds` |
 | S2 (per-envelope signing, non-malleable attribution) | `test_relay_signs_full_chain_over_preserved_hops` · `test_tampered_hop_fails_closed` · `test_signature_attribution_is_not_malleable` |
 | S3 (broker-keyed, agent never signs) | `test_broker_signs_agent_has_no_key` · `test_signing_key_resolved_at_cold_start_from_secret` |
 | S4 (verify & quarantine, fail-closed) | `test_tampered_hop_fails_closed` · `test_tampered_payload_fails_closed` · `test_unknown_signer_quarantines` · `test_unsigned_chain_missing` · `test_covers_out_of_range_invalid` · `test_no_full_cover_signature_invalid` · `test_forged_chain_drops_before_trust_map` |
@@ -154,17 +154,17 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 
 ## Relationships
 
-- `docs/tce-signing-shape.md` (#170) — the design note this implements; the shape (DSSE + in-toto,
+- `docs/tce-signing-shape.md` — the design note this implements; the shape (DSSE + in-toto,
   broker-keyed, per-hop) is decided there, built here. Sub-decisions still open (SPIFFE vs DID,
   Rekor anchoring) stay in that note.
-- `channels/PUBLISH.md` (sa#156) — the unsigned outbound seam this signs; `stamp_outbound`'s `signer`
+- `channels/PUBLISH.md` — the unsigned outbound seam this signs; `stamp_outbound`'s `signer`
   param is the sender-side binding. P8 (lineage, not a collapsed taint bit) is what signing
   authenticates — orthogonal to correctness-of-propagation.
 - `broker/TAINT.md` — source-based, non-strippable taint. Signing authenticates lineage; it does
   **not** replace taint. The receiver re-derives taint from the chain regardless of signature status.
-- `channels/TRUST-MAPPING.md` (sa#81) — the receiver's trust map is authoritative for what a verified
+- `channels/TRUST-MAPPING.md` — the receiver's trust map is authoritative for what a verified
   hop earns; authenticity raises the action surface but never cleans taint.
-- `channels/SCHEMAS.md` (sa#74) — `ChainSignature` and `EventTrigger.chain_signatures`, the wire
+- `channels/SCHEMAS.md` — `ChainSignature` and `EventTrigger.chain_signatures`, the wire
   fields the signature travels in.
 - `docs/friction-doctrine.md` — verification is a knob shipping OFF (S5); the floor stays tiny.
 - `docs/contract-vs-reference.md` — the tiering S7 records: contract (signing semantics + conformance)

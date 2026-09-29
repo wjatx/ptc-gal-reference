@@ -1,4 +1,4 @@
-"""mcp.signing — sign the admission-record ledger (#174, adopts #181).
+"""mcp.signing — sign the admission-record ledger (adopts the Layer A DSSE signing).
 
 The MCP mirror of ``grants.record_signing``: turns an admission record from
 *asserted* into *non-repudiable* — who proposed, who ratified, which
@@ -79,8 +79,8 @@ class McpAdmissionRecord(BaseModel):
     proposedBy: str  # maker credential ARN
     ratifiedBy: str  # checker credential ARN
     ts: str  # ISO-8601 UTC
-    # How the two identities were established (#226) — None (and absent on
-    # every pre-#226 record) = two IAM-backed STS ARNs; "solo-local" = ONE
+    # How the two identities were established — None (and absent on
+    # every pre-solo-identity record) = two IAM-backed STS ARNs; "solo-local" = ONE
     # operator holding both local roles. Derived from the identity strings by
     # ceremony_identity.attestation_for, never asserted separately. See the
     # PromotionRecord field of the same name for the full rationale.
@@ -94,7 +94,7 @@ class AdmissionVerifyResult:
 
 
 def canonical_record_payload(record: McpAdmissionRecord) -> str:
-    """The ONE serialization of an admission record — STORED and signed (#246).
+    """The ONE serialization of an admission record — STORED and signed.
 
     Canonical JSON: sorted keys, no whitespace, ASCII. The ledger stores
     exactly this string as the item's data, the signature binds its sha256,
@@ -171,7 +171,7 @@ def verify_admission_record(
 ) -> AdmissionVerifyResult:
     """Verify the STORED admission-record bytes against their DSSE envelope.
 
-    The verify_record mirror: since #246 the input is the stored serialization
+    The verify_record mirror: the input is the stored serialization
     itself (the ledger item's data string), and the subject digest is the
     sha256 over exactly those bytes — additive McpAdmissionRecord growth can
     never flip a valid signature to INVALID. Fails closed with a distinct

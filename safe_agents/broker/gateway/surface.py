@@ -1,4 +1,4 @@
-"""surface.py — the broker's MCP mouth, as pure logic (#283).
+"""surface.py — the broker's MCP mouth, as pure logic.
 
 This module is deliberately **SDK-free**. It computes what the gateway advertises
 and what it answers, in plain dataclasses, so the decisions can be tested without
@@ -32,9 +32,9 @@ gets audited.
 
 An op the manifest never CLASSIFIED is denied by `handle_request` before the PDP
 runs (`runtime/pep.py:838-864`). That early return used to write no audit record —
-a refusal with no line on the tape — which was the worse half of #281, because the
+a refusal with no line on the tape — which was the worse half of the host-refusal gap, because the
 missileer archetype keeps a dangerous op OUT of the manifest rather than denying
-it, so the most hardened manifest was the one whose refusals were invisible. #281
+it, so the most hardened manifest was the one whose refusals were invisible. The fix
 closed that: both refusal shapes now record `deny`/`denied`, and the reason string
 carries which.
 
@@ -72,7 +72,7 @@ _WIRE_SEPARATOR = "__"
 #: cannot yet advertise real ones. Permissive-and-honest beats invented: a wrong
 #: schema would have the client refuse valid calls locally, before the broker ever
 #: sees them, which is enforcement in the wrong place by the wrong component.
-#: Tracked as the #266 surface finding.
+#: Tracked as the public-API surface finding.
 _PERMISSIVE_SCHEMA: dict[str, Any] = {"type": "object", "additionalProperties": True}
 
 logger = logging.getLogger(__name__)

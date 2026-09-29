@@ -1,6 +1,6 @@
 # Channels-airlock bringup runbook
 
-Bringing the sa#152 channels airlock (`SafeAgents-Channels-{env}`) up from nothing: the two-phase
+Bringing the channels airlock (`SafeAgents-Channels-{env}`) up from nothing: the two-phase
 deploy, the consumer image layer, the secret seed, and the screened variant. Companion to
 `channels/README.md` §"The deployed binding"; the broker analog is `docs/broker-service-bringup.md`.
 
@@ -94,14 +94,14 @@ through the gate matrix (bad token / unmapped / expired / valid / replay), drain
 queue, and runs the `ingest_chain` bridge both ways. Drop records land PII-safe in the audit
 bucket under `channels/drops/`.
 
-Since sa#166 the webhook-peer drain (`docs/channels-drain-bringup.md`) reads this same
+The webhook-peer drain (`docs/channels-drain-bringup.md`) also reads this same
 `channel-accepted` queue, so this smoke also asserts the END-TO-END path: the airlock's
 `channel_accepted` log AND the drain-side effect — one `inbound_observed` ledger object written by
 `InboundLogReceiver`. If the drain isn't deployed and seeded yet, only the airlock half of the
 assertion is meaningful — bring the drain up first (see that runbook, including its
 `ledger-example` connector secret seed).
 
-### 5a. Assert the deploy binding (#205 — run immediately after ANY channels deploy)
+### 5a. Assert the deploy binding (run immediately after ANY channels deploy)
 
 ```
 AIRLOCK_CONFIG_ASSERT=1 \
@@ -169,7 +169,7 @@ Enabling the Bedrock classifier screen is config only — no base code changes:
 - **200-always.** Drops are silent to the sender; a 5xx would make the provider retry, the retry
   would dedupe, and the record would strand. Consequence: misconfiguration (missing env var,
   Secrets Manager outage) is also silent to callers — the airlock answers 200 while dropping
-  everything, visible only in the logs. The stack now ships the alarms for this (sa#153): metric
+  everything, visible only in the logs. The stack now ships the alarms for this: metric
   filters on the `handler_error` (hard failure — the handler threw, the message dropped) and
   `screen_error` (the classifier screen failing closed — 100% drop when persistent)
   structured-log events, each alarming on first occurrence in a 5-minute window into the

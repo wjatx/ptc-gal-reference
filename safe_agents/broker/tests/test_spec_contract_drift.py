@@ -3,8 +3,8 @@
 `spec/README.md` asserts that "spec text follows the shipped contracts, never
 the reverse". That is a claim about a process, and until this file nothing
 enforced it: two real drifts shipped and were caught only by a human reading
-the tables line by line — PTC-31's tool-definition hash after #223, and a
-`Grant.hash` field the #246 integrity work removed from the code while the
+the tables line by line — PTC-31's tool-definition hash after the full-definition widening, and a
+`Grant.hash` field the stored-bytes integrity work removed from the code while the
 spec table kept describing it.
 
 ## What it compares, and what it deliberately does not
@@ -29,7 +29,7 @@ The first cut of this file also accepted the section's `>
 that object's table. Mutation testing (insert an unmarked phantom `hash` row
 into the `Grant` table; the check must go red) showed that rule GREEN: the
 `Grant` section carries a blockquote for `certifiedUntil`, so it blanket-
-excused the whole object — including a resurrection of the very field #246
+excused the whole object — including a resurrection of the very field the integrity work
 removed, which is one of the two drifts this file exists to catch.
 
 The rule below is both stricter and more faithful to the convention as

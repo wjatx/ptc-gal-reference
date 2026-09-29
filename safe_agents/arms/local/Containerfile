@@ -1,8 +1,8 @@
-# Containerfile — the confined agent for the local/Mac arm (sa#39 / sa#98 prototype).
+# Containerfile — the confined agent for the local/Mac arm (two-box prototype).
 #
 # A Podman container IS a netns + fs/pid isolation, so it is the local equivalent of the
-# RHEL/EC2 agent-ns: the container is the OpenShell-style sandbox (#39) AND the netns
-# egress boundary (#35/#97). The agent runs here as an unprivileged user; its only model
+# RHEL/EC2 agent-ns: the container is the OpenShell-style sandbox AND the netns
+# egress boundary. The agent runs here as an unprivileged user; its only model
 # egress is the broker model-proxy on the host (HTTPS_PROXY). iproute2 is included so the
 # in-container confinement step can blackhole the default route and leave only the broker
 # reachable (Stage 2).

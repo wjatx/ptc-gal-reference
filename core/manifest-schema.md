@@ -28,7 +28,7 @@ The base ships the schemas; this file is where a per-agent repo supplies the val
 | `repo` | Git repo cloned onto the host (read-only worker source), pulled via the deploy key. |
 | `deploy_key_secret` | Secrets Manager id of the ed25519 private deploy key (read-only clone; write only if the agent pushes artifacts). |
 | `arm` | **New.** Which cloud arm runs this agent: `ec2` · `ec2-woken` · `fargate`. Selects the adapter. |
-| `schedule` | **New (sa#115).** Optional `{expression, timezone, state}` block for `arm: fargate`. `state` defaults to `DISABLED` — a provision never auto-enables a production schedule before its first manual proof; the consumer enables explicitly after verifying. Omitted `expression`/`timezone` fall back to the fargate arm's own defaults. |
+| `schedule` | **New.** Optional `{expression, timezone, state}` block for `arm: fargate`. `state` defaults to `DISABLED` — a provision never auto-enables a production schedule before its first manual proof; the consumer enables explicitly after verifying. Omitted `expression`/`timezone` fall back to the fargate arm's own defaults. |
 | `policy` | The agent's network-egress confinement policy file (security-group / netns spec). Under the broker model this allows **only the broker endpoint + `api.anthropic.com`**; enforcement is by confined netns + security group on EC2/Fargate arms. OpenShell egress policies apply only to the dev-box arm. |
 | `secrets.runner_keys` | JSON bundle of **non-connector** runtime config (flags, feature config, non-secret env). Connector creds do **not** belong here — they live only in the broker's store. |
 | `secrets.broker_connector_keys` | Secrets Manager path for the connector credentials bundle. Seeded exclusively into the **broker's** secret store by `seed-agent`; the agent process never receives these and holds no credentials to any connector. |
@@ -48,9 +48,9 @@ schedule:
 
 The canonical, authoritative definition of the envelope's fields — exact names, types,
 and which are strict vs. permissive — is the typed `Envelope` model in
-`safe_agents/broker/schemas/envelope.py` (sa#135). In brief: it is the domain-specific
+`safe_agents/broker/schemas/envelope.py`. In brief: it is the domain-specific
 risk configuration the base floor is bent into for a given agent — polarity, caps,
-allowlists, reversibility classes, the typed `confidence` bar/error-budget knob (#184,
+allowlists, reversibility classes, the typed `confidence` bar/error-budget knob (
 superseding the former `abstention_thresholds` placeholder), fallback budgets, the
 input-trust map, promotion predicates, and which autonomy rungs the agent may occupy.
 `polarity`, `caps`, `allowlists`, `high_stakes`, and `confidence` are modeled strictly;
@@ -59,19 +59,19 @@ docstring). The pipeline validates every manifest's
 `envelope:` block against this schema (`safe_agents/pipeline/validate.py`).
 
 The `envelope:` block is one of five **broker-facing** blocks, together typed as the
-`AgentManifest` model in `safe_agents/broker/schemas/manifest.py` (sa#113): `envelope`
-(required) plus `principal`, `grant_classes`, `budgets`, `connectors`, and (sa#141)
+`AgentManifest` model in `safe_agents/broker/schemas/manifest.py`: `envelope`
+(required) plus `principal`, `grant_classes`, `budgets`, `connectors`, and
 `connector_providers` / `connector_secrets`. The broker's
 `build_runtime(manifest)` consumes an `AgentManifest` to construct the runtime —
 principal, granted action classes, the per-UTC-day cap (from `envelope.caps.actions_per_utc_day`;
-the legacy `actions_per_run` spelling still loads via alias — #163),
+the legacy `actions_per_run` spelling still loads via alias after the caps rename),
 and connectors (resolved provider-first via `connector_providers`, else by name against
 the base registry; `connector_secrets` maps a connector to its secret leaf, defaulting to
-the tool name, resolved under `<prefix>/connectors/` when a secret prefix is set — sa#164)
+the tool name, resolved under `<prefix>/connectors/` when a secret prefix is set)
 — so **no agent-specific constant is baked into the broker code**; the
 config lives in the manifest artifact (broker-debaking P2). Provider paths are honored
 only from the image-baked manifest file — the envelope store carries no provider field. The envelope itself is not yet consumed at decision time — the real
-envelope-hash verification is sa#122 (broker-debaking P4).
+envelope-hash verification is broker-debaking P4.
 
 ## Annotated example
 
@@ -102,7 +102,7 @@ envelope:
     brief.write:   [autonomous]
     notify.send:   [autonomous]
   caps:
-    actions_per_utc_day: 1    # at most one actionable signal per UTC day (#163 rename;
+    actions_per_utc_day: 1    # at most one actionable signal per UTC day (caps rename;
                               # the legacy `actions_per_run` spelling still loads)
     position_usd:    0        # no order surface exists at all today
   allowlists:
@@ -112,7 +112,7 @@ envelope:
     order.place:  { tier: irreversible, handling: blocked }
     ledger.append:{ tier: recoverable,  handling: autonomous }   # append-only, never delete
     notify.send:  { tier: irreversible, handling: autonomous }   # low blast: a message
-  confidence:                 # typed bar/error-budget knob (#184); unset = OFF
+  confidence:                 # typed bar/error-budget knob; unset = OFF
     min_confidence: 0.9       # below-bar routes to the per-agent safe response
   fallback_budgets:
     degraded_runs_per_week: 2

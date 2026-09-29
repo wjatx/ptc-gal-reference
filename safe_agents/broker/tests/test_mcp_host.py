@@ -1,4 +1,4 @@
-"""SDK-backed half of the MCP host conformance suite (#174, #219 Leg-1 rider).
+"""SDK-backed half of the MCP host conformance suite.
 
 MCP-HOST.md's conformance suite (M1-M13) splits across two files. This file
 holds Section 1 — the host/connector *integration mechanics*, the assembly
@@ -113,7 +113,7 @@ def _admit(
 
 
 # ===========================================================================
-# Section 1 — host + connector integration mechanics (#174)
+# Section 1 — host + connector integration mechanics
 # ===========================================================================
 
 
@@ -458,7 +458,7 @@ def test_connector_non_dict_args_fail_closed():
 
 
 # ===========================================================================
-# Section 2 — M2-M5, M13(live) conformance (#174)
+# Section 2 — M2-M5, M13(live) conformance
 #
 # One test (or small group) per clause in MCP-HOST.md §"Conformance clauses";
 # every docstring names its clause sentence. Each test would FAIL if its
@@ -612,7 +612,7 @@ def test_m5_drift_surfaces_exactly_once_not_per_call(caplog):
 
 def test_m13_registry_rows_are_hmac_integrity_protected():
     """M13: a registry item carries an item-level rowHash over its STORED bytes
-    (#246); a tampered item is served quarantined with tool=None — tampered
+   ; a tampered item is served quarantined with tool=None — tampered
     bytes are evidence, never parsed — and the host gate therefore renders the
     coordinate uncallable."""
     registry = MemoryToolRegistry()
@@ -626,7 +626,7 @@ def test_m13_registry_rows_are_hmac_integrity_protected():
             assert not clean.quarantined
             assert clean.stored_hash == compute_row_hmac(clean.tool, registry._hmac_key)
             # Tamper the item-level rowHash -> served quarantined; the bytes ride
-            # as raw_data for audit but are never parsed (#246: tool is None).
+            # as raw_data for audit but are never parsed (tool is None).
             registry._rows[(_SERVER_ID, "add")]["rowHash"] = "tampered-hmac"
             tampered = registry.get_tool(_SERVER_ID, "add")
             assert tampered.quarantined is True

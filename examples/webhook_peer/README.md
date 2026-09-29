@@ -1,9 +1,9 @@
 # webhook-peer — a fictional A2A peer airlock + drain consumer
 
 A **fictional** example consumer, now standing on BOTH channels seams: the inbound
-airlock (a `ChannelsManifest`) that admits its one mapped peer, and — since sa#166 —
+airlock (a `ChannelsManifest`) that admits its one mapped peer, and — since the webhook drain landed —
 the drain (a broker `AgentManifest` + `Receiver`) that lets an airlock-accepted
-envelope drain end-to-end to a ledger. Together they are the sa#8 A2A driving case
+envelope drain end-to-end to a ledger. Together they are the A2A driving case
 worked all the way through: a peer POSTs, the airlock admits and stamps it, and the
 drain records it, exactly once.
 
@@ -16,7 +16,7 @@ source changed.
 
 ## What it shows
 
-The sa#8 driving case — a peer agent reaching this agent over A2A. The peer POSTs an
+The A2A driving case — a peer agent reaching this agent over A2A. The peer POSTs an
 `EventTrigger` envelope to a signed webhook; the airlock verifies the shared token, maps
 the peer identity to a principal, dedupes, (optionally) screens, and stamps its own
 provenance hop before the envelope reaches a worker. The airlock loop itself is

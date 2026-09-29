@@ -1,4 +1,4 @@
-"""channels.stores — the durable seam bindings behind the airlock (sa#152).
+"""channels.stores — the durable seam bindings behind the airlock.
 
 The reference dispatcher (channels/dispatch.py) takes three injected seams whose
 in-memory forms are a `set` and two `list`s; this module binds them to AWS:

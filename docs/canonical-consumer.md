@@ -3,9 +3,9 @@
 > **Status: doctrine (2026-07-11).** The *consumer* pattern; `docs/PTC.md` is the *protocol* it rides.
 > Where `docs/adopting-safe-agents.md` is the **how-to** (refactor this agent, pick an arm, run the
 > pipeline), this doc is the **what-shape** — the invariant anatomy every consumer has once the
-> broker-debaking (sa#139) and PTC connector work (#171/#172/#173/#175) landed, and the line that
+> broker-debaking and PTC connector work landed, and the line that
 > decides what is *base* and what is *the consumer's*. It is the direct input to the Phase 7 normative
-> spec (`docs/PTC.md` §11 #178): the spec standardizes the wire; this doc standardizes the consumer.
+> spec (`docs/PTC.md` §11): the spec standardizes the wire; this doc standardizes the consumer.
 
 ## 1. The one idea
 
@@ -55,9 +55,9 @@ consumer fill, and the guard that keeps the fill from becoming a mechanism the c
 | # | Seam (base owns the *shape*) | Consumer fills (its *config*/*domain*) | Guard |
 |---|---|---|---|
 | 1 | `Envelope` (`safe_agents/broker/schemas/envelope.py`) | its risk envelope: polarity, rungs, caps, trust map | polarity never in base; envelope hash pins what was approved |
-| 2 | `ToolOp` schema + PDP rules (#171) | its `tool_ops` table — every granted op's effect/external/reversibility | base names **no** op; the table travels in the manifest |
-| 3 | the `Connector` protocol + `connector_providers` injection seam (#141) | its domain connector *classes* (`AlpacaConnector`) | the broker holds the instance; the agent never gets a reference |
-| 4 | the closed `AuthStrategy` catalog + `capability_iam` (#173/#175) | *which* strategy each connector uses + the minimal IAM per capability | catalog is an enum, not an import path; nothing store-loaded injects a strategy |
+| 2 | `ToolOp` schema + PDP rules | its `tool_ops` table — every granted op's effect/external/reversibility | base names **no** op; the table travels in the manifest |
+| 3 | the `Connector` protocol + `connector_providers` injection seam | its domain connector *classes* (`AlpacaConnector`) | the broker holds the instance; the agent never gets a reference |
+| 4 | the closed `AuthStrategy` catalog + `capability_iam` (#79) | *which* strategy each connector uses + the minimal IAM per capability | catalog is an enum, not an import path; nothing store-loaded injects a strategy |
 | 5 | the consumer-image contract (`docs/consumer-image-contract.md`) + the promotion flow | its image (agent code + prompts + pinned SDK) + its grants | the agent holds no connector credential; grants are maker-checker, broker-read-only |
 
 Seams 1–4 are the `AgentManifest` (`safe_agents/broker/schemas/manifest.py`) — `build_runtime(manifest)`
@@ -65,7 +65,7 @@ constructs the entire broker runtime from it, with no agent-specific constant ba
 Seam 5 is the deployment: the image the broker runs and the grants it reads.
 
 `build_runtime` is imported from **`safe_agents.broker.api`**, the base's public embedding surface
-[ruling: maintainer, 2026-07-26, #266] — the one entry point this document had named as the pattern's
+[ruling: maintainer, 2026-07-26] — the one entry point this document had named as the pattern's
 centerpiece for months while the consumer-boundary guard forbade importing it. The rule the ruling
 settled: *a consumer may import what it fills (`broker.schemas`) and what it runs (`broker.api`),
 never what decides.* See `docs/consuming-the-sdk.md` §2, and `examples/embedded_agent/` for the
@@ -73,7 +73,7 @@ smallest consumer that exercises seams 1–4 without seam 5 — no image, no dep
 
 ## 4. Capability vs provider — the distinction the epic sharpened
 
-The connector work (#171–#175) forced a split that was previously blurred. Keep them separate:
+The connector work forced a split that was previously blurred. Keep them separate:
 
 - A **capability** is *what the agent may do*: a `(tool, op)` pair, its ToolOp classification, its
   grant, and its envelope rung. It is a **policy** object — it decides whether a call is allowed and at
@@ -85,13 +85,13 @@ The connector work (#171–#175) forced a split that was previously blurred. Kee
 The payoff of the split: the same capability can change provider without touching policy, and the same
 provider can serve capabilities at different rungs. A live brokerage and paper-Alpaca are the same
 `trade.place` capability with different providers and different rungs — *one code path, config-only
-difference* (§7). And the base can ship the `peer.publish` transport as a base connector (#172) while
+difference* (§7). And the base can ship the `peer.publish` transport as a base connector while
 the *classification* of a peer publish stays whatever the consumer's `tool_ops` says — provider base,
 capability consumer.
 
 ## 5. Classification travels with the agent
 
-The base runtime names no operation. A consumer's `tool_ops` table (seam 2, #171) is the sole source
+The base runtime names no operation. A consumer's `tool_ops` table (seam 2) is the sole source
 of every op's effect/external/reversibility/egress classification, and it lives **in the consumer's
 manifest**, not in a base global. Two consequences:
 
@@ -117,10 +117,10 @@ is not a path that exists from anything the agent can reach (`safe_agents/connec
 - The Doer is the *sole* holder of connector instances; it fetches the credential at call time, passes
   it into `execute(...)`, and the credential never reaches the audit record (args are hashed) or the
   agent.
-- A connector's credential is a broker-resolved **strategy**, not a static string (#173): `StaticSecret`
+- A connector's credential is a broker-resolved **strategy**, not a static string (#79): `StaticSecret`
   (a secret leaf), `OAuthRefresh` (mint a short-lived access token from a broker-held refresh token),
   or `assumed_role` (STS-assume a per-capability scoped role and hand the connector only the short-lived
-  bundle — #175). The catalog is base-owned and **closed** (an enum discriminator, never an import
+  bundle). The catalog is base-owned and **closed** (an enum discriminator, never an import
   path), so nothing store-loaded can inject a strategy, role, or scope.
 - When the credential is an *identity* (`assumed_role`), the provider's blast radius is bounded by IAM,
   not by the broker: `capability_iam` declares the minimal actions/resources, the CDK provisions one
@@ -140,7 +140,7 @@ path, config-only difference" safe rather than reckless:
 |---|---|
 | taint **bit** propagates (today) | correct gating *if you trust the sender* → paper trades autonomous-ish |
 | full **lineage** in the chain | receiver derives its own taint; human sees origin → live trade *with approval* |
-| **signed** lineage (#181, verify OFF) | receiver can't be lied to → autonomous cross-mesh high-blast |
+| **signed** lineage (verify OFF) | receiver can't be lied to → autonomous cross-mesh high-blast |
 
 So a live-brokerage `trade.place` stays pinned to `in-loop` in its envelope until signed-provenance
 verification runs ON — not as a limitation of the code, but as the honest expression of what the trust
@@ -183,7 +183,7 @@ of it. That is the pattern working.
 
 - `docs/adopting-safe-agents.md` — the how-to companion (refactor, arm choice, pipeline run); this doc
   is its *why-shape*.
-- `docs/PTC.md` — the trust *protocol* this consumer pattern rides (§9 is the rung rule; #178 the spec).
+- `docs/PTC.md` — the trust *protocol* this consumer pattern rides (§9 is the rung rule; §11 tracks the spec).
 - `docs/contract-vs-reference.md` — the packaging lens (which tier each seam is); `docs/friction-doctrine.md`
   — the floor-vs-knob lens (why an envelope value ships OFF).
 - `broker/SCHEMAS.md`, `safe_agents/broker/schemas/manifest.py` — the `AgentManifest` the five seams fill.

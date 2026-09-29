@@ -1,7 +1,7 @@
 # Canonical-serialization migration — runbook
 
 Written 2026-07-28, NOT YET EXECUTED. Companion to `docs/operator-identities.md` (who runs what
-under which role); it follows the precedent set by the #246 epoch cut. The change it migrates:
+under which role); it follows the precedent set by the stored-bytes-integrity epoch cut. The change it migrates:
 `canonical_grant_payload` and `proposal_to_json` were sorted-keys
 + ASCII but **not compact**, so they emitted Python's default `", "` / `": "` whitespace. Both now
 use `separators=(",", ":")`, matching `canonical_record_payload`, `canonical_ack_payload` and
@@ -13,7 +13,7 @@ use `separators=(",", ":")`, matching `canonical_record_payload`, `canonical_ack
 **A pre-change stored grant does not quarantine. It reads clean.** Verified by construction against
 `InMemoryGrantStore` on 2026-07-28: an item whose `data` holds the old whitespace-bearing bytes and
 whose `grantHash` is the HMAC over *those* bytes verifies, parses, and is served as authoritative.
-The same holds for a pre-change stored proposal. That is #246 working exactly as designed — the
+The same holds for a pre-change stored proposal. That is stored-bytes integrity working exactly as designed — the
 integrity basis is the **stored bytes**, verified verbatim, never a re-serialization of the parsed
 model, so a serializer change cannot make an untouched row look tampered.
 
@@ -26,7 +26,7 @@ Two consequences, both load-bearing, and both the opposite of the intuition:
    *had* failed its HMAC, `re-seed` refuses it outright — a store-layer quarantine is an incident,
    never a ceremony.
 2. **There is no outage window and no forced ordering.** Old and new bytes coexist safely, so unlike
-   the #246 re-shape there is no quarantine→deny period to shrink and no image-first constraint.
+   the stored-bytes re-shape there is no quarantine→deny period to shrink and no image-first constraint.
    Deploy whenever.
 
 So the migration is **normalization, not recovery**. What is actually wrong with an un-migrated row
@@ -69,7 +69,7 @@ rows are a published-contract violation** and Option B is the answer.
 
 ## Option B — forced re-mint: archive → delete → `seed`
 
-The #246 shape, and for the same reason: no ceremony command re-mints a row in place at an unchanged
+The stored-bytes migration's shape, and for the same reason: no ceremony command re-mints a row in place at an unchanged
 level and unchanged envelope hash, so the re-mint runs through the sanctioned bootstrap path. This
 also produces a fresh `bootstrap` PromotionRecord per grant, which is why the archive leg is not
 optional — the pre-migration ledger arc is real history and the re-mint restarts it.
@@ -78,14 +78,14 @@ Per environment (`ENV` ∈ `development`, `production`), under `docs/operator-id
 
 **0. Pre-flight.** Confirm the deployed broker image already carries the change, or that you are
 willing to have new-form rows read by an old image — which is safe here (verification is verbatim
-either way), unlike #246. Record the current grant inventory per principal from the image-baked
+either way), unlike the stored-bytes migration. Record the current grant inventory per principal from the image-baked
 manifest's granted classes; **never `Scan` from an acting role** — no acting role holds
 `dynamodb:Scan` and the call is IAM-denied.
 
 **1. Archive (the epoch cut, a git-tracked ceremony artifact).** Export the exact `GRANT#` and
 `RECORD#` items verbatim into `archives/<date>-canonicalization/<ENV>-grants-pre-canonical.json`,
 with a `README.md` stating what the artifact is, why delete+re-mint rather than transform, and the
-provenance (session summary reference). Match the wording convention the #246 epoch cut
+provenance (session summary reference). Match the wording convention the stored-bytes epoch cut
 established.
 
 **2. Delete the archived `GRANT#` and `RECORD#` items.** Leave `ENVELOPE#`, `PROPOSAL#`, `ACK#` and
@@ -94,7 +94,7 @@ every MCP item alone — none of them changed shape.
 > **Operational gotcha, confirmed in `infra/lib/identity-stack.ts`:** **no ceremony role holds
 > `dynamodb:DeleteItem` on the grants table.** PromotionRole has GetItem/Query/PutItem/UpdateItem;
 > the only `DeleteItem` grant anywhere is the agent's counters-table idempotency eviction. The delete
-> leg therefore runs out-of-band under an admin identity, exactly as the #246 legs did. That is not a
+> leg therefore runs out-of-band under an admin identity, exactly as the stored-bytes migration's legs did. That is not a
 > gap to fix — a ceremony role that could delete grants would be a laundering seam — but it does mean
 > this step is deliberately outside the ceremony surface and must be recorded as such in the archive
 > README.
@@ -118,7 +118,7 @@ principal. Notes that bite:
   quarantines on the broker's next read. It is fetched under ambient credentials *before* assuming
   PromotionRole (the one residual admin touch, per `docs/operator-identities.md`).
 - In manifest mode, `_resolve_envelope_hash` **refuses** if the manifest's principal is not the
-  principal being seeded (#199) — that refusal is the guard against minting a grant under the wrong
+  principal being seeded — that refusal is the guard against minting a grant under the wrong
   envelope, so read the error rather than reaching for another manifest.
 - `seed` never overwrites: if step 2 missed an item you will get
   `[seed] SKIP …: grant already exists`, which means that coordinate did **not** migrate. Treat a

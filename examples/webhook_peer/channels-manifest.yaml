@@ -1,4 +1,4 @@
-# webhook-peer/channels-manifest.yaml — FICTIONAL example consumer (sa#8 A2A peer).
+# webhook-peer/channels-manifest.yaml — FICTIONAL example consumer (A2A peer).
 #
 # The channels analogue of the broker AgentManifests in this directory: it wires the
 # inbound airlock ENTIRELY as config. A peer agent POSTs an EventTrigger over the signed

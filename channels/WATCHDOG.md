@@ -1,4 +1,4 @@
-# WATCHDOG — the input-poisoning campaign watchdog (sa#161)
+# WATCHDOG — the input-poisoning campaign watchdog
 
 > **Status: contract (2026-07-18).** Contract-tier per `docs/contract-vs-reference.md`: this
 > document is the normative words, `safe_agents/watcher/campaign.py` is the typed encoding (the
@@ -6,7 +6,7 @@
 > `AttributionBasis`, `CampaignReport`), and `safe_agents/watcher/tests/test_campaign.py` is the
 > conformance suite. The scheduled runner (`safe_agents/watcher/campaign_runner.py`) and its
 > GitHub Actions cron are **reference-tier** — one instantiation of the engine, mirroring
-> `safe_agents/watcher/liveness.py` (sa#38). No classifier, threshold value, or schedule is named
+> `safe_agents/watcher/liveness.py`. No classifier, threshold value, or schedule is named
 > in this document.
 
 ## What the watchdog is — and the one direction it may act
@@ -28,7 +28,7 @@ It is a **watchdog, never a screen**:
   it runs entirely after the fact, over records already written. `analyze()` is a pure function of
   its typed inputs (no boto3/botocore import, no clock read) — there is structurally nowhere for a
   gate to hide.
-  <!-- assumption-tested 2026-08-06 — HOLDS by import graph both directions (no deciding import; nothing on a request path imports the watcher); unpinned by any test until #370 lands -->
+  <!-- assumption-tested 2026-08-06 — HOLDS by import graph both directions (no deciding import; nothing on a request path imports the watcher); unpinned by any test until #128 lands -->
 - **It produces suspicion and a suggested remediation, never a safety decision.** Its output
   (`CampaignReport.suggested_remediation`) is a report a human reads. Applying a remediation is a
   human ceremony outside this contract, exactly as `channels/SCREENING.md`'s classifier only
@@ -155,7 +155,7 @@ strength stays sound: replaying requires possessing the captured transport token
 `rotate_channel_token` is the correct remedy for a captured token whether or not the replayed
 payload also carries a genuine signature.
 
-**Signer attribution is sound (closed 2026-07-18, sa#161 residual).** `sender.channel_identity` —
+**Signer attribution is sound (closed 2026-07-18, a campaign-watchdog residual).** `sender.channel_identity` —
 the dedupe key's sender half, and what `transport-token`'s `attribution_key` digests — is now bound
 into the signed statement alongside `event_id` (`channels/SIGNING.md` S1b,
 `BoundContext.sender_channel_identity`). An exact byte-for-byte replay still dedupes silently at
@@ -190,7 +190,7 @@ any consumer who needs stronger correlation than this today.
 **Attribution granularity is the sending broker**, not an individual upstream agent behind it — a
 consequence of `channels/SIGNING.md` S2 (per-envelope signing; inbound signatures are not carried
 across a relay). Cross-relay per-signer attribution is deferred with signing itself, to the
-normative spec (#178, #180).
+normative spec (#13).
 
 ## Grouping, windows, and campaign identity
 
@@ -294,7 +294,7 @@ precondition for the strongest attribution tier, not a requirement to run the wa
 
 Per `docs/contract-vs-reference.md`: this document plus the engine's conformance suite are
 **contract tier**; the scheduled runner and its GitHub Actions workflow are **reference tier**,
-mirroring the liveness watcher (`safe_agents/watcher/liveness.py`, sa#38). No new floor is added —
+mirroring the liveness watcher (`safe_agents/watcher/liveness.py`). No new floor is added —
 the watchdog reads records the floor already produces.
 
 Per `docs/config-provenance.md`: `CampaignThresholds` (`min_attempts`, `window_seconds`) and the
@@ -312,26 +312,26 @@ mints authority.
 - **Not a gate.** It has no seam into `dispatch.py` or the broker; nothing it produces can drop,
   delay, or deny a live request.
 - **Not a shedding rate-limiter.** The vocabulary (W6) never sheds held or legitimate load — it
-  inherits the sa#160 never-shed invariant by construction, having no shed action to select.
+  inherits the approval-queue never-shed invariant by construction, having no shed action to select.
 - **Not a content classifier.** It never inspects message content and consumes no LLM judgment —
   that is gate 7's job (`channels/SCREENING.md`), a different mechanism with a different failure
   mode.
 
 ## Relationships
 
-- `channels/SCREENING.md` (sa#43) — the on-path model-judged gate this watchdog is deliberately not;
+- `channels/SCREENING.md` — the on-path model-judged gate this watchdog is deliberately not;
   the refuse/pass contentless-verdict discipline this doc's remediation vocabulary borrows.
-- `channels/SIGNING.md` (#170) — the authenticated provenance this watchdog's strongest attribution
+- `channels/SIGNING.md` — the authenticated provenance this watchdog's strongest attribution
   tier depends on; `chain_verified`/`signer_key_id` are this standard's fields, and `unenroll_verify_key`
   names its verify-keys secret.
-- `channels/TRUST-MAPPING.md` (sa#81) — `DropRecord`, the primary input surface; `remove_trust_map_entry`
+- `channels/TRUST-MAPPING.md` — `DropRecord`, the primary input surface; `remove_trust_map_entry`
   and `rotate_channel_token` name its enforcement levers.
-- `docs/friction-doctrine.md` §Availability/forced-abstention — the sa#159/160/161 lineage; the
+- `docs/friction-doctrine.md` §Availability/forced-abstention — the availability-doctrine / liveness / campaign-watchdog lineage; the
   approval-queue-flood signal this watchdog also correlates; the watchdog's own positive-safe-action
   obligation.
-- `reliability/META-ALARM-STANDARD.md` (sa#29) — the three-channel discipline any scheduled runner
+- `reliability/META-ALARM-STANDARD.md` — the three-channel discipline any scheduled runner
   (W7) must satisfy.
 - `docs/contract-vs-reference.md`, `docs/config-provenance.md` — the packaging and placement doctrine
   this document is scoped against.
-- `safe_agents/watcher/liveness.py` (sa#38) — the sibling off-substrate watcher this runner's
+- `safe_agents/watcher/liveness.py` — the sibling off-substrate watcher this runner's
   reference implementation mirrors.

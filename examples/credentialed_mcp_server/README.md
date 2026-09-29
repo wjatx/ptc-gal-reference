@@ -6,13 +6,13 @@ environment, and reports a **fingerprint** of the key it started with.
 It exists because every other toy server in this repo ignores its environment,
 which made a whole class of claim unprovable:
 
-- **#253 (credential relocation).** A credential moved out of a harness config
+- **Credential relocation.** A credential moved out of a harness config
   into the product wrapper's store is only *relocated* if it still arrives. Against a server
   that ignores its environment, a wrap that delivered nothing would pass every
   assertion — the manifest would carry an `env_map`, the harness config would be
   clean, and the server would work exactly as well as if the mechanism were a
   no-op.
-- **#298 (carried configuration).** The same hole one hop earlier:
+- **Carried configuration.** The same hole one hop earlier:
   `McpServerDecl.env` was proven to the manifest and never to the child.
 
 Two design points worth keeping if this is extended:

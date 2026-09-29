@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CLI: validate a single agent deployment manifest (sa#41).
+CLI: validate a single agent deployment manifest (#53).
 
 Usage:
     python core/bin/validate-manifest agents/<name>.yaml [--offline] [--repo-root DIR]
@@ -8,7 +8,7 @@ Usage:
 Combines load_manifest() (structural YAML checks) with validate_manifest_extended()
 (envelope + policy checks). Exits 0 on success, 1 on validation failure.
 
---offline  Skip broker-dependent checks (default; safe until sa#12 lands).
+--offline  Skip broker-dependent checks (default; safe until the broker build lands).
 --repo-root DIR  Resolve policy file relative to DIR and check its content.
                  When omitted, policy file content checks are skipped.
 """

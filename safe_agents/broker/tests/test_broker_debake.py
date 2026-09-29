@@ -1,4 +1,4 @@
-"""test_broker_debake.py — broker-debaking P2 acceptance (sa#113).
+"""test_broker_debake.py — broker-debaking P2 acceptance.
 
 Two layers, matching the phase's two-part definition-of-done:
 
@@ -41,7 +41,7 @@ def _manifest(**overrides) -> AgentManifest:
         "principal": {"agentId": "test-agent", "skill": "t", "user": "u", "tier": "B"},
         "grant_classes": ["search.query", "notify.send"],
         "connectors": ["github", "search"],
-        # #171 — classifications are consumer-owned and travel in the manifest;
+        # Classifications are consumer-owned and travel in the manifest;
         # build_runtime compiles these into the runtime's ToolOpTable. Carry every
         # op these behavior tests grant (incl. github.whoami for the env override).
         "tool_ops": [
@@ -127,7 +127,7 @@ class TestBuildRuntimeFromManifest:
 
     def test_counter_cap_falls_back_when_caps_absent(self) -> None:
         # No caps block at all → the generic platform default, not a crash — but
-        # ONLY for read-effect grants (#205: granted writes must NAME their cap).
+        # ONLY for read-effect grants (granted writes must NAME their cap).
         runtime, _ = build_runtime(
             _manifest(envelope={"polarity": "abstain"}, grant_classes=["search.query"])
         )

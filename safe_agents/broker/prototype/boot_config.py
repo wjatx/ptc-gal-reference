@@ -1,6 +1,6 @@
-"""boot_config.py — the #205 named-config-or-refuse seam for the broker boot.
+"""boot_config.py — the named-config-or-refuse seam for the broker boot.
 
-Doctrine (docs/config-provenance.md; the #197/#199 lesson): authority-shaping
+Doctrine (docs/config-provenance.md; the wrong-authority-mint lesson): authority-shaping
 config must be operator-NAMED. On the real-store arm the machine refuses
 instead of defaulting or warn-and-continuing, and every refusal fails toward
 running nothing / less authority. The local/memory arm keeps every dev
@@ -35,12 +35,12 @@ Dynamo-specific seams (store construction, table-name resolution).
 Plus the arm resolution itself: ``resolve_store_arm`` validates BROKER_STORE
 against the CLOSED set {unset, "memory", "dynamo", "sqlite"} — a typo'd value
 (``dynamodb``) refuses at boot instead of silently booting the memory arm
-with every dev fallback. Since #248 ``resolve_secrets_arm`` gives BROKER_SECRETS
+with every dev fallback. ``resolve_secrets_arm`` gives BROKER_SECRETS
 the same treatment against {"file", "dir", "secretsmanager", "fake"}, and is
 the ONE point that decides which credential backend is in force — the two sites
 that used to test ``== "secretsmanager"`` independently now switch on it.
 
-Split out of broker_server.py (#205 R5) so the refusal seam is one small,
+Split out of broker_server.py so the refusal seam is one small,
 importable module; broker_server re-exports the public names so existing
 import surfaces keep working.
 """
@@ -63,23 +63,23 @@ if TYPE_CHECKING:
 
 
 class BrokerConfigError(ValueError):
-    """An authority-shaping config value was defaulted where it must be named (#205).
+    """An authority-shaping config value was defaulted where it must be named.
 
     Raised at boot / build_runtime, before any store write or connector call — every
     refusal fails toward running nothing, never toward minting authority from a
-    fallback (docs/config-provenance.md; the #197/#199 lesson)."""
+    fallback (docs/config-provenance.md; the wrong-authority-mint lesson)."""
 
 
 # The broker builds every agent-specific value from an AgentManifest (principal,
 # granted action classes, connectors, per-run cap, envelope) — NOT from module
-# constants (de-baking P2, sa#113). This checked-in example is the memory-arm-only
+# constants (de-baking P2). This checked-in example is the memory-arm-only
 # default; point the broker at a real manifest with BROKER_MANIFEST.
 DEFAULT_MANIFEST_PATH = Path(__file__).with_name("example_manifest.yaml")
 
 # Generic platform fallback when a manifest omits envelope.caps.actions_per_utc_day.
 # NOT agent-specific — the same ceiling for any agent, the runtime's own default cap
 # surfaced as a named constant. A manifest that sets caps.actions_per_utc_day overrides
-# it. Since #205 it applies ONLY when no granted class is write-effect: an envelope
+# it. It applies ONLY when no granted class is write-effect: an envelope
 # governing granted writes must NAME its cap (resolve_counter_cap refuses the default).
 DEFAULT_COUNTER_CAP = 100.0
 
@@ -95,11 +95,11 @@ DEV_HMAC_KEY = b"safe-agents-dev-hmac-key"
 # build_runtime refuses it loudly until then.
 _STORE_ARMS = ("memory", "dynamo", "sqlite")
 
-# The CLOSED set of secrets arms (#248). Config SELECTS from this set; it never
-# names an import path (docs/config-provenance.md, #186) — a secrets provider is
+# The CLOSED set of secrets arms. Config SELECTS from this set; it never
+# names an import path (docs/config-provenance.md) — a secrets provider is
 # the highest-value possible target for an injected class path.
 #
-# Before #248 there was no catalog at all: two independent sites tested
+# Originally there was no catalog at all: two independent sites tested
 # `BROKER_SECRETS == "secretsmanager"` and fell through to BROKER_SECRETS_FILE and
 # then to FAKE CREDENTIALS, so a single typo (`secretmanager`) booted green on
 # fakes while the operator believed Secrets Manager was in force. That is the
@@ -140,7 +140,7 @@ def is_durable_arm() -> bool:
     fallback byte-for-byte; a durable arm must NAME its authority-shaping
     config. The sqlite arm joined this predicate with the grants-sqlite slice:
     a durable local store run under the fixed dev HMAC key is tamper-evident
-    in name only, and a defaulted manifest on it is the #197/#199
+    in name only, and a defaulted manifest on it is the fallback-manifest
     wrong-authority substitution — the backend being a file instead of a
     table changes none of that."""
     return resolve_store_arm() in ("dynamo", "sqlite")
@@ -194,7 +194,7 @@ def load_named_manifest() -> AgentManifest:
 
 def resolve_hmac_key() -> bytes:
     """The grant-store HMAC key: BROKER_HMAC_KEY, else (memory arm only) the fixed
-    dev key. The dynamo arm must NAME the key the ceremony writes with (#205 — the
+    dev key. The dynamo arm must NAME the key the ceremony writes with (the
     write side, grants/_commands_common.py, already refuses; this is read/write
     symmetry)."""
     hmac_key = os.environ.get("BROKER_HMAC_KEY", "").encode()
@@ -236,7 +236,7 @@ def resolve_sqlite_db_path() -> Path:
 
 
 def resolve_sqlite_grants_db_path() -> Path:
-    """Where the CHECKER-WRITABLE key space lives — co-located unless split (#203).
+    """Where the CHECKER-WRITABLE key space lives — co-located unless split.
 
     The grant ceremony's two halves write disjoint key spaces, and the maker's
     half must be structurally unable to write the checker's. On DynamoDB that
@@ -245,14 +245,14 @@ def resolve_sqlite_grants_db_path() -> Path:
     topology** — ``GRANT#``/``RECORD#``/``TOOLDEF#``/``TOOLREC#`` move to their
     own database file, and the maker mounts that file read-only. The refusal is
     then the kernel's rather than a check of ours, which is the property the
-    #250 Phase 3 exit predicate asks for.
+    OpenShift substrate work's exit predicate asked for.
 
-    **Unset means co-located, and that is deliberately NOT a #205 violation.**
+    **Unset means co-located, and that is deliberately NOT a named-config violation.**
     The named-or-refuse rule exists because a *defaulted* path silently opens a
     fresh EMPTY database, so the operator believes an admitted set is in force
     when nothing is. That hazard is absent here: the fallback is the path the
     operator ALREADY named through ``BROKER_SQLITE_PATH``, which is the same
-    file, with the same contents, that every pre-#203 deployment used. There is
+    file, with the same contents, that every pre-split deployment used. There is
     no empty-database outcome to guess into — an unset value reproduces today's
     behaviour byte for byte, and splitting is an opt-in deployment fact.
 
@@ -275,7 +275,7 @@ def resolve_sqlite_grants_db_path() -> Path:
 
 
 def resolve_sqlite_grants_readonly() -> bool:
-    """Whether the grant-space stores open read-only in THIS process (#203).
+    """Whether the grant-space stores open read-only in THIS process.
 
     Set in the maker pod, and in the broker pod (which runs
     ``BROKER_GRANT_LOAD=read`` — ``get_grant`` only, never a write). It exists
@@ -298,7 +298,7 @@ def resolve_sqlite_grants_readonly() -> bool:
 
 
 def sqlite_grants_open_options() -> dict:
-    """Constructor kwargs for every CHECKER-WRITABLE sqlite store (#203).
+    """Constructor kwargs for every CHECKER-WRITABLE sqlite store.
 
     One resolution point, because the journal mode is NOT free to choose:
     journal mode is a persistent property of the database FILE, so when the
@@ -323,18 +323,18 @@ def sqlite_grants_open_options() -> dict:
 def resolve_secrets_arm() -> str:
     """The secrets arm from BROKER_SECRETS: 'file', 'dir', 'secretsmanager' or 'fake'.
 
-    The ONE place that decides WHICH credential backend is in force (#248). Both
+    The ONE place that decides WHICH credential backend is in force. Both
     resolution sites — the broker boot and the MCP operator commands — switch on
     this string; each still composes its own wrappers (the boot overlays dev stubs
     for the stub connectors, an operator invocation deliberately does not), but
     neither re-derives the arm, and neither can reach a provider the catalog does
     not name.
 
-    An unrecognized value REFUSES. Unset keeps the pre-#248 implicit resolution
+    An unrecognized value REFUSES. Unset keeps the original implicit resolution
     byte-for-byte — the path variable selects the arm — so every existing caller
     (run-local.sh, both CDK stacks, the Fargate BROKER_ENV contract) is unchanged:
 
-        BROKER_SECRETS_DIR set   -> 'dir'    (the container arm, #248)
+        BROKER_SECRETS_DIR set   -> 'dir'    (the container arm)
         BROKER_SECRETS_FILE set  -> 'file'   (the 0600 JSON blob, the Mac arm)
         neither                  -> 'fake'   (memory-arm dev default; F3 refuses
                                               this pairing on a durable store)
@@ -362,7 +362,7 @@ def resolve_secrets_arm() -> str:
 def resolve_secrets_dir() -> Path:
     """The secrets mount directory on the 'dir' arm — NAMED, never defaulted.
 
-    Naming the arm without naming its root is the #205 shape: a defaulted root
+    Naming the arm without naming its root is the named-or-refuse shape: a defaulted root
     (``/run/secrets``, say) silently resolves every credential against a directory
     the operator never chose — which either misses (a stub credential via the
     overlay fallback) or, worse, hits someone else's mount."""
@@ -398,7 +398,7 @@ def require_named_real_backends(audit_label: str, secrets_label: str) -> None:
     """F3 — a DURABLE store (dynamo or sqlite) paired with a non-durable audit
     sink or fake credentials is never a sanctioned combination: it looks like a
     real run but loses the audit tape on restart and/or serves a fake connector
-    credential. Was a warn-and-continue; since #205 a refusal at boot (fails
+    credential. Was a warn-and-continue; now a refusal at boot (fails
     toward running nothing)."""
     if is_durable_arm() and (audit_label == "memory" or secrets_label == "fake"):
         raise BrokerConfigError(
@@ -420,8 +420,8 @@ def require_sanctioned_grant_load(mode: str) -> None:
     (brokerRole is read-only on the grants table, so dynamo+seed only ever
     works against DynamoDB Local); the sqlite arm has no IAM between the
     broker process and the file, so seed mode there would silently mint
-    grants into a durable trust store on every boot — the #197/#199 shape.
-    Grants on the sqlite arm come from the ceremony (the #226 solo-identity
+    grants into a durable trust store on every boot — the wrong-authority-mint shape.
+    Grants on the sqlite arm come from the ceremony (the solo-identity
     ceremony is the local path); until then ``read`` serves what the ceremony
     wrote (fail-closed: absent ⇒ denied) and ``skip`` is the construction
     smoke."""
@@ -497,7 +497,7 @@ def resolve_counter_cap(
 @contextlib.contextmanager
 def grant_load_suppressed():
     """Scope BROKER_GRANT_LOAD=skip to a broker_server import (side-effect
-    suppression) WITHOUT leaking it into the process env (#210): a bare
+    suppression) WITHOUT leaking it into the process env: a bare
     module-level setdefault poisoned later same-process callers — e.g.
     build_runtime resolving grant-load mode to 'skip' and serving an empty
     registry — with test-order-dependent failures as the visible symptom."""

@@ -1,4 +1,4 @@
-# EVIDENCE — constructed confidence as a typed contract (#184, Pillar 4)
+# EVIDENCE — constructed confidence as a typed contract (Pillar 4)
 
 > **Status: contract (2026-07-12).** Contract-tier per `docs/contract-vs-reference.md`: this document
 > is the normative words, `safe_agents/broker/schemas/evidence.py` (`ConfidenceArtifact`,
@@ -19,7 +19,7 @@ a model asserting its own confidence is exactly the self-report the broker exist
 The evidence contract packages **constructed** confidence — agreement across independent samples
 (self-consistency), across ensemble members, or against a calibrated conformal threshold — as a typed
 `ConfidenceArtifact` that a **deterministic** predicate gates on. Every function here is pure; there
-is no model in any gate (the same discipline as `Liveness.overdue`, sa#160, which observes THAT a
+is no model in any gate (the same discipline as `Liveness.overdue`, which observes THAT a
 contract was met, never judges WHY).
 
 It is **not** a new decision verb, a new grant, or a taint mechanism. Whether a call is *allowed* is
@@ -62,12 +62,12 @@ interface DemotionSignal {
   trigger:      "stale_confidence" | "corroboration_failure" | "budget_breach" | "false_action"
   principal:    Principal
   action_class: string
-  period:       string  // the counter-period bucket: "YYYYMMDD" (utc-day) or "YYYYMMDDTHH" (utc-hour, #212)
+  period:       string  // the counter-period bucket: "YYYYMMDD" (utc-day) or "YYYYMMDDTHH" (utc-hour)
   detail:       string  // audit-safe cause, no payload content
   ts:           string
 }
 
-interface CorroborationRecord {          // the corroboration_failure typed input (#192)
+interface CorroborationRecord {          // the corroboration_failure typed input
   k:             int     // quorum: agreeing sources required (1..n)
   n:             int     // independent sources consulted
   agreeing:      int     // non-stale, provenance-valid agreeing sources (0..n)
@@ -119,32 +119,32 @@ A missing artifact is below-bar whenever a bar is configured. Proven by `test_co
 
 `error_budget_draw(artifact, blast_class, blast_weights)` returns `error_prob × blast_radius`, drawn
 per decision against a **per-period** `Σ error_prob × blast_radius` bound (UTC-day by default; the
-manifest's `counter_period`, #212)
+manifest's `counter_period`)
 (`Envelope.confidence.error_budget_tolerance`), metered on the scoped-counter seam
 (principal+op+UTC-day precedent, suffix `error_budget`). A class with no declared weight raises loudly
 — a `ValueError`, never a silent default. A breach emits the typed `DemotionSignal` with
 `trigger = "budget_breach"`, which the Phase-3 evaluator consumes; **the base emits, never applies** a
 demotion. **The metering has landed:** the PEP is the SINGLE writer (drawn in `_executor` after a
-successful WRITE, beside the sa#137 query-bytes meter), the PIP only READS the counter to set the
+successful WRITE, beside the read-gating query-bytes meter), the PIP only READS the counter to set the
 cumulative `error_budget_breached` Fact the now-real rules 2/3 key on, and a missing artifact draws
 `error_prob = 1.0` (the probability ceiling) so omission never dodges the budget. Crossing the
-tolerance emits the signal on the sa#153 log-metric surface AND the `on_demotion_signal` seam
+tolerance emits the signal on the log-metric alarm surface AND the `on_demotion_signal` seam
 (a raising subscriber never fails the request).
 
 ### stale_confidence (drift)
 
-The artifact's `stale` flag is the **label-free drift input** (#65 absorbed): a stale artifact voids
+The artifact's `stale` flag is the **label-free drift input** (#59 absorbed): a stale artifact voids
 its conformal threshold and so is always below-bar. The drift **detector** that sets the flag is
 reference-tier and lands later; this contract only defines the input and its below-bar consequence.
 
-The demotion runner consumes both typed inputs directly (#192): `derive_stale_confidence`
+The demotion runner consumes both typed inputs directly: `derive_stale_confidence`
 (a stale artifact → the `stale_confidence` signal) and `derive_corroboration_failure`
 (a `CorroborationRecord` with `agreeing < k` → the `corroboration_failure` signal), wired as
 `--stale-artifact-json` / `--corroboration-json` on the runner CLI. Both consume the typed
 evidence AS GIVEN — deterministic, no model, no re-judgment of why — and an unusable input
 file refuses loudly (exit 2), never falling through to "no breach".
 
-### The #58 evidence reviewer
+### The evidence reviewer
 
 `annotations` is **attach-only**: a reviewer (or any upstream) may record a finding there, but nothing
 in this contract reads it. An annotation cannot license or veto anything — it is a place to record, not
@@ -165,7 +165,7 @@ a place to decide.
   False; at/above bar → True.
 - **E7 — budget draw.** `error_budget_draw` = `error_prob × weight` per class; a missing weight raises
   `ValueError`.
-- **E8 — caps rename (#163).** Both `actions_per_run` and `actions_per_utc_day` load to one field; the
+- **E8 — caps rename.** Both `actions_per_run` and `actions_per_utc_day` load to one field; the
   canonical dump key is the new one; setting both at once is rejected; the old spelling does not leak as
   an extra key; the two spellings' envelope hashes are equal.
 - **E9 — demotion signal.** `DemotionSignal` round-trips; the trigger vocabulary is exactly the four
@@ -174,7 +174,7 @@ a place to decide.
   validation (`extra="forbid"`); an incoherent `Confidence` knob (budget without weights, or empty) is
   rejected.
 
-- **E15 — corroboration record (#192).** `CorroborationRecord` round-trips; rejects unknown keys and
+- **E15 — corroboration record.** `CorroborationRecord` round-trips; rejects unknown keys and
   incoherent counts (`k > n`, `agreeing > n`, `stale_sources > n`); `failed` is exactly
   `agreeing < k`.
 
@@ -198,7 +198,7 @@ The wiring slice (`test_confidence_wiring.py`, W1–W10) pins four further claus
 ## Deployment note
 
 This change churns **every** envelope hash (it retires the `abstention_thresholds` placeholder and
-renames the cap), and a pre-#184 stored envelope dump — which carries `"abstention_thresholds": null`
+renames the cap), and an older stored envelope dump — which carries `"abstention_thresholds": null`
 — **fails validation loudly at boot**. That is the intended fail-closed path, not a regression: re-run
 seed_envelope → seed_grants per principal to cure it (a far-jump broker redeploy already re-seeds
 grants per the cross-version reseed rule). No compat shim.
@@ -206,7 +206,7 @@ grants per the cross-version reseed rule). No compat shim.
 ## Deferred (this contract's edges)
 
 - **The drift detector** — the reference-tier machinery that sets `ConfidenceArtifact.stale` from a
-  label-free drift signal (#65). This contract defines only the flag and its consequence.
+  label-free drift signal (#59). This contract defines only the flag and its consequence.
 
 The construction methods have **landed** (`safe_agents/evidence/methods.py`, the worked consumer
 `examples/confidence_budget/`): reference implementations of self-consistency / ensemble / conformal

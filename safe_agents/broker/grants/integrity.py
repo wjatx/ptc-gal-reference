@@ -83,7 +83,7 @@ def detect_orphaned_grants(
     docs/GAL.md §3 — superseding the old no-record exemption), so a demoted
     grant is covered both by the record that last raised its level and by its
     demotion record. The matching key is unchanged; ledger-level checks (e.g.
-    every demotion has a record) are Phase 5 work (#62), not done here.
+    every demotion has a record) are Phase 5 work, not done here.
 
     Args:
         grants: the grants to audit.

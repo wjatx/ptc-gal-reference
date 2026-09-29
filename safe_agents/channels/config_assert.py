@@ -1,4 +1,4 @@
-"""#205 — mechanical post-deploy assertion for the channels airlock/drain binding.
+"""Mechanical post-deploy assertion for the channels airlock/drain binding.
 
 The retro finding this closes: deploy-time values (the airlock's CHANNELS_MANIFEST
 path, the drain's manifest path + receiver) were improvised by sub-agents during
@@ -14,7 +14,7 @@ Doctrine (matches the ceremony surface's fail-toward-nothing posture):
   have NO default. An unset expectation is a REFUSAL — a loud failure telling the
   operator to declare it — never a silent skip and never "accept whatever was
   deployed". Accepting the deployed value as its own expectation would make the
-  check vacuously green, which is the exact blindness #205 exists to remove.
+  check vacuously green, which is the exact blindness this assertion exists to remove.
 - A deliberately-manifestless deploy (the stack omits ``CHANNELS_MANIFEST``
   entirely — the legal empty-manifest drop-everything posture) is declared with
   the literal expectation value ``@absent`` (:data:`EXPECT_ABSENT`): the check

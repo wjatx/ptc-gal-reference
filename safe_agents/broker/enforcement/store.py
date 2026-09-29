@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# Evidence-counter suffixes (#193) — the track-record labels the grant ceremony
+# Evidence-counter suffixes — the track-record labels the grant ceremony
 # reads and the PEP writes, on the same scoped_counter_key coordinate as the
 # budget meters so evidence and enforcement can never disagree. Defined HERE
 # (not in grants/) because the PEP is the writer and must not import upward;
@@ -39,10 +39,10 @@ ACTION_CAP_SUFFIX = "counter"
 UNBOUNDED_COUNTER_CAP = 1e18
 
 # ---------------------------------------------------------------------------
-# Counter periods (#212) — the time-scale knob.
+# Counter periods — the time-scale knob.
 #
 # The bucket segment of every counter key is a PERIOD bucket. "utc-day" is the
-# default and its bucket format (YYYYMMDD) is byte-for-byte the pre-#212 key, so
+# default and its bucket format (YYYYMMDD) is byte-for-byte the pre-counter-period key, so
 # every existing row reads as a day-period row with no migration ("compat via
 # period-in-key": an 8-digit bucket IS a day bucket; an hour bucket carries a
 # 'T'). The period is manifest-named and image-baked — authority-shaping config
@@ -60,7 +60,7 @@ _PERIOD_STEP: dict[str, datetime.timedelta] = {
 # thousands of point reads. Per period — a year of days, a year of hours.
 MAX_WINDOW_PERIODS: dict[str, int] = {"utc-day": 366, "utc-hour": 8784}
 
-# Back-compat name (pre-#212): the day-period window bound.
+# Back-compat name (pre-counter-period): the day-period window bound.
 MAX_WINDOW_DAYS = MAX_WINDOW_PERIODS["utc-day"]
 
 
@@ -128,22 +128,22 @@ def scoped_counter_key(
     rule evaluates a different counter than enforce() draws.
 
     Scoped by PRINCIPAL and UTC PERIOD (day-scoping decided 2026-07-08, cutover
-    smoke; generalized to periods in #212): the original bare
+    smoke; later generalized to periods): the original bare
     ``{tool}.{op}:counter`` key was shared by every principal on the table and
     never reset, so ``caps.actions_per_utc_day`` compared against all-time
     GLOBAL spend — one principal could exhaust another's budget, and every
     principal eventually walked into its own cap on accumulated history.
     Principal-scoping isolates budgets; period-scoping makes each cap a per-op
     PER-PERIOD budget with no reset job (a new period is a new key; old keys age
-    out). ``suffix`` is "counter" (action cap), "query_bytes" (sa#137 egress
-    budget), or an evidence label (the ``*_SUFFIX`` constants above, #193).
+    out). ``suffix`` is "counter" (action cap), "query_bytes" (read-gating egress
+    budget), or an evidence label (the ``*_SUFFIX`` constants above).
 
     ``period`` is the manifest-named bucket size (default "utc-day", whose key
-    is byte-for-byte the pre-#212 format). ``bucket`` addresses a specific
+    is byte-for-byte the pre-counter-period format). ``bucket`` addresses a specific
     period's key — used by read_counter_window to walk a multi-period evidence
     window. None means the current period, which every writer uses; only
     readers pass an explicit bucket. A malformed bucket raises rather than
-    silently keying the wrong coordinate. ``day`` is the pre-#212 spelling of
+    silently keying the wrong coordinate. ``day`` is the pre-counter-period spelling of
     ``bucket`` and asserts day semantics (it refuses under any other period).
     """
     _require_known_period(period)
@@ -240,7 +240,7 @@ def read_counter_window(
     """Sum a scoped counter over the last ``window_periods`` periods (anchor
     inclusive).
 
-    read_counter is a single-period point read, so before #193 a ceremony
+    read_counter is a single-period point read, so before evidence labeling a ceremony
     ``window_n`` silently meant "the current period only". This walks the
     bucket-keyed coordinates directly — a bounded loop of point reads, fine at
     this scale since the counters table has no TTL (bucket keys are retained
@@ -327,7 +327,7 @@ class EnforcementStore(Protocol):
     def delete_idempotency(self, key: str) -> None:
         """Remove the stored record for this key; a no-op if absent.
 
-        Used by enforce() to evict stale non-executed outcomes (#148) and to
+        Used by enforce() to evict stale non-executed outcomes and to
         RELEASE its own claim when the effective decision turned out to be
         deny/abstain/require_approval, so the key becomes claimable again. Also
         the operator's clearing path for a claim stranded by a process crash.
@@ -352,8 +352,8 @@ class EnforcementStore(Protocol):
 
         A read-only point read — never mutates. Both real callers stay
         side-effect-free through it: the PIP derives its budget facts (the cap
-        counter, the sa#137 query-egress counter) and the PEP detects an
-        error-budget breach after metering (#184). The authoritative atomic bound
+        counter, the read-gating query-egress counter) and the PEP detects an
+        error-budget breach after metering. The authoritative atomic bound
         stays try_increment_counter's compare-and-set; this read is advisory.
         """
         ...
@@ -533,7 +533,7 @@ class DynamoStore:
         decision_json = str, ts = str (the CLAIM time), status = str
         ("in_flight" | "executed" | "failed"; absent on rows written before the
         claim lifecycle, which read back as "executed"), result_json? = str
-        (absent for records written before sa#108 and while in flight),
+        (absent for records written before connector-result caching and while in flight),
         error? = str (present only on a "failed" row)
 
       Ledger items:
@@ -569,7 +569,7 @@ class DynamoStore:
             key=key,
             decision_json=item["decision_json"],
             ts=item["ts"],
-            # Tolerate absence: records written before sa#108 (and every
+            # Tolerate absence: records written before result caching (and every
             # deny/abstain/require_approval record) carry no result_json → None.
             result_json=item.get("result_json"),
             # Tolerate absence: rows written before the claim lifecycle carry no

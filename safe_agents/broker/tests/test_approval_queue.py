@@ -1,4 +1,4 @@
-"""Tests for approval-queue de-amplification (sa#160 sub-item).
+"""Tests for approval-queue de-amplification.
 
 Four concerns:
   1. The `ApprovalQueue` Envelope knob validates/rejects and is hash-bound.

@@ -1,4 +1,4 @@
-# self-stop-on-timeout.service — the oneshot the lifetime-cap timer fires (sa#98 belt-and-suspenders).
+# self-stop-on-timeout.service — the oneshot the lifetime-cap timer fires (belt-and-suspenders).
 #
 # Triggered by self-stop-on-timeout.timer (OnBootSec=3h), NOT enabled directly. It runs
 # self-stop-on-timeout.sh, which stops THIS instance via the box's existing ec2:StopInstances-self

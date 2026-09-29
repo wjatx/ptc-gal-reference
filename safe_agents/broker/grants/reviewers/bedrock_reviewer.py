@@ -1,4 +1,4 @@
-"""grants.reviewers.bedrock_reviewer — a reference evidence reviewer (sa#58).
+"""grants.reviewers.bedrock_reviewer — a reference evidence reviewer.
 
 **Reference-tier** per docs/contract-vs-reference.md: the normative seam is
 `CheckerProtocol` in grants/ceremony.py (findings-attach-NEVER-gate,

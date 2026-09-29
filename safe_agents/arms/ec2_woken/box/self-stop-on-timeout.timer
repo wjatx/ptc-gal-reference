@@ -1,4 +1,4 @@
-# self-stop-on-timeout.timer — box lifetime cap (sa#98 belt-and-suspenders).
+# self-stop-on-timeout.timer — box lifetime cap (belt-and-suspenders).
 #
 # Fires self-stop-on-timeout.service once, 3h after boot. Installed + enabled by
 # box_provision.render_box_user_data alongside the drain loop. The drain loop's own idle

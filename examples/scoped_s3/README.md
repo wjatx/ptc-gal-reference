@@ -1,4 +1,4 @@
-# scoped_s3 — per-capability IAM scoping (#175, PTC Phase 3a)
+# scoped_s3 — per-capability IAM scoping (PTC Phase 3a)
 
 A **fictional** reference consumer for the `assumed_role` credential strategy plus the
 `capability_iam` manifest block — the confinement half of `broker/CONNECTOR-AUTH.md`.
@@ -6,8 +6,8 @@ It is the worked example behind conformance clauses **C6–C8**.
 
 ## What it shows
 
-`#173` made a connector's credential a broker-resolved *strategy* instead of a static
-string. `#175` finishes the story when the credential is an **identity**: an assumed
+An earlier change made a connector's credential a broker-resolved *strategy* instead of a static
+string. Connector IAM scoping finishes the story when the credential is an **identity**: an assumed
 IAM role's blast radius is whatever that role can do, so the role must be scoped to
 *exactly* the declared capability — never the broker's full identity (doctrine 2).
 

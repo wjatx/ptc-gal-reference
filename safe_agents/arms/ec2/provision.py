@@ -5,13 +5,13 @@ Re-derives the bootstrap + EC2 provisioning from a consumer agent's reference
 pattern, generalized for any agent via manifest parameters. See arms.md §Arm 1
 and PORTING.md for the re-derivation rationale.
 
-How it plugs into the pipeline (sa#32):
+How it plugs into the pipeline:
     provision_phase() in safe_agents/pipeline/phases.py calls ec2_provision() for arm=ec2.
     teardown_phase() calls ec2_teardown() to remove everything ec2_provision() created.
     The same AWSInterface abstraction is used throughout — FakeAWS for unit tests,
     LiveAWS for real deploys. No boto3 is imported at module load time.
 
-Two-identity split (sa#33):
+Two-identity split:
     agentRole  — zero connector authority (IdentityStack baseline). The EC2 arm
                  adds: run-record PutItem on agent-runs-<env>, GetSecretValue on
                  the agent's oauth_token path only, and SSM Session Manager core.
@@ -21,7 +21,7 @@ Two-identity split (sa#33):
                  Defined in IdentityStack; the broker role resource pattern is
                  BROKER_CONNECTOR_KEYS_RESOURCE_PATTERN (tested separately).
 
-Egress confinement (sa#35, Option A — the two-box broker model):
+Egress confinement (Option A — the two-box broker model):
     The box runs in the ISOLATED agent subnet (no NAT) on the agent SG (egress = broker
     SG only) + the endpoint SG (AWS interface endpoints) — the same placement the proven
     ec2-woken box uses. The confined agent does a REAL brokered round-trip against the
@@ -65,9 +65,9 @@ if TYPE_CHECKING:
 _TEMPLATE_PATH = Path(__file__).parent / "user-data.sh.tmpl"
 
 # Parameters the template requires. Validated in render_user_data().
-# sa#85: repo and deploy_key_secret removed — code now arrives via S3 bundle,
+# Removed repo and deploy_key_secret — code now arrives via S3 bundle,
 # not git clone; no deploy key is needed in the prebuilt-AMI model.
-# sa#35: broker_dns / agent_runs_table / region added — the converged two-box model
+# Added broker_dns / agent_runs_table / region — the converged two-box model
 # writes them into /etc/safe-agents/agent.env for run-brokered.sh (broker SERVICE
 # round-trip + run-record write), replacing the old co-located model-proxy stub.
 _REQUIRED_PARAMS: frozenset[str] = frozenset(
@@ -198,7 +198,7 @@ def agent_role_extensions(
         {
             # S3 deploy bucket: read ONLY this agent's code bundle and the shared
             # platform bundle (the conformance harness). Delivered at boot via the S3
-            # gateway endpoint (sa#88: code + harness arrive via S3, not git). No write,
+            # gateway endpoint (code + harness arrive via S3, not git). No write,
             # no other agents' paths, no other buckets.
             "Sid": "DeployBundleRead",
             "Effect": "Allow",
@@ -235,7 +235,7 @@ def agent_role_extensions(
 # Provisioning
 # ---------------------------------------------------------------------------
 
-# Tag filter for the prebuilt base AMI (sa#84 bakery writes these tags).
+# Tag filter for the prebuilt base AMI (the AMI bakery writes these tags).
 # Key: "safe-agents:ami", value: "base" — selects the base image.
 _BASE_AMI_TAG_KEY = "safe-agents:ami"
 _BASE_AMI_TAG_VALUE = "base"
@@ -709,7 +709,7 @@ def ec2_provision(
     """Provision the EC2 instance for arm=ec2.
 
     Runs five explicit steps with waits/conditionals to eliminate the SSM
-    re-provision race (sa#90):
+    re-provision race:
 
       0. wait_for_clean_start — pre-provision gate: prior instances are terminated
          (or raises if any are still alive); IAM profile is in a stable state
@@ -765,7 +765,7 @@ def ec2_provision(
         return value
 
     agent_role_arn = _ssm("agent-role-arn")
-    # Converged two-box confinement (sa#35, Option A): the box runs in the ISOLATED agent subnet
+    # Converged two-box confinement (Option A): the box runs in the ISOLATED agent subnet
     # (no NAT) on the agent SG — whose only egress is the broker SG (+ the endpoint SG for the AWS
     # interface endpoints) — the SAME placement the proven ec2-woken box uses. The subnet has no
     # internet route and the agent SG permits only the broker, so the box (and anything in its
@@ -787,7 +787,7 @@ def ec2_provision(
     role_name = agent_role_arn.split("/")[-1]
 
     # -- Resolve AMI (prebuilt base AMI via tag lookup, or caller override) ----
-    # sa#85: look up the newest AMI tagged safe-agents:ami=base (built by sa#84
+    # Look up the newest AMI tagged safe-agents:ami=base (built by the AMI
     # bakery) rather than the public AL2023 SSM parameter. A caller may pass an
     # explicit image_id to skip the lookup (e.g. for targeted testing).
     if image_id is None:
@@ -839,7 +839,7 @@ def ec2_provision(
     )
 
     # -- Render user-data ------------------------------------------------------
-    # sa#85: repo and deploy_key_secret removed — the prebuilt-AMI model pulls
+    # Removed repo and deploy_key_secret — the prebuilt-AMI model pulls
     # the agent code bundle from S3 (no git clone / deploy key needed here).
     params: dict[str, str] = {
         "name": manifest.name,
@@ -853,7 +853,7 @@ def ec2_provision(
     user_data_plain = render_user_data(params)
     # gzip then base64: cloud-init auto-detects gzip-magic user-data and decompresses it before
     # running, so this is the documented technique for the 16 KB / 25,600-byte encoded user-data
-    # limit (matches the RHEL arm). base64-alone overflows once the netns-confinement wiring (sa#97)
+    # limit (matches the RHEL arm). base64-alone overflows once the netns-confinement wiring
     # is present; gzip drops ~17 KB raw to ~5 KB, well under the cap.
     user_data_b64 = base64.b64encode(gzip.compress(user_data_plain.encode())).decode()
 

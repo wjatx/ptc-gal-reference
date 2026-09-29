@@ -1,4 +1,4 @@
-"""owner_command_receiver.py — owner-channel's CONSUMER-OWNED drain Receiver (sa#176).
+"""owner_command_receiver.py — owner-channel's CONSUMER-OWNED drain Receiver.
 
 owner-channel stands on BOTH channels seams: the inbound airlock (a
 ``ChannelsManifest`` admitting its one mapped human owner) AND, with this file,
@@ -8,7 +8,7 @@ class by dotted path
 (``examples.owner_channel.owner_command_receiver:OwnerCommandReceiver``) and the
 drain worker imports, zero-arg instantiates, and protocol-checks it — the same
 fail-closed injection discipline as webhook-peer's ``inbound_log_receiver.py``
-and the sa#141 connector seam.
+and the connector-injection seam.
 
 This receiver handles ONLY the owner COMMAND path. An owner APPROVAL envelope
 (``/approve <intent_id> yes|no``) forks in the BASE drain handler
@@ -23,7 +23,7 @@ The consumer writes ONLY against public surfaces: the ``Receiver`` protocol
 (``safe_agents.channels.drain.receiver``) and the ``EventTrigger`` schema
 (``safe_agents.channels.schemas``) — never ``safe_agents.broker`` internals.
 
-Discipline worth stating plainly (sa#176): ``sender_class == "owner"`` RAISES the
+Discipline worth stating plainly: ``sender_class == "owner"`` RAISES the
 owner's action surface but is a FLOOR, never a grant. The airlock's owner seed
 hop carries ``label="trusted"`` earned by gate-1 auth, and this receiver's own
 trust map extends that same trust to the drain side by trusting sources prefixed

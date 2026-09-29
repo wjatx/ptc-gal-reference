@@ -1,6 +1,6 @@
 # agents/smoke-fargate.yaml — deployment manifest for a smoke-deploy of the Fargate arm.
 #
-# Purpose: proves the Fargate arm adapter (sa#36) end-to-end — provision →
+# Purpose: proves the Fargate arm adapter end-to-end — provision →
 # deploy → smoke — in the development environment. Targets the test-stub agent
 # (the runner-contract reference implementation) so the smoke runs without a real
 # Claude session. The coordinator runs the live capstone; CI uses --dry-run.

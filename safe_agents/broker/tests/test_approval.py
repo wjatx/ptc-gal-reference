@@ -2,7 +2,7 @@
 
 All tests use InMemoryIntentStore — no AWS credentials, no moto, no network.
 
-Acceptance criteria from #47:
+Acceptance criteria:
   - require_approval: broker returns pending, Intent persisted, no connector call this turn.
   - WYSIWYE: after approval, executor receives the stored materializedRequest, not a
     re-issued call from a (hypothetically compromised) agent.

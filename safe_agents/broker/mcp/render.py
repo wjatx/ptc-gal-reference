@@ -1,5 +1,4 @@
-"""Pure, read-only rendering + classification for `show`/`diff` (#221 Phase 5,
-item 3 of 4).
+"""Pure, read-only rendering + classification for `show`/`diff`.
 
 Today re-vetting starts blind: a drifted `def_hash` tells an operator THAT a
 tool's admitted definition no longer matches what the server advertises, but
@@ -27,7 +26,7 @@ Four tool classes, rendered deliberately differently:
                  machine-summarized (added/removed/retyped/required deltas),
                  never a raw-JSON dump. On a REMOTE (`streamable-http`)
                  server a newly-required input field is additionally a
-                 DISCLOSURE ESCALATION (#232): its own block, rendered above
+                 DISCLOSURE ESCALATION: its own block, rendered above
                  the contract summary, naming the destination — the vendor
                  now receives that field on every call. The identical delta
                  on a stdio server stays an ordinary contract change (the
@@ -38,12 +37,12 @@ Four tool classes, rendered deliberately differently:
                  truncated, summarized, or whitespace-collapsed — summarizing
                  the injection vector would defeat the point of showing it.
                - The remaining metadata fields (title/icons/annotations/meta/
-                 execution — signed since #223) are small values rendered
+                 execution — all signed) are small values rendered
                  verbatim old/new when they move; an annotation flip like
                  `readOnlyHint` -> `destructiveHint` is exactly the drift the
                  widening exists to catch, so it is never summarized either.
 
-Since #246 the stored row NESTS the ratified definition (`RegisteredTool.
+The stored row NESTS the ratified definition (`RegisteredTool.
 tool_def`); a row whose server advertised no metadata at admission carries
 None there, which renders honestly as absent -> present. The first re-vet
 pins the real baseline.
@@ -74,7 +73,7 @@ from safe_agents.broker.schemas.mcp_registry import (
 # which is how a codebase ends up with two notions of "changed".
 
 # The McpToolDef advertised-metadata fields (schemas/mcp_registry.py) — SIGNED
-# since #223, carried on RegisteredTool since the same change. Kept as a tuple
+# and carried on RegisteredTool. Kept as a tuple
 # here (not re-derived from the model) so a schema change to McpToolDef is a
 # conscious edit to this list too. `output_schema` is deliberately absent: it
 # is a CONTRACT-class field rendered through the schema-delta summarizer, not
@@ -137,12 +136,12 @@ def render_description_delta(old: str, new: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# disclosure escalation — a newly-required input field on a REMOTE server (#232)
+# disclosure escalation — a newly-required input field on a REMOTE server
 # ---------------------------------------------------------------------------
 
 
 def render_disclosure_escalation(delta: SchemaDelta, destination: str) -> str:
-    """Render the #232 tier: fields the vendor now RECEIVES that it did not
+    """Render the disclosure-escalation tier: fields the vendor now RECEIVES that it did not
     before. On a remote (`url`) server `input_schema` is not merely
     model-facing surface — it is an exfiltration-channel specification,
     enumerating what the vendor gets on every call — so a newly-required
@@ -172,7 +171,7 @@ def render_disclosure_escalation(delta: SchemaDelta, destination: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# advertised metadata — SIGNED since #223
+# advertised metadata — SIGNED
 # ---------------------------------------------------------------------------
 
 ALL_METADATA_FIELDS = ("output_schema",) + VERBATIM_METADATA_FIELDS
@@ -198,7 +197,7 @@ def render_advertised_metadata(tool_def: McpToolDef) -> str:
 def render_metadata_delta(name: str, old: object, new: object) -> str:
     """Verbatim old/new rendering for ONE moved metadata field. These are
     small, signed values (an annotation flip like `readOnlyHint` ->
-    `destructiveHint` is exactly the drift #223 widened the set to catch), so
+    `destructiveHint` is exactly the drift the signed set was widened to catch), so
     they are shown in full — absent renders as "not advertised", never as an
     empty container."""
 
@@ -240,7 +239,7 @@ def render_registered_tool(server_id: str, tool_name: str, result: ToolReadResul
     """Render one `store.get_tool` result for `show`. Read-only; formats what
     the caller already fetched."""
     if result.quarantined:
-        # #246: a quarantined read carries tool=None — tampered bytes are
+        # A quarantined read carries tool=None — tampered bytes are
         # evidence, never parsed — so there is no row content to show.
         return "\n".join(
             [
@@ -303,7 +302,7 @@ class ToolDiffResult:
     #: ceremony must never let one blanket confirmation cover a change to it.
     description_changed: bool = False
     #: True only when the tool sits on a REMOTE (`streamable-http`) server AND
-    #: the DRIFT includes a newly-required input field — the #232 disclosure
+    #: the DRIFT includes a newly-required input field — the disclosure
     #: escalation (the vendor now receives that field on every call). A caller
     #: with acknowledgment semantics routes it exactly like
     #: `description_changed`: a blanket bulk confirmation must never cover a
@@ -327,7 +326,7 @@ def render_tool_diff(
 
     `transport`/`source` are the server's declared transport and destination
     (a `McpServerSnapshot` carries both) and make the CONTRACT rendering
-    transport-aware (#232): on `"streamable-http"` a newly-required input
+    transport-aware: on `"streamable-http"` a newly-required input
     field renders as a disclosure escalation naming `source` (the URL). The
     stdio default keeps every transport-blind caller byte-identical."""
     header = f"=== {tool_name} ==="
@@ -367,7 +366,7 @@ def render_tool_diff(
         rendered = "\n".join([header, f"  status: unchanged (def_hash={live_hash})"])
         return ToolDiffResult(tool_name, DriftKind.UNCHANGED, rendered)
 
-    stored_def = stored.tool_def  # the ratified definition, nested since #246
+    stored_def = stored.tool_def  # the ratified definition, nested whole
     lines = [
         header,
         f"  status: DRIFT — def_hash changed (admitted={stored.def_hash} live={live_hash})",
@@ -375,7 +374,7 @@ def render_tool_diff(
     disclosure_escalation = False
     if stored_def.input_schema != live_def.input_schema:
         delta = diff_input_schema(stored_def.input_schema, live_def.input_schema)
-        # #232, the TL11a discipline re-derived for the base: on a remote
+        # The TL11a discipline re-derived for the base: on a remote
         # server a newly-required field renders in its own block, ABOVE the
         # contract summary, naming the destination. Deliberately narrow —
         # only newly required, only remote; promoting every remote schema
@@ -409,7 +408,7 @@ def render_tool_diff(
     else:
         lines.append("  description: unchanged")
 
-    # Signed metadata (#223). A row admitted when the server advertised no
+    # Signed metadata. A row admitted when the server advertised no
     # metadata carries None, so a live value honestly renders as absent ->
     # present. Unchanged fields stay silent — the M5 flood discipline: quiet
     # fields must not drown the one that moved.

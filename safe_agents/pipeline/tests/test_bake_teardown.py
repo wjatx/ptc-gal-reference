@@ -1,5 +1,5 @@
 """
-Bake-artifact teardown tests — acceptance criteria for sa#89.
+Bake-artifact teardown tests.
 
 All tests are AWS-free: every AWS call goes through FakeAWS.
 
@@ -394,7 +394,7 @@ class TestBakeTeardownEmptyEnvironment:
 # ---------------------------------------------------------------------------
 # 7. Live-shape regression — FakeAWS mirrors real boto3 key names + owner filter
 #
-# Root cause of issue #89: LiveAWS passed `filters=[{"name": "name",
+# Root cause of the live-shape bug: LiveAWS passed `filters=[{"name": "name",
 # "values": ["safe-agents-base*"]}]` to all imagebuilder list APIs. The
 # imagebuilder API rejects '*' in filter values (allowed pattern:
 # ^[0-9a-zA-Z./_ :,{}"-]{1,1024}$) with InvalidParameterValueException.

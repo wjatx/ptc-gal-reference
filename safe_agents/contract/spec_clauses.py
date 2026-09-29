@@ -4,7 +4,7 @@ Conformance-clause extraction harness for the PTC and GAL specifications.
 Extracts every normative conformance row from spec/PTC-SPEC.md §8.2 and
 spec/GAL-SPEC.md §7.2–§7.4, joins each row to its origin pointer, and records
 whether the clause carries an implementation-status marker. It EXTRACTS ONLY —
-it never adjudicates whether a clause is implemented (#359 owns that pass); it
+it never adjudicates whether a clause is implemented (the conformance audit owns that pass); it
 produces the row inventory that pass works against.
 
 Both specs make marker ABSENCE load-bearing ("absence of the marker means the
@@ -89,14 +89,14 @@ GAL_ORIGIN_HEADING = "### 7.5 Clause origin mapping (non-normative)"
 PTC_TABLE_COLUMNS = 4
 GAL_ORIGIN_TABLE_COLUMNS = 2
 
-# --- Exit predicate (#359), asserted by verify_extraction on every run -----
+# --- Exit predicate, asserted by verify_extraction on every run -----
 
 EXPECTED_ROW_COUNTS = {SPEC_PTC: 43, SPEC_GAL: 39}
 EXPECTED_TOTAL_ROWS = 82
 
 # clause_id -> (marker_form, tracking issue)
 #
-# Grew from 3 to 23 on 2026-08-08, when the #359 conformance audit's findings
+# Grew from 3 to 23 on 2026-08-08, when the conformance audit's findings
 # were marked. That jump is the honest number, not a regression: every one of
 # these clauses was ALREADY unimplemented, and marker absence had been claiming
 # otherwise in a published document. Every marker is SCOPED — it names the one
@@ -104,10 +104,10 @@ EXPECTED_TOTAL_ROWS = 82
 # which is why the clause text still reads as a requirement.
 #
 # Three tracking ids appear more than once, and each is one defect across
-# several rows rather than a filing error: #315 (PTC-7/8/9, outbound stamping),
-# #372 (GAL-4/GAL-14, the runtime bootstrap path).
+# several rows rather than a filing error: #15 (PTC-7/8/9, outbound stamping),
+# #27 (GAL-4/GAL-14, the runtime bootstrap path).
 EXPECTED_MARKED: dict[str, tuple[str, str]] = {
-    # #359 PTC findings
+    # Conformance-audit PTC findings
     "PTC-2":  (MARKER_FORM_INLINE, "#17"),
     "PTC-3":  (MARKER_FORM_INLINE, "#18"),
     "PTC-6":  (MARKER_FORM_INLINE, "#19"),
@@ -122,7 +122,7 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     "PTC-33": (MARKER_FORM_INLINE, "#24"),
     "PTC-35": (MARKER_FORM_INLINE, "#25"),
     "PTC-42": (MARKER_FORM_INLINE, "#26"),
-    # #359 GAL findings
+    # Conformance-audit GAL findings
     "GAL-4":  (MARKER_FORM_INLINE, "#27"),
     "GAL-14": (MARKER_FORM_INLINE, "#27"),
     "GAL-26": (MARKER_FORM_INLINE, "#28"),
@@ -132,7 +132,7 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # requirement the code does not yet meet, which is the marker's whole point.
     "GAL-5":  (MARKER_FORM_INLINE, "#32"),
     "GAL-33": (MARKER_FORM_INLINE, "#31"),
-    # Predates the audit. GAL-34 (#255) left this set on 2026-09-19 when the
+    # Predates the audit. GAL-34 left this set on 2026-09-19 when the
     # lapse arc shipped.
     "GAL-35": (MARKER_FORM_BLOCKQUOTE, "#14"),
     # Renumbered 2026-09-21: every marker now cites an issue in the PUBLIC
@@ -192,7 +192,7 @@ BLOCKQUOTE_MARKER_RE = re.compile(
 )
 # The inline form is a parenthetical. It may carry a prefix naming which part of
 # the clause is unbuilt — PTC-25 reads "(argument clamping: not yet implemented
-# — #358)" — so the prefix is allowed, but the parentheses are still required:
+# — #16)" — so the prefix is allowed, but the parentheses are still required:
 # without them the convention-defining prose that quotes the form would match.
 INLINE_MARKER_RE = re.compile(
     r"\([^()]*?not yet implemented\s*[—–-]\s*(#\d+)\)"
@@ -213,7 +213,7 @@ class ClauseRow:
     role: str                              # conformance role this clause binds
     clause_text: str
     marker_state: str                      # MARKER_STATE_*
-    marker_tracking_issue: Optional[str]   # e.g. "#358", else None
+    marker_tracking_issue: Optional[str]   # e.g. "#16", else None
     marker_form: Optional[str]             # MARKER_FORM_*, else None
     origin: str                            # the contract pointer
     source_line: int                       # 1-based line in the spec file
@@ -468,7 +468,7 @@ def pics_proforma(rows: list[ClauseRow], *, filled: bool) -> str:
 
 
 def verify_extraction(rows: list[ClauseRow]) -> list[CheckResult]:
-    """Assert the #359 exit predicate over an extracted inventory."""
+    """Assert the conformance-audit exit predicate over an extracted inventory."""
     results: list[CheckResult] = []
 
     def check(name: str, ok: bool, bad: str, good: str) -> None:
@@ -641,7 +641,7 @@ class TrackingCheckUnavailable(RuntimeError):
 
 # Prose citations that send a reader to a tracking issue. The marker's own
 # `#NNN` is already pinned by EXPECTED_MARKED; these are the BODY-TEXT pointers,
-# and they are the ones that bit. Both #180 and #187 lived in §1.3 prose, so a
+# and they are the ones that bit. Both stale citations lived in §1.3 prose, so a
 # check scoped to markers alone would have missed the two instances that
 # prompted the check. A qualified form names the repository and is checked
 # wherever it appears; the bare form is skipped inside version-history rows,

@@ -1,6 +1,6 @@
-"""mcp_construction.py — native MCP connector construction from the manifest (#221).
+"""mcp_construction.py — native MCP connector construction from the manifest.
 
-Before #221 an MCP server reached the runtime only through the ``connector_providers``
+Originally an MCP server reached the runtime only through the ``connector_providers``
 seam: a consumer wrote a zero-arg ``McpConnector`` subclass that re-derived the
 manifest, registry table, and HMAC key from env (``examples/restricted_mcp_server/
 provider.py``, retired with this module). That worked, but it put twenty lines of
@@ -23,7 +23,7 @@ refuses overlap at load):
   * the STATIC half — ``McpServerDecl.env``, plain config pinned in the image
     (e.g. ``ALPACA_PAPER_TRADE: "true"``); never credential material;
   * the CREDENTIAL half — resolved broker-side at CHILD SPAWN time on the
-    connector's own loop via the #173 CredentialProvider catalog, then mapped
+    connector's own loop via the #79 CredentialProvider catalog, then mapped
     field-by-field through ``connector_auth.env_map`` (child env var name →
     credential field name). The map is an explicit allowlist: an unmapped
     credential field NEVER reaches the child. With ``env_map`` empty, no
@@ -35,7 +35,7 @@ crosses to the agent — the agent still only asks.
 
 A REMOTE (streamable-http, ``url``) declaration is natively constructed the
 same way — same registry and HMAC wiring, connected instead of spawned — with
-the credential half delivered as request HEADERS (#237, MCP-HOST.md M25)
+the credential half delivered as request HEADERS (MCP-HOST.md M25)
 rather than as a child environment. The two transports' delivery declarations
 are duals and each is refused on the other's transport: ``env_map`` on a
 remote decl and ``header_map`` on a stdio one both fail at manifest load (and
@@ -93,7 +93,7 @@ def native_mcp_server_ids(manifest: AgentManifest) -> frozenset[str]:
     (``command``) or a remote streamable-http endpoint (``url``). A
     namespace-only declaration (neither ``command`` nor ``url``) is NOT
     native — its construction remains the consumer's concern, byte-for-byte
-    the pre-#221 behavior.
+    the pre-native behavior.
     """
     return frozenset(
         server_id
@@ -111,7 +111,7 @@ def compose_child_env(
     """Merge the static and credential halves of one child environment. Pure.
 
     ``credential`` is the value the CredentialProvider resolved; with a non-empty
-    ``env_map`` it MUST be a flat JSON string map (the #221 credential-leaf
+    ``env_map`` it MUST be a flat JSON string map (the MCP credential-leaf
     shape) — each mapped field is copied to its declared child env var. Refusals
     fail toward NOT spawning: a missing field, a non-JSON credential, or a
     collision with the static half (belt — the manifest validator refuses the
@@ -166,7 +166,7 @@ def compose_headers(
 ) -> dict[str, str]:
     """Render the declared credential headers for ONE remote connect. Pure.
 
-    The remote mirror of ``compose_child_env`` (#237): each ``header_map``
+    The remote mirror of ``compose_child_env``: each ``header_map``
     entry is a ``HeaderSource`` naming where the resolved credential goes, and
     the credential itself is a bare string or a flat JSON string map — which of
     the two is settled by whether any entry names a ``field`` (the manifest
@@ -262,7 +262,7 @@ def build_mcp_connectors(
     — because without the admitted-tool registry (key #2 of two-key admission)
     every tool is DECLARED-only and uncallable, so refuse loudly instead of
     serving a dead connector. The HMAC key resolves exactly as the grant
-    store's does (``resolve_hmac_key``, #205: the fixed dev key is honored only
+    store's does (``resolve_hmac_key``: the fixed dev key is honored only
     on the local/memory arm).
 
     Each transport gets the credential half its shape allows, through the same
@@ -301,7 +301,7 @@ def build_mcp_connectors(
             "instead of serving a dead connector"
         )
     hmac_key = resolve_hmac_key()
-    # TOOLDEF#/TOOLREC# are the checker-writable key space (#203). The serving
+    # TOOLDEF#/TOOLREC# are the checker-writable key space. The serving
     # broker only READS the registry (two-key admission is a read at connect),
     # so it takes the same read-only grant mount the maker does.
     grant_opts = sqlite_grants_open_options() if on_sqlite else {}
@@ -345,7 +345,7 @@ def build_mcp_connectors(
                     # which is how an expired access token recovers (M18/M25).
                     if not header_map:
                         return None
-                    # A strategy may cache its minted credential (#173.2). Drop
+                    # A strategy may cache its minted credential (#79). Drop
                     # that cache HERE, because this closure runs only at connect
                     # and a connect is either the first one (where invalidating
                     # is a no-op) or a RECONNECT — and a reconnect means the last
