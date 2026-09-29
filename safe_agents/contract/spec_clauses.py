@@ -91,8 +91,8 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 
 # --- Exit predicate, asserted by verify_extraction on every run -----
 
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 43, SPEC_GAL: 39}
-EXPECTED_TOTAL_ROWS = 82
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 44, SPEC_GAL: 39}
+EXPECTED_TOTAL_ROWS = 83
 
 # clause_id -> (marker_form, tracking issue)
 #
