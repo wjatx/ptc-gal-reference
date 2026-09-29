@@ -146,6 +146,12 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # the specification's requirement to the RI's coverage. This marker is the
     # correct form of that honesty: fully normative, and openly not yet built.
     "GAL-39": (MARKER_FORM_BLOCKQUOTE, "#11"),
+    # Added by GAL 0.2.10-draft. GAL-36 now puts the authority a call was
+    # evaluated under inside the frozen call, and requires that release verify
+    # equivalence with the authority approved. A held intent carries no authority
+    # coordinate, so only that half is marked; terminal-only rejection and the
+    # indeterminate-outcome rule hold by construction.
+    "GAL-36": (MARKER_FORM_BLOCKQUOTE, "#45"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from
