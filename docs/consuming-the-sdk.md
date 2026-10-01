@@ -57,7 +57,7 @@ version of the trusted floor your agent stands on.
 |---|---|
 | `safe_agents.pipeline` | the `provision → deploy → smoke` pipeline + its CLI (`safe_agents.pipeline.cli`) |
 | `safe_agents.broker.schemas` | what a consumer **fills**: the seven schemas, `AgentManifest`, `Envelope`, `ToolOp` |
-| `safe_agents.broker.api` | what a consumer **runs**: `build_runtime(manifest)`, `load_agent_manifest`, and the `BrokerRuntime` / `AgentRequest` / `BrokerResponse` call surface |
+| `safe_agents.broker.api` | what a consumer **runs**: `build_runtime(manifest)`, `load_agent_manifest`, and the `BrokerRuntime` / `AgentRequest` / `BrokerResponse` call surface, plus `GatewayClient` / `GatewayClientError` / `result_text` for running the stdio MCP gateway as a child process and asking it |
 | `safe_agents.connectors` | the shared connectors (github; telegram) + the `Connector` protocol re-export — see `safe_agents/connectors/README.md` for the shared-vs-agent-owned split |
 | `safe_agents.arms` | the substrate arms behind one runner contract (`ec2`, `ec2_woken`, `fargate`, `local`, `openshift`, `rhel_openshell`) |
 | `safe_agents.contract` | the runner-contract conformance harness |

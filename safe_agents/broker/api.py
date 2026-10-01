@@ -19,8 +19,16 @@ Tier                             Surface
 what a consumer FILLS            ``safe_agents.broker.schemas`` — the seven schemas,
                                  ``AgentManifest``, ``Envelope``, ``ToolOp``
 what a consumer RUNS             this module — ``build_runtime`` and the runtime
-                                 objects it hands back
+                                 objects it hands back, and ``GatewayClient``,
+                                 which runs the MCP gateway as a child process
 ===============================  ==================================================
+
+There are two ways to run the broker and this module carries both. ``build_runtime``
+embeds it in the consumer's own process. ``GatewayClient`` starts the broker's stdio
+MCP mouth as a child process and asks it over the pipe, which is the position a
+wrapped agent is in: the consumer holds a client and can do nothing with it except
+ask. The client carries frames and reports what came back. It decides nothing, so
+publishing it gives a consumer no way around a decision.
 
 Everything else in the broker is internal, and the interesting half of that is
 what the previous doc text got wrong in the *other* direction: §2 listed
@@ -60,6 +68,11 @@ posture ladder is where that distinction is stated honestly.
 
 from __future__ import annotations
 
+from safe_agents.broker.gateway.stdio_client import (
+    GatewayClient,
+    GatewayClientError,
+    result_text,
+)
 from safe_agents.broker.prototype.boot_config import load_agent_manifest
 from safe_agents.broker.prototype.broker_server import build_runtime
 from safe_agents.broker.runtime.pep import AgentRequest, BrokerResponse, BrokerRuntime
@@ -74,4 +87,10 @@ __all__ = [
     "BrokerRuntime",
     "AgentRequest",
     "BrokerResponse",
+    # The other way to run it: the stdio MCP gateway as a child process, driven
+    # from outside. `result_text` joins the text blocks of a `tools/call` result,
+    # which is where the gateway puts the broker's answer.
+    "GatewayClient",
+    "GatewayClientError",
+    "result_text",
 ]

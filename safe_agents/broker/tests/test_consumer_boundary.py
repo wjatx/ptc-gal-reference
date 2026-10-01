@@ -158,6 +158,12 @@ class TestBoundaryGuardHasTeeth:
         "from safe_agents.broker.mcp import stdio_host_factory",
         "from safe_agents.broker.mcp.factory import stdio_host_factory",
         "from safe_agents.broker.mcp.registry import DynamoToolRegistry",
+        # The gateway package stays internal even though its stdio client is
+        # published: a consumer takes `GatewayClient` from `broker.api`. Opening the
+        # package to reach one module would also open `gateway.surface`, which holds
+        # a `BrokerRuntime`.
+        "from safe_agents.broker.gateway.stdio_client import GatewayClient",
+        "from safe_agents.broker.gateway import GatewaySurface",
     ]
 
     @pytest.mark.parametrize("probe", INTERNAL_PROBES)
@@ -179,6 +185,7 @@ class TestBoundaryGuardHasTeeth:
         "from safe_agents.broker.api import build_runtime, BrokerRuntime",
         "from safe_agents.broker import api",
         "import safe_agents.broker.api",
+        "from safe_agents.broker.api import GatewayClient, GatewayClientError, result_text",
     ]
 
     @pytest.mark.parametrize("ok", PUBLIC_IMPORTS)
@@ -199,8 +206,40 @@ class TestPublicSurfaceIsExactlyTheRuling:
     def test_the_promised_names_are_importable(self) -> None:
         from safe_agents.broker import api
 
-        for name in ("build_runtime", "load_agent_manifest", "BrokerRuntime"):
+        for name in (
+            "build_runtime",
+            "load_agent_manifest",
+            "BrokerRuntime",
+            "GatewayClient",
+            "GatewayClientError",
+            "result_text",
+        ):
             assert hasattr(api, name), f"api.py no longer exports {name!r}"
+            assert name in api.__all__, f"{name!r} is importable but not in api.__all__"
+
+    def test_the_published_gateway_client_decides_nothing(self) -> None:
+        """`GatewayClient` is published because it only carries frames.
+
+        Checked on the module's imports rather than taken from its docstring: the
+        client must not import anything from the broker, so a later edit that gave
+        it a runtime, a store or a connector to consult would fail here before it
+        became something a consumer could reach through the façade.
+        """
+        from safe_agents.broker.gateway import stdio_client
+
+        tree = ast.parse(Path(stdio_client.__file__).read_text(encoding="utf-8"))
+        imported: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.extend(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.append(("." * node.level) + (node.module or ""))
+        reaches = [name for name in imported if name.startswith((".", "safe_agents"))]
+        assert reaches == [], (
+            "the published gateway client imports from the base "
+            f"({', '.join(reaches)}); it is published on the ground that it carries "
+            "frames and consults nothing"
+        )
 
     def test_what_decides_and_executes_stays_unpublished(self) -> None:
         from safe_agents.broker import api

@@ -12,6 +12,10 @@ which is the check that runs on Windows, and the laptop demo (`demo.py`), which 
 what a tester runs instead of hand-writing JSON-RPC. A shell pipe of `printf` lines
 does not work in PowerShell, which is why the demo is Python.
 
+A consumer reaches this through `safe_agents.broker.api`, which re-exports
+`GatewayClient`, `GatewayClientError` and `result_text`. This module's own path is
+internal like the rest of `broker.gateway`, and the consumer-boundary guard flags it.
+
 Every wait is bounded. A blocking `readline()` on a pipe cannot time out portably
 (`select()` does not work on pipes on Windows), so stdout is drained by a thread into
 a queue. stderr is drained by a second thread for a different reason: a child that
