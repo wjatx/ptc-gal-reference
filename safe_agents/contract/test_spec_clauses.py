@@ -28,8 +28,11 @@ from safe_agents.contract.spec_clauses import (
     GAL_SPEC_FILENAME,
     MARKER_FORM_BLOCKQUOTE,
     MARKER_FORM_INLINE,
+    MARKER_FORM_UNRECOGNIZED,
+    MARKER_STATE_EXCEEDED,
     MARKER_STATE_MARKED,
     MARKER_STATE_UNMARKED,
+    PTC_CLAUSE_HEADING,
     PTC_SPEC_FILENAME,
     SPEC_GAL,
     SPEC_PTC,
@@ -125,7 +128,10 @@ def test_gal_appended_clauses_are_blockquote_marked(
     assert "Implementation status" not in row.clause_text
 
 
-@pytest.mark.parametrize("clause_id", ["PTC-1", "PTC-4", "PTC-26", "PTC-34", "GAL-3", "GAL-30", "GAL-32"])
+@pytest.mark.parametrize(
+    "clause_id",
+    ["PTC-1", "PTC-4", "PTC-26", "PTC-34", "GAL-3", "GAL-30", "GAL-34", "GAL-37", "GAL-38"],
+)
 def test_neighbouring_clauses_are_unmarked(rows: list[ClauseRow], clause_id: str) -> None:
     """
     A marker binds only its own clause, and a scope leak shows up here.
@@ -138,6 +144,10 @@ def test_neighbouring_clauses_are_unmarked(rows: list[ClauseRow], clause_id: str
     PTC-33/35, GAL-3 abuts GAL-4, and GAL-30/GAL-32 precede the blockquote
     cases. This test matters MORE at 23 markers than it did at three: with most
     of the table marked, an over-greedy pattern would be invisible in the counts.
+
+    Re-picked again for 0.3.0-draft, which marked GAL-32. GAL-34 and GAL-38 now
+    stand directly before the blockquote cases GAL-36 and GAL-35, and GAL-37
+    directly after the inline run GAL-31..33.
     """
     row = _by_id(rows, clause_id)
     assert row.marker_state == MARKER_STATE_UNMARKED
@@ -170,6 +180,57 @@ def test_out_of_section_markers_are_not_picked_up(rows: list[ClauseRow]) -> None
         "test no longer proves scoping"
     )
     assert len([r for r in rows if r.marker_state == MARKER_STATE_MARKED]) == len(EXPECTED_MARKED)
+
+
+# ---------------------------------------------------------------------------
+# The inline short form: a comma, and nothing else
+# ---------------------------------------------------------------------------
+
+def _ptc_stub(tmp_path: Path, clause_text: str) -> list[ClauseRow]:
+    stub = tmp_path / PTC_SPEC_FILENAME
+    stub.write_text(
+        f"# PTC\n\n{PTC_CLAUSE_HEADING}\n\n"
+        "| # | Role | Clause | Origin |\n|---|---|---|---|\n"
+        f"| PTC-1 | All | {clause_text} | SCHEMAS C1 |\n",
+        encoding="utf-8",
+    )
+    return extract_ptc(stub)
+
+
+@pytest.mark.parametrize(("clause_text", "state", "issue"), [
+    ("Does a thing (one half: not yet implemented, #16); and another.", MARKER_STATE_MARKED, "#16"),
+    ("Does a thing (not yet implemented, #7).", MARKER_STATE_MARKED, "#7"),
+    # The generic pattern must not claim the inverse marker, which means the opposite.
+    ("Does a thing (stronger mechanism, #12).", MARKER_STATE_EXCEEDED, "#12"),
+])
+def test_the_comma_form_is_read(
+    tmp_path: Path, clause_text: str, state: str, issue: str,
+) -> None:
+    [row] = _ptc_stub(tmp_path, clause_text)
+    assert (row.marker_state, row.marker_form, row.marker_tracking_issue) == (
+        state, MARKER_FORM_INLINE, issue,
+    )
+    unread = [r for r in verify_extraction([row]) if r.name == MARKER_FORM_UNRECOGNIZED]
+    assert [r.passed for r in unread] == [True]
+
+
+@pytest.mark.parametrize("clause_text", [
+    pytest.param("Does a thing (one half: not yet implemented \u2014 #16).", id="em dash"),
+    pytest.param("Does a thing (one half: not yet implemented \u2013 #16).", id="en dash"),
+    pytest.param("Does a thing (one half: not yet implemented - #16).", id="hyphen"),
+    pytest.param("Does a thing (stronger mechanism \u2014 #12).", id="stronger, em dash"),
+    pytest.param("Does a thing (one half: not yet implemented).", id="no issue number"),
+    pytest.param("Does a thing (one half: NOT YET IMPLEMENTED #16).", id="no separator"),
+])
+def test_a_marker_in_any_other_form_is_a_named_failure(tmp_path: Path, clause_text: str) -> None:
+    """The dash form retired with 0.3.0-draft. A marker still written that way is
+    not read, and an unread marker reports its clause as implemented, so the
+    self-checks name it instead of leaving the row quietly unmarked."""
+    [row] = _ptc_stub(tmp_path, clause_text)
+    assert row.marker_state == MARKER_STATE_UNMARKED
+    [unread] = [r for r in verify_extraction([row]) if r.name == MARKER_FORM_UNRECOGNIZED]
+    assert not unread.passed
+    assert "PTC-1" in unread.reason and "comma" in unread.reason
 
 
 # ---------------------------------------------------------------------------

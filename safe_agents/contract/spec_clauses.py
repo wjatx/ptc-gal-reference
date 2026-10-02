@@ -64,6 +64,7 @@ DUPLICATE_CLAUSE_ID    = "DUPLICATE_CLAUSE_ID"
 MARKED_SET_MISMATCH    = "MARKED_SET_MISMATCH"
 EXCEEDED_SET_MISMATCH  = "EXCEEDED_SET_MISMATCH"
 ORIGIN_MISSING         = "ORIGIN_MISSING"
+MARKER_FORM_UNRECOGNIZED = "MARKER_FORM_UNRECOGNIZED"
 TRACKING_ISSUE_UNRESOLVABLE = "TRACKING_ISSUE_UNRESOLVABLE"
 PROSE_COUNT_MISMATCH   = "PROSE_COUNT_MISMATCH"
 
@@ -91,8 +92,10 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 
 # --- Exit predicate, asserted by verify_extraction on every run -----
 
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 44, SPEC_GAL: 39}
-EXPECTED_TOTAL_ROWS = 83
+# PTC grew from 44 to 47 with 0.3.0-draft: PTC-45 (audience), PTC-46
+# (verification key scope) and PTC-47 (wire form).
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 47, SPEC_GAL: 39}
+EXPECTED_TOTAL_ROWS = 86
 
 # clause_id -> (marker_form, tracking issue)
 #
@@ -103,7 +106,7 @@ EXPECTED_TOTAL_ROWS = 83
 # unbuilt conjunct rather than retracting a row whose other conjuncts ship,
 # which is why the clause text still reads as a requirement.
 #
-# Three tracking ids appear more than once, and each is one defect across
+# Two tracking ids appear more than once, and each is one defect across
 # several rows rather than a filing error: #15 (PTC-7/8/9, outbound stamping),
 # #27 (GAL-4/GAL-14, the runtime bootstrap path).
 EXPECTED_MARKED: dict[str, tuple[str, str]] = {
@@ -152,6 +155,13 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # coordinate, so only that half is marked; terminal-only rejection and the
     # indeterminate-outcome rule hold by construction.
     "GAL-36": (MARKER_FORM_BLOCKQUOTE, "#45"),
+    # Added by GAL 0.3.0-draft, which states two requirements ahead of the code.
+    # GAL-31: an auditor detects a removed record and a rolled-back ledger, which
+    # §6.11 already asserted and record signatures do not provide. GAL-32: an
+    # acknowledgment carries an expiry and is not applied past it. Each marker
+    # names that one conjunct; the rest of both clauses ships.
+    "GAL-31": (MARKER_FORM_INLINE, "#157"),
+    "GAL-32": (MARKER_FORM_INLINE, "#158"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from
@@ -185,18 +195,29 @@ STRONGER_BLOCKQUOTE_RE = re.compile(
     r".*?\(tracking:\s*(#\d+)\)"
 )
 STRONGER_INLINE_RE = re.compile(
-    r"\([^()]*?stronger mechanism\s*[—–-]\s*(#\d+)\)"
+    r"\([^()]*?stronger mechanism,\s+(#\d+)\)"
 )
 BLOCKQUOTE_MARKER_RE = re.compile(
     r"\*\*Implementation status:\*\*.*?\(tracking:\s*(#\d+)\)"
 )
 # The inline form is a parenthetical. It may carry a prefix naming which part of
-# the clause is unbuilt — PTC-25 reads "(argument clamping: not yet implemented
-# — #16)" — so the prefix is allowed, but the parentheses are still required:
+# the clause is unbuilt — PTC-25 reads "(argument clamping: not yet implemented,
+# #16)" — so the prefix is allowed, but the parentheses are still required:
 # without them the convention-defining prose that quotes the form would match.
+#
+# COMMA ONLY, since 0.3.0-draft of both specifications. The issue number was
+# separated by a dash until then; the published text has no dash form left, and
+# nothing in this repository uses one. Accepting both would let a marker written
+# the old way pass here while the specification says it has one form.
 INLINE_MARKER_RE = re.compile(
-    r"\([^()]*?not yet implemented\s*[—–-]\s*(#\d+)\)"
+    r"\([^()]*?not yet implemented,\s+(#\d+)\)"
 )
+# The words of either inline marker, in any form. A clause that says them and
+# resolved to NO marker was written in a form the patterns above do not read
+# (the retired dash form, or a missing issue number), and silence there is the
+# costly direction: an unread marker reports the clause as implemented.
+# verify_extraction fails on it by name (MARKER_FORM_UNRECOGNIZED).
+MARKER_WORDS_RE = re.compile(r"not yet implemented|stronger mechanism", re.IGNORECASE)
 
 
 class SpecFormatError(RuntimeError):
@@ -461,7 +482,7 @@ def pics_proforma(rows: list[ClauseRow], *, filled: bool) -> str:
                 support = pics_answer(r) if filled else ""
                 note = ""
                 if filled and r.marker_state == MARKER_STATE_MARKED:
-                    note = f"not yet implemented — {r.marker_tracking_issue}"
+                    note = f"not yet implemented, {r.marker_tracking_issue}"
                 out.append(f"| {r.clause_id} | M | {support} | {note} |")
             out.append("")
     return "\n".join(out)
@@ -503,6 +524,16 @@ def verify_extraction(rows: list[ClauseRow]) -> list[CheckResult]:
     check(ORIGIN_MISSING, not no_origin,
           f"rows with no origin pointer: {no_origin}",
           "every row carries an origin pointer")
+    unread = [
+        r.clause_id for r in rows
+        if r.marker_state == MARKER_STATE_UNMARKED and MARKER_WORDS_RE.search(r.clause_text)
+    ]
+    check(MARKER_FORM_UNRECOGNIZED, not unread,
+          f"{unread}: the clause text carries the words of an inline marker in a form "
+          "this harness does not read, so the clause is reported as implemented. The "
+          "short forms are `(not yet implemented, #NNN)` and `(stronger mechanism, "
+          "#NNN)`, with a comma; the dash form was retired in 0.3.0-draft",
+          "no unmarked clause carries the words of an inline marker")
     return results
 
 

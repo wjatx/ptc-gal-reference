@@ -35,7 +35,7 @@ removed, which is one of the two drifts this file exists to catch.
 The rule below is both stricter and more faithful to the convention as
 written. GAL §3: marked clauses carry the blockquote "wherever a reader can
 encounter them", and "where a marked clause owns a field-table row, the row
-carries the short inline form `(not yet implemented — #NNN)`". So the row form
+carries the short inline form `(not yet implemented, #NNN)`". So the row form
 is the field-level authority, the blockquote is the section-level one, and a
 marked field needs BOTH — which `test_marked_rows_carry_the_section_blockquote`
 enforces, so the exemption cannot be taken quietly in one place only.
@@ -328,7 +328,7 @@ def test_spec_fields_are_implemented(table: SpecTable) -> None:
         "  - If the field was removed from the code deliberately, delete its row from the "
         "spec table (spec text follows the shipped contracts, never the reverse).\n"
         "  - If the clause is deliberately normative AHEAD of the implementation, mark it: "
-        "append `*(not yet implemented — #NNN)*` to the field name cell, and add the "
+        "append `*(not yet implemented, #NNN)*` to the field name cell, and add the "
         "blockquote line `> **Implementation status:** NORMATIVE, NOT YET IMPLEMENTED in "
         "the reference implementation (tracking: #NNN).` to the object's section "
         "(spec/GAL-SPEC.md §3). BOTH are required; the row form is what excuses the "
@@ -350,7 +350,7 @@ def test_marked_rows_carry_the_section_blockquote(table: SpecTable) -> None:
         return
     assert table.section_marked, (
         f"{table.spec} §{table.heading} marks field(s) "
-        f"{', '.join(sorted(table.marked_fields))} `(not yet implemented — #NNN)` in the "
+        f"{', '.join(sorted(table.marked_fields))} `(not yet implemented, #NNN)` in the "
         f"table (line {table.line_no}) but the object's section carries no "
         "`> **Implementation status:**` blockquote. Per spec/GAL-SPEC.md §3 a marked "
         "clause is flagged wherever a reader can encounter it — add the blockquote line "

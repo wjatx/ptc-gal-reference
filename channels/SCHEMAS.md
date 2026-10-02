@@ -187,6 +187,7 @@ A third-party implementation of the envelope (any language) must pass the equiva
 | C7 | documented here; executable with the off-substrate verifier (#50) |
 | C8 | `test_provenance_source_must_be_namespaced`; the absence of any transport enum is the contract text itself |
 | C9 | `test_audience_must_name_a_receiver` · `test_audience_is_required_and_kept_as_written`; the receiver's refusal is in the dispatch suite, `test_adapters.py::test_an_envelope_addressed_to_another_zone_drops_before_verification` |
+| wire form and size | `test_signing.py::test_wire_form_is_ascii_and_reads_back_equal` · `::test_the_size_ceiling_is_inclusive_and_exact` · `::test_an_envelope_past_the_size_ceiling_is_not_forwardable` · `::test_the_limits_are_the_documented_numbers` · `::test_a_signature_has_one_spelling_and_a_bounded_count` (the signature count); refusal before a dedupe key is claimed is `test_adapters.py::test_unforwardable_envelope_drops_before_it_claims_a_dedupe_key` and `test_airlock_handler.py::test_an_envelope_at_the_inbound_ceiling_is_forwarded_and_one_past_it_is_dropped`; the forwarded and the posted body are `test_airlock_handler.py::test_the_forwarded_body_is_the_wire_form` and `test_emailer_connector.py::test_the_posted_body_is_the_envelope_wire_form` |
 | fixtures | `test_driving_use_case_fixture_roundtrips` — the A2A trade-signal envelope, JSON round-trip |
 
 ## Relationships

@@ -2,8 +2,8 @@
 
 > One/two-pager for the LF agent-standards conversation: what we're building, which existing
 > standards we adopt, why two seams remain unstandardized, and how these proposals fill them.
-> Names are final (2026-07-24); the normative spec drafts are [`PTC-SPEC.md`](https://github.com/wjatx/ptc-gal-standards/blob/main/PTC-SPEC.md) (`0.2.5-draft`)
-> and [`GAL-SPEC.md`](https://github.com/wjatx/ptc-gal-standards/blob/main/GAL-SPEC.md) (`0.2.6-draft`) — they revise independently and their versions differ.
+> Names are final (2026-07-24); the normative spec drafts are [`PTC-SPEC.md`](https://github.com/wjatx/ptc-gal-standards/blob/main/PTC-SPEC.md) (`0.3.0-draft`)
+> and [`GAL-SPEC.md`](https://github.com/wjatx/ptc-gal-standards/blob/main/GAL-SPEC.md) (`0.3.0-draft`). They revise independently, so their versions can differ; both are at `0.3.0-draft` now.
 > Internal spines: `docs/PTC.md`, `docs/GAL.md`.
 
 ## What we're building
@@ -50,7 +50,7 @@ Two limits on that claim, stated here because they are the first things worth pr
   single clause id appears in a single test. So a green suite is evidence about our vocabulary, not
   about the numbered clauses an independent implementer reads. Bidirectional traceability is
   specified and unbuilt.
-- **24 of 83 conformance clauses are not supported**, more than a quarter and not a handful. Each is
+- **26 of 86 conformance clauses are not supported**, more than a quarter and not a handful. Each is
   individually marked in the draft with the requirement that is missing and an issue tracking it,
   because a spec clause is not a shipped control. The count is generated from the markers, never
   hand-written (`python3 -m safe_agents.contract.spec_clauses --summary --spec-dir spec`), so a

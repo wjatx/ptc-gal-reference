@@ -36,7 +36,7 @@ is the weakest.
 
 ## Conformance status
 
-**59 of 83 conformance clauses are supported. 24 are not.**
+**60 of 86 conformance clauses are supported. 26 are not.**
 
 That statement is generated, never written by hand:
 
@@ -62,14 +62,14 @@ A marker is scoped to the specific requirement that is unbuilt, not to the claus
 
 > The decision function is pure, deterministic, and model-free; facts are pre-resolved into a closed
 > fact set with no model-derived field; evaluation is first-match over an ordered rule set; the
-> matched rule is recorded (recording the matched rule: not yet implemented — #22); unmatched
+> matched rule is recorded (recording the matched rule: not yet implemented, #22); unmatched
 > writes default-deny.
 
 Four of those five requirements ship. The fifth does not, and the marker names it and points at the
 issue tracking the work. Marking the whole row would understate the implementation as badly as
 silence overstated it.
 
-This matters when reading the 23. Almost none is a clause where nothing was built. The dominant
+This matters when reading the 26. Almost none is a clause where nothing was built. The dominant
 shape is a compound clause conjoining several requirements where most ship and one does not, which is
 precisely the shape that reads as implemented when nothing distinguishes the halves.
 
@@ -121,7 +121,7 @@ wrote the specifications. Drills are designed by the people whose work they test
 drill evidence that the drill ran rather than evidence that the control holds. Independent execution
 is tracked and open.
 
-**The backlog is not small.** Roughly 190 issues are open, including the 23 clause gaps above. The
+**The backlog is not small.** Roughly 190 issues are open, including the 26 clause gaps above. The
 conformance statement is the accurate summary of what works; the issue count is the accurate summary
 of what is known to be incomplete.
 
@@ -132,7 +132,7 @@ checkout with no cloud account:
 
 ```
 git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
-python3 -m safe_agents.contract.spec_clauses --summary --spec-dir spec   # 83 rows, marker state, self-checks
+python3 -m safe_agents.contract.spec_clauses --summary --spec-dir spec   # 86 rows, marker state, self-checks
 python3 -m pytest                                                        # the full suite
 ```
 
