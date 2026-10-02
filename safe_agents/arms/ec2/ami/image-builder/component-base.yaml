@@ -3,7 +3,7 @@ schemaVersion: 1.0
 # safe-agents base-AMI component (AWSTOE format for EC2 Image Builder).
 #
 # Target platform: arm64 Amazon Linux 2023.
-# Installs: toolchain (git / python3) + AWS CLI v2 + boto3 venv + Claude Code CLI.
+# Installs: toolchain (git / python3) + AWS CLI v2 + Claude Code CLI.
 # The bake runs in CI where internet egress exists. The deployed instance never
 # needs internet access: agent code arrives via the S3 gateway endpoint at boot.
 #
@@ -16,14 +16,10 @@ schemaVersion: 1.0
 #     are a line of toolchain/artifacts.lock, for linux-aarch64. A hash mismatch or a
 #     pruned URL exits the step and fails the bake. Move a pin with
 #     scripts/update-artifact-pin.py, which rewrites this file.
-#   - The boto3 venv installs with --require-hashes from requirement lines copied from
-#     toolchain/boto3-venv.txt (safe_agents/arms/ec2/tests/test_ec2_arm.py fails if the
-#     two differ).
 #   - dnf installs named packages from Amazon Linux's own signed repositories.
 #
 # This form of the component has not been baked. The first bake is the first place
-# the pinned downloads, the hashed pip install on the system Python 3.9, and the
-# arm64 Claude Code binary run on Amazon Linux 2023.
+# the pinned downloads and the arm64 Claude Code binary run on Amazon Linux 2023.
 #
 # Deploy with:
 #   aws imagebuilder create-component \
@@ -52,7 +48,7 @@ phases:
         inputs:
           commands:
             # git — deploy-key clone and local git ops.
-            # python3 / python3-pip — runner scripts, boto3 venv.
+            # python3 / python3-pip — runner scripts.
             # unzip — needed to unpack the AWS CLI v2 installer zip (see InstallAWSCLI).
             # python3-pyyaml — the conformance harness imports yaml; must be available
             #                  on the system python3 path. The harness arrives via S3 at
@@ -74,34 +70,6 @@ phases:
             - unzip -q /tmp/awscliv2.zip -d /tmp
             - /tmp/aws/install
             - rm -rf /tmp/aws /tmp/awscliv2.zip
-
-      - name: InstallBoto3Venv
-        action: ExecuteBash
-        inputs:
-          commands:
-            # Pre-provision the boto3 venv, isolated from distro python packages.
-            # pip is the one the venv is created with; it is not upgraded from PyPI.
-            #
-            # The requirement lines below are toolchain/boto3-venv.txt, one entry per
-            # line: boto3 and everything it depends on, each an exact version with the
-            # hashes of its published files. No file from the repository is on the build
-            # instance, so they are written out here. --require-hashes makes pip refuse
-            # any file whose hash is not listed, and any dependency that is not listed.
-            - python3 -m venv /opt/boto3-venv
-            - |
-              cat > /tmp/boto3-venv.txt <<'REQ'
-              --only-binary :all:
-              boto3==1.42.97 --hash=sha256:2833dbeda3670ea610ad48dff7d27cdc829dbbfcdfbc6b750b673948e949b6f0 --hash=sha256:966e49f0510af9a64057a902b7df53d4348c447de0d3df4cc855dfd85e058fcd
-              botocore==1.42.97 --hash=sha256:5c0bb00e32d16ff6d278cc8c9e10dc3672d9c1d569031635ac3c908a60de8310 --hash=sha256:77d2c8ce1bc592d3fbd7c01c35836f4a5b0cac2ca03ccdf6ffc60faa16b5fadc
-              jmespath==1.1.0 --hash=sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d --hash=sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64
-              python-dateutil==2.9.0.post0 --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
-              s3transfer==0.16.1 --hash=sha256:61bcd00ccb83b21a0fe7e91a553fff9729d46c83b4e0106e7c314a733891f7c2 --hash=sha256:8e424355754b9ccb32467bdc568edf55be82692ef2002d934b1311dbb3b9e524
-              six==1.17.0 --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
-              urllib3==1.26.20 ; python_full_version < '3.10' --hash=sha256:0ed14ccfbf1c30a9072c7ca157e4319b70d65f623e91e7b32fadb2853431016e --hash=sha256:40c2dc0c681e47eb8f90e7e27bf6ff7df2e677421fd46756da1161c39ca70d32
-              urllib3==2.8.0 ; python_full_version >= '3.10' --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63
-              REQ
-            - /opt/boto3-venv/bin/python -m pip install --no-cache-dir --require-hashes -r /tmp/boto3-venv.txt
-            - rm -f /tmp/boto3-venv.txt
 
       # -- HARNESS-COUPLING BLOCK START --------------------------------------
       # This step is ONE OF ONLY TWO places safe-agents couples to Claude Code
@@ -169,8 +137,6 @@ phases:
           commands:
             - test -d /opt/agents
             - test -d /opt/broker
-            - test -d /opt/boto3-venv
-            - /opt/boto3-venv/bin/python3 -c "import boto3; print('boto3 ok')"
             # aws CLI installed via the official installer (not awscli2 dnf package).
             - aws --version
             # The harness (harness.py) arrives at boot via S3; not checked here.

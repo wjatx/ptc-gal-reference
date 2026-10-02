@@ -1071,40 +1071,18 @@ class TestAmiComponentContent:
             "the validate phase must fail the bake if node or npm is on the image"
         )
 
-    def test_boto3_requirements_are_exactly_the_lock(self) -> None:
-        """The component writes its own requirements file (no repository file is on the
-        build instance). Every entry must be an entry of toolchain/boto3-venv.txt, with the
-        same version, marker and hashes, and none may be missing: pip then installs what
-        the lock says or nothing.
+    def test_does_not_bake_boto3(self) -> None:
+        """Nothing on the box imports boto3: the box scripts reach AWS through the AWS CLI.
+
+        The component once built a boto3 virtualenv under /opt for a runner wrapper and
+        a credential fetcher that no longer exist. Comments count here too, so the step
+        cannot come back under a note that says something still needs it.
         """
-        def entries(lines: list[str]) -> dict[str, frozenset[str]]:
-            found: dict[str, frozenset[str]] = {}
-            for line in lines:
-                spec, *hashes = [part.strip() for part in line.split("--hash=")]
-                assert spec not in found, f"{spec} is listed twice"
-                found[spec] = frozenset(hashes)
-            return found
-
-        lock_text = (REPO_ROOT / "safe_agents" / "arms" / "toolchain" / "boto3-venv.txt").read_text(encoding="utf-8")
-        locked = entries([
-            line for line in lock_text.replace("\\\n", " ").splitlines()
-            if line.strip() and not line.lstrip().startswith(("#", "--"))
-        ])
-
-        content = _COMPONENT_PATH.read_text(encoding="utf-8")
-        written = re.search(r"cat > /tmp/boto3-venv\.txt <<'REQ'\n(.*?)\n\s*REQ\n", content, re.DOTALL)
-        assert written, "component must write /tmp/boto3-venv.txt from a quoted here-document"
-        lines = [line.strip() for line in written.group(1).splitlines()]
-        assert lines[0] == "--only-binary :all:", "the requirements must refuse source builds, as the lock does"
-        baked = entries(lines[1:])
-
-        assert locked and any(spec.startswith("boto3==") for spec in locked)
-        assert all(len(hashes) >= 1 and all(re.fullmatch(r"sha256:[0-9a-f]{64}", h) for h in hashes) for hashes in locked.values())
-        assert baked == locked, (
-            f"baked only: {sorted(set(baked) - set(locked))}; locked only: {sorted(set(locked) - set(baked))}; "
-            f"hashes differ: {sorted(spec for spec in set(baked) & set(locked) if baked[spec] != locked[spec])}"
+        content = _COMPONENT_PATH.read_text(encoding="utf-8").lower()
+        assert "boto3" not in content, (
+            "component must not bake boto3: nothing on the box uses it. If a box script "
+            "comes to need it, add the hash lock and its test together with the step."
         )
-        assert "/opt/boto3-venv/bin/python -m pip install --no-cache-dir --require-hashes -r /tmp/boto3-venv.txt" in content
 
     def test_remote_smoke_harness_path_matches_boot_extracted_path(self) -> None:
         """Gap 2: phases.py remote-smoke path must match the path user-data extracts.

@@ -114,15 +114,6 @@ so it writes the one requirement line its platform needs, and
 `safe_agents/arms/rhel_openshell/tests/test_rhel_ami.py` fails unless that
 version and hash are in this lock.
 
-`boto3-venv.txt` is a second lock of the same kind, compiled from `boto3-venv.in`
-by the same command with the two file names changed. It is boto3 and its
-dependencies, which the EC2 arm's component installs into `/opt/boto3-venv`. The
-interpreter is the system Python of Amazon Linux 2023, also 3.9, and boto3 1.42.97
-is the last release that supports it, so this pin cannot move forward until the
-venv is built with a newer Python. The component writes the lock's requirement
-lines out itself, and `safe_agents/arms/ec2/tests/test_ec2_arm.py` fails unless
-they are exactly the lock's.
-
 ## Architectures
 
 A file published per architecture has one lock line per platform. A script or

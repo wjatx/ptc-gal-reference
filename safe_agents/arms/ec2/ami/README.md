@@ -32,7 +32,6 @@ ami/
 
 - **`dnf` packages**: git, python3, python3-pip, unzip, python3-pyyaml, iptables-nft.
 - **AWS CLI v2**, from its pinned aarch64 release archive.
-- **boto3**, into `/opt/boto3-venv`, with `pip install --require-hashes`.
 - **Claude Code CLI** (the native binary), the sole HARNESS-COUPLING step. It also writes
   `DISABLE_UPDATES=1` into `/etc/claude-code/managed-settings.json`, so the baked binary
   never updates itself.
@@ -45,9 +44,8 @@ it, and the validate phase fails the bake if `node` or `npm` is present.
 The AWS CLI archive and the Claude Code binary are lines of
 `safe_agents/arms/toolchain/artifacts.lock`, fetched with the inline form that directory's
 README defines: an exact version, checked against a SHA-256, with no fallback. A mismatch
-or a removed URL fails the bake. The boto3 requirement lines are a copy of
-`safe_agents/arms/toolchain/boto3-venv.txt`, and `safe_agents/arms/ec2/tests/test_ec2_arm.py`
-fails if the two differ. `dnf` installs named packages from Amazon Linux's signed repositories.
+or a removed URL fails the bake. `dnf` installs named packages from Amazon Linux's signed
+repositories.
 
 Move a pin with `scripts/update-artifact-pin.py`, which rewrites the component. A changed
 component needs a new `--semantic-version`, and the recipe's `componentArn` to match,
@@ -239,8 +237,7 @@ The CI role needs only `s3:PutObject` on `arn:aws:s3:::safe-agents-*-deploy/agen
 ### Build instance profile (used by the Image Builder build instance)
 
 Attach AWS managed policy `EC2InstanceProfileForImageBuilder` plus SSM core actions for console
-access. The build instance needs internet egress for `dnf`, the pinned release downloads and
-the hashed `pip` install. It does
+access. The build instance needs internet egress for `dnf` and the pinned release downloads. It does
 NOT need access to the agent S3 bucket, DynamoDB, or Secrets Manager.
 
 ### CI deploy role (used by the bundle upload script)
