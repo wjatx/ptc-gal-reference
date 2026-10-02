@@ -13,8 +13,12 @@
 
 # ── ── HARNESS-COUPLING BLOCK START ──────────────────────────────────────────
 # What this block does:
-#   1. Install the @anthropic-ai/claude-code CLI via npm (Node.js from install-tools.sh).
-#   2. Verify the OAuth token is reachable from Secrets Manager (bootstrap-time check).
+#   1. Install the Claude Code native binary from its pinned release
+#      (safe_agents/arms/toolchain/README.md, "Claude Code"). It is one self-contained
+#      executable and needs no Node.js. It is never installed with npm.
+#   2. Set DISABLE_UPDATES=1 in the managed settings, so the binary never updates itself
+#      past the pin.
+#   3. Verify the OAuth token is reachable from Secrets Manager (bootstrap-time check).
 #      The token is NOT persisted here — run-agent.sh fetches it fresh at each invocation.
 set -euo pipefail
 
@@ -26,19 +30,55 @@ else
     SUDO=""
 fi
 
+# The rhel-bootstrap bundle carries the helper beside scripts/ (the bundle builder,
+# safe_agents/arms/ec2/ami/bundle.py, copies it from safe_agents/arms/toolchain/). A bundle
+# without it stops here, on the missing file.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source-path=SCRIPTDIR source=../../../toolchain/fetch-verified.sh
+. "${SCRIPT_DIR}/../toolchain/fetch-verified.sh"
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+MANAGED_SETTINGS=/etc/claude-code/managed-settings.json
+
 log "Setting up Claude Code environment..."
 
 # /usr/local/bin must be on PATH — RHEL login shells omit it; claude is installed there.
 export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
+# The pin holds for this script's own run of the CLI too, before any settings file is read.
+export DISABLE_UPDATES=1
 
-# `npm install -g` writes to the system npm prefix (/usr/lib/node_modules) which
-# requires root when node was installed via dnf.
 if ! command -v claude &>/dev/null; then
-    $SUDO npm install -g @anthropic-ai/claude-code
-    log "Claude Code installed: $(claude --version 2>/dev/null || echo 'installed')"
+    # x86_64 only, like the arm. This binary's first run on a real host is the first bake.
+    fetch_verified \
+        https://downloads.claude.ai/claude-code-releases/2.1.285/linux-x64/claude \
+        33dad1ec615a2e08cc78b494f05c110e49916de2c79d78ec8799ebf46b233d29 \
+        "${WORK}/claude"
+    $SUDO install -m 0755 "${WORK}/claude" /usr/local/bin/claude
+    log "Claude Code binary installed to /usr/local/bin/claude"
 else
-    log "Claude Code already installed: $(claude --version 2>/dev/null)"
+    log "Claude Code already installed (baked AMI)"
 fi
+
+# Managed settings apply to every user on the box and cannot be overridden by a user's own
+# settings. Anything already in the file is kept; only env.DISABLE_UPDATES is set. Written
+# on every run, so a box baked before this setting existed gets it at boot.
+$SUDO install -d -m 0755 /etc/claude-code
+$SUDO python3 - "$MANAGED_SETTINGS" <<'PY'
+import json, pathlib, sys
+
+path = pathlib.Path(sys.argv[1])
+settings = json.loads(path.read_text()) if path.exists() else {}
+settings.setdefault("env", {})["DISABLE_UPDATES"] = "1"
+path.write_text(json.dumps(settings, indent=2) + "\n")
+PY
+$SUDO chmod 0644 "$MANAGED_SETTINGS"
+
+# Run it once. A binary that cannot execute on this host stops the bootstrap here, not at
+# the first agent turn.
+CLAUDE_VERSION="$(claude --version)"
+log "Claude Code version: ${CLAUDE_VERSION}"
 
 mkdir -p ~/bin ~/.claude ~/claude-agents/logs ~/claude-agents/results
 

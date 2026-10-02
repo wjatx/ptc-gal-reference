@@ -90,14 +90,6 @@ ALLOWED: dict[str, dict[str, int]] = {
     "safe_agents/arms/ec2/ami/image-builder/component-base.yaml": {"npm-install": 1, "pip-install": 1, "unverified-fetch": 1},
     "safe_agents/arms/fargate/Containerfile.agent": {"image-unpinned": 1, "npm-install": 1, "unverified-fetch": 1},
     "safe_agents/arms/local/Containerfile": {"image-unpinned": 1, "npm-install": 1},
-    "safe_agents/arms/rhel_openshell/ami/image-builder/component-base.yaml": {"latest-lookup": 2, "npm-install": 1, "pip-install": 2, "pipe-to-shell": 2, "repo-or-rpm-by-url": 3, "tool-install": 1, "unverified-fetch": 1},
-    "safe_agents/arms/rhel_openshell/bootstrap/scripts/install-k8s-tools.sh": {"latest-lookup": 3, "unverified-fetch": 7},
-    "safe_agents/arms/rhel_openshell/bootstrap/scripts/install-languages.sh": {"pipe-to-shell": 1, "unverified-fetch": 1},
-    "safe_agents/arms/rhel_openshell/bootstrap/scripts/install-openshell.sh": {"pipe-to-shell": 1},
-    "safe_agents/arms/rhel_openshell/bootstrap/scripts/install-python-env.sh": {"pip-install": 3, "pipe-to-shell": 1, "tool-install": 1},
-    "safe_agents/arms/rhel_openshell/bootstrap/scripts/install-tools.sh": {"latest-lookup": 1, "pipe-to-shell": 1, "repo-or-rpm-by-url": 2, "unverified-fetch": 2},
-    "safe_agents/arms/rhel_openshell/bootstrap/scripts/setup-claude.sh": {"npm-install": 1},
-    "safe_agents/arms/rhel_openshell/user-data.sh.tmpl": {"latest-lookup": 1, "repo-or-rpm-by-url": 1, "unverified-fetch": 1},
 }
 
 

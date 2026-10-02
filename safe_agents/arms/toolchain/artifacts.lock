@@ -44,29 +44,9 @@ yq linux-x86_64 4.54.1 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf
 # Pins that no script uses yet. `update-artifact-pin.py --check` fails when a line
 # above is neither used nor listed here, and when a line listed here is in use, so
 # this list only shrinks. One per line: `#:unused name platform`.
-#:unused argocd linux-x86_64
 #:unused awscli linux-aarch64
-#:unused awscli linux-x86_64
-#:unused bat linux-x86_64
 #:unused claude-code linux-aarch64
-#:unused claude-code linux-x86_64
-#:unused epel-release any
-#:unused gh linux-x86_64
-#:unused gitleaks linux-x86_64
-#:unused go linux-x86_64
-#:unused helm linux-x86_64
 #:unused node linux-aarch64
-#:unused node linux-x86_64
-#:unused oc linux-x86_64
-#:unused openshell linux-x86_64
 #:unused openshell-checksums any
-#:unused openshell-gateway linux-x86_64
 #:unused openshell-installer any
-#:unused openshell-prover linux-x86_64
-#:unused ripgrep linux-x86_64
-#:unused rust linux-x86_64
-#:unused ssm-agent linux-x86_64
-#:unused terraform linux-x86_64
 #:unused uv linux-aarch64
-#:unused uv linux-x86_64
-#:unused yq linux-x86_64

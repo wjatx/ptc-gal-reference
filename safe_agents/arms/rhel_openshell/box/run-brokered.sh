@@ -24,7 +24,7 @@
 # runnable on demand (e.g. over SSM: `SA_RUN_SMOKE=1 /opt/safe-agents/bin/run-brokered.sh "task"`).
 #
 # RHEL specifics vs the EC2 arm: the confined turn drops to the `dev` user (EC2 uses ec2-user); the
-# aws CLI + node/claude live under /usr/local/bin (RHEL omits them from the default service PATH),
+# aws CLI + claude live under /usr/local/bin (RHEL omits them from the default service PATH),
 # so PATH is exported at the top and survives the self-re-exec into the netns. The run record is
 # tagged arm=rhel-openshell. Installed under /opt (bootstrap.sh restorecon's it for SELinux).
 #
@@ -46,9 +46,12 @@
 #   SA_RUN_SMOKE          "1" to run the four smoke-egress assertions before the turn (default off)
 #   CLAUDE_CODE_OAUTH_TOKEN  model token; if unset, resolved at runtime from SA_OAUTH_SECRET_ID
 set -uo pipefail
-# RHEL: aws + node/claude install under /usr/local/bin; ip/runuser under /usr/sbin. Set PATH at the
+# RHEL: aws + claude install under /usr/local/bin; ip/runuser under /usr/sbin. Set PATH at the
 # top so BOTH phases get it (phase 2 re-execs this script from the top inside the netns).
 export PATH="/usr/local/bin:/usr/sbin:/sbin:/usr/bin:/bin:${PATH:-}"
+# The Claude Code binary is pinned (safe_agents/arms/toolchain/README.md) and must not update
+# itself. Set at the top, like PATH, so both phases get it across the runuser env reset.
+export DISABLE_UPDATES=1
 
 # Load the env contract when present so on-demand (SSM) invocations get the same config the
 # systemd service does. Existing environment wins (set -a exports what the file defines).

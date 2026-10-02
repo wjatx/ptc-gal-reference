@@ -285,6 +285,13 @@ _DEFAULT_RHEL_BOX_DIR: Path = (
     Path(__file__).parent.parent.parent / "rhel_openshell" / "box"
 )
 
+# The pinned-download files the RHEL install scripts need on the box, from
+# safe_agents/arms/toolchain/: the fetch_verified helper every script sources, and the hash lock
+# install-python-env.sh installs from. They ride the rhel-bootstrap tarball under toolchain/, so
+# the scripts reach them at ../toolchain/ and no second copy is kept in the bootstrap dir.
+_DEFAULT_TOOLCHAIN_DIR: Path = Path(__file__).parent.parent.parent / "toolchain"
+RHEL_BOOTSTRAP_TOOLCHAIN_FILES: tuple[str, ...] = ("fetch-verified.sh", "python-tools.txt")
+
 # Default ec2-bootstrap directory: safe_agents/arms/ec2/bootstrap/ relative to this file.
 # bundle.py → ec2/ami/ → ec2/ → bootstrap/.
 _DEFAULT_EC2_BOOTSTRAP_DIR: Path = Path(__file__).parent.parent / "bootstrap"
@@ -308,6 +315,7 @@ def bundle_rhel_bootstrap(
     bootstrap_dir: Path,
     *,
     box_dir: Path | None = None,
+    toolchain_dir: Path | None = None,
     excludes: frozenset[str] | None = None,
 ) -> bytes:
     """Create an in-memory tar.gz bundle of the rhel_openshell/bootstrap/ + box/ dirs.
@@ -322,6 +330,8 @@ def bundle_rhel_bootstrap(
         /home/dev/rhel-bootstrap/scripts/install-tools.sh
         /home/dev/rhel-bootstrap/scripts/install-openshell.sh
         /home/dev/rhel-bootstrap/box/run-brokered.sh
+        /home/dev/rhel-bootstrap/toolchain/fetch-verified.sh
+        /home/dev/rhel-bootstrap/toolchain/python-tools.txt
         ...
 
     bootstrap.sh then installs the confinement + runner scripts to /opt/safe-agents/bin. The
@@ -335,15 +345,25 @@ def bundle_rhel_bootstrap(
     box_dir:
         Path to ``safe_agents/arms/rhel_openshell/box/`` (the run-brokered.sh runner). Defaults to the
         sibling ``box/`` dir. Bundled under ``rhel-bootstrap/box/`` in the same tarball.
+    toolchain_dir:
+        Path to ``safe_agents/arms/toolchain/``. The files named in
+        ``RHEL_BOOTSTRAP_TOOLCHAIN_FILES`` are bundled under ``rhel-bootstrap/toolchain/``.
     excludes:
         Extra filenames or ``*.ext`` glob patterns to omit (merged with defaults).
 
     Returns
     -------
     Raw bytes of a gzip-compressed tar archive.
+
+    Raises
+    ------
+    FileNotFoundError
+        A toolchain file is missing. Every install script sources the helper, so a bundle
+        without it would fail on the box; the bundle build fails instead.
     """
     all_excludes = _DEFAULT_EXCLUDES | {"model-proxy-stub.py"} | (excludes or frozenset())
     box_dir = box_dir if box_dir is not None else _DEFAULT_RHEL_BOX_DIR
+    toolchain_dir = toolchain_dir if toolchain_dir is not None else _DEFAULT_TOOLCHAIN_DIR
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         tar.add(
@@ -357,6 +377,14 @@ def bundle_rhel_bootstrap(
                 arcname="rhel-bootstrap/box",
                 filter=_exclude_filter(all_excludes),
             )
+        for name in RHEL_BOOTSTRAP_TOOLCHAIN_FILES:
+            source = toolchain_dir / name
+            if not source.is_file():
+                raise FileNotFoundError(
+                    f"rhel-bootstrap bundle: {source} is missing. The RHEL install scripts "
+                    "need it on the box; see safe_agents/arms/toolchain/README.md."
+                )
+            tar.add(source, arcname=f"rhel-bootstrap/toolchain/{name}")
     return buf.getvalue()
 
 

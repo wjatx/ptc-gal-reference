@@ -17,7 +17,7 @@
 #   that must run as root BEFORE handing off to the snapshotted bootstrap.sh:
 #
 #     1. Install SSM agent (RHEL marketplace AMIs omit it — must be first so we
-#        can always connect via Session Manager even if later steps fail).
+#        can connect via Session Manager if a later step fails).
 #     2. Set cgroups v2 delegation BEFORE the dev user's systemd manager starts
 #        (required by rootless podman + OpenShell sandbox creation).
 #     3. Create dev user with NOPASSWD sudo.
@@ -30,6 +30,13 @@
 #
 #   The heavy install moved to bootstrap/ so this file stays well under the 25,600-byte
 #   cloud-init user-data limit (already gzip-encoded; provision.py compresses before upload).
+#
+#   Pinned downloads (safe_agents/arms/toolchain/README.md): steps 1 and 4 are the only
+#   downloads here, and both run before any bundle is on the box, so neither can source
+#   fetch-verified.sh. Each uses the canonical inline form instead: a literal URL and
+#   SHA-256 from toolchain/artifacts.lock. On the prebuilt AMI both tools are already
+#   baked, from the same two pins by the same commands (ami/image-builder/component-base.yaml),
+#   and nothing is downloaded. A hash mismatch or a pruned URL stops the boot.
 #
 # Two-identity split (arms.md):
 #   Agent process  — agentRole instance profile; zero connector authority.
@@ -68,13 +75,24 @@ _bootstrap_err() {
 trap '_bootstrap_err' ERR
 
 # ── Step 1: SSM agent ─────────────────────────────────────────────────────────
-# RHEL marketplace AMIs do not bundle the SSM agent. Install it FIRST so that
-# Session Manager access is available even if later steps fail. RHEL uses the
-# linux_amd64 RPM (this arm is x86_64 only; OpenShell does not support arm64).
-dnf -y install \
-    https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm \
-    || true
-systemctl enable --now amazon-ssm-agent || true
+# RHEL marketplace AMIs do not bundle the SSM agent; the prebuilt safe-agents AMI bakes it.
+# On a marketplace AMI, install it FIRST so that Session Manager access is available if a
+# later step fails. RHEL uses the linux_amd64 RPM (this arm is x86_64 only; OpenShell does
+# not support arm64).
+#
+# The RPM is a pinned release, fetched with the inline form (see the header). The form
+# ends in `exit 1` on a mismatch, which run bare would exit this script without firing
+# the ERR trap, and no failure marker would be written. So it runs in a subshell, and
+# `|| false` turns the subshell's failure into a failed command that fires the trap.
+if rpm -q amazon-ssm-agent &>/dev/null; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SSM agent already present (baked AMI)"
+else
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SSM agent not found: marketplace AMI fallback, installing the pinned RPM (requires egress)"
+    ( u=https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/3.3.5390.0/linux_amd64/amazon-ssm-agent.rpm; h=85369679511b67f8f01824043ae17a679b6f21edd78229ccd1d5acd6c347f82f; d=/tmp/amazon-ssm-agent.rpm; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; } ) || false
+    dnf -y install /tmp/amazon-ssm-agent.rpm
+    rm -f /tmp/amazon-ssm-agent.rpm
+fi
+systemctl enable --now amazon-ssm-agent
 
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] SSM agent installed and enabled"
 
@@ -104,14 +122,21 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] dev user created (NOPASSWD sudo)"
 # marketplace-AMI fallback installs from upstream; that needs egress, and this box
 # sits in the isolated no-NAT subnet, so an unconditional install would trip the
 # ERR trap here and kill bootstrap before the S3 bundle pulls even run.
+#
+# The fallback installs the pinned release archive, fetched with the inline form in a
+# subshell with `|| false` (see step 1). --update: a RHEL 9 AMI may ship a copy under
+# /usr/local/aws-cli/v2/current that is not on PATH, and the installer refuses to write
+# over one without it.
 export PATH=/usr/local/bin:$PATH
 if command -v aws &>/dev/null; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AWS CLI already present (baked AMI): $(aws --version 2>&1)"
 else
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AWS CLI not found — marketplace AMI fallback, installing from upstream (requires egress)"
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AWS CLI not found — marketplace AMI fallback, installing the pinned release (requires egress)"
     dnf -y install unzip
-    curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
-    (cd /tmp && unzip -q awscliv2.zip && ./aws/install)
+    ( u=https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.37.8.zip; h=6a2f98fee0901ff623ff9abb5c80f4d67c40e5c0ac5e2ad7afa2ba756a7d5088; d=/tmp/awscliv2.zip; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; } ) || false
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install --update
+    rm -rf /tmp/aws /tmp/awscliv2.zip
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] AWS CLI v2 installed"
 fi
 
@@ -134,9 +159,10 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] Platform contract unpacked to /opt/safe-a
 
 # ── Step 7: Pull rhel-bootstrap bundle from S3 ────────────────────────────────
 # The snapshotted bootstrap scripts (install-tools.sh, install-openshell.sh,
-# setup-claude.sh, etc.) are delivered via this bundle so bootstrap.sh does the
+# setup-claude.sh, and the rest) are delivered via this bundle so bootstrap.sh does the
 # heavy install. This avoids keeping the full toolchain install in user-data and
-# keeps this file well under the 25,600-byte cloud-init limit.
+# keeps this file well under the 25,600-byte cloud-init limit. The bundle also carries
+# toolchain/fetch-verified.sh, which every install script sources for its pinned downloads.
 RHEL_BOOTSTRAP_KEY="platform/rhel-bootstrap/bundle.tar.gz"
 BOOTSTRAP_DIR="/home/dev/rhel-bootstrap"
 mkdir -p "${BOOTSTRAP_DIR}"
@@ -149,9 +175,11 @@ rm -f /tmp/rhel-bootstrap.tar.gz
 echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] RHEL bootstrap bundle extracted to ${BOOTSTRAP_DIR}"
 
 # ── Step 8: Invoke bootstrap.sh as the dev user ───────────────────────────────
-# bootstrap.sh is the LIVE-VERIFIED, snapshotted install script. It runs as dev
+# bootstrap.sh is the snapshotted install script. It runs as dev
 # (required for rootless podman + OpenShell user bus). The SA_* env vars are
 # passed through so bootstrap.sh can write the correct systemd units and sidecar.
+# Its install scripts were moved to pinned downloads after the last live run and have
+# not been run on a host since.
 #
 # XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS are set so that `systemctl --user`
 # commands inside bootstrap.sh (and install-openshell.sh) can reach the dev user's

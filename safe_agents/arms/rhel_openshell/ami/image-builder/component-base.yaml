@@ -12,13 +12,32 @@ schemaVersion: 1.0
 #   - SSM agent            (user-data.sh.tmpl step 1; RHEL AMIs omit it)
 #   - AWS CLI v2 (x86_64)  (user-data.sh.tmpl step 4; RHEL AMIs omit it)
 #   - core dnf toolchain   (bootstrap/scripts/install-tools.sh)
-#   - Node.js 20.x         (bootstrap/scripts/install-tools.sh; needed by the Claude CLI)
+#   - htop, bat, rg, gh    (bootstrap/scripts/install-tools.sh)
 #   - uv + ruff            (bootstrap/scripts/install-python-env.sh)
 #   - Claude Code CLI      (bootstrap/scripts/setup-claude.sh — HARNESS-COUPLING block)
+#
+# No Node.js. Claude Code is a native binary and needs none, and the autonomous profile
+# gets none; the validate phase fails the bake if node or npm is on the image. The
+# interactive profile installs Node.js at boot (bootstrap/scripts/install-languages.sh).
 #
 # The bake runs in CI where the RHUI repos (RHEL marketplace AMIs are RHUI-entitled)
 # and the internet are reachable. NONE of these installs run over the network at agent
 # runtime — that is the whole point of the prebuilt AMI.
+#
+# Pinned downloads (safe_agents/arms/toolchain/README.md):
+#   - No bundle exists on the build instance, so no step can source fetch-verified.sh.
+#     Every download is the canonical inline form instead: one line whose URL and SHA-256
+#     are a line of toolchain/artifacts.lock. A hash mismatch or a pruned URL exits the
+#     step and fails the bake. Move a pin with scripts/update-artifact-pin.py, which
+#     rewrites this file and the boot scripts together.
+#   - Each tool is installed from the SAME pin, by the same commands, as the boot script
+#     named beside it above. The boot scripts skip a tool that is already here, so a box on
+#     this AMI and a box that fell back to the marketplace AMI end up with the same files.
+#     safe_agents/arms/rhel_openshell/tests/test_rhel_ami.py fails if the two sets of pins
+#     differ.
+#   - dnf installs named packages from RHEL's own signed repositories, and htop from EPEL.
+#     EPEL is added from its pinned release RPM; no repository is added by URL and
+#     gpgcheck stays on.
 #
 # RHEL-specific invariants (do NOT break these):
 #   - nftables is ALREADY present on the RHEL 9 marketplace AMI and is the NAT tool the
@@ -53,10 +72,13 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-            # EPEL: htop / bat / ripgrep live here, not BaseOS/AppStream (mirrors
-            # install-tools.sh). CRB is required by some EPEL packages on RHEL 9;
-            # both the RHUI and the standard repo names are tried.
-            - dnf install -y "https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm" || true
+            # EPEL, for htop alone: it has no upstream binary release to pin (mirrors
+            # install-tools.sh). The pinned epel-release RPM carries the repo definition
+            # and the EPEL signing key, so the hash covers both. CRB is required by some
+            # EPEL packages on RHEL 9; both the RHUI and the standard repo names are tried.
+            - u=https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/e/epel-release-9-11.el9.noarch.rpm; h=b434245bffd8b40ea486157e72363d08b36e38145c8f917c5c00adfca3f2101b; d=/tmp/epel-release.rpm; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; }
+            - dnf install -y /tmp/epel-release.rpm
+            - rm -f /tmp/epel-release.rpm
             - dnf config-manager --set-enabled codeready-builder-for-rhel-9-rhui-rpms 2>/dev/null || dnf config-manager --set-enabled crb 2>/dev/null || true
 
       - name: InstallToolchain
@@ -76,73 +98,107 @@ phases:
               git jq unzip tar curl wget buildah skopeo tree tmux vim make gcc gcc-c++
               openssl-devel bzip2-devel libffi-devel zlib-devel readline-devel sqlite-devel xz-devel
               python3 python3-pip python3-pyyaml
-            - dnf install -y htop bat ripgrep 2>/dev/null || true
+            - dnf install -y htop
 
-      - name: InstallGitHubCLI
+      - name: InstallPinnedCliTools
         action: ExecuteBash
         inputs:
           commands:
-            # gh (mirrors install-tools.sh). Repo add + install at bake time.
-            - dnf install -y 'dnf-command(config-manager)'
-            - dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo
-            - dnf install -y gh
-
-      - name: InstallNode
-        action: ExecuteBash
-        inputs:
-          commands:
-            # Node.js 20.x LTS via NodeSource (mirrors install-tools.sh). Required by the
-            # Claude Code CLI installed below.
-            - curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
-            - dnf install -y nodejs
+            # bat, ripgrep and gh from their pinned release archives (mirrors
+            # install-tools.sh): unpack the one top-level directory, install the binary.
+            - u=https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_64-unknown-linux-gnu.tar.gz; h=726f04c8f576a7fd18b7634f1bbf2f915c43494c1c0f013baa3287edb0d5a2a3; d=/tmp/bat.tar.gz; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; }
+            - mkdir -p /tmp/bat && tar -xzf /tmp/bat.tar.gz -C /tmp/bat --strip-components=1
+            - install -m 0755 /tmp/bat/bat /usr/local/bin/bat
+            - rm -rf /tmp/bat /tmp/bat.tar.gz
+            - u=https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz; h=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c; d=/tmp/ripgrep.tar.gz; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; }
+            - mkdir -p /tmp/ripgrep && tar -xzf /tmp/ripgrep.tar.gz -C /tmp/ripgrep --strip-components=1
+            - install -m 0755 /tmp/ripgrep/rg /usr/local/bin/rg
+            - rm -rf /tmp/ripgrep /tmp/ripgrep.tar.gz
+            - u=https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_linux_amd64.tar.gz; h=bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386; d=/tmp/gh.tar.gz; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; }
+            - mkdir -p /tmp/gh && tar -xzf /tmp/gh.tar.gz -C /tmp/gh --strip-components=1
+            - install -m 0755 /tmp/gh/bin/gh /usr/local/bin/gh
+            - rm -rf /tmp/gh /tmp/gh.tar.gz
 
       - name: InstallSSMAgent
         action: ExecuteBash
         inputs:
           commands:
             # RHEL marketplace AMIs do not bundle the SSM agent (user-data.sh.tmpl step 1
-            # installs it at boot today). Bake it so the no-NAT box is SSM-manageable
-            # immediately. x86_64 RPM (this arm is x86_64 only).
-            - dnf install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+            # installs it at boot on a marketplace AMI). Bake it so the no-NAT box is
+            # SSM-manageable immediately. x86_64 RPM (this arm is x86_64 only), from the
+            # same pin user-data uses.
+            - u=https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/3.3.5390.0/linux_amd64/amazon-ssm-agent.rpm; h=85369679511b67f8f01824043ae17a679b6f21edd78229ccd1d5acd6c347f82f; d=/tmp/amazon-ssm-agent.rpm; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; }
+            - dnf install -y /tmp/amazon-ssm-agent.rpm
+            - rm -f /tmp/amazon-ssm-agent.rpm
             - systemctl enable amazon-ssm-agent
 
       - name: InstallAWSCLI
         action: ExecuteBash
         inputs:
           commands:
-            # AWS CLI v2 via the official x86_64 installer (user-data.sh.tmpl step 4 does this
-            # at boot today). run-brokered.sh calls 'aws secretsmanager' + 'aws dynamodb' at
-            # runtime; the CLI must be pre-installed because the box has no internet then.
-            - curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+            # AWS CLI v2 from its pinned x86_64 release archive (user-data.sh.tmpl step 4
+            # does the same on a marketplace AMI). run-brokered.sh calls
+            # 'aws secretsmanager' + 'aws dynamodb' at runtime; the CLI must be pre-installed
+            # because the box has no internet then. --update: a RHEL 9 AMI may ship a copy
+            # under /usr/local/aws-cli that is not on PATH, and the installer refuses to
+            # write over one without it.
+            - u=https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.37.8.zip; h=6a2f98fee0901ff623ff9abb5c80f4d67c40e5c0ac5e2ad7afa2ba756a7d5088; d=/tmp/awscliv2.zip; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; }
             - unzip -q /tmp/awscliv2.zip -d /tmp
-            - /tmp/aws/install
+            - /tmp/aws/install --update
             - rm -rf /tmp/aws /tmp/awscliv2.zip
 
       - name: InstallPythonEnv
         action: ExecuteBash
         inputs:
           commands:
-            # uv + ruff (mirrors install-python-env.sh). Installed to a system location so
-            # they are on PATH for the dev user at runtime. UV_TOOL_BIN_DIR is load-bearing:
-            # without it, `uv tool install` as root drops ruff into /root/.local/bin where
-            # the dev user's `command -v ruff` guard (install-python-env.sh) cannot see it,
-            # and the boot-time fallback install would then need egress the no-NAT box lacks.
-            - python3 -m pip install --upgrade pip
-            - curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
-            - env UV_TOOL_BIN_DIR=/usr/local/bin /usr/local/bin/uv tool install ruff --force 2>/dev/null || python3 -m pip install ruff
+            # uv + ruff (mirrors install-python-env.sh), both on PATH for the dev user at
+            # runtime: the dev user's `command -v ruff` guard must see the baked ruff, or
+            # the boot would try an install that needs egress the no-NAT box lacks.
+            #
+            # uv is its pinned release archive, which holds two executables and nothing
+            # else. pip is the python3-pip dnf installed above; it is not upgraded from PyPI.
+            - u=https://github.com/astral-sh/uv/releases/download/0.12.22/uv-x86_64-unknown-linux-gnu.tar.gz; h=b9980552309f09c15172b8be828555e375097f16deb459795ce7bfd200380f0b; d=/tmp/uv.tar.gz; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; }
+            - mkdir -p /tmp/uv && tar -xzf /tmp/uv.tar.gz -C /tmp/uv --strip-components=1
+            - install -m 0755 /tmp/uv/* /usr/local/bin/
+            - rm -rf /tmp/uv /tmp/uv.tar.gz
+            # ruff installs into a root-owned virtualenv with --require-hashes. The boot
+            # script reads toolchain/python-tools.txt from its bundle; no bundle exists
+            # here, so the one line this x86_64 image needs is written out instead: the
+            # same version, and the hash that lock lists for the manylinux x86_64 wheel
+            # (test_rhel_ami.py checks both against the lock).
+            - python3 -m venv /opt/safe-agents/python-tools
+            - printf '%s\n' '--only-binary :all:' 'ruff==0.15.20 --hash=sha256:309809086c2acb67624950a3c8133e80f32d0d3e27106c0cd60ff26657c9f24b' > /tmp/python-tools.txt
+            - /opt/safe-agents/python-tools/bin/python -m pip install --no-cache-dir --require-hashes -r /tmp/python-tools.txt
+            - ln -sf /opt/safe-agents/python-tools/bin/ruff /usr/local/bin/ruff
+            - rm -f /tmp/python-tools.txt
 
       # -- HARNESS-COUPLING BLOCK START --------------------------------------
       # This step is the ONLY place this bake couples to Claude Code specifically
       # (mirrors bootstrap/scripts/setup-claude.sh). All other steps are harness-neutral.
       # To swap harnesses: replace ONLY this step.
       #
-      # Installs the Claude Code CLI globally via npm (requires nodejs, above).
+      # Installs the Claude Code native binary from its pinned release: one self-contained
+      # executable that needs no Node.js. It is never installed with npm. The managed
+      # settings set DISABLE_UPDATES=1, so the binary never updates itself past the pin.
       # Token injection happens at run time from Secrets Manager (run-brokered.sh), NOT here.
       - name: ClaudeCodeCLI
         action: ExecuteBash
         inputs:
           commands:
-            - npm install --global --quiet @anthropic-ai/claude-code
+            - u=https://downloads.claude.ai/claude-code-releases/2.1.285/linux-x64/claude; h=33dad1ec615a2e08cc78b494f05c110e49916de2c79d78ec8799ebf46b233d29; d=/tmp/claude; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; }
+            - install -m 0755 /tmp/claude /usr/local/bin/claude
+            - rm -f /tmp/claude
+            - |
+              install -d -m 0755 /etc/claude-code
+              python3 - /etc/claude-code/managed-settings.json <<'PY'
+              import json, pathlib, sys
+
+              path = pathlib.Path(sys.argv[1])
+              settings = json.loads(path.read_text()) if path.exists() else {}
+              settings.setdefault("env", {})["DISABLE_UPDATES"] = "1"
+              path.write_text(json.dumps(settings, indent=2) + "\n")
+              PY
+              chmod 0644 /etc/claude-code/managed-settings.json
       # -- HARNESS-COUPLING BLOCK END ----------------------------------------
 
       - name: CreateDirectoryLayout
@@ -161,12 +217,20 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
-            # Fail the bake early rather than ship a broken AMI.
+            # Fail the bake early rather than ship a broken AMI. Each pinned binary is RUN,
+            # not just found: a file that cannot execute on this host fails here. This is
+            # the first place the x86_64 Claude Code binary runs. HOME is set for it in case
+            # the build agent's shell has none.
             - git --version
             - python3 --version
-            - node --version
-            - export PATH="/usr/local/bin:$PATH"; which claude
+            - export PATH="/usr/local/bin:$PATH" HOME="${HOME:-/root}"; DISABLE_UPDATES=1 claude --version
             - aws --version
+            - /usr/local/bin/bat --version
+            - /usr/local/bin/rg --version
+            - /usr/local/bin/gh --version
+            - /usr/local/bin/uv --version
+            - /usr/local/bin/ruff --version
+            - command -v htop
             # nftables must be present (the arm's NAT tool). If this ever fails the AMI
             # would break agent-netns-setup.sh — so assert it, and never install iptables.
             - command -v nft
@@ -181,10 +245,20 @@ phases:
             - test -d /opt/agents
             - test -d /opt/broker
             - test -d /opt/safe-agents/bin
-            - export PATH="/usr/local/bin:$PATH"; which claude
+            - export PATH="/usr/local/bin:$PATH" HOME="${HOME:-/root}"; DISABLE_UPDATES=1 claude --version
             - aws --version
             # The harness imports yaml; verify the system python3 can import it.
             - python3 -c "import yaml; print('pyyaml ok')"
+
+      - name: ValidatePinnedHarness
+        action: ExecuteBash
+        inputs:
+          commands:
+            # The managed settings must carry the update lock, or the baked CLI could move
+            # past its pin.
+            - python3 -c "import json; assert json.load(open('/etc/claude-code/managed-settings.json'))['env']['DISABLE_UPDATES'] == '1'"
+            # No Node.js on the base image (see the header).
+            - export PATH="/usr/local/bin:$PATH"; if command -v node || command -v npm; then echo "Node.js must not be on the rhel-openshell base AMI" >&2; exit 1; fi
 
       - name: ValidateSelinuxAndNft
         action: ExecuteBash

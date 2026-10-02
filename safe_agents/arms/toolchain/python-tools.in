@@ -1,0 +1,3 @@
+# Python tools the arms install on a box, outside any project environment.
+# Compiled to python-tools.txt. README.md in this directory has the command.
+ruff==0.15.20

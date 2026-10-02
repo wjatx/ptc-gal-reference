@@ -92,6 +92,42 @@ A pinned install must not update itself. Every arm sets `DISABLE_UPDATES=1` for
 the CLI, in `/etc/claude-code/managed-settings.json` and in the environment it
 runs under.
 
+## Python tools
+
+`python-tools.txt` is a hash lock for the Python tools an arm installs on a box,
+outside any project environment. Today that is ruff, on the RHEL arm. It is
+compiled from `python-tools.in`:
+
+```sh
+uv pip compile safe_agents/arms/toolchain/python-tools.in --universal --generate-hashes --only-binary :all: --emit-build-options --python-version 3.9 -o safe_agents/arms/toolchain/python-tools.txt
+```
+
+This is the command `CONTRIBUTING.md` gives for the files under `requirements/`,
+with one difference. The interpreter that installs from this lock is the system
+Python of RHEL 9, which is 3.9, so the lock is compiled for 3.9 and later. The
+file lives here and not under `requirements/` because an install script reads it
+on the box, so it has to ship inside the package.
+
+A script installs from it into a virtualenv of its own, with
+`pip install --require-hashes -r`. An Image Builder component has no file to read,
+so it writes the one requirement line its platform needs, and
+`safe_agents/arms/rhel_openshell/tests/test_rhel_ami.py` fails unless that
+version and hash are in this lock.
+
+## Reaching these files on a box
+
+A script that runs from a bundle sources the helper from the bundle. The RHEL
+arm's `rhel-bootstrap` bundle carries `fetch-verified.sh` and `python-tools.txt`
+under `toolchain/`, beside `scripts/`. The bundle builder
+(`safe_agents/arms/ec2/ami/bundle.py`) copies them from this directory and fails
+if either is missing.
+
+A step that runs before any bundle is on the machine uses the inline form: an
+Image Builder component, and the two downloads in the RHEL arm's
+`user-data.sh.tmpl`. The inline form ends in `exit 1`. In a script with an `ERR`
+trap, write it as `( ... ) || false`, so a failure fires the trap. Run bare, it
+exits the script without the trap running.
+
 ## Out of scope
 
 Two kinds of download are left as they are.

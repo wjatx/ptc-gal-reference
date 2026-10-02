@@ -15,8 +15,9 @@ Acceptance criteria:
   3a. No k8s tools, No Go/Rust, No Remote Control, No dev-UX packages in template.
   3b. Bootstrap structure (bootstrap/ dir): all required scripts present.
        - tmux in install-tools.sh
-       - LIVE-VERIFIED install-openshell.sh (no version pin, no manual gateway add,
-         XDG_RUNTIME_DIR + DBUS set, enable-linger present)
+       - install-openshell.sh (pinned release RPMs, no upstream installer, ONE gateway
+         registration on :17670, XDG_RUNTIME_DIR + DBUS set, enable-linger present)
+       - every install script sources the bundled fetch-verified.sh; the bundle carries it
        - HARNESS-COUPLING BLOCK markers in setup-claude.sh
        - SA_PROFILE gate for interactive-only tools in bootstrap.sh
        - systemd timer written by bootstrap.sh
@@ -29,7 +30,9 @@ Acceptance criteria:
 """
 from __future__ import annotations
 
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -49,6 +52,7 @@ from safe_agents.arms.rhel_openshell.provision import (
     rhel_openshell_teardown,
     _pick_newest_rhel_ami,
 )
+from safe_agents.arms.tests.fetch_rules import pins
 from safe_agents.broker.tests.platform_marks import requires_posix_bash
 from safe_agents.pipeline import FakeAWS, load_manifest, run_pipeline
 
@@ -68,6 +72,24 @@ INSTALL_TOOLS_SCRIPT = BOOTSTRAP_DIR / "scripts" / "install-tools.sh"
 INSTALL_PYTHON_ENV_SCRIPT = BOOTSTRAP_DIR / "scripts" / "install-python-env.sh"
 INSTALL_OPENSHELL_SCRIPT = BOOTSTRAP_DIR / "scripts" / "install-openshell.sh"
 SETUP_CLAUDE_SCRIPT = BOOTSTRAP_DIR / "scripts" / "setup-claude.sh"
+INSTALL_LANGUAGES_SCRIPT = BOOTSTRAP_DIR / "scripts" / "install-languages.sh"
+INSTALL_K8S_TOOLS_SCRIPT = BOOTSTRAP_DIR / "scripts" / "install-k8s-tools.sh"
+# The scripts that download something. Each sources the fetch_verified helper from the bundle.
+FETCHING_SCRIPTS = (
+    INSTALL_TOOLS_SCRIPT,
+    INSTALL_PYTHON_ENV_SCRIPT,
+    INSTALL_OPENSHELL_SCRIPT,
+    SETUP_CLAUDE_SCRIPT,
+    INSTALL_LANGUAGES_SCRIPT,
+    INSTALL_K8S_TOOLS_SCRIPT,
+)
+# The endpoint the OpenShell gateway listens on. The real port is 17670, not 8080.
+OPENSHELL_GATEWAY_ENDPOINT = "https://127.0.0.1:17670"
+
+
+def _non_comment(text: str) -> str:
+    """The script's executable lines: whole-line comments dropped."""
+    return "\n".join(ln for ln in text.splitlines() if not ln.strip().startswith("#"))
 BOOTSTRAP_SCRIPT = BOOTSTRAP_DIR / "bootstrap.sh"
 # Netns + broker-SERVICE egress confinement (autonomous profile, converged two-box model).
 AGENT_NETNS_SETUP_SCRIPT = BOOTSTRAP_DIR / "scripts" / "agent-netns-setup.sh"
@@ -301,9 +323,16 @@ class TestUserDataRendering:
         assert end_idx != -1, "HARNESS-COUPLING BLOCK END marker missing from setup-claude.sh"
         assert start_idx < end_idx, "BLOCK START must precede BLOCK END"
         block = content[start_idx:end_idx]
-        assert "@anthropic-ai/claude-code" in block or "claude-code" in block, (
-            "Claude Code CLI install must be inside the HARNESS-COUPLING block "
+        assert "downloads.claude.ai/claude-code-releases/" in block, (
+            "the pinned Claude Code binary install must be inside the HARNESS-COUPLING block "
             "(to make harness swaps easy: only this block changes)"
+        )
+        assert "npm" not in _non_comment(block), (
+            "Claude Code is installed as the pinned native binary, never with npm"
+        )
+        assert "DISABLE_UPDATES" in block and "/etc/claude-code/managed-settings.json" in block, (
+            "setup-claude.sh must set DISABLE_UPDATES in the managed settings so the "
+            "binary never updates itself past the pin"
         )
 
     def test_oauth_token_fetch_inside_harness_block(self) -> None:
@@ -324,7 +353,7 @@ class TestUserDataRendering:
         )
 
     def test_openshell_install_in_dev_context(self) -> None:
-        """OpenShell install must be in the dev user's session (LIVE-VERIFIED).
+        """OpenShell install must be in the dev user's session.
 
         The thin user-data invokes bootstrap.sh as dev via `sudo -u dev -H bash -lc`.
         Inside install-openshell.sh (already running as dev), XDG_RUNTIME_DIR and
@@ -341,19 +370,16 @@ class TestUserDataRendering:
         # install-openshell.sh (running as dev) sets the user-bus vars.
         osh = INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8")
         assert "openshell" in osh.lower(), "install-openshell.sh must install OpenShell"
-        assert "install.sh | sh" in osh, "must use the native OpenShell installer"
+        assert "NVIDIA/OpenShell/releases/download/v" in osh, (
+            "must install OpenShell from its pinned release RPMs"
+        )
         assert "XDG_RUNTIME_DIR" in osh and "DBUS_SESSION_BUS_ADDRESS" in osh, (
             "install-openshell.sh must set XDG_RUNTIME_DIR + DBUS so systemctl --user works"
         )
         assert "enable-linger" in osh, "dev must have linger enabled for the user manager"
-        # The installer owns gateway registration (on :17670); no manual gateway add
-        # in executable code (comments may reference the phrase for documentation).
-        osh_non_comment = "\n".join(
-            ln for ln in osh.splitlines() if not ln.strip().startswith("#")
-        )
-        assert "gateway add" not in osh_non_comment, (
-            "install-openshell.sh must not run 'gateway add' in executable code; "
-            "the installer registers the gateway on :17670 itself"
+        # The gateway user service is enabled from this same dev session.
+        assert "systemctl --user enable openshell-gateway" in _non_comment(osh), (
+            "install-openshell.sh must enable the openshell-gateway user service"
         )
 
     def test_s3_bundle_delivery_present(self) -> None:
@@ -492,6 +518,23 @@ class TestBootstrapStructure:
             f"bootstrap/bootstrap.sh not found at {BOOTSTRAP_SCRIPT}"
         )
 
+    @requires_posix_bash
+    @pytest.mark.parametrize(
+        "script",
+        sorted((BOOTSTRAP_DIR / "scripts").glob("*.sh")) + [BOOTSTRAP_SCRIPT],
+        ids=lambda p: p.name,
+    )
+    def test_bootstrap_scripts_bash_n_clean(self, script: Path) -> None:
+        proc = subprocess.run(["bash", "-n", str(script)], capture_output=True, text=True)
+        assert proc.returncode == 0, f"bash -n failed for {script.name}: {proc.stderr}"
+
+    @requires_posix_bash
+    def test_rendered_user_data_bash_n_clean(self) -> None:
+        proc = subprocess.run(
+            ["bash", "-n"], input=render_user_data(_VALID_PARAMS), capture_output=True, text=True
+        )
+        assert proc.returncode == 0, f"bash -n failed for the rendered user-data: {proc.stderr}"
+
     def test_install_tools_sh_exists(self) -> None:
         assert INSTALL_TOOLS_SCRIPT.is_file(), (
             f"bootstrap/scripts/install-tools.sh not found at {INSTALL_TOOLS_SCRIPT}"
@@ -515,41 +558,86 @@ class TestBootstrapStructure:
             "for the flock-based concurrency gate (a prior re-derivation dropped this)"
         )
 
-    def test_openshell_no_hardcoded_version_pin(self) -> None:
-        """install-openshell.sh must NOT pin a specific OpenShell version (LIVE-VERIFIED).
+    def test_openshell_installs_pinned_rpms_not_the_installer(self) -> None:
+        """install-openshell.sh installs the pinned release RPMs and never runs the installer.
 
-        Pinning (e.g. OPENSHELL_VERSION=0.0.71) caused a release-asset 404 when upstream
-        churned to 0.0.72. The native installer always installs the current latest.
+        This reverses an earlier rule. The script used to take whatever release was newest,
+        because a pin (OPENSHELL_VERSION=0.0.71) hit a release-asset 404 when upstream
+        pruned it for 0.0.72. Every download is now pinned and hash-checked, so a pruned
+        asset stops the script, and that is the intended outcome (move the pin, or mirror
+        the assets). The upstream installer is not run at all: it downloads the packages
+        itself and checks them against a checksum file from the same release, not a hash
+        this repository holds. test_pinned_fetches.py checks each pair against the lock.
+        """
+        code = _non_comment(INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8"))
+        for package in ("openshell", "openshell-gateway", "openshell-prover"):
+            assert re.search(
+                rf"fetch_verified \\\s+https://github\.com/NVIDIA/OpenShell/releases/download/v[\d.]+/{package}-\d",
+                code,
+            ), f"install-openshell.sh must fetch the pinned {package} RPM with fetch_verified"
+        assert "install.sh" not in code and "| sh" not in code, (
+            "install-openshell.sh must not download or run the upstream installer script"
+        )
+        assert "OPENSHELL_VERSION" not in code, (
+            "the version lives in the pinned URLs (artifacts.lock), not in an installer variable"
+        )
+        assert "--nogpgcheck" not in code, "dnf's signature checking must stay on"
+
+    def test_openshell_registers_the_gateway_once_on_17670(self) -> None:
+        """Exactly one `gateway add`, and on the gateway's real endpoint.
+
+        The gateway listens on :17670 (mtls), not 8080. A registration on the wrong port,
+        or a second one on top of the first, leaves a mis-registered duplicate entry. The
+        upstream installer used to own this step; this script now does, with the endpoint
+        and flags the installer uses. Comments may mention the phrase.
         """
         content = INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8")
-        # No 'OPENSHELL_VERSION=0.0' or similar concrete version pin in a functional line.
-        # Comments explaining the no-pin decision are OK.
-        non_comment_lines = [
-            ln for ln in content.splitlines() if not ln.strip().startswith("#")
-        ]
-        non_comment_text = "\n".join(non_comment_lines)
-        import re
-        version_pin = re.search(r'OPENSHELL_VERSION=["\']?0\.\d+', non_comment_text)
-        assert version_pin is None, (
-            "install-openshell.sh must not pin a specific OpenShell version; "
-            f"found: {version_pin.group() if version_pin else ''}"
+        code = _non_comment(content)
+        adds = [ln.strip() for ln in code.splitlines() if "gateway add" in ln]
+        assert adds == ['openshell gateway add "$GATEWAY_ENDPOINT" --local --name openshell'], (
+            f"install-openshell.sh must register the local gateway exactly once; found {adds}"
         )
+        assert f'GATEWAY_ENDPOINT="{OPENSHELL_GATEWAY_ENDPOINT}"' in code, (
+            f"the gateway endpoint must be {OPENSHELL_GATEWAY_ENDPOINT} (the real port is 17670)"
+        )
+        assert "8080" not in code, "8080 is not the gateway port"
 
-    def test_openshell_no_gateway_add(self) -> None:
-        """install-openshell.sh must not run `gateway add` in executable code.
-
-        The native installer's start_user_gateway() registers on :17670 (mtls).
-        A manual `gateway add` uses the wrong port and creates a mis-registered entry.
-        Comments may reference the phrase for documentation.
-        """
+    def test_openshell_header_does_not_claim_it_is_verified(self) -> None:
+        """The pinned OpenShell release has not been run on RHEL, and the script says so."""
         content = INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8")
-        non_comment = "\n".join(
-            ln for ln in content.splitlines() if not ln.strip().startswith("#")
+        assert "NOT VERIFIED ON RHEL" in content
+        assert "LIVE-VERIFIED" not in content
+
+    @pytest.mark.parametrize("script", FETCHING_SCRIPTS, ids=lambda p: p.name)
+    def test_install_scripts_source_the_bundled_fetch_helper(self, script: Path) -> None:
+        """Every script that downloads sources fetch-verified.sh from the bundle's toolchain/."""
+        code = _non_comment(script.read_text(encoding="utf-8"))
+        assert '. "${SCRIPT_DIR}/../toolchain/fetch-verified.sh"' in code, (
+            f"{script.name} must source the fetch_verified helper the bundle ships"
         )
-        assert "gateway add" not in non_comment, (
-            "install-openshell.sh must not run 'gateway add' in executable code; "
-            "the installer registers the gateway on :17670 itself"
+        assert "set -euo pipefail" in code, (
+            f"{script.name} must run under set -e so a failed fetch_verified stops it"
         )
+        assert "fetch_verified" in code.split("fetch-verified.sh", 1)[1], (
+            f"{script.name} sources the helper but never calls fetch_verified"
+        )
+
+    def test_node_is_interactive_only(self) -> None:
+        """The autonomous profile gets no Node.js; the interactive profile keeps it, pinned.
+
+        Claude Code is a native binary, so nothing in the 'always' steps needs Node.
+        install-languages.sh, which bootstrap.sh runs only under SA_PROFILE=interactive,
+        installs it from the nodejs.org release archive.
+        """
+        for script in (INSTALL_TOOLS_SCRIPT, INSTALL_PYTHON_ENV_SCRIPT, SETUP_CLAUDE_SCRIPT):
+            code = _non_comment(script.read_text(encoding="utf-8")).lower()
+            for token in ("nodejs", "nodesource", "npm"):
+                assert token not in code, f"{script.name} must not install Node.js: found {token!r}"
+        languages = _non_comment(INSTALL_LANGUAGES_SCRIPT.read_text(encoding="utf-8"))
+        assert "https://nodejs.org/dist/v" in languages, (
+            "install-languages.sh must install Node.js from the pinned nodejs.org archive"
+        )
+        assert "nodesource" not in languages.lower() and "dnf module" not in languages
 
     def test_openshell_xdg_and_dbus_set(self) -> None:
         """install-openshell.sh must set XDG_RUNTIME_DIR + DBUS_SESSION_BUS_ADDRESS."""
@@ -1144,6 +1232,36 @@ class TestRhelBootstrapBundle:
             "rhel-bootstrap bundle must contain scripts/install-openshell.sh"
         )
 
+    def test_bundle_carries_the_pinned_fetch_toolchain(self) -> None:
+        """The install scripts source toolchain/fetch-verified.sh and read
+        toolchain/python-tools.txt, so the bundle must carry both, byte for byte."""
+        import io as _io
+        import tarfile as _tarfile
+
+        from safe_agents.arms.ec2.ami.bundle import (
+            RHEL_BOOTSTRAP_TOOLCHAIN_FILES,
+            bundle_rhel_bootstrap,
+        )
+
+        toolchain_dir = BOOTSTRAP_DIR.parent.parent / "toolchain"
+        data = bundle_rhel_bootstrap(BOOTSTRAP_DIR)
+        assert set(RHEL_BOOTSTRAP_TOOLCHAIN_FILES) == {"fetch-verified.sh", "python-tools.txt"}
+        with _tarfile.open(fileobj=_io.BytesIO(data), mode="r:gz") as tf:
+            for name in RHEL_BOOTSTRAP_TOOLCHAIN_FILES:
+                member = tf.extractfile(f"rhel-bootstrap/toolchain/{name}")
+                assert member is not None, f"bundle is missing toolchain/{name}"
+                assert member.read() == (toolchain_dir / name).read_bytes(), (
+                    f"bundled toolchain/{name} differs from safe_agents/arms/toolchain/{name}"
+                )
+
+    def test_bundle_fails_when_a_toolchain_file_is_missing(self, tmp_path: Path) -> None:
+        """A bundle without the helper would only fail on the box; the build fails instead."""
+        from safe_agents.arms.ec2.ami.bundle import bundle_rhel_bootstrap
+
+        (tmp_path / "fetch-verified.sh").write_text("# helper only, no lock\n", encoding="utf-8")
+        with pytest.raises(FileNotFoundError, match="python-tools.txt"):
+            bundle_rhel_bootstrap(BOOTSTRAP_DIR, toolchain_dir=tmp_path)
+
     def test_bundle_excludes_pycache(self) -> None:
         """bundle_rhel_bootstrap must exclude __pycache__ and .pyc files."""
         import io as _io
@@ -1574,6 +1692,65 @@ class TestSmokeEgressAssertions:
         assert "CONFINEMENT FAILED" in content and "exit 1" in content
 
 
+class TestPinnedFetchesFailLoud:
+    """A failed pinned download stops the boot, and the failure is visible afterwards.
+
+    user-data's two downloads run before any bundle is on the box, so they use the
+    canonical inline form (safe_agents/arms/toolchain/README.md). That form ends in
+    `exit 1`. Run bare, it would exit user-data without firing the ERR trap, and no
+    failure marker would be written. Each one therefore runs as `( ... ) || false`.
+    """
+
+    def _inline_fetch_lines(self) -> list[str]:
+        template = TEMPLATE_PATH.read_text(encoding="utf-8")
+        return [ln.strip() for ln in template.splitlines() if pins.INLINE_RE.search(ln)]
+
+    def test_user_data_has_exactly_the_two_pre_bundle_fetches(self) -> None:
+        urls = [pins.INLINE_RE.search(ln)["url"] for ln in self._inline_fetch_lines()]
+        assert len(urls) == 2 and "amazon-ssm-agent.rpm" in urls[0] and "awscli-exe-linux-x86_64-" in urls[1], (
+            f"user-data must fetch the SSM agent, then the AWS CLI, and nothing else; found {urls}"
+        )
+
+    @requires_posix_bash
+    @pytest.mark.skipif(shutil.which("sha256sum") is None, reason="the inline form needs sha256sum")
+    def test_hash_mismatch_fires_the_err_trap_and_stops(self, tmp_path: Path) -> None:
+        """Run each fetch line as written, against a `curl` that returns the wrong bytes."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        stub = bin_dir / "curl"
+        stub.write_text(
+            '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do [ "$1" = "-o" ] && echo "not the pinned bytes" > "$2"; shift; done\n',
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+        env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+        lines = self._inline_fetch_lines()
+        assert lines, "no inline fetch found in user-data.sh.tmpl"
+        for line in lines:
+            match = pins.INLINE_RE.search(line)
+            # Same line, with the download written under tmp_path instead of /tmp.
+            body = line.replace(f"d={match['dest']};", "d=fetched.bin;")
+            script = (
+                "set -euo pipefail\n"
+                "trap 'echo BOOTSTRAP_FAILED > marker.FAILED' ERR\n"
+                f"{body}\n"
+                "echo reached-the-next-step\n"
+            )
+            marker = tmp_path / "marker.FAILED"
+            marker.unlink(missing_ok=True)
+            done = subprocess.run(["bash", "-c", script], capture_output=True, text=True, env=env, cwd=tmp_path)
+            assert done.returncode != 0 and "reached-the-next-step" not in done.stdout, (
+                f"a hash mismatch must stop user-data: {line[:80]}"
+            )
+            assert marker.exists(), (
+                "the ERR trap did not fire, so no failure marker would be written. Each inline "
+                f"fetch must run as `( ... ) || false`: {line[:80]}"
+            )
+            assert f"fetch_verified FAILED {match['url']} expected sha256 {match['sha256']}" in done.stderr
+            assert not (tmp_path / "fetched.bin").exists(), "the mismatched download must be removed"
+
+
 class TestOfflineBootGuards:
     """Every internet install in the boot path must be guarded on the binary existing.
 
@@ -1592,7 +1769,7 @@ class TestOfflineBootGuards:
         """
         content = TEMPLATE_PATH.read_text(encoding="utf-8")
         guard_idx = content.find("command -v aws")
-        install_idx = content.find("awscli-exe-linux-x86_64.zip")
+        install_idx = content.find("awscli.amazonaws.com/awscli-exe-linux-x86_64-")
         assert guard_idx != -1, "user-data must guard the AWS CLI install with `command -v aws`"
         assert install_idx != -1, (
             "the upstream AWS CLI install must remain as the marketplace-AMI fallback"
@@ -1611,17 +1788,33 @@ class TestOfflineBootGuards:
             "or the guard misses the baked CLI and falls into the unreachable upstream install"
         )
 
-    def test_core_dnf_block_guarded_in_install_tools(self) -> None:
-        """EPEL setup + the core dnf install must run only when a core binary is missing."""
-        content = INSTALL_TOOLS_SCRIPT.read_text(encoding="utf-8")
-        guard_idx = content.find("_MISSING_CMDS")
-        assert guard_idx != -1, (
-            "install-tools.sh must probe for missing core binaries before touching dnf"
+    def test_ssm_agent_install_guarded_in_user_data(self) -> None:
+        """user-data must not fetch the SSM agent RPM when the agent is already baked in.
+
+        The fetch now fails the boot on any error, so on the no-NAT subnet an unguarded
+        fetch would kill the bootstrap at its first step.
+        """
+        content = TEMPLATE_PATH.read_text(encoding="utf-8")
+        guard_idx = content.find("rpm -q amazon-ssm-agent")
+        install_idx = content.find("s3.amazonaws.com/ec2-downloads-windows/SSMAgent/")
+        assert guard_idx != -1, "user-data must guard the SSM agent install with `rpm -q`"
+        assert install_idx != -1, (
+            "the pinned SSM agent RPM must remain as the marketplace-AMI fallback"
         )
-        for netop in ("epel-release-latest-9", "dnf install -y --allowerasing"):
-            idx = content.find(netop)
+        assert guard_idx < install_idx, "the `rpm -q` guard must come BEFORE the fetch"
+
+    def test_core_dnf_block_guarded_in_install_tools(self) -> None:
+        """The core dnf install runs only when a core binary is missing, and the EPEL
+        fetch only when htop is missing: both need egress the no-NAT subnet does not have."""
+        content = INSTALL_TOOLS_SCRIPT.read_text(encoding="utf-8")
+        for guard, netop in (
+            ("_MISSING_CMDS", "dnf install -y --allowerasing"),
+            ("command -v htop", "dl.fedoraproject.org/pub/epel/"),
+        ):
+            guard_idx, idx = content.find(guard), content.find(netop)
+            assert guard_idx != -1, f"install-tools.sh must probe with {guard!r} before touching the network"
             assert idx != -1 and idx > guard_idx, (
-                f"{netop!r} must live inside the missing-binaries guard — it needs egress "
+                f"{netop!r} must live inside the {guard!r} guard — it needs egress "
                 "the no-NAT subnet does not have"
             )
 
@@ -1641,7 +1834,7 @@ class TestOfflineBootGuards:
     def test_uv_install_guarded(self) -> None:
         content = INSTALL_PYTHON_ENV_SCRIPT.read_text(encoding="utf-8")
         guard_idx = content.find("command -v uv")
-        install_idx = content.find("astral.sh/uv/install.sh")
+        install_idx = content.find("github.com/astral-sh/uv/releases/download/")
         assert guard_idx != -1 and install_idx != -1 and guard_idx < install_idx, (
             "the uv install must be guarded on `command -v uv` (baked in by sa#109)"
         )
@@ -1652,8 +1845,12 @@ class TestOfflineBootGuards:
         assert guard_idx != -1, (
             "install-python-env.sh must guard the ruff install on `command -v ruff`"
         )
-        for frag in ("uv tool install ruff", "pip install --user ruff", "pip install --upgrade ruff"):
-            idx = content.find(frag)
-            assert idx == -1 or idx > guard_idx, (
-                f"{frag!r} must come after the `command -v ruff` guard"
+        install_idx = content.find("pip install --no-cache-dir --require-hashes")
+        assert install_idx > guard_idx, (
+            "the hash-checked ruff install must come after the `command -v ruff` guard"
+        )
+        code = _non_comment(content)
+        for frag in ("uv tool install", "pip install --user", "pip install --upgrade"):
+            assert frag not in code, (
+                f"{frag!r} resolves from PyPI with no hash check; ruff installs from the lock"
             )

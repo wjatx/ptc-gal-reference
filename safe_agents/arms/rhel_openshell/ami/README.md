@@ -8,9 +8,9 @@ arm. It mirrors the EC2 arm's bakery (`arms/ec2/ami`), adapted for RHEL 9 x86_64
 The RHEL two-box arm places the box in the **isolated agent subnet** — no NAT, no
 internet route; only the S3 gateway endpoint and the broker/AWS interface endpoints are
 reachable. But RHEL's `user-data.sh.tmpl` + `bootstrap.sh` install their toolchain at boot
-over the internet (SSM agent, AWS CLI, `dnf` core tools, Node.js, and `claude` via **npm** —
-which is **not** S3-backed). A fresh box in the isolated subnet therefore cannot complete
-bootstrap.
+over the internet (SSM agent, AWS CLI, `dnf` core tools, and pinned release downloads such
+as the Claude Code binary, none of which is S3-backed). A fresh box in the isolated subnet
+therefore cannot complete bootstrap.
 
 Baking the toolchain into the base AMI (in CI, where internet + RHUI egress exist) makes the
 box **config-only**, exactly like the EC2 arm: it boots ready to run with no internet.
@@ -24,7 +24,7 @@ box **config-only**, exactly like the EC2 arm: it boots ready to run with no int
 | Root device | `/dev/xvda` | **`/dev/sda1`** |
 | Package manager | `dnf` (AL2023) | `dnf` (RHEL 9 + EPEL/CRB) |
 | NAT firewall tool | `iptables-nft` (baked) | **`nftables`** (already on the RHEL AMI — **do NOT bake iptables**) |
-| AWS CLI installer | `awscli-exe-linux-aarch64.zip` | `awscli-exe-linux-x86_64.zip` |
+| AWS CLI installer | `awscli-exe-linux-aarch64.zip` | pinned `awscli-exe-linux-x86_64-<version>.zip` |
 | SSM agent | present on AL2023 | **baked** (RHEL AMIs omit it) |
 | AMI tag | `safe-agents:ami=base` | `safe-agents:ami=base-rhel` |
 | IB resource prefix | `safe-agents-base` | `safe-agents-base-rhel` |
@@ -40,14 +40,36 @@ installs at boot today (`user-data.sh.tmpl` root essentials + `bootstrap.sh` aut
 "always" steps):
 
 - **SSM agent** — `user-data.sh.tmpl` step 1 (RHEL AMIs omit it).
-- **AWS CLI v2** (x86_64 installer) — `user-data.sh.tmpl` step 4.
+- **AWS CLI v2** (x86_64 release archive) — `user-data.sh.tmpl` step 4.
 - **Core `dnf` toolchain** — `bootstrap/scripts/install-tools.sh` (git, jq, tar, gcc, tmux,
-  buildah/skopeo, the `-devel` set, plus EPEL htop/bat/ripgrep and `gh`).
-- **Node.js 20.x** (NodeSource) — required by the Claude Code CLI.
+  buildah/skopeo, the `-devel` set), plus htop from EPEL.
+- **bat, ripgrep and `gh`** — `bootstrap/scripts/install-tools.sh`, from their release
+  archives.
 - **uv + ruff** — `bootstrap/scripts/install-python-env.sh`.
 - **python3-pyyaml** — the conformance harness imports `yaml` on the system `python3`.
-- **Claude Code CLI** (`@anthropic-ai/claude-code` via npm) — the sole HARNESS-COUPLING step,
-  mirroring `bootstrap/scripts/setup-claude.sh`.
+- **Claude Code CLI** (the native binary) — the sole HARNESS-COUPLING step, mirroring
+  `bootstrap/scripts/setup-claude.sh`. It also writes `DISABLE_UPDATES=1` into
+  `/etc/claude-code/managed-settings.json`, so the baked binary never updates itself.
+
+The image carries **no Node.js**. Claude Code needs none, and the validate phase fails the
+bake if `node` or `npm` is present. The interactive profile installs Node.js at boot.
+
+### Every download is pinned
+
+Each file the component downloads is a line of `safe_agents/arms/toolchain/artifacts.lock`,
+fetched with the inline form that directory's README defines: an exact version, checked
+against a SHA-256, with no fallback. A mismatch or a removed URL fails the bake. `dnf`
+installs named packages from RHEL's signed repositories and htop from EPEL, which is added
+from its pinned release RPM.
+
+The component and the boot scripts install each tool from the same pin by the same
+commands, and `tests/test_rhel_ami.py` fails if the two sets of pins differ. Move a pin with
+`scripts/update-artifact-pin.py`, which rewrites both. A changed component needs a new
+`--semantic-version` (and the recipe's `componentArn` to match) before Image Builder will
+take it.
+
+The component's `VerifyInstalls` step runs each pinned binary. That step is the first
+place the x86_64 Claude Code binary executes; it has been hashed, and not run.
 
 ## AMI tagging convention
 

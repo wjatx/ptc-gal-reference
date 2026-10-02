@@ -7,9 +7,10 @@ Acceptance criteria:
   1. The image-builder/ config files are syntactically valid (JSON parses, YAML parses)
      and internally consistent (names/tags match the teardown + provision constants).
   2. The recipe references a RHEL 9 x86_64 parent and /dev/sda1 — NOT AL2023 / arm64 /xvda.
-  3. The component bakes the boot toolchain: SSM agent, AWS CLI v2 (x86_64), Node.js,
-     Claude Code CLI, uv/ruff, python3-pyyaml — and preserves nft + SELinux (no iptables,
-     no SELinux disable).
+  3. The component bakes the boot toolchain: SSM agent, AWS CLI v2 (x86_64), the pinned
+     Claude Code binary, uv/ruff, python3-pyyaml — and preserves nft + SELinux (no iptables,
+     no SELinux disable). It bakes no Node.js, and it installs each tool from the same pin
+     as the boot script that installs it on a marketplace AMI.
   4. dist-config tags the output AMI safe-agents:ami=base-rhel.
   5. teardown constants target the base-rhel bake; rhel_bake_teardown removes a seeded bake
      and is idempotent, reusing the shared (EC2) teardown engine.
@@ -26,6 +27,7 @@ import pytest
 import yaml
 
 from safe_agents.pipeline.aws_interface import FakeAWS
+from safe_agents.arms.tests.fetch_rules import pins
 from safe_agents.arms.rhel_openshell.ami import teardown as rhel_bake
 from safe_agents.arms.rhel_openshell.ami.teardown import rhel_bake_teardown
 from safe_agents.arms.rhel_openshell.provision import (
@@ -45,6 +47,17 @@ COMPONENT_PATH = IB_DIR / "component-base.yaml"
 INFRA_PATH = IB_DIR / "infra-config.json"
 PIPELINE_PATH = IB_DIR / "pipeline.json"
 DIST_PATH = IB_DIR / "dist-config.json"
+
+# The boot path a marketplace AMI takes on the autonomous profile: user-data, then the
+# three "always" scripts bootstrap.sh runs. The component bakes what these install.
+ARM_DIR = Path(__file__).parent.parent
+BOOT_AUTONOMOUS_PATHS = (
+    ARM_DIR / "user-data.sh.tmpl",
+    ARM_DIR / "bootstrap" / "scripts" / "install-tools.sh",
+    ARM_DIR / "bootstrap" / "scripts" / "install-python-env.sh",
+    ARM_DIR / "bootstrap" / "scripts" / "setup-claude.sh",
+)
+PYTHON_TOOLS_LOCK = ARM_DIR.parent / "toolchain" / "python-tools.txt"
 
 REPO_ROOT = Path(__file__).parent.parent.parent.parent.parent  # safe-agents/
 SMOKE_MANIFEST = REPO_ROOT / "agents" / "smoke-rhel-openshell.yaml"
@@ -187,6 +200,11 @@ class TestComponentBakesToolchain:
     def _content(self) -> str:
         return COMPONENT_PATH.read_text(encoding="utf-8")
 
+    def _non_comment(self) -> str:
+        return "\n".join(
+            ln for ln in self._content().splitlines() if not ln.strip().startswith("#")
+        )
+
     def test_supported_os_is_rhel9(self) -> None:
         """The component header/deploy comment must target RHEL 9 (create-component OS)."""
         assert "Red Hat Enterprise Linux 9" in self._content(), (
@@ -201,18 +219,69 @@ class TestComponentBakesToolchain:
             "component must bracket the Claude install with HARNESS-COUPLING markers"
         )
         block = content[start:end]
-        assert "@anthropic-ai/claude-code" in block, (
-            "the Claude Code CLI (npm) install must be inside the HARNESS-COUPLING block"
+        assert "downloads.claude.ai/claude-code-releases/" in block and "/linux-x64/claude" in block, (
+            "the pinned Claude Code native binary (x86_64) must be installed inside the "
+            "HARNESS-COUPLING block"
+        )
+        assert "DISABLE_UPDATES" in block and "/etc/claude-code/managed-settings.json" in block, (
+            "the block must write DISABLE_UPDATES into the managed settings, or the baked "
+            "CLI could update itself past the pin"
         )
 
-    def test_bakes_node(self) -> None:
-        assert "nodejs" in self._content(), "component must install Node.js (Claude CLI needs it)"
+    def test_does_not_bake_node(self) -> None:
+        """Claude Code is a native binary, so the base AMI carries no Node.js.
+
+        The autonomous profile gets none. The interactive profile installs it at boot
+        (bootstrap/scripts/install-languages.sh), from a pinned archive.
+        """
+        commands = self._non_comment().lower()
+        for token in ("nodejs", "nodesource", "npm install", "@anthropic-ai/claude-code"):
+            assert token not in commands, f"component must not bake Node.js or use npm: found {token!r}"
+        assert "command -v node || command -v npm" in self._content(), (
+            "the validate phase must fail the bake if node or npm is on the image"
+        )
+
+    def test_bake_and_boot_install_the_same_pins(self) -> None:
+        """The bake and the marketplace-AMI boot path must not drift apart.
+
+        Each side carries its downloads as (url, sha256) pairs from artifacts.lock. The set
+        the component bakes must equal the set the autonomous boot path installs, so a box
+        on the prebuilt AMI and a box that fell back to the marketplace AMI hold the same
+        files. A tool added to one side and not the other fails here.
+        """
+        def pairs(text: str) -> set[tuple[str, str]]:
+            return {(pair.url, pair.sha256) for pair in pins.find_pairs(text)}
+
+        baked = pairs(self._content())
+        booted: set[tuple[str, str]] = set()
+        for path in BOOT_AUTONOMOUS_PATHS:
+            booted |= pairs(path.read_text(encoding="utf-8"))
+        assert baked, "the component carries no pinned downloads at all"
+        assert baked == booted, (
+            f"baked only: {sorted(url for url, _ in baked - booted)}; "
+            f"booted only: {sorted(url for url, _ in booted - baked)}"
+        )
+
+    def test_ruff_requirement_matches_the_python_tools_lock(self) -> None:
+        """The component writes ruff's one requirement line itself (no bundle at bake time).
+
+        Its version and hash must be in toolchain/python-tools.txt, the lock the boot
+        script installs from, and the install must require hashes.
+        """
+        content = self._content()
+        written = re.findall(r"ruff==(\S+) --hash=sha256:([0-9a-f]{64})", content)
+        assert len(written) == 1, "component must write exactly one hashed ruff requirement"
+        version, sha256 = written[0]
+        lock = PYTHON_TOOLS_LOCK.read_text(encoding="utf-8")
+        assert f"ruff=={version} \\\n" in lock, f"ruff=={version} is not the version in {PYTHON_TOOLS_LOCK.name}"
+        assert f"--hash=sha256:{sha256}" in lock, f"the component's ruff hash is not in {PYTHON_TOOLS_LOCK.name}"
+        assert "pip install --no-cache-dir --require-hashes -r /tmp/python-tools.txt" in content
 
     def test_bakes_awscli_x86_64(self) -> None:
         """AWS CLI v2 must use the x86_64 installer (RHEL arm is x86_64, not aarch64)."""
         content = self._content()
-        assert "awscli-exe-linux-x86_64.zip" in content, (
-            "component must install AWS CLI v2 via the x86_64 installer"
+        assert "awscli.amazonaws.com/awscli-exe-linux-x86_64-" in content, (
+            "component must install AWS CLI v2 from the versioned x86_64 archive"
         )
         assert "aarch64" not in content, (
             "component must NOT use the aarch64 AWS CLI installer — the RHEL arm is x86_64"
@@ -226,7 +295,10 @@ class TestComponentBakesToolchain:
 
     def test_bakes_python_env_and_pyyaml(self) -> None:
         content = self._content()
-        assert "astral.sh/uv/install.sh" in content, "component must install uv"
+        assert "github.com/astral-sh/uv/releases/download/" in content, (
+            "component must install uv from its pinned release archive"
+        )
+        assert "astral.sh/uv/install.sh" not in content, "uv must not come from the installer script"
         assert "ruff" in content, "component must install ruff"
         assert "python3-pyyaml" in content, (
             "component must install python3-pyyaml (the harness imports yaml at runtime)"
@@ -235,13 +307,13 @@ class TestComponentBakesToolchain:
     def test_ruff_baked_into_system_bin_dir(self) -> None:
         """ruff must land in /usr/local/bin, not root's ~/.local/bin.
 
-        `uv tool install` as root defaults to /root/.local/bin, which the dev user's
-        `command -v ruff` offline guard (install-python-env.sh) cannot see — the boot
+        An install as root that drops ruff into /root/.local/bin hides it from the dev
+        user's `command -v ruff` offline guard (install-python-env.sh) — the boot
         would then fall into a network install the no-NAT subnet cannot perform.
         """
-        assert "UV_TOOL_BIN_DIR=/usr/local/bin" in self._content(), (
-            "the uv tool install must set UV_TOOL_BIN_DIR=/usr/local/bin so ruff is on "
-            "the dev user's PATH at runtime"
+        assert "ln -sf /opt/safe-agents/python-tools/bin/ruff /usr/local/bin/ruff" in self._content(), (
+            "the baked ruff must be linked into /usr/local/bin so it is on the dev "
+            "user's PATH at runtime"
         )
 
     def test_does_not_bake_iptables(self) -> None:
@@ -277,8 +349,8 @@ class TestComponentBakesToolchain:
         Matched org-agnostically: this asserted the literal
         `Third-Ralph/safe-agents` until the repo moved, at which point it
         would have passed however the component cloned. The pattern deliberately
-        does not ban `github.com` outright — the component legitimately adds the
-        `cli.github.com` RPM repo to install the GitHub CLI.
+        does not ban `github.com` outright — the component legitimately downloads
+        pinned release archives from it.
         """
         content = self._content()
         assert not re.search(r"github\.com[:/][\w.-]+/safe-agents", content)

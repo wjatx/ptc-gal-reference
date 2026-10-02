@@ -30,7 +30,7 @@ RHEL-specific differences from the EC2 arm:
               EC2 arm uses the narrower <agent>/claude-oauth-token* path. Plus the
               tables-CMK KMS grant (run-record PutItem into the CMK-encrypted table).
     Bootstrap:Config-only on the prebuilt AMI: the internet toolchain (SSM
-              agent, AWS CLI, node/claude via npm, dnf core tools) is baked in, so a
+              agent, AWS CLI, the claude binary, dnf core tools) is baked in, so a
               box in the isolated no-NAT subnet boots without egress. bootstrap.sh's
               install scripts are guarded (command -v short-circuits) — see the RHEL
               bakery at arms/rhel_openshell/ami and its README.
@@ -214,7 +214,7 @@ def agent_role_extensions(
 # Tag that identifies a prebuilt safe-agents RHEL base AMI. The RHEL
 # bakery (arms/rhel_openshell/ami) tags its output AMI with this so a fresh
 # provision into the ISOLATED no-NAT subnet boots config-only — the toolchain
-# (node/claude/aws-cli/ssm-agent) is already baked in, no internet needed at boot.
+# (claude/aws-cli/ssm-agent) is already baked in, no internet needed at boot.
 # Distinct from the EC2 arm's "base" so the two bakeries never cross wires.
 BASE_RHEL_AMI_TAG_FILTER: dict[str, str] = {"safe-agents:ami": "base-rhel"}
 
@@ -413,7 +413,7 @@ def rhel_openshell_provision(
     #
     # This box now launches from a prebuilt RHEL base AMI (tag safe-agents:ami=base-rhel,
     # resolved by _resolve_base_ami below) with the internet toolchain — SSM agent, AWS CLI,
-    # node/claude via npm, dnf core tools — baked in. npm's registry is not S3-backed, so baking is
+    # the claude binary, dnf core tools — baked in. Those downloads are not S3-backed, so baking is
     # exactly what lets a FRESH provision into this isolated no-NAT subnet complete bootstrap. When
     # no bake exists yet, _resolve_base_ami falls back to the RHEL 9 marketplace AMI (which only
     # completes bootstrap in a subnet with egress).
