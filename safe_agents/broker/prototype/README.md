@@ -7,7 +7,8 @@ and the **PIP** shape, and to see what falls out, with no AWS in the way.
 
 ## Run it
 
-From the repo root, with the SDK installed (`pip install -e .` — pulls pydantic):
+From the repo root, with the SDK installed as `CONTRIBUTING.md` describes under "Setting up a
+dev environment":
 
 ```sh
 # terminal 1 — the broker

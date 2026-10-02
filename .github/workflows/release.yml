@@ -57,12 +57,12 @@ jobs:
       # Reads this commit's CI result. Nothing here writes.
       actions: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Full history: the ancestry check below compares against origin/main.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -98,11 +98,17 @@ jobs:
           fi
 
       - name: Build sdist and wheel
-        # `build` makes the sdist and then builds the wheel from that sdist, so a
-        # wheel existing at all is the proof the sdist is buildable.
+        # requirements/release.txt is `build`, `twine` and the build backend at
+        # exact versions with hashes. `--no-isolation` makes `build` use that
+        # installed backend rather than fetching one into a temporary
+        # environment, so the build downloads nothing, and it stops before
+        # building if the installed backend is not the one pyproject.toml
+        # requires. `build` still makes the sdist and then builds the wheel from
+        # that sdist, so a wheel existing at all is the proof the sdist is
+        # buildable.
         run: |
-          python -m pip install build==1.6.1 twine==7.0.0
-          python -m build --outdir dist
+          python -m pip install --require-hashes -r requirements/release.txt
+          python -m build --no-isolation --outdir dist
 
       - name: Metadata renders on PyPI
         run: python -m twine check --strict dist/*
@@ -133,10 +139,17 @@ jobs:
       # Run from outside the checkout. From inside it, `import safe_agents`
       # resolves to the source tree and this step passes whatever the wheel
       # contains.
+      #
+      # The wheel's dependencies come from requirements/runtime.txt, the `aws`
+      # and `mcp` extras at exact versions with hashes. The wheel then goes in
+      # with `--no-index`, so pip has to satisfy its metadata, both extras
+      # included, from what that lock installed, and fails naming any
+      # requirement the lock does not meet.
       - name: The wheel installs into a fresh environment and imports
         run: |
           python -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/python" -m pip install "$(ls "$PWD"/dist/*.whl)[mcp]"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --require-hashes -r requirements/runtime.txt
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --no-index "$(ls "$PWD"/dist/*.whl)[aws,mcp]"
           cd "$RUNNER_TEMP"
           venv/bin/python - <<'PY'
           import pathlib
@@ -145,6 +158,7 @@ jobs:
           import safe_agents.broker.schemas
           import safe_agents.connectors
           import safe_agents.pipeline
+          import safe_agents.reliability
           from safe_agents.broker.api import GatewayClient, build_runtime  # noqa: F401
 
           origin = pathlib.Path(safe_agents.__file__).resolve()

@@ -1,0 +1,2 @@
+# The build backend. Keep this identical to [build-system] requires in pyproject.toml.
+setuptools==84.0.0

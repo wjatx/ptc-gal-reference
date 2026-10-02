@@ -26,7 +26,8 @@ git clone https://github.com/wjatx/ptc-gal-reference
 cd ptc-gal-reference
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements/dev.txt
+python -m pip install --no-index --no-build-isolation --check-build-dependencies -e ".[dev]"
 git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
 ```
 
@@ -39,13 +40,16 @@ git clone https://github.com/wjatx/ptc-gal-reference
 cd ptc-gal-reference
 py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements/dev.txt
+python -m pip install --no-index --no-build-isolation --check-build-dependencies -e ".[dev]"
 git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
 ```
 
-The `[dev]` extra carries pytest and the MCP SDK; a bare `pip install -e .` can run neither the
-suite nor the demo. The last line clones the specifications into `spec/`, which is where the
-conformance tests and commands below look for them.
+The first `pip` command installs the `[dev]` extra, which carries pytest and the MCP SDK, from
+`requirements/dev.txt`: every package at an exact version, checked against a recorded hash. The
+second installs this repository on top of that and downloads nothing; on its own it fails,
+naming the first dependency it could not find. The last line clones the specifications into `spec/`, which is
+where the conformance tests and commands below look for them.
 
 Every command from here on is the same on all three systems, run from the repository root with
 the virtual environment active.
@@ -160,8 +164,8 @@ create the environment and `python` once it is active.
 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, or skip activation and call
 `.venv\Scripts\python.exe` in place of `python`.
 
-**`ModuleNotFoundError: No module named 'mcp'`.** The install missed the extra. Rerun
-`python -m pip install -e ".[dev]"`.
+**`ModuleNotFoundError: No module named 'mcp'`.** The install missed the locked dependencies.
+Rerun `python -m pip install --require-hashes -r requirements/dev.txt`.
 
 **Tests skip.** `python -m pytest -rs` prints each skip with its reason. About twenty skip on
 every system: they are opt-in live checks that need a real credential or a deployed environment,

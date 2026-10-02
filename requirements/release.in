@@ -1,0 +1,4 @@
+# What the release workflow needs to build and check the distribution.
+-r build-backend.in
+build==1.6.1
+twine==7.0.0

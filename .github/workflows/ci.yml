@@ -27,7 +27,9 @@
 # asserted from tests. Read it before treating a green check as more than it is.
 #
 # Locally, CONTRIBUTING.md is the short version:
-#   python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"
+#   python3 -m venv .venv && source .venv/bin/activate
+#   python -m pip install --require-hashes -r requirements/dev.txt
+#   python -m pip install --no-index --no-build-isolation --check-build-dependencies -e ".[dev]"
 #   python3 -m pytest
 
 name: CI
@@ -54,9 +56,9 @@ jobs:
     name: "suite — full pytest, specifications present"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -70,9 +72,17 @@ jobs:
         run: git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
 
       - name: Install (dev extra)
-        # [dev] carries pytest plus moto, which backs the DynamoDB store tests that
-        # exercise the real Condition and Update expressions rather than a fake.
-        run: pip install -e ".[dev]"
+        # requirements/dev.txt is the [dev] extra resolved to exact versions with
+        # hashes, plus the build backend. [dev] carries pytest plus moto, which
+        # backs the DynamoDB store tests that exercise the real Condition and
+        # Update expressions rather than a fake. The project then goes in with
+        # `--no-index`, so the second command downloads nothing and pip has to
+        # satisfy the project, its [dev] extra and its build backend from what
+        # the lock installed. A lock that pyproject.toml has moved past fails
+        # here, naming the requirement it could not meet.
+        run: |
+          python -m pip install --require-hashes -r requirements/dev.txt
+          python -m pip install --no-index --no-build-isolation --check-build-dependencies -e ".[dev]"
 
       # From the root with no path argument, so pytest collects whatever
       # `testpaths` in pyproject.toml declares. This is the command
@@ -98,14 +108,14 @@ jobs:
     name: "lint — ruff + standing-doc pointers"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: Install ruff
-        run: pip install ruff==0.15.20
+        run: python -m pip install --require-hashes -r requirements/lint.txt
 
       - name: ruff check
         run: ruff check .
@@ -121,14 +131,16 @@ jobs:
     name: "manifests — offline validation"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
       - name: Install (dev extra)
-        run: pip install -e ".[dev]"
+        run: |
+          python -m pip install --require-hashes -r requirements/dev.txt
+          python -m pip install --no-index --no-build-isolation --check-build-dependencies -e ".[dev]"
 
       - name: Validate every committed manifest
         # Offline: schema and cross-reference only, no cloud lookups. Fails on the
@@ -143,9 +155,9 @@ jobs:
     name: "infra — CDK synth + conformance + egress snapshots"
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: "npm"
@@ -159,7 +171,7 @@ jobs:
         run: npm test
         working-directory: infra
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -183,7 +195,7 @@ jobs:
     # tells contributors the suite needs no container runtime, and that stays
     # true. This drill does need one.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # A missing binary must fail here with an obvious message rather than
       # midway through the drill.
@@ -225,9 +237,9 @@ jobs:
       # The runner's git defaults to core.autocrlf=true on Windows, as a tester's
       # usually does. .gitattributes is what keeps the checkout LF, so this job
       # deliberately leaves that default alone rather than masking it.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -237,7 +249,9 @@ jobs:
         run: git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
 
       - name: Install (dev extra)
-        run: python -m pip install -e ".[dev]"
+        run: |
+          python -m pip install --require-hashes -r requirements/dev.txt
+          python -m pip install --no-index --no-build-isolation --check-build-dependencies -e ".[dev]"
 
       # -rs lists every skip with its reason. On Windows the POSIX-only tests skip
       # (pgrep, bash -n, the runner-contract harness), and each says which

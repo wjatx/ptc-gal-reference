@@ -1,0 +1,2 @@
+# Keep this identical to the ruff pin in the dev extra in pyproject.toml.
+ruff==0.15.20
