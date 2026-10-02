@@ -96,8 +96,9 @@ export class ChannelsStack extends Stack {
       .filter(Boolean);
 
     // -c channelsVerifyKeysArn=<secretArn> — OPTIONAL pointer to an operator-created Secrets
-    // Manager secret holding sender-verification public keys (value JSON `{key_id:
-    // public_key_pem}`, channels/SIGNING.md). The stack POINTS at it, never creates it — a Layer-3
+    // Manager secret holding sender-verification keys, each with the zone and sender identities
+    // it may sign for (value JSON `{key_id: {public_key, zone, sender_identities}}`,
+    // channels/SIGNING.md S8). The stack POINTS at it, never creates it — a Layer-3
     // config pointer to Layer-4 material per docs/config-provenance.md. Absent (the shipped
     // default), the airlock gets no BROKER_VERIFY_KEYS_SECRET_ARN and unsigned peers pass
     // (`safe_agents/channels/keys.py::resolve_verification_keys` returns None on an unset ARN).

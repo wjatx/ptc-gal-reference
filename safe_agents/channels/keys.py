@@ -21,11 +21,20 @@ from __future__ import annotations
 import json
 import os
 
-from safe_agents.channels.signing import ChainSigner, KeyResolver, load_public_key, signer_from_pem
+from safe_agents.channels.signing import (
+    ChainSigner,
+    KeyResolver,
+    PeerKey,
+    PeerKeyResolver,
+    canonical_identity,
+    load_public_key,
+    signer_from_pem,
+)
 
 # Env names — the sender's signing key (a Secrets-Manager ARN → PEM private key),
 # the key_id a receiver resolves it by, and the receiver's verification-key map
-# (an ARN → JSON ``{key_id: public_key_pem}``). All optional; absence = OFF.
+# (an ARN → JSON ``{key_id: {public_key, zone, sender_identities}}``, see
+# `peer_key_resolver_from_map`). All optional; absence = OFF.
 SIGNING_KEY_SECRET_ARN_ENV = "BROKER_SIGNING_KEY_SECRET_ARN"
 SIGNING_KEY_ID_ENV = "BROKER_SIGNING_KEY_ID"
 VERIFY_KEYS_SECRET_ARN_ENV = "BROKER_VERIFY_KEYS_SECRET_ARN"
@@ -87,22 +96,75 @@ def key_resolver_from_map(pem_by_key_id: dict[str, str]) -> KeyResolver:
     return lambda key_id: parsed.get(key_id)
 
 
-def resolve_verification_keys() -> KeyResolver | None:
-    """Build the receiver's KeyResolver from its cold-start environment, or None.
+# The fields of one verification-key entry. Closed: an unrecognized field is a
+# configuration error, never ignored.
+_PEER_KEY_FIELDS = frozenset({"public_key", "zone", "sender_identities"})
+_PEER_KEY_SHAPE = (
+    '{"public_key": "<PEM>", "zone": "<zone>", "sender_identities": ["<identity>", ...]}'
+)
+
+
+def _peer_key(key_id: str, entry: object) -> PeerKey:
+    """Parse one verification-key entry, naming the key and the fault on error.
+
+    The message carries the ``key_id`` and the expected shape, never key
+    material. A bare PEM string is the pre-scope format and is refused: a key
+    with no scope would be trusted to sign for every zone and every sender.
+    """
+    if not isinstance(entry, dict) or set(entry) != _PEER_KEY_FIELDS:
+        raise SigningConfigError(
+            f"verification key {key_id!r} must be an object of the form {_PEER_KEY_SHAPE}"
+        )
+    zone, identities = entry["zone"], entry["sender_identities"]
+    if not isinstance(zone, str) or not zone.strip():
+        raise SigningConfigError(f"verification key {key_id!r}: zone must be a non-empty string")
+    if (
+        not isinstance(identities, list)
+        or not identities
+        or not all(isinstance(identity, str) and identity.strip() for identity in identities)
+    ):
+        raise SigningConfigError(
+            f"verification key {key_id!r}: sender_identities must be a non-empty list of "
+            "non-empty strings"
+        )
+    return PeerKey(
+        public_key=load_public_key(entry["public_key"]),
+        zone=zone,
+        sender_identities=frozenset(canonical_identity(identity) for identity in identities),
+    )
+
+
+def peer_key_resolver_from_map(entry_by_key_id: dict[str, object]) -> PeerKeyResolver:
+    """Turn a ``{key_id: {public_key, zone, sender_identities}}`` map into a resolver.
+
+    Each key carries the one zone it may sign for and the sender identities an
+    envelope it signs may claim (`signing.PeerKey`). Every entry is parsed up
+    front, so a malformed one fails at cold start and not on the first inbound
+    chain. An unknown key_id resolves to None, which verification treats as an
+    unknown signer and quarantines.
+    """
+    parsed = {key_id: _peer_key(key_id, entry) for key_id, entry in entry_by_key_id.items()}
+    return lambda key_id: parsed.get(key_id)
+
+
+def resolve_verification_keys() -> PeerKeyResolver | None:
+    """Build the receiver's PeerKeyResolver from its cold-start environment, or None.
 
     Returns None when no verification-keys ARN is configured — the airlock skips
     the signature gate and unsigned peers pass. When the ARN is set, its
-    SecretString is a JSON ``{key_id: public_key_pem}`` map; a set-but-unfetchable
-    or malformed value fails closed.
+    SecretString is the JSON map `peer_key_resolver_from_map` takes; a
+    set-but-unfetchable or malformed value fails closed.
     """
     secret_arn = os.environ.get(VERIFY_KEYS_SECRET_ARN_ENV)
     if not secret_arn:
         return None
     try:
-        pem_by_key_id = json.loads(_fetch_secret(secret_arn))
-        if not isinstance(pem_by_key_id, dict):
+        entry_by_key_id = json.loads(_fetch_secret(secret_arn))
+        if not isinstance(entry_by_key_id, dict):
             raise ValueError("verification-keys secret must be a JSON object")
-        return key_resolver_from_map(pem_by_key_id)
+        return peer_key_resolver_from_map(entry_by_key_id)
+    except SigningConfigError:
+        raise
     except Exception as exc:
         raise SigningConfigError(
             f"{VERIFY_KEYS_SECRET_ARN_ENV} is set but the verification keys could not "

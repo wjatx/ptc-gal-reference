@@ -29,7 +29,7 @@ from safe_agents.channels import keys as keys_mod
 from safe_agents.channels.dispatch import dispatch
 from safe_agents.channels.keys import (
     SigningConfigError,
-    key_resolver_from_map,
+    peer_key_resolver_from_map,
     resolve_signer,
     resolve_verification_keys,
 )
@@ -37,12 +37,17 @@ from safe_agents.channels.manifest import WebhookAdapterConfig
 from safe_agents.channels.publish import stamp_outbound
 from safe_agents.channels.schemas import EventTrigger, ProvenanceEntry, SenderIdentity
 from safe_agents.channels.signing import (
+    HOP_FIELDS,
     PREDICATE_TYPE,
     SIGNATURE_INVALID,
     SIGNATURE_MISSING,
+    SIGNER_IDENTITY_OUT_OF_SCOPE,
     SIGNER_UNKNOWN,
-    BoundContext,
+    SIGNER_ZONE_MISMATCH,
+    SUBJECT_FIELDS,
+    UNSIGNED_FIELDS,
     ChainSigner,
+    bound_envelope,
     build_statement,
     canonical_identity,
     make_gate,
@@ -82,11 +87,21 @@ def _keypair() -> tuple[str, str]:
     return priv, pub
 
 
+def _peer_resolver(keys: dict[str, tuple[str, str, list[str]]]):
+    """``key_id -> (public_pem, zone, sender_identities)``, the scope each key is enrolled with."""
+    return peer_key_resolver_from_map(
+        {
+            key_id: {"public_key": pem, "zone": zone, "sender_identities": identities}
+            for key_id, (pem, zone, identities) in keys.items()
+        }
+    )
+
+
 @pytest.fixture
 def signer_and_resolver():
     priv, pub = _keypair()
     signer = signer_from_pem("broker:A", "zone-a", priv)
-    resolver = key_resolver_from_map({"broker:A": pub})
+    resolver = _peer_resolver({"broker:A": (pub, "zone-a", ["peer:example"])})
     return signer, resolver
 
 
@@ -193,30 +208,21 @@ def test_no_full_cover_signature_invalid(signer_and_resolver):
     # Sign only a prefix, then append a hop the sending broker never committed
     # to. Every present signature verifies, but none covers the full chain, so
     # the sending broker did not commit to the hop it just added — fail closed.
-    prefix = [ProvenanceEntry(zone="zone-a", source="peer:example", label="trusted", ts=_TS)]
-    context = BoundContext(
-        payload={"x": 1},
-        payload_digest=None,
-        payload_ref=None,
-        event_id="evt-1",
-        principal="example-agent",
-        expiry=_EXPIRY,
-        sender_channel_identity="peer:example",
-    )
-    partial = signer.sign_prefix(prefix, context)
-    env = EventTrigger(
+    unsigned = EventTrigger(
         event_id="evt-1",
         principal="example-agent",
         sender=SenderIdentity(channel_type="webhook", channel_identity="peer:example"),
         payload={"x": 1},
         provenance=[
-            *prefix,
+            ProvenanceEntry(zone="zone-a", source="peer:example", label="trusted", ts=_TS),
             ProvenanceEntry(zone="zone-a", source="peer:appended", label="trusted", ts=_TS),
         ],
-        chain_signatures=[partial],
         ts=_TS,
         expiry=_EXPIRY,
     )
+    partial = signer.sign_envelope(unsigned, covers=1)
+    env = unsigned.model_copy(update={"chain_signatures": [partial]})
+    assert verify_chain(env.model_copy(update={"provenance": env.provenance[:1]}), resolver).ok
     result = verify_chain(env, resolver)
     assert not result.ok and result.reason == SIGNATURE_INVALID
 
@@ -293,7 +299,7 @@ def test_relay_signs_full_chain_over_preserved_hops():
     assert relayed.chain_signatures[0].covers == len(relayed.provenance)
     assert len(relayed.provenance) == len(first.provenance) + 1  # A's hop preserved
 
-    assert verify_chain(relayed, key_resolver_from_map({"broker:B": pub_b})).ok
+    assert verify_chain(relayed, _peer_resolver({"broker:B": (pub_b, "zone-b", ["peer:relay"])})).ok
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +347,7 @@ def test_signing_key_resolved_at_cold_start_from_secret(monkeypatch):
     assert fetched == ["arn:sign"]
     # The signature it produces verifies against the paired public key.
     env = _signed_outbound(signer)
-    assert verify_chain(env, key_resolver_from_map({"broker:A": pub})).ok
+    assert verify_chain(env, _peer_resolver({"broker:A": (pub, "zone-a", ["peer:example"])})).ok
 
 
 def test_verification_keys_resolve_and_fail_closed(monkeypatch):
@@ -354,13 +360,59 @@ def test_verification_keys_resolve_and_fail_closed(monkeypatch):
     assert resolve_verification_keys() is None
 
     monkeypatch.setenv(keys_mod.VERIFY_KEYS_SECRET_ARN_ENV, "arn:verify")
-    monkeypatch.setattr(keys_mod, "_fetch_secret", lambda arn: json.dumps({"broker:A": pub}))
+    entry = {"public_key": pub, "zone": "zone-a", "sender_identities": [" Peer:Example "]}
+    monkeypatch.setattr(keys_mod, "_fetch_secret", lambda arn: json.dumps({"broker:A": entry}))
     resolver = resolve_verification_keys()
-    assert resolver is not None and resolver("broker:A") is not None and resolver("nope") is None
+    assert resolver is not None and resolver("nope") is None
+    key = resolver("broker:A")
+    # The scope comes from the receiver's configuration, identities in canonical form.
+    assert key.zone == "zone-a" and key.sender_identities == {"peer:example"}
 
     # A malformed secret fails closed rather than silently disabling verification.
     monkeypatch.setattr(keys_mod, "_fetch_secret", lambda arn: "not json")
     with pytest.raises(SigningConfigError):
+        resolve_verification_keys()
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        pytest.param("PEM", id="bare PEM string, the format before keys had a scope"),
+        pytest.param({"public_key": "PEM", "zone": "zone-a"}, id="no sender identities"),
+        pytest.param({"public_key": "PEM", "sender_identities": ["peer:example"]}, id="no zone"),
+        pytest.param(
+            {"public_key": "PEM", "zone": " ", "sender_identities": ["peer:example"]},
+            id="blank zone",
+        ),
+        pytest.param(
+            {"public_key": "PEM", "zone": "zone-a", "sender_identities": []},
+            id="empty sender identities",
+        ),
+        pytest.param(
+            {"public_key": "PEM", "zone": "zone-a", "sender_identities": "peer:example"},
+            id="sender identities not a list",
+        ),
+        pytest.param(
+            {"public_key": "PEM", "zone": "zone-a", "sender_identities": ["peer:example", ""]},
+            id="blank sender identity",
+        ),
+        pytest.param(
+            {"public_key": "PEM", "zone": "zone-a", "sender_identities": ["*"], "any": True},
+            id="unrecognized field",
+        ),
+    ],
+)
+def test_a_verification_key_without_a_full_scope_is_refused(monkeypatch, entry):
+    """A key with no scope would be trusted to sign for every zone and sender,
+    so an entry that does not state both is a configuration error naming the key."""
+    import json
+
+    _, pub = _keypair()
+    if isinstance(entry, dict):
+        entry = {**entry, "public_key": pub}
+    monkeypatch.setenv(keys_mod.VERIFY_KEYS_SECRET_ARN_ENV, "arn:verify")
+    monkeypatch.setattr(keys_mod, "_fetch_secret", lambda arn: json.dumps({"broker:A": entry}))
+    with pytest.raises(SigningConfigError, match="broker:A"):
         resolve_verification_keys()
 
 
@@ -518,7 +570,7 @@ def test_verify_chain_success_names_the_full_cover_signer_under_relay():
     # Only B's full-cover signature rides the relayed envelope, so the
     # evidence names B — the broker that actually committed to this chain —
     # never A, whose inbound signature isn't carried across the relay.
-    result = verify_chain(relayed, key_resolver_from_map({"broker:B": pub_b}))
+    result = verify_chain(relayed, _peer_resolver({"broker:B": (pub_b, "zone-b", ["peer:relay"])}))
     assert result.ok
     assert result.signer_key_id == "broker:B"
     assert result.signer_zone == "zone-b"
@@ -577,7 +629,7 @@ def test_dispatch_unsigned_drop_has_unverified_evidence():
         ts=_TS,
         expiry=_EXPIRY,
     )
-    gate = make_gate(key_resolver_from_map({}))
+    gate = make_gate(_peer_resolver({}))
     out, drops, _ = _run(unsigned, gate=gate)
     assert out is None
     assert len(drops) == 1 and drops[0].reason == SIGNATURE_MISSING
@@ -613,7 +665,7 @@ def test_dispatch_verification_off_leaves_defaults(signer_and_resolver):
 def test_mutated_sender_replay_fails_verification_no_second_attributed_record(signer_and_resolver):
     """The replay closure (channels/WATCHDOG.md §"Replay soundness"):
     `sender.channel_identity` is now bound into the signed statement
-    (`BoundContext.sender_channel_identity`), so a captured signature no
+    (`bound_envelope`), so a captured signature no
     longer verifies once it's mutated — even an INTERNALLY CONSISTENT
     mutation (the same identity a conformant adapter's `extract_identity`
     would also report for this request, so the gate-3 sender-transport-
@@ -708,8 +760,8 @@ def test_mutated_sender_after_signing_fails_verify_chain(signer_and_resolver):
 
 def test_sign_verify_round_trip_with_non_canonical_sender_spelling(signer_and_resolver):
     """An honest signer's non-canonical wire spelling still verifies: signing
-    canonicalizes `sender_channel_identity` at construction (`stamp_outbound`),
-    and `BoundContext.of` canonicalizes again at verify time — idempotent, so
+    canonicalizes `sender.channel_identity` when it signs (`stamp_outbound`),
+    and `bound_envelope` canonicalizes again at verify time — idempotent, so
     they agree regardless of which side (if either) already canonicalized."""
     signer, resolver = signer_and_resolver
     env = stamp_outbound(
@@ -766,14 +818,14 @@ def test_relay_resign_binds_the_relays_own_sender_not_the_inbounds():
         signer=signer_b,
     )
     assert relayed.sender.channel_identity == "peer:relay"
-    assert verify_chain(relayed, key_resolver_from_map({"broker:B": pub_b})).ok
+    assert verify_chain(relayed, _peer_resolver({"broker:B": (pub_b, "zone-b", ["peer:relay"])})).ok
     # Confirms the bound field really is the relay's own claim: a copy whose
     # sender still says "peer:example" (the ORIGINAL sender, not the relay's)
     # does not verify.
     impersonating_original = relayed.model_copy(
         update={"sender": relayed.sender.model_copy(update={"channel_identity": "peer:example"})}
     )
-    assert not verify_chain(impersonating_original, key_resolver_from_map({"broker:B": pub_b})).ok
+    assert not verify_chain(impersonating_original, _peer_resolver({"broker:B": (pub_b, "zone-b", ["peer:relay"])})).ok
 
 
 # ---------------------------------------------------------------------------
@@ -929,20 +981,25 @@ def test_forged_payload_ref_envelope_drops_at_the_webhook_gate(signer_and_resolv
     assert reasons == [SIGNATURE_INVALID]
 
 
-def _context(**overrides) -> BoundContext:
-    fields = {
-        "payload": _ORIGINAL_PAYLOAD,
-        "payload_digest": None,
-        "payload_ref": None,
-        "event_id": "evt-1",
-        "principal": "example-agent",
-        "expiry": _EXPIRY,
-        "sender_channel_identity": "peer:example",
-    }
-    return BoundContext(**{**fields, **overrides})
-
-
 _HOP = ProvenanceEntry(zone="zone-a", source="peer:example", label="trusted", ts=_TS)
+
+
+def _unsigned(**overrides) -> EventTrigger:
+    """An unsigned one-hop envelope. Overrides are applied past the schema, so a
+    test can hand the statement builder a combination the schema would refuse."""
+    return EventTrigger(
+        event_id="evt-1",
+        principal="example-agent",
+        sender=SenderIdentity(channel_type="webhook", channel_identity="peer:example"),
+        payload=copy.deepcopy(_ORIGINAL_PAYLOAD),
+        provenance=[_HOP],
+        ts=_TS,
+        expiry=_EXPIRY,
+    ).model_copy(update=overrides)
+
+
+def _statement(envelope: EventTrigger) -> bytes:
+    return build_statement(envelope, 1, key_id="broker:A", zone="zone-a")
 _INLINE_SUBJECT = {
     "name": "payload",
     "digest": {"sha256": _payload_hash(_ORIGINAL_PAYLOAD).removeprefix("sha256:")},
@@ -969,9 +1026,7 @@ _INLINE_SUBJECT = {
     ],
 )
 def test_statement_subjects(raw_original, expected_subjects):
-    statement = json.loads(
-        build_statement([_HOP], _context(**raw_original), key_id="broker:A", zone="zone-a")
-    )
+    statement = json.loads(_statement(_unsigned(**raw_original)))
     assert statement["predicateType"] == PREDICATE_TYPE
     assert PREDICATE_TYPE == "https://safe-agents.dev/provenance-chain/v2"
     assert statement["subject"] == expected_subjects
@@ -980,9 +1035,7 @@ def test_statement_subjects(raw_original, expected_subjects):
 def test_statement_and_payload_hash_are_canonical_json():
     """Sign and verify agree only because both sides produce one byte string:
     sorted keys, no whitespace, ASCII escapes. Key order on the wire is not content."""
-    raw = build_statement(
-        [_HOP], _context(payload=_NESTED_PAYLOAD), key_id="broker:A", zone="zone-a"
-    )
+    raw = _statement(_unsigned(payload=_NESTED_PAYLOAD))
     statement = json.loads(raw)
     canonical = json.dumps(statement, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     assert raw == canonical.encode("utf-8")
@@ -992,10 +1045,7 @@ def test_statement_and_payload_hash_are_canonical_json():
 
     reordered = json.loads(json.dumps(_NESTED_PAYLOAD, sort_keys=True))
     assert list(reordered) != list(_NESTED_PAYLOAD)  # the fixture really is unsorted
-    assert (
-        build_statement([_HOP], _context(payload=reordered), key_id="broker:A", zone="zone-a")
-        == raw
-    )
+    assert _statement(_unsigned(payload=reordered)) == raw
 
 
 @pytest.mark.parametrize(
@@ -1015,4 +1065,172 @@ def test_statement_refuses_a_raw_original_it_cannot_bind(raw_original):
     """A reference the statement cannot name is refused loudly at signing time,
     never signed with the reference silently left out of the bound set."""
     with pytest.raises(ValueError):
-        build_statement([_HOP], _context(**raw_original), key_id="broker:A", zone="zone-a")
+        _statement(_unsigned(**raw_original))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"x": float("nan")}, id="NaN"),
+        pytest.param({"x": float("inf")}, id="Infinity"),
+        pytest.param({1: "a"}, id="non-string key"),
+        pytest.param({"x": (1, 2)}, id="tuple"),
+    ],
+)
+def test_signing_refuses_a_payload_json_cannot_carry(signer_and_resolver, payload):
+    """Serializing such a payload rewrites it, so a signature over the in-process
+    value would cover content the receiver never sees. Signing refuses instead."""
+    signer, _ = signer_and_resolver
+    with pytest.raises(ValueError):
+        _signed_outbound(signer, payload=payload)
+
+
+# ---------------------------------------------------------------------------
+# S1d — the whole envelope is signed by default
+# ---------------------------------------------------------------------------
+
+
+def test_every_envelope_field_is_signed_or_named_as_unsigned():
+    """The statement signs every field it is not told to leave out. A field
+    added to EventTrigger lands in ``predicate.envelope`` unless it is named in
+    one of the three sets, and this fails if a name there stops being a field."""
+    fields = set(EventTrigger.model_fields)
+    elsewhere = SUBJECT_FIELDS | HOP_FIELDS | UNSIGNED_FIELDS
+    in_view = set(bound_envelope(_unsigned()))
+    assert elsewhere <= fields
+    assert in_view == fields - elsewhere
+    assert UNSIGNED_FIELDS == {"sender_class", "chain_signatures"}
+    assert set(bound_envelope(_unsigned())["sender"]) == set(SenderIdentity.model_fields)
+
+
+def _sender(**changes):
+    return {"sender": SenderIdentity(channel_type="webhook", channel_identity="peer:example").model_copy(update=changes)}
+
+
+# One post-signing change per signed top-level field, and per field of the nested
+# sender claim. The completeness test below fails when the envelope gains a field
+# this table does not exercise.
+_SIGNED_FIELD_MUTATIONS = {
+    "schema_version": {"schema_version": 2},
+    "event_id": {"event_id": "evt-2"},
+    "principal": {"principal": "someone-else"},
+    "payload": {"payload": _SWAPPED_PAYLOAD},
+    "payload_digest": {"payload_digest": _RAW_DIGEST},
+    "payload_ref": {"payload_ref": _RAW_REF, "payload_digest": _RAW_DIGEST},
+    "provenance": {
+        "provenance": [ProvenanceEntry(zone="zone-a", source="peer:example", label="trusted", ts=_EXPIRY)]
+    },
+    "ts": {"ts": "2020-01-01T00:00:00+00:00"},
+    "expiry": {"expiry": "2099-01-01T00:00:00+00:00"},
+    "sender.channel_type": _sender(channel_type="telegram"),
+    "sender.channel_identity": _sender(channel_identity="peer:other"),
+    "sender.evidence": _sender(evidence=["sig:pass"]),
+}
+
+
+def test_the_mutation_table_covers_every_signed_field():
+    top_level = {name for name in _SIGNED_FIELD_MUTATIONS if "." not in name}
+    nested = {name.split(".", 1)[1] for name in _SIGNED_FIELD_MUTATIONS if name.startswith("sender.")}
+    assert top_level == set(EventTrigger.model_fields) - UNSIGNED_FIELDS - {"sender"}
+    assert nested == set(SenderIdentity.model_fields)
+
+
+@pytest.mark.parametrize("field", sorted(_SIGNED_FIELD_MUTATIONS))
+def test_no_signed_field_can_change_after_signing(signer_and_resolver, field):
+    signer, resolver = signer_and_resolver
+    env = _signed_outbound(signer)
+    assert verify_chain(env, resolver).ok
+    result = verify_chain(env.model_copy(update=_SIGNED_FIELD_MUTATIONS[field]), resolver)
+    assert not result.ok and result.reason == SIGNATURE_INVALID
+
+
+def test_the_receiver_owned_class_is_outside_the_signature(signer_and_resolver):
+    """``sender_class`` is the one content field left unsigned: the receiver sets
+    it and discards whatever arrived, so a sender has nothing to bind there."""
+    signer, resolver = signer_and_resolver
+    env = _signed_outbound(signer).model_copy(update={"sender_class": "owner"})
+    assert verify_chain(env, resolver).ok
+
+
+# ---------------------------------------------------------------------------
+# S8 — a key verifies only for the zone and sender it is enrolled for
+# ---------------------------------------------------------------------------
+
+
+def _two_enrolled_peers():
+    """Peers A and B, both enrolled at one receiver, each scoped to its own zone and identity."""
+    priv_a, pub_a = _keypair()
+    priv_b, pub_b = _keypair()
+    resolver = _peer_resolver(
+        {
+            "broker:A": (pub_a, "zone-a", ["peer:example"]),
+            "broker:B": (pub_b, "zone-b", ["peer:relay"]),
+        }
+    )
+    return priv_a, priv_b, resolver
+
+
+def test_an_enrolled_key_cannot_sign_for_another_zone():
+    """B holds a key the receiver knows, and signs an envelope that names A's
+    zone and A's identity. The signature is sound and still must not verify."""
+    _, priv_b, resolver = _two_enrolled_peers()
+    b_claiming_zone_a = signer_from_pem("broker:B", "zone-a", priv_b)
+    forged = _signed_outbound(b_claiming_zone_a)
+    result = verify_chain(forged, resolver)
+    assert not result.ok
+    assert (result.reason, result.detail) == (SIGNATURE_INVALID, SIGNER_ZONE_MISMATCH)
+    assert result.signer_key_id is None
+
+    out, drops, _ = _run(forged, gate=make_gate(resolver))
+    assert out is None
+    assert [(d.reason, d.detail, d.chain_verified) for d in drops] == [
+        (SIGNATURE_INVALID, SIGNER_ZONE_MISMATCH, False)
+    ]
+
+
+def test_an_enrolled_key_cannot_sign_for_another_sender():
+    """B signs in its own zone but claims A's sender identity, the value the
+    receiver's trust map keys on."""
+    _, priv_b, resolver = _two_enrolled_peers()
+    signer_b = signer_from_pem("broker:B", "zone-b", priv_b)
+    as_a = stamp_outbound(
+        zone="zone-b",
+        agent_identity="relay",
+        channel_type="webhook",
+        channel_identity="peer:example",
+        turn_tainted=False,
+        event_id="evt-1",
+        principal="example-agent",
+        payload=dict(_ORIGINAL_PAYLOAD),
+        ts=_TS,
+        expiry=_EXPIRY,
+        signer=signer_b,
+    )
+    result = verify_chain(as_a, resolver)
+    assert not result.ok
+    assert (result.reason, result.detail) == (SIGNATURE_INVALID, SIGNER_IDENTITY_OUT_OF_SCOPE)
+
+    in_scope = as_a.model_copy(update={"chain_signatures": []})
+    in_scope = in_scope.model_copy(update=_sender(channel_identity="peer:relay"))
+    in_scope = in_scope.model_copy(update={"chain_signatures": [signer_b.sign_envelope(in_scope)]})
+    assert verify_chain(in_scope, resolver).ok  # the same key, for its own sender, verifies
+
+
+def test_each_peer_still_verifies_within_its_own_scope():
+    priv_a, priv_b, resolver = _two_enrolled_peers()
+    assert verify_chain(_signed_outbound(signer_from_pem("broker:A", "zone-a", priv_a)), resolver).ok
+    relayed = stamp_outbound(
+        zone="zone-b",
+        agent_identity="relay",
+        channel_type="webhook",
+        channel_identity="peer:relay",
+        turn_tainted=False,
+        event_id="evt-2",
+        principal="downstream",
+        payload={"signal": "hold"},
+        ts=_TS,
+        expiry=_EXPIRY,
+        signer=signer_from_pem("broker:B", "zone-b", priv_b),
+    )
+    result = verify_chain(relayed, resolver)
+    assert result.ok and result.signer_key_id == "broker:B" and result.detail is None

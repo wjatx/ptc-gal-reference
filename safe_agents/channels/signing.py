@@ -12,8 +12,10 @@ Shape (decided in docs/tce-signing-shape.md), name-agnostic:
   * The signature is over a **DSSE** pre-authentication encoding (PAE) of an
     **in-toto-style statement**: ``subject`` = a hash of the actual inline
     payload, plus the raw-original reference when the envelope names one,
-    ``predicate`` = the ordered provenance hops. DSSE is the structural fit for
-    a chain predicate and its PAE signing is language-portable.
+    ``predicate`` = the ordered provenance hops, the signer, and every other
+    field of the envelope except the two named in ``UNSIGNED_FIELDS``. DSSE is
+    the structural fit for a chain predicate and its PAE signing is
+    language-portable.
   * Signing is **per envelope**: the sending broker signs the full chain as it
     leaves its zone (``covers`` = ``len(provenance)``), preserved upstream hops
     included. Inbound signatures are not carried across a relay
@@ -36,7 +38,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Callable
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -45,7 +47,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from safe_agents.channels.schemas import ChainSignature, EventTrigger, ProvenanceEntry
+from safe_agents.channels.schemas import ChainSignature, EventTrigger
 
 # The DSSE payloadType and in-toto statement/predicate type URIs. Name-agnostic
 # (no PTC/TCE) pending the maintainer's LF naming pass; the predicate type is versioned so a
@@ -54,9 +56,13 @@ from safe_agents.channels.schemas import ChainSignature, EventTrigger, Provenanc
 # v2 (GHSA-wfrf-hcqh-pw8x): v1 bound the declared ``payload_digest`` IN PLACE OF
 # the inline payload whenever a ``payload_ref`` was present, and did not bind the
 # reference at all, so a signed inline envelope verified with its payload
-# swapped. v2 always binds the inline payload and binds the reference beside it.
-# The statement changed shape, so the URI moved rather than being redefined in
-# place; a v2 verifier rejects a v1 signature.
+# swapped. v1 also signed an enumerated list of envelope fields, and that list
+# was found short three times (the sender identity, the reference, then ``ts``
+# and ``sender.evidence``). v2 always binds the inline payload, binds the
+# reference beside it, and signs the whole envelope by default: the fields left
+# out are the ones named in ``UNSIGNED_FIELDS``, not the ones somebody
+# remembered to put in. The statement changed shape, so the URI moved rather
+# than being redefined in place; a v2 verifier rejects a v1 signature.
 DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json"
 STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
 PREDICATE_TYPE = "https://safe-agents.dev/provenance-chain/v2"
@@ -68,11 +74,36 @@ PREDICATE_TYPE = "https://safe-agents.dev/provenance-chain/v2"
 DIGEST_ALGORITHM = "sha256"
 _RAW_DIGEST_RE = re.compile(rf"{DIGEST_ALGORITHM}:([0-9a-f]{{64}})")
 
-# A key resolver maps a signature's ``key_id`` to the verifying public key, or
-# None when the signer is unknown (→ the chain is quarantined). The airlock
-# closes one over its cold-start verification-key map, exactly as `dispatch`'s
-# `screen` seam is injected.
+# A key resolver maps a ``key_id`` to its public key, or None when the key is
+# unknown. The grant-record, acknowledgment and tool-admission signers share
+# this shape; the provenance chain uses the scoped `PeerKeyResolver` below.
 KeyResolver = Callable[[str], Ed25519PublicKey | None]
+
+
+@dataclass(frozen=True)
+class PeerKey:
+    """A peer broker's verification key, and what that key may sign for.
+
+    Being known to the receiver does not let a key speak for every peer. Without
+    a scope, any enrolled broker could sign an envelope naming another broker's
+    zone and identity, and the receiver would record it as verified.
+
+    ``zone`` is the one zone whose hops this key may sign. ``sender_identities``
+    are the ``sender.channel_identity`` values, in canonical form, that an
+    envelope this key signs in full may claim. Both come from the receiver's own
+    configuration, never from the envelope.
+    """
+
+    public_key: Ed25519PublicKey
+    zone: str
+    sender_identities: frozenset[str]
+
+
+# Maps a signature's ``key_id`` to the scoped key, or None when the signer is
+# unknown (→ the chain is quarantined). The airlock closes one over its
+# cold-start verification-key map, exactly as `dispatch`'s `screen` seam is
+# injected.
+PeerKeyResolver = Callable[[str], PeerKey | None]
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +116,13 @@ SIGNATURE_MISSING = "chain_signature_missing"
 SIGNATURE_INVALID = "chain_signature_invalid"
 SIGNER_UNKNOWN = "chain_signer_unknown"
 
+# Machine codes for a drop record's ``detail``, both under SIGNATURE_INVALID: a
+# known key used outside the scope the receiver configured for it. The reason
+# stays in the forgery class, because the envelope claims an origin its signer
+# may not speak for.
+SIGNER_ZONE_MISMATCH = "signer_zone_mismatch"
+SIGNER_IDENTITY_OUT_OF_SCOPE = "signer_identity_out_of_scope"
+
 
 @dataclass(frozen=True)
 class ChainVerifyResult:
@@ -93,7 +131,8 @@ class ChainVerifyResult:
     ``reason`` is one of the ``SIGNATURE_*`` / ``SIGNER_UNKNOWN`` constants on
     failure, else None. On failure the airlock quarantines the chain and drops —
     never treats an unverified chain as authoritative (mirrors the grant-HMAC
-    quarantine).
+    quarantine). ``detail`` narrows a failure with one of the ``SIGNER_*`` machine
+    codes above, or is None.
 
     ``signer_key_id``/``signer_zone`` are evidence-of-check (per the campaign watchdog and
     the ``sig:pass`` provenance-hop precedent in ``channels/SIGNING.md``): on
@@ -108,16 +147,40 @@ class ChainVerifyResult:
     reason: str | None = None
     signer_key_id: str | None = None
     signer_zone: str | None = None
+    detail: str | None = None
 
 
 # ---------------------------------------------------------------------------
 # Canonical statement + DSSE PAE
 # ---------------------------------------------------------------------------
 
+# How each top-level EventTrigger field relates to the signed statement. A field
+# named in none of these three sets is signed as part of ``predicate.envelope``,
+# so a field added to the envelope later is bound without anyone remembering to
+# add it. test_signing.py asserts the partition covers the model.
+#
+#   SUBJECT_FIELDS   bound as the statement's subjects (`_subjects`).
+#   HOP_FIELDS       bound as ``predicate.hops``, by the prefix ``covers`` names.
+#   UNSIGNED_FIELDS  outside the signature, each for a reason: ``sender_class``
+#                    is the receiver's to set and the receiver discards the wire
+#                    value; ``chain_signatures`` are the signatures themselves.
+SUBJECT_FIELDS = frozenset({"payload", "payload_digest", "payload_ref"})
+HOP_FIELDS = frozenset({"provenance"})
+UNSIGNED_FIELDS = frozenset({"sender_class", "chain_signatures"})
+
 
 def _inline_payload_hex(payload: dict) -> str:
-    """The 64-hex sha256 of the canonical inline ``payload``."""
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    """The 64-hex sha256 of the canonical inline ``payload``.
+
+    Refuses a payload JSON cannot carry as given (NaN, a non-string key, a
+    tuple). Such a payload is rewritten on the way to the wire, so a signature
+    over the in-process value would cover content the receiver never sees.
+    """
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+    )
+    if json.loads(canonical) != payload:
+        raise ValueError("payload does not survive a JSON round trip unchanged")
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -128,58 +191,39 @@ def canonical_identity(raw: str) -> str:
     `OwnerInboundAdapter`'s own `_canonical_identity` (`safe_agents/channels/
     webhook.py`, `safe_agents/channels/owner.py`) — duplicated here rather than
     imported, matching those two modules' own duplication of each other,
-    because `signing.py` stays adapter-free. Applied at BOTH sign time
-    (`BoundContext` construction in `stamp_outbound`) and verify time
-    (`BoundContext.of`) so an honest signer's wire spelling and the post-
+    because `signing.py` stays adapter-free. Applied by `bound_envelope` at both
+    sign time and verify time, so an honest signer's wire spelling and the post-
     `normalize` canonical form the receiver's gate 3.5 actually sees always
     agree, regardless of which side canonicalized first (idempotent).
     """
     return raw.strip().casefold()
 
 
-@dataclass(frozen=True)
-class BoundContext:
-    """The envelope fields every signature commits to, beyond its hop prefix.
+def bound_envelope(envelope: EventTrigger) -> dict:
+    """The envelope fields a signature commits to beyond its subjects and hops.
 
-    Binding these into the signed statement is what makes the signature more
-    than a bare chain assertion: the payload (so it can't be swapped) and the
-    raw-original reference beside it (``_subjects``), the anti-replay identity — ``event_id``/``principal``/``expiry`` — so a valid
-    signed envelope cannot be replayed under a fresh dedupe key or an extended
-    TTL (the airlock's expiry gate keys on exactly these), and
-    ``sender_channel_identity`` — so a valid signed envelope cannot be replayed
-    under a fresh *dedupe* key either. ``EventTrigger.dedupe_key()`` is
-    ``(sender.channel_identity, event_id)``; before this field existed,
-    ``sender.channel_identity`` rode outside the signature entirely, so a
-    captured signed envelope could be replayed with a mutated sender claim,
-    landing a fresh dedupe key (and, pre-dedupe, a fresh watchdog attribution
-    bucket) without ever breaking the signature (`channels/WATCHDOG.md`
-    §"Replay soundness"). Canonicalized via `canonical_identity` so an honest
-    signer's wire spelling and the receiver's post-`normalize` form always
-    agree.
+    Everything on the envelope except the fields bound elsewhere in the
+    statement and the two in ``UNSIGNED_FIELDS``. This is what makes a signature
+    more than a bare chain assertion: the anti-replay identity
+    (``event_id``/``principal``/``expiry``), so a valid signed envelope cannot be
+    replayed under a fresh dedupe key or an extended TTL; the whole sender claim;
+    and ``ts``, which receivers record.
+
+    ``sender.channel_identity`` is the one value bound in canonical form.
+    ``EventTrigger.dedupe_key()`` is ``(sender.channel_identity, event_id)``, so
+    leaving it out would let a captured envelope be replayed under a mutated
+    sender claim (`channels/WATCHDOG.md` §"Replay soundness"), and binding the
+    wire spelling would fail an honest sender whose spelling the receiver's
+    `normalize` canonicalizes before the gate runs.
     """
-
-    payload: dict
-    payload_digest: str | None
-    payload_ref: str | None
-    event_id: str
-    principal: str
-    expiry: str
-    sender_channel_identity: str
-
-    @classmethod
-    def of(cls, envelope: EventTrigger) -> "BoundContext":
-        return cls(
-            payload=envelope.payload,
-            payload_digest=envelope.payload_digest,
-            payload_ref=envelope.payload_ref,
-            event_id=envelope.event_id,
-            principal=envelope.principal,
-            expiry=envelope.expiry,
-            sender_channel_identity=canonical_identity(envelope.sender.channel_identity),
-        )
+    view = envelope.model_dump(
+        mode="json", exclude=set(SUBJECT_FIELDS | HOP_FIELDS | UNSIGNED_FIELDS)
+    )
+    view["sender"]["channel_identity"] = canonical_identity(envelope.sender.channel_identity)
+    return view
 
 
-def _subjects(context: BoundContext) -> list[dict]:
+def _subjects(envelope: EventTrigger) -> list[dict]:
     """The statement's subjects: what the signature commits the content to.
 
     The first subject is ALWAYS a hash of the *actual* inline ``payload``, which
@@ -198,56 +242,44 @@ def _subjects(context: BoundContext) -> list[dict]:
     bound set, and a verifier treats the same condition as a failed signature.
     """
     subjects: list[dict] = [
-        {"name": "payload", "digest": {DIGEST_ALGORITHM: _inline_payload_hex(context.payload)}}
+        {"name": "payload", "digest": {DIGEST_ALGORITHM: _inline_payload_hex(envelope.payload)}}
     ]
-    if context.payload_digest is None:
-        if context.payload_ref is not None:
+    if envelope.payload_digest is None:
+        if envelope.payload_ref is not None:
             raise ValueError("payload_ref set requires payload_digest to also be set")
         return subjects
-    matched = _RAW_DIGEST_RE.fullmatch(context.payload_digest)
+    matched = _RAW_DIGEST_RE.fullmatch(envelope.payload_digest)
     if matched is None:
         raise ValueError(
             f"payload_digest must be '{DIGEST_ALGORITHM}:<64 lowercase hex>': "
-            f"{context.payload_digest!r}"
+            f"{envelope.payload_digest!r}"
         )
     raw_original: dict = {"name": "raw_original", "digest": {DIGEST_ALGORITHM: matched.group(1)}}
-    if context.payload_ref is not None:
-        raw_original["uri"] = context.payload_ref
+    if envelope.payload_ref is not None:
+        raw_original["uri"] = envelope.payload_ref
     subjects.append(raw_original)
     return subjects
 
 
-def build_statement(
-    provenance_prefix: Sequence[ProvenanceEntry],
-    context: BoundContext,
-    *,
-    key_id: str,
-    zone: str,
-) -> bytes:
+def build_statement(envelope: EventTrigger, covers: int, *, key_id: str, zone: str) -> bytes:
     """Serialize the in-toto statement a single signature commits to.
 
     Canonical JSON (sorted keys, no whitespace, ASCII) so sign and verify agree
     byte-for-byte. ``subject`` binds the inline payload and any raw-original
-    reference (``_subjects``); ``predicate.hops`` is the hop
-    prefix; ``predicate.signer`` binds this signature's ``key_id``/``zone`` (so
-    per-hop attribution is non-malleable — an attacker cannot relabel who signed
-    without breaking the signature); ``predicate.envelope`` binds the anti-replay
-    identity, INCLUDING the canonicalized ``sender_channel_identity`` — the
-    dedupe key's sender half (`BoundContext`'s docstring).
+    reference (`_subjects`); ``predicate.hops`` is the first ``covers`` hops;
+    ``predicate.signer`` binds this signature's ``key_id``/``zone`` (so per-hop
+    attribution is non-malleable — an attacker cannot relabel who signed without
+    breaking the signature); ``predicate.envelope`` binds every other signed
+    field (`bound_envelope`).
     """
     statement = {
         "_type": STATEMENT_TYPE,
         "predicateType": PREDICATE_TYPE,
-        "subject": _subjects(context),
+        "subject": _subjects(envelope),
         "predicate": {
-            "hops": [entry.model_dump(mode="json") for entry in provenance_prefix],
+            "hops": [entry.model_dump(mode="json") for entry in envelope.provenance[:covers]],
             "signer": {"key_id": key_id, "zone": zone},
-            "envelope": {
-                "event_id": context.event_id,
-                "principal": context.principal,
-                "expiry": context.expiry,
-                "sender_channel_identity": context.sender_channel_identity,
-            },
+            "envelope": bound_envelope(envelope),
         },
     }
     return json.dumps(statement, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
@@ -318,25 +350,22 @@ class ChainSigner:
     zone: str
     _private_key: Ed25519PrivateKey
 
-    def sign_prefix(
-        self,
-        provenance_prefix: Sequence[ProvenanceEntry],
-        context: BoundContext,
-    ) -> ChainSignature:
-        """Sign the chain prefix this broker commits to, as it leaves this zone.
+    def sign_envelope(self, envelope: EventTrigger, *, covers: int | None = None) -> ChainSignature:
+        """Sign the envelope as it leaves this zone.
 
-        The signature binds the prefix, the payload and anti-replay identity
-        (``context``), and this signer's own ``key_id``/``zone`` — so neither the
-        signed content nor its attribution can be altered without breaking it.
+        Takes the finished envelope, never a set of fields beside it, so what is
+        signed and what is sent cannot differ. The signature binds the first
+        ``covers`` hops (all of them by default), the content, every other signed
+        field, and this signer's own ``key_id``/``zone`` — so neither the signed
+        content nor its attribution can be altered without breaking it.
         """
-        statement = build_statement(
-            provenance_prefix, context, key_id=self.key_id, zone=self.zone
-        )
+        covers = len(envelope.provenance) if covers is None else covers
+        statement = build_statement(envelope, covers, key_id=self.key_id, zone=self.zone)
         sig = self._private_key.sign(pae(DSSE_PAYLOAD_TYPE, statement))
         return ChainSignature(
             key_id=self.key_id,
             zone=self.zone,
-            covers=len(provenance_prefix),
+            covers=covers,
             payload_type=DSSE_PAYLOAD_TYPE,
             sig=base64.b64encode(sig).decode("ascii"),
         )
@@ -353,20 +382,16 @@ def signer_from_pem(key_id: str, zone: str, pem: str | bytes) -> ChainSigner:
 
 
 def _verify_one(
-    signature: ChainSignature,
-    provenance: Sequence[ProvenanceEntry],
-    context: BoundContext,
-    public_key: Ed25519PublicKey,
+    signature: ChainSignature, envelope: EventTrigger, public_key: Ed25519PublicKey
 ) -> bool:
-    prefix = provenance[: signature.covers]
     try:
         # Rebuild the statement with the signature's OWN key_id/zone: an attacker
         # who rewrites those fields produces a statement the signer never signed
-        # → fail. Inside the try: a reference or digest the statement cannot name
-        # (`_subjects` raises) is a failed signature, not an exception escaping
-        # the gate.
+        # → fail. Inside the try: content the statement cannot name (`_subjects`
+        # and `_inline_payload_hex` raise) is a failed signature, not an
+        # exception escaping the gate.
         statement = build_statement(
-            prefix, context, key_id=signature.key_id, zone=signature.zone
+            envelope, signature.covers, key_id=signature.key_id, zone=signature.zone
         )
         public_key.verify(base64.b64decode(signature.sig), pae(signature.payload_type, statement))
         return True
@@ -374,7 +399,7 @@ def _verify_one(
         return False
 
 
-def verify_chain(envelope: EventTrigger, key_resolver: KeyResolver) -> ChainVerifyResult:
+def verify_chain(envelope: EventTrigger, key_resolver: PeerKeyResolver) -> ChainVerifyResult:
     """Verify every chain signature and require full coverage of the chain.
 
     Fails closed (mirrors grant-HMAC):
@@ -384,47 +409,60 @@ def verify_chain(envelope: EventTrigger, key_resolver: KeyResolver) -> ChainVeri
       * ``covers`` outside ``[1, len(provenance)]``, a signature whose declared
         ``zone`` isn't the top hop it covers, or a bad signature →
         ``SIGNATURE_INVALID``;
+      * a key signing for a zone other than its own, or a full-cover signature
+        from a key not scoped to the envelope's ``sender.channel_identity`` →
+        ``SIGNATURE_INVALID``, with a ``detail`` naming which;
       * no signature covers the full chain (so the sending broker didn't commit
         to the hop it just added) → ``SIGNATURE_INVALID``.
 
     Every present signature must verify — a valid full-cover signature does not
     excuse a forged prefix signature riding alongside it. The signed statement
     binds the inline payload, the raw-original reference and digest when the
-    envelope carries them, the anti-replay identity (``event_id``/``principal``/
-    ``expiry``/``sender.channel_identity``), and the signature's own
-    ``key_id``/``zone``, so none of those can be altered post-signature; the
-    zone-matches-top-hop check ties each signature to the hop its broker
-    actually added (per-hop attribution). Binding ``sender.channel_identity``
-    closes the dedupe-key replay hole: `EventTrigger.dedupe_key()` is
-    ``(sender.channel_identity, event_id)``, so a captured signature that didn't
-    bind the sender half could be replayed under a mutated sender claim without
-    invalidating the signature (`channels/WATCHDOG.md` §"Replay soundness").
+    envelope carries them, every other field of the envelope outside
+    ``UNSIGNED_FIELDS``, and the signature's own ``key_id``/``zone``, so none of
+    those can be altered post-signature. The zone-matches-top-hop check ties
+    each signature to the hop its broker actually added, and the key's own scope
+    ties that broker to the zone and sender identity it is enrolled for.
     """
     signatures = envelope.chain_signatures
     if not signatures:
         return ChainVerifyResult(ok=False, reason=SIGNATURE_MISSING)
 
-    context = BoundContext.of(envelope)
     n = len(envelope.provenance)
+    sender_identity = canonical_identity(envelope.sender.channel_identity)
+    full_cover: ChainSignature | None = None
     for signature in signatures:
         if not 1 <= signature.covers <= n:
             return ChainVerifyResult(ok=False, reason=SIGNATURE_INVALID)
         if envelope.provenance[signature.covers - 1].zone != signature.zone:
             return ChainVerifyResult(ok=False, reason=SIGNATURE_INVALID)
-        public_key = key_resolver(signature.key_id)
-        if public_key is None:
+        key = key_resolver(signature.key_id)
+        if key is None:
             return ChainVerifyResult(ok=False, reason=SIGNER_UNKNOWN)
-        if not _verify_one(signature, envelope.provenance, context, public_key):
+        if key.zone != signature.zone:
+            return ChainVerifyResult(
+                ok=False, reason=SIGNATURE_INVALID, detail=SIGNER_ZONE_MISMATCH
+            )
+        if not _verify_one(signature, envelope, key.public_key):
             return ChainVerifyResult(ok=False, reason=SIGNATURE_INVALID)
+        if signature.covers == n:
+            # Checked on EVERY full-cover signature, after it verified: the key
+            # that vouches for the whole envelope must be scoped to its sender.
+            if sender_identity not in key.sender_identities:
+                return ChainVerifyResult(
+                    ok=False, reason=SIGNATURE_INVALID, detail=SIGNER_IDENTITY_OUT_OF_SCOPE
+                )
+            full_cover = full_cover or signature
 
-    full_cover = next((signature for signature in signatures if signature.covers == n), None)
     if full_cover is None:
         return ChainVerifyResult(ok=False, reason=SIGNATURE_INVALID)
 
     return ChainVerifyResult(ok=True, signer_key_id=full_cover.key_id, signer_zone=full_cover.zone)
 
 
-def make_gate(key_resolver: KeyResolver | None) -> Callable[[EventTrigger], ChainVerifyResult] | None:
+def make_gate(
+    key_resolver: PeerKeyResolver | None,
+) -> Callable[[EventTrigger], ChainVerifyResult] | None:
     """Build the airlock verify gate, or None when verification ships OFF.
 
     Returns None when ``key_resolver`` is None (no required signers configured) —

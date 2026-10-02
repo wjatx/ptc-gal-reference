@@ -43,19 +43,19 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   and `payload_ref` when the envelope names a raw original (S1c), `predicate.hops` = the ordered
   provenance hops,
   `predicate.signer` = this signature's own `key_id`/`zone` (so attribution is non-malleable), and
-  `predicate.envelope` = the anti-replay identity `event_id`/`principal`/`expiry`/
-  `sender_channel_identity` (canonicalized — `signing.canonical_identity`, byte-identical to the
-  adapters' own `_canonical_identity`). Canonical JSON (sorted keys, no whitespace, ASCII) so sign
+  `predicate.envelope` = every other field of the envelope except the two that are unsigned by
+  design (S1d), with `sender.channel_identity` in canonical form (`signing.canonical_identity`,
+  byte-identical to the adapters' own `_canonical_identity`). Canonical JSON (sorted keys, no whitespace, ASCII) so sign
   and verify agree byte-for-byte; DSSE PAE binds the `payloadType` so a signature cannot be replayed
   under a different type.
-  **Why `sender_channel_identity` is bound (campaign-watchdog residual, 2026-07-18).** `EventTrigger
+  **Why `sender.channel_identity` is bound (campaign-watchdog residual, 2026-07-18).** `EventTrigger
   .dedupe_key()` is `(sender.channel_identity, event_id)`, and `sender.channel_identity` is
   agent/wire-authored. Before this field joined the bound set, a captured signed envelope could be
   replayed with a mutated sender claim — landing a fresh dedupe key, and, pre-dedupe, a fresh
   watchdog attribution bucket (`channels/WATCHDOG.md` §"Replay soundness") — without ever
   invalidating the signature. Binding it means the dedupe key's sender half is now
   signature-bound exactly like its `event_id` half already was: an exact replay dedupes, and ANY
-  mutation — to `event_id` or to `sender_channel_identity` — breaks the signature and lands in the
+  mutation — to `event_id` or to `sender.channel_identity` — breaks the signature and lands in the
   `FORGERY_REASONS` class, attributed to transport only, never to the impersonated signer.
 - **Per-envelope signing.** The sending broker signs the **full chain as it leaves** —
   `ChainSignature.covers = len(provenance)` — including any preserved upstream hops. Attribution
@@ -70,12 +70,12 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 
 - **S1 — DSSE-over-in-toto, Ed25519, name-agnostic.** The signed bytes are the DSSE PAE
   (`DSSEv1 <len> <type> <len> <payload>`) of a canonical in-toto statement binding the payload hash
-  (`subject`), the ordered hops, the signer identity, and the anti-replay envelope fields
+  (`subject`), the ordered hops, the signer identity, and the rest of the envelope
   (`predicate`); the algorithm is Ed25519; no PTC/TCE name appears in code, schema, or wire constant
   (`build_statement`, `pae`, `DSSE_PAYLOAD_TYPE` / `STATEMENT_TYPE` / `PREDICATE_TYPE`). The first
   subject always binds a hash of the *actual* inline `payload`, so a swap breaks verification whatever
-  `payload_digest` or `payload_ref` the envelope carries; `event_id`/`principal`/`expiry`/
-  `sender_channel_identity` (canonicalized) are all bound too, so a signed envelope cannot be replayed
+  `payload_digest` or `payload_ref` the envelope carries; `event_id`, `principal`, `expiry` and the
+  canonical `sender.channel_identity` are all bound too, so a signed envelope cannot be replayed
   under a fresh dedupe key (`(sender.channel_identity, event_id)`), an extended TTL, or a mutated
   `sender.channel_identity`.
 - **S1c — the raw-original reference is bound, and so is its presence.** When the envelope carries a
@@ -86,19 +86,30 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   digits, is refused at signing and fails verification as `SIGNATURE_INVALID`. That the bytes behind
   the reference match the digest remains the dereferencing zone's check (reference-tier,
   `channels/SCHEMAS.md`).
-  **What the statement does not bind.** `ts`, `sender.channel_type`, `sender.evidence` and
-  `schema_version` are outside the signed statement, and `sender_class` is receiver-owned. A party
-  with no key can change those four on a signed envelope and it still verifies. A receiver that
-  acts on any of them is acting on an unauthenticated value.
-  **Why the predicate type is v2 (2026-10-01).** The v1 statement bound the declared digest *in place
-  of* the inline payload whenever a `payload_ref` was present, and did not bind the reference. The
-  verifier could not tell which form the signer had used, so a signed inline envelope verified with
-  its payload swapped, a `payload_ref` attached, and `payload_digest` set to the hash of the original
-  payload (GHSA-wfrf-hcqh-pw8x). The statement changed shape, so `PREDICATE_TYPE` moved to
+- **S1d — the whole envelope is signed by default.** `predicate.envelope` is the envelope itself
+  with a short, named list of fields left out (`bound_envelope`), where v1 signed a short list of
+  fields put in. Two fields are unsigned, each for a reason: `sender_class` is the receiver's to set,
+  and the receiver discards whatever arrived before any gate reads it (`channels/ADAPTERS.md`, gate
+  3); `chain_signatures` are the signatures themselves. `payload`, `payload_digest` and `payload_ref`
+  are bound as subjects and `provenance` as hops. Everything else is in the predicate: today
+  `schema_version`, `event_id`, `principal`, the whole `sender` claim, `ts` and `expiry`. A field
+  added to the envelope later is signed without anyone adding it to a list, and
+  `test_every_envelope_field_is_signed_or_named_as_unsigned` fails if the partition stops covering
+  the model. The signer is handed the finished envelope (`ChainSigner.sign_envelope`), never a set
+  of values beside it, so what is signed and what is sent cannot differ. Signing refuses a payload
+  JSON cannot carry as given (NaN, Infinity, a non-string key), because serializing it would change
+  it after the signature was made.
+  **Why the predicate type is v2 (2026-10-01).** The v1 statement had two faults with one cause, an
+  enumerated list of what to sign. It bound the declared digest *in place of* the inline payload
+  whenever a `payload_ref` was present and did not bind the reference, so a signed inline envelope
+  verified with its payload swapped, a `payload_ref` attached, and `payload_digest` set to the hash
+  of the original payload (GHSA-wfrf-hcqh-pw8x). It also left `ts`, `sender.channel_type`,
+  `sender.evidence` and `schema_version` outside the signature, so a party with no key could change
+  them, and receivers record `ts`. The statement changed shape, so `PREDICATE_TYPE` moved to
   `provenance-chain/v2` and was not redefined in place. The verifier rebuilds the statement and the
   wire does not carry its type, so a v2 verifier reports a v1 signature as `SIGNATURE_INVALID`.
 - **S2 — per-envelope signing, non-malleable attribution.** The sending broker signs the full chain as
-  it leaves (`ChainSigner.sign_prefix`, `covers = len(provenance)`), including preserved upstream hops.
+  it leaves (`ChainSigner.sign_envelope`, `covers = len(provenance)`), including preserved upstream hops.
   The signature's own `key_id`/`zone` are bound into the signed bytes and the verifier requires the
   `zone` to equal the top hop it covers, so attribution within the envelope cannot be forged or
   relabelled. Inbound signatures are not carried across a relay (it re-packages the envelope);
@@ -117,6 +128,19 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   quarantine; it authenticates lineage but does **not** clean taint — the receiver still
   applies its own trust map and re-derives taint from the chain (`broker/TAINT.md`,
   `channels/TRUST-MAPPING.md`).
+- **S8 — a key verifies only for the zone and sender it is enrolled for.** Being known to the
+  receiver does not let a key speak for every peer. Each verification key is enrolled with one
+  `zone` and a non-empty list of `sender_identities` (`signing.PeerKey`). A signature whose `zone`
+  is not its key's zone fails, and a full-cover signature fails unless its key is enrolled for the
+  envelope's canonical `sender.channel_identity`. Both are `SIGNATURE_INVALID`, with the drop
+  record's `detail` set to `signer_zone_mismatch` or `signer_identity_out_of_scope`. The scope comes
+  from the receiver's own configuration and never from the envelope. Without it, any enrolled broker
+  could sign an envelope naming another broker's zone and identity, and the receiver's trust map
+  would resolve the impersonated identity and record `sig:pass`. The verification-keys secret is
+  JSON of the form `{key_id: {"public_key": PEM, "zone": ..., "sender_identities": [...]}}`
+  (`keys.peer_key_resolver_from_map`). An entry with a missing, empty or unrecognized field is a
+  `SigningConfigError` naming the key, including a bare PEM string, which was the format before keys
+  had a scope: an unscoped key would be trusted for every zone and sender.
 - **S5 — ships OFF (friction doctrine).** With no verification-keys ARN configured
   (`BROKER_VERIFY_KEYS_SECRET_ARN` unset → `resolve_verification_keys()` returns `None` →
   `make_gate(None)` returns `None`), the airlock skips the verify gate (Gate 3.5) and unsigned peers
@@ -142,7 +166,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   chain as it leaves, preserved upstream hops included); `signer=None` emits an unsigned chain.
   `keys.resolve_signer(zone)` builds the `ChainSigner` at cold start. **Inbound signatures are NOT
   carried onward** (PTC-13, S2): a relay re-packages the envelope under its own `event_id`, `expiry`
-  and sender claim, and an upstream signature binds the anti-replay set of the envelope it was made
+  and sender claim, and an upstream signature binds the whole envelope it was made
   for, so it could not verify against the new one. The upstream *hops* still ride as lineage,
   covered by this zone's signature. An earlier revision of this line said inbound signatures were
   preserved, which contradicted PTC-13 and `publish.py`; it never described the code.
@@ -152,19 +176,21 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   of the budget gates). A drop uses the verification reason verbatim (a closed `DropReason`
   vocabulary). On success, Gate 8 records `sig:pass` in the receiver's provenance evidence **only when
   the gate actually ran** — evidence of a check performed, never asserted for an unverified chain
-  (the same discipline as `sender.evidence`). `resolve_verification_keys()` builds the resolver, or
-  `None` to ship the gate OFF.
+  (the same discipline as `sender.evidence`). `resolve_verification_keys()` builds the scoped
+  resolver (S8), or `None` to ship the gate OFF.
 
 ## Conformance
 
 | Clause | Test (`test_signing.py`) |
 |---|---|
 | S1 (shape) | `test_valid_signed_chain_verifies` · `test_tampered_payload_fails_closed` · `test_payload_swap_with_pinned_digest_fails_closed` · `test_replay_with_fresh_event_id_or_extended_expiry_fails_closed` |
-| S1b (`sender_channel_identity` bound — campaign-watchdog residual closure) | `test_mutated_sender_after_signing_fails_verify_chain` · `test_mutated_sender_replay_fails_verification_no_second_attributed_record` · `test_sign_verify_round_trip_with_non_canonical_sender_spelling` · `test_relay_resign_binds_the_relays_own_sender_not_the_inbounds` |
+| S1b (`sender.channel_identity` bound — campaign-watchdog residual closure) | `test_mutated_sender_after_signing_fails_verify_chain` · `test_mutated_sender_replay_fails_verification_no_second_attributed_record` · `test_sign_verify_round_trip_with_non_canonical_sender_spelling` · `test_relay_resign_binds_the_relays_own_sender_not_the_inbounds` |
 | S1c (inline payload always bound; raw-original reference and its presence bound) | `test_payload_swap_behind_an_added_payload_ref_fails_closed` · `test_inline_payload_and_raw_original_reference_are_bound` · `test_forged_payload_ref_envelope_drops_at_the_webhook_gate` · `test_nested_payload_content_is_bound` · `test_statement_subjects` · `test_statement_and_payload_hash_are_canonical_json` · `test_statement_refuses_a_raw_original_it_cannot_bind` |
+| S1d (whole envelope signed by default) | `test_every_envelope_field_is_signed_or_named_as_unsigned` · `test_the_mutation_table_covers_every_signed_field` · `test_no_signed_field_can_change_after_signing` · `test_the_receiver_owned_class_is_outside_the_signature` · `test_signing_refuses_a_payload_json_cannot_carry` |
 | S2 (per-envelope signing, non-malleable attribution) | `test_relay_signs_full_chain_over_preserved_hops` · `test_tampered_hop_fails_closed` · `test_signature_attribution_is_not_malleable` |
 | S3 (broker-keyed, agent never signs) | `test_broker_signs_agent_has_no_key` · `test_signing_key_resolved_at_cold_start_from_secret` |
 | S4 (verify & quarantine, fail-closed) | `test_tampered_hop_fails_closed` · `test_tampered_payload_fails_closed` · `test_unknown_signer_quarantines` · `test_unsigned_chain_missing` · `test_covers_out_of_range_invalid` · `test_no_full_cover_signature_invalid` · `test_forged_chain_drops_before_trust_map` |
+| S8 (a key verifies only within its enrolled zone and sender identities) | `test_an_enrolled_key_cannot_sign_for_another_zone` · `test_an_enrolled_key_cannot_sign_for_another_sender` · `test_each_peer_still_verifies_within_its_own_scope` · `test_a_verification_key_without_a_full_scope_is_refused` · `test_verification_keys_resolve_and_fail_closed` |
 | S5 (ships OFF) | `test_verification_ships_off_unsigned_passes` |
 | S4/S5 (gate placement + evidence) | `test_verify_gate_runs_after_normalize_before_expiry` · `test_sig_pass_evidence_recorded` |
 | S6 (non-repudiation ≠ correctness) | the absence of any propagation-correctness claim is the contract text itself (the banked §8 problem) |
@@ -190,7 +216,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 - `docs/friction-doctrine.md` — verification is a knob shipping OFF (S5); the floor stays tiny.
 - `docs/contract-vs-reference.md` — the tiering S7 records: contract (signing semantics + conformance)
   vs reference (key resolution, airlock binding).
-- `channels/WATCHDOG.md` §"Replay soundness" — the reflected-DoS reasoning `sender_channel_identity`
+- `channels/WATCHDOG.md` §"Replay soundness" — the reflected-DoS reasoning `sender.channel_identity`
   binding (S1b) closes: signer attribution is sound only when the dedupe key's sender half is
   itself signature-bound, or a captured envelope could be replayed under a fresh attribution bucket
   without forging anything.

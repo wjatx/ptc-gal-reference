@@ -21,7 +21,7 @@ sender side"):
 from __future__ import annotations
 
 from safe_agents.channels.schemas import EventTrigger, ProvenanceEntry, SenderIdentity
-from safe_agents.channels.signing import BoundContext, ChainSigner, canonical_identity
+from safe_agents.channels.signing import ChainSigner
 
 
 def stamp_outbound(
@@ -103,7 +103,7 @@ def stamp_outbound(
         resolved at cold start from a Secrets-Manager-held key — never in the
         agent image, and never a caller/agent assertion. When supplied, this
         zone signs the FULL outbound chain (preserved upstream hops included),
-        bound to this envelope's payload and anti-replay identity
+        bound to this envelope's content and every other signed field
         (channels/SIGNING.md). Inbound signatures are not carried onward — a relay
         re-packages the envelope, so they could not verify against it; the
         upstream *hops* still ride as lineage. ``None`` emits an unsigned chain
@@ -130,33 +130,7 @@ def stamp_outbound(
         ts=ts,
     )
     provenance = [*upstream, *origin_hops, hop]
-    # Per-envelope signing: this zone signs the FULL chain as it leaves — the
-    # preserved upstream hops included — bound to THIS envelope's payload and
-    # anti-replay identity. Inbound signatures are NOT carried onward: a relay
-    # re-packages a fresh payload/event_id/principal, so an upstream broker's
-    # signature (over its own envelope) can never verify against this one. The
-    # upstream *hops* still ride (lineage the receiver re-derives taint from);
-    # attributing each intermediate signer across a relay needs nested
-    # per-hop attestations and is deferred to the normative spec. Unsigned
-    # when no signer is configured.
-    chain_signatures: list = []
-    if signer is not None:
-        context = BoundContext(
-            payload=payload,
-            payload_digest=payload_digest,
-            payload_ref=payload_ref,
-            event_id=event_id,
-            principal=principal,
-            expiry=expiry,
-            # Binds THIS zone's own sender claim into the signature (never an
-            # inbound/relayed one — a relay signs its own claim, channels/
-            # SIGNING.md S2), canonicalized so an honest but non-canonically-
-            # spelled claim still verifies once the receiver's gate 3 normalize
-            # canonicalizes it (`canonical_identity`, idempotent either order).
-            sender_channel_identity=canonical_identity(channel_identity or agent_identity),
-        )
-        chain_signatures.append(signer.sign_prefix(provenance, context))
-    return EventTrigger(
+    envelope = EventTrigger(
         event_id=event_id,
         principal=principal,
         sender=SenderIdentity(
@@ -168,7 +142,20 @@ def stamp_outbound(
         payload_digest=payload_digest,
         payload_ref=payload_ref,
         provenance=provenance,
-        chain_signatures=chain_signatures,
         ts=ts,
         expiry=expiry,
     )
+    if signer is None:
+        return envelope
+    # Per-envelope signing: this zone signs the FULL chain as it leaves — the
+    # preserved upstream hops included — together with the finished envelope it
+    # sits on. The signer is handed the envelope itself, so what is signed is what
+    # is sent, including THIS zone's own sender claim (never an inbound/relayed
+    # one — a relay signs its own claim, channels/SIGNING.md S2). Inbound
+    # signatures are NOT carried onward: a relay re-packages a fresh
+    # payload/event_id/principal, so an upstream broker's signature (over its own
+    # envelope) can never verify against this one. The upstream *hops* still ride
+    # (lineage the receiver re-derives taint from); attributing each intermediate
+    # signer across a relay needs nested per-hop attestations and is deferred to
+    # the normative spec.
+    return envelope.model_copy(update={"chain_signatures": [signer.sign_envelope(envelope)]})

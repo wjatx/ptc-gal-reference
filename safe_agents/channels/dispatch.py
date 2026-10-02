@@ -142,7 +142,13 @@ def dispatch(
         result = verify_chain(envelope)
         if not result.ok:
             drops.append(
-                make_drop_record(adapter.channel_type, identity, result.reason, now.isoformat())
+                make_drop_record(
+                    adapter.channel_type,
+                    identity,
+                    result.reason,
+                    now.isoformat(),
+                    detail=result.detail,
+                )
             )
             return None
         chain_verified = True

@@ -92,9 +92,10 @@ that committed to the entire chain as it left its own zone, never a partial-cove
 signature; a chain lacking a full-cover signature fails verification outright and never reaches the
 airlock's evidence-of-check fields at all. When more than one enrolled key produces a valid full-cover
 signature over the same chain, `verify_chain` reports the first match and the watchdog attributes to
-that `key_id` — this is not a reflected-DoS gap: every candidate is an enrolled, trusted verify-key
-sharing the same top-hop zone (`channels/SIGNING.md` S4), so attributing among them picks between
-trusted parties rather than mis-attributing to an untrusted or victim identity.
+that `key_id` — this is not a reflected-DoS gap: every full-cover signer must be a key enrolled for
+that top-hop zone AND for the envelope's sender identity (`channels/SIGNING.md` S8), so attributing
+among them picks between parties the receiver enrolled for exactly this sender, never a peer
+signing in another's name.
 
 ## The attribution table — the reflected-DoS rule
 
@@ -158,7 +159,7 @@ payload also carries a genuine signature.
 **Signer attribution is sound (closed 2026-07-18, a campaign-watchdog residual).** `sender.channel_identity` —
 the dedupe key's sender half, and what `transport-token`'s `attribution_key` digests — is now bound
 into the signed statement alongside `event_id` (`channels/SIGNING.md` S1b,
-`BoundContext.sender_channel_identity`). An exact byte-for-byte replay still dedupes silently at
+`signing.bound_envelope`). An exact byte-for-byte replay still dedupes silently at
 gate 6 as before; ANY mutation an attacker makes to dodge dedupe — to `event_id`, as already true,
 or now to `sender.channel_identity` — invalidates the signature and lands the replay in
 `FORGERY_REASONS` (`chain_signature_invalid`), attributed to transport only, never to the
