@@ -16,7 +16,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # §"payload / payload_ref / payload_digest"). Consumers may bound lower.
 MAX_PAYLOAD_BYTES = 65536
 
-_PAYLOAD_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+# Matched with `fullmatch`: under `match`, a trailing `$` also accepts one
+# trailing newline, which let a digest with "\n" appended through the schema gate.
+_PAYLOAD_DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _non_blank(v: str, field_name: str) -> str:
@@ -93,9 +95,10 @@ class ChainSignature(BaseModel):
 
     Turns provenance from *asserted* into *authenticated*: a receiver can verify
     which broker committed to the chain-as-it-left-that-zone instead of trusting
-    an unauthenticated chain (channels/SIGNING.md). Signatures accrete per hop —
-    each sending broker adds its own over the chain state as it leaves its zone,
-    so `provenance[:covers]` is exactly the prefix this signature commits to.
+    an unauthenticated chain (channels/SIGNING.md). Signing is per envelope: the
+    sending broker signs the full chain as it leaves its zone, so
+    `provenance[:covers]` is the prefix this signature commits to and a verifier
+    requires one signature whose `covers` is the whole chain.
 
     The signature is over a DSSE pre-authentication encoding of an in-toto-style
     statement (`safe_agents.channels.signing`); it is never authored by the
@@ -159,7 +162,7 @@ class EventTrigger(BaseModel):
     @field_validator("payload_digest")
     @classmethod
     def digest_format(cls, v: str | None) -> str | None:
-        if v is not None and not _PAYLOAD_DIGEST_RE.match(v):
+        if v is not None and not _PAYLOAD_DIGEST_RE.fullmatch(v):
             raise ValueError(f"payload_digest must match 'sha256:<64-hex>': {v!r}")
         return v
 

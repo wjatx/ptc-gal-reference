@@ -38,9 +38,10 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   sender's chain (the non-repudiation §9 needs). The private key is the **broker's** workload
   identity; the agent holds no key and cannot sign.
 - The signature is over a **DSSE pre-authentication encoding (PAE)** of an **in-toto-style
-  statement** binding, together: `subject` = a hash of the payload (a canonical hash of the actual
-  inline `payload`, so a swapped payload breaks the signature; the `payload_digest` field is honored
-  only for out-of-line `payload_ref`, reference-tier), `predicate.hops` = the ordered provenance hops,
+  statement** binding, together: `subject` = a canonical hash of the actual inline `payload`,
+  always, so a swapped payload breaks the signature, plus a second subject binding `payload_digest`
+  and `payload_ref` when the envelope names a raw original (S1c), `predicate.hops` = the ordered
+  provenance hops,
   `predicate.signer` = this signature's own `key_id`/`zone` (so attribution is non-malleable), and
   `predicate.envelope` = the anti-replay identity `event_id`/`principal`/`expiry`/
   `sender_channel_identity` (canonicalized — `signing.canonical_identity`, byte-identical to the
@@ -71,12 +72,31 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   (`DSSEv1 <len> <type> <len> <payload>`) of a canonical in-toto statement binding the payload hash
   (`subject`), the ordered hops, the signer identity, and the anti-replay envelope fields
   (`predicate`); the algorithm is Ed25519; no PTC/TCE name appears in code, schema, or wire constant
-  (`build_statement`, `pae`, `DSSE_PAYLOAD_TYPE` / `STATEMENT_TYPE` / `PREDICATE_TYPE`). For an inline
-  payload the subject binds a hash of the *actual* `payload`, so a swap breaks verification even if the
-  attacker pins a matching-format `payload_digest`; `event_id`/`principal`/`expiry`/
+  (`build_statement`, `pae`, `DSSE_PAYLOAD_TYPE` / `STATEMENT_TYPE` / `PREDICATE_TYPE`). The first
+  subject always binds a hash of the *actual* inline `payload`, so a swap breaks verification whatever
+  `payload_digest` or `payload_ref` the envelope carries; `event_id`/`principal`/`expiry`/
   `sender_channel_identity` (canonicalized) are all bound too, so a signed envelope cannot be replayed
   under a fresh dedupe key (`(sender.channel_identity, event_id)`), an extended TTL, or a mutated
-  sender claim.
+  `sender.channel_identity`.
+- **S1c — the raw-original reference is bound, and so is its presence.** When the envelope carries a
+  `payload_digest`, the statement has a second subject, `raw_original`, binding that digest and, when
+  set, the `payload_ref` as its `uri`. An envelope that carries neither has one subject. A reference
+  or digest therefore cannot be attached to, changed on, or stripped from a signed envelope. A
+  reference with no digest, or a digest that is not exactly `sha256:` followed by 64 lowercase hex
+  digits, is refused at signing and fails verification as `SIGNATURE_INVALID`. That the bytes behind
+  the reference match the digest remains the dereferencing zone's check (reference-tier,
+  `channels/SCHEMAS.md`).
+  **What the statement does not bind.** `ts`, `sender.channel_type`, `sender.evidence` and
+  `schema_version` are outside the signed statement, and `sender_class` is receiver-owned. A party
+  with no key can change those four on a signed envelope and it still verifies. A receiver that
+  acts on any of them is acting on an unauthenticated value.
+  **Why the predicate type is v2 (2026-10-01).** The v1 statement bound the declared digest *in place
+  of* the inline payload whenever a `payload_ref` was present, and did not bind the reference. The
+  verifier could not tell which form the signer had used, so a signed inline envelope verified with
+  its payload swapped, a `payload_ref` attached, and `payload_digest` set to the hash of the original
+  payload (GHSA-wfrf-hcqh-pw8x). The statement changed shape, so `PREDICATE_TYPE` moved to
+  `provenance-chain/v2` and was not redefined in place. The verifier rebuilds the statement and the
+  wire does not carry its type, so a v2 verifier reports a v1 signature as `SIGNATURE_INVALID`.
 - **S2 — per-envelope signing, non-malleable attribution.** The sending broker signs the full chain as
   it leaves (`ChainSigner.sign_prefix`, `covers = len(provenance)`), including preserved upstream hops.
   The signature's own `key_id`/`zone` are bound into the signed bytes and the verifier requires the
@@ -141,6 +161,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 |---|---|
 | S1 (shape) | `test_valid_signed_chain_verifies` · `test_tampered_payload_fails_closed` · `test_payload_swap_with_pinned_digest_fails_closed` · `test_replay_with_fresh_event_id_or_extended_expiry_fails_closed` |
 | S1b (`sender_channel_identity` bound — campaign-watchdog residual closure) | `test_mutated_sender_after_signing_fails_verify_chain` · `test_mutated_sender_replay_fails_verification_no_second_attributed_record` · `test_sign_verify_round_trip_with_non_canonical_sender_spelling` · `test_relay_resign_binds_the_relays_own_sender_not_the_inbounds` |
+| S1c (inline payload always bound; raw-original reference and its presence bound) | `test_payload_swap_behind_an_added_payload_ref_fails_closed` · `test_inline_payload_and_raw_original_reference_are_bound` · `test_forged_payload_ref_envelope_drops_at_the_webhook_gate` · `test_nested_payload_content_is_bound` · `test_statement_subjects` · `test_statement_and_payload_hash_are_canonical_json` · `test_statement_refuses_a_raw_original_it_cannot_bind` |
 | S2 (per-envelope signing, non-malleable attribution) | `test_relay_signs_full_chain_over_preserved_hops` · `test_tampered_hop_fails_closed` · `test_signature_attribution_is_not_malleable` |
 | S3 (broker-keyed, agent never signs) | `test_broker_signs_agent_has_no_key` · `test_signing_key_resolved_at_cold_start_from_secret` |
 | S4 (verify & quarantine, fail-closed) | `test_tampered_hop_fails_closed` · `test_tampered_payload_fails_closed` · `test_unknown_signer_quarantines` · `test_unsigned_chain_missing` · `test_covers_out_of_range_invalid` · `test_no_full_cover_signature_invalid` · `test_forged_chain_drops_before_trust_map` |

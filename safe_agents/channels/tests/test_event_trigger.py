@@ -84,6 +84,7 @@ def test_payload_ref_requires_digest():
         ("sha256:" + "a" * 64, True),
         ("sha256:" + "A" * 64, False),  # uppercase hex rejected
         ("sha256:" + "a" * 63, False),  # too short
+        ("sha256:" + "a" * 64 + "\n", False),  # trailing newline rejected
         ("sha1:" + "a" * 64, False),  # wrong scheme
         ("not-a-digest", False),
     ],

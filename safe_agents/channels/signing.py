@@ -10,12 +10,14 @@ gate that moves the §9 rung (see docs/PTC.md, docs/tce-signing-shape.md).
 Shape (decided in docs/tce-signing-shape.md), name-agnostic:
 
   * The signature is over a **DSSE** pre-authentication encoding (PAE) of an
-    **in-toto-style statement**: ``subject`` = the payload digest the envelope
-    already carries, ``predicate`` = the ordered provenance hops. DSSE is the
-    structural fit for a chain predicate and its PAE signing is language-portable.
-  * Signatures **accrete per hop**: each sending broker signs the chain prefix as
-    it left that zone (``covers`` = the prefix length), so a receiver attributes
-    every hop to the broker that committed to it.
+    **in-toto-style statement**: ``subject`` = a hash of the actual inline
+    payload, plus the raw-original reference when the envelope names one,
+    ``predicate`` = the ordered provenance hops. DSSE is the structural fit for
+    a chain predicate and its PAE signing is language-portable.
+  * Signing is **per envelope**: the sending broker signs the full chain as it
+    leaves its zone (``covers`` = ``len(provenance)``), preserved upstream hops
+    included. Inbound signatures are not carried across a relay
+    (channels/SIGNING.md S2).
   * Keys are **Ed25519** (asymmetric → non-repudiation: a receiver holds only the
     public key and cannot forge a sender's chain). The private key belongs to the
     broker's workload identity and is resolved by the broker at cold start — the
@@ -32,6 +34,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
@@ -47,9 +50,23 @@ from safe_agents.channels.schemas import ChainSignature, EventTrigger, Provenanc
 # The DSSE payloadType and in-toto statement/predicate type URIs. Name-agnostic
 # (no PTC/TCE) pending the maintainer's LF naming pass; the predicate type is versioned so a
 # future normative wire schema can bump it.
+#
+# v2 (GHSA-wfrf-hcqh-pw8x): v1 bound the declared ``payload_digest`` IN PLACE OF
+# the inline payload whenever a ``payload_ref`` was present, and did not bind the
+# reference at all, so a signed inline envelope verified with its payload
+# swapped. v2 always binds the inline payload and binds the reference beside it.
+# The statement changed shape, so the URI moved rather than being redefined in
+# place; a v2 verifier rejects a v1 signature.
 DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json"
 STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
-PREDICATE_TYPE = "https://safe-agents.dev/provenance-chain/v1"
+PREDICATE_TYPE = "https://safe-agents.dev/provenance-chain/v2"
+
+# The one digest algorithm `payload_digest` may name, and the only spelling of a
+# digest the statement will bind: lowercase hex, nothing before or after. One
+# raw original must have exactly one signed spelling, so this does not normalize.
+# EventTrigger enforces the same shape on the wire.
+DIGEST_ALGORITHM = "sha256"
+_RAW_DIGEST_RE = re.compile(rf"{DIGEST_ALGORITHM}:([0-9a-f]{{64}})")
 
 # A key resolver maps a signature's ``key_id`` to the verifying public key, or
 # None when the signer is unknown (→ the chain is quarantined). The airlock
@@ -98,22 +115,10 @@ class ChainVerifyResult:
 # ---------------------------------------------------------------------------
 
 
-def _subject_digest_hex(payload_digest: str | None, payload: dict, payload_ref: str | None) -> str:
-    """Return the 64-hex sha256 the statement subject binds to.
-
-    For an **inline** payload (``payload_ref`` unset) the subject is bound to a
-    hash of the *actual* ``payload`` — the ``payload_digest`` field is ignored, so
-    an on-path attacker cannot mutate the payload while pinning a stale digest.
-    The receiver recomputes the same hash, so any payload tamper breaks the
-    signature. For an **out-of-line** payload (``payload_ref`` set) the raw bytes
-    are not in the envelope; the subject binds to the declared ``payload_digest``,
-    whose binding to the referenced bytes is reference-tier (channels/SCHEMAS.md).
-    """
-    if payload_ref is None:
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    # payload_ref set ⇒ payload_digest set (EventTrigger enforces the invariant).
-    return (payload_digest or "").split(":", 1)[-1]
+def _inline_payload_hex(payload: dict) -> str:
+    """The 64-hex sha256 of the canonical inline ``payload``."""
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def canonical_identity(raw: str) -> str:
@@ -137,8 +142,8 @@ class BoundContext:
     """The envelope fields every signature commits to, beyond its hop prefix.
 
     Binding these into the signed statement is what makes the signature more
-    than a bare chain assertion: the payload (so it can't be swapped), the
-    anti-replay identity — ``event_id``/``principal``/``expiry`` — so a valid
+    than a bare chain assertion: the payload (so it can't be swapped) and the
+    raw-original reference beside it (``_subjects``), the anti-replay identity — ``event_id``/``principal``/``expiry`` — so a valid
     signed envelope cannot be replayed under a fresh dedupe key or an extended
     TTL (the airlock's expiry gate keys on exactly these), and
     ``sender_channel_identity`` — so a valid signed envelope cannot be replayed
@@ -174,6 +179,44 @@ class BoundContext:
         )
 
 
+def _subjects(context: BoundContext) -> list[dict]:
+    """The statement's subjects: what the signature commits the content to.
+
+    The first subject is ALWAYS a hash of the *actual* inline ``payload``, which
+    the receiver recomputes from the envelope it was handed, whatever else that
+    envelope carries. No field on the envelope can stand in for it.
+
+    When the envelope names a raw original, a second subject binds its
+    ``payload_digest`` and, when set, its ``payload_ref``. Whether that subject
+    exists is therefore signed too: a reference or digest cannot be attached to,
+    changed on, or stripped from a signed envelope. That the bytes behind the
+    reference match the digest is the dereferencing zone's check, not this one's
+    (reference-tier, channels/SCHEMAS.md).
+
+    A reference with no digest, or a digest this statement cannot name, raises:
+    signing must refuse rather than leave part of the envelope outside the
+    bound set, and a verifier treats the same condition as a failed signature.
+    """
+    subjects: list[dict] = [
+        {"name": "payload", "digest": {DIGEST_ALGORITHM: _inline_payload_hex(context.payload)}}
+    ]
+    if context.payload_digest is None:
+        if context.payload_ref is not None:
+            raise ValueError("payload_ref set requires payload_digest to also be set")
+        return subjects
+    matched = _RAW_DIGEST_RE.fullmatch(context.payload_digest)
+    if matched is None:
+        raise ValueError(
+            f"payload_digest must be '{DIGEST_ALGORITHM}:<64 lowercase hex>': "
+            f"{context.payload_digest!r}"
+        )
+    raw_original: dict = {"name": "raw_original", "digest": {DIGEST_ALGORITHM: matched.group(1)}}
+    if context.payload_ref is not None:
+        raw_original["uri"] = context.payload_ref
+    subjects.append(raw_original)
+    return subjects
+
+
 def build_statement(
     provenance_prefix: Sequence[ProvenanceEntry],
     context: BoundContext,
@@ -184,18 +227,18 @@ def build_statement(
     """Serialize the in-toto statement a single signature commits to.
 
     Canonical JSON (sorted keys, no whitespace, ASCII) so sign and verify agree
-    byte-for-byte. ``subject`` binds the payload; ``predicate.hops`` is the hop
+    byte-for-byte. ``subject`` binds the inline payload and any raw-original
+    reference (``_subjects``); ``predicate.hops`` is the hop
     prefix; ``predicate.signer`` binds this signature's ``key_id``/``zone`` (so
     per-hop attribution is non-malleable — an attacker cannot relabel who signed
     without breaking the signature); ``predicate.envelope`` binds the anti-replay
     identity, INCLUDING the canonicalized ``sender_channel_identity`` — the
     dedupe key's sender half (`BoundContext`'s docstring).
     """
-    subject_hex = _subject_digest_hex(context.payload_digest, context.payload, context.payload_ref)
     statement = {
         "_type": STATEMENT_TYPE,
         "predicateType": PREDICATE_TYPE,
-        "subject": [{"name": "payload", "digest": {"sha256": subject_hex}}],
+        "subject": _subjects(context),
         "predicate": {
             "hops": [entry.model_dump(mode="json") for entry in provenance_prefix],
             "signer": {"key_id": key_id, "zone": zone},
@@ -316,12 +359,15 @@ def _verify_one(
     public_key: Ed25519PublicKey,
 ) -> bool:
     prefix = provenance[: signature.covers]
-    # Rebuild the statement with the signature's OWN key_id/zone: an attacker who
-    # rewrites those fields produces a statement the signer never signed → fail.
-    statement = build_statement(
-        prefix, context, key_id=signature.key_id, zone=signature.zone
-    )
     try:
+        # Rebuild the statement with the signature's OWN key_id/zone: an attacker
+        # who rewrites those fields produces a statement the signer never signed
+        # → fail. Inside the try: a reference or digest the statement cannot name
+        # (`_subjects` raises) is a failed signature, not an exception escaping
+        # the gate.
+        statement = build_statement(
+            prefix, context, key_id=signature.key_id, zone=signature.zone
+        )
         public_key.verify(base64.b64decode(signature.sig), pae(signature.payload_type, statement))
         return True
     except (InvalidSignature, ValueError, TypeError):
@@ -343,7 +389,8 @@ def verify_chain(envelope: EventTrigger, key_resolver: KeyResolver) -> ChainVeri
 
     Every present signature must verify — a valid full-cover signature does not
     excuse a forged prefix signature riding alongside it. The signed statement
-    binds the payload, the anti-replay identity (``event_id``/``principal``/
+    binds the inline payload, the raw-original reference and digest when the
+    envelope carries them, the anti-replay identity (``event_id``/``principal``/
     ``expiry``/``sender.channel_identity``), and the signature's own
     ``key_id``/``zone``, so none of those can be altered post-signature; the
     zone-matches-top-hop check ties each signature to the hop its broker

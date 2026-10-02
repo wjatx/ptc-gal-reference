@@ -15,6 +15,9 @@ mapping table lives there. Three layers:
 
 from __future__ import annotations
 
+import copy
+import hashlib
+import json
 from datetime import datetime
 from typing import Any
 
@@ -30,14 +33,17 @@ from safe_agents.channels.keys import (
     resolve_signer,
     resolve_verification_keys,
 )
+from safe_agents.channels.manifest import WebhookAdapterConfig
 from safe_agents.channels.publish import stamp_outbound
 from safe_agents.channels.schemas import EventTrigger, ProvenanceEntry, SenderIdentity
 from safe_agents.channels.signing import (
+    PREDICATE_TYPE,
     SIGNATURE_INVALID,
     SIGNATURE_MISSING,
     SIGNER_UNKNOWN,
     BoundContext,
     ChainSigner,
+    build_statement,
     canonical_identity,
     make_gate,
     signer_from_pem,
@@ -45,6 +51,7 @@ from safe_agents.channels.signing import (
 )
 from safe_agents.channels.tests.test_adapters import StubInboundAdapter
 from safe_agents.channels.trust_map import ChannelTrustMap, TrustMapEntry
+from safe_agents.channels.webhook import SignedWebhookAdapter, WebhookRequest
 
 _TS = "2026-07-10T00:00:00+00:00"
 _EXPIRY = "2026-07-10T01:00:00+00:00"
@@ -83,7 +90,25 @@ def signer_and_resolver():
     return signer, resolver
 
 
-def _signed_outbound(signer: ChainSigner, *, turn_tainted: bool = False, inbound=None):
+_ORIGINAL_PAYLOAD = {"signal": "buy", "ticker": "ACME"}
+_SWAPPED_PAYLOAD = {"signal": "sell", "ticker": "ACME"}
+
+
+def _payload_hash(payload: dict) -> str:
+    """`sha256:<hex>` of the canonical inline payload, as the statement hashes it."""
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _signed_outbound(
+    signer: ChainSigner,
+    *,
+    turn_tainted: bool = False,
+    inbound=None,
+    payload: dict | None = None,
+    **raw_original,
+):
+    """A signed envelope; ``raw_original`` passes ``payload_ref``/``payload_digest`` through."""
     return stamp_outbound(
         zone="zone-a",
         agent_identity="example",
@@ -92,11 +117,12 @@ def _signed_outbound(signer: ChainSigner, *, turn_tainted: bool = False, inbound
         turn_tainted=turn_tainted,
         event_id="evt-1",
         principal="example-agent",
-        payload={"signal": "buy", "ticker": "ACME"},
+        payload=copy.deepcopy(payload or _ORIGINAL_PAYLOAD),
         ts=_TS,
         expiry=_EXPIRY,
         inbound=inbound,
         signer=signer,
+        **raw_original,
     )
 
 
@@ -201,14 +227,9 @@ def test_payload_swap_with_pinned_digest_fails_closed(signer_and_resolver):
     # An on-path attacker mutates the inline payload AND pins a well-formed
     # payload_digest, hoping the verifier trusts the field. Verification rebinds
     # the subject to a hash of the actual payload, so the swap breaks the sig.
-    import hashlib
-    import json as _json
-
-    fake = {"signal": "sell", "ticker": "ACME"}
-    pinned = "sha256:" + hashlib.sha256(
-        _json.dumps({"signal": "buy", "ticker": "ACME"}, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
-    tampered = env.model_copy(update={"payload": fake, "payload_digest": pinned})
+    tampered = env.model_copy(
+        update={"payload": _SWAPPED_PAYLOAD, "payload_digest": _payload_hash(_ORIGINAL_PAYLOAD)}
+    )
     result = verify_chain(tampered, resolver)
     assert not result.ok and result.reason == SIGNATURE_INVALID
 
@@ -753,3 +774,245 @@ def test_relay_resign_binds_the_relays_own_sender_not_the_inbounds():
         update={"sender": relayed.sender.model_copy(update={"channel_identity": "peer:example"})}
     )
     assert not verify_chain(impersonating_original, key_resolver_from_map({"broker:B": pub_b})).ok
+
+
+# ---------------------------------------------------------------------------
+# S1c — the inline payload is always bound, and so is the raw-original reference
+# ---------------------------------------------------------------------------
+
+_RAW_REF = "airlock-raw:msg-1"
+_RAW_DIGEST = "sha256:" + "a" * 64
+_REFERENCED = {"payload_ref": _RAW_REF, "payload_digest": _RAW_DIGEST}
+_DIGEST_ONLY = {"payload_digest": _RAW_DIGEST}
+# Mixed case and longer than any plausible truncation, so a verifier that
+# normalized or shortened the reference before binding it would be caught.
+_LONG_REF = "airlock-raw:2026-10-01/Example-Vendor-9931.eml"
+_LONG_REFERENCED = {"payload_ref": _LONG_REF, "payload_digest": _RAW_DIGEST}
+# Unsorted keys, nesting, a list and a non-ASCII value: everything the canonical
+# form has to settle.
+_NESTED_PAYLOAD = {
+    "order": {"legs": [{"qty": 1, "side": "buy"}, {"qty": 2, "side": "sell"}], "note": "café"},
+    "b": 1,
+    "a": 2,
+}
+
+
+def test_payload_swap_behind_an_added_payload_ref_fails_closed(signer_and_resolver):
+    """GHSA-wfrf-hcqh-pw8x. A party with no key swaps the inline payload of a
+    signed envelope, attaches a ``payload_ref``, and pins ``payload_digest`` to
+    the hash of the ORIGINAL payload. The v1 statement bound the declared digest
+    in place of the inline payload whenever a ``payload_ref`` was present, so the
+    rebuilt statement was byte-identical to the signed one and this verified."""
+    signer, resolver = signer_and_resolver
+    env = _signed_outbound(signer)
+    forged = env.model_copy(
+        update={
+            "payload": _SWAPPED_PAYLOAD,
+            "payload_ref": _RAW_REF,
+            "payload_digest": _payload_hash(_ORIGINAL_PAYLOAD),
+        }
+    )
+    result = verify_chain(forged, resolver)
+    assert not result.ok and result.reason == SIGNATURE_INVALID
+
+
+@pytest.mark.parametrize(
+    "signed_with, mutation",
+    [
+        pytest.param({}, _REFERENCED, id="inline: reference attached"),
+        pytest.param({}, _DIGEST_ONLY, id="inline: digest attached"),
+        # Reachable only past the schema gate, which requires a digest beside a
+        # reference. The verifier must still answer, not raise out of the gate.
+        pytest.param({}, {"payload_ref": _RAW_REF}, id="inline: reference attached, no digest"),
+        pytest.param(_REFERENCED, {"payload": _SWAPPED_PAYLOAD}, id="referenced: inline payload swapped"),
+        pytest.param(_REFERENCED, {"payload_ref": "airlock-raw:msg-2"}, id="referenced: reference repointed"),
+        pytest.param(_REFERENCED, {"payload_digest": "sha256:" + "b" * 64}, id="referenced: digest changed"),
+        pytest.param(_REFERENCED, {"payload_ref": None}, id="referenced: reference removed"),
+        pytest.param(
+            _REFERENCED,
+            {"payload_ref": None, "payload_digest": None},
+            id="referenced: reference and digest removed",
+        ),
+        pytest.param(_DIGEST_ONLY, {"payload": _SWAPPED_PAYLOAD}, id="digest only: inline payload swapped"),
+        pytest.param(_DIGEST_ONLY, {"payload_digest": None}, id="digest only: digest removed"),
+        pytest.param(_DIGEST_ONLY, {"payload_ref": _RAW_REF}, id="digest only: reference attached"),
+        pytest.param(_DIGEST_ONLY, {"payload_ref": ""}, id="digest only: empty reference attached"),
+        pytest.param(
+            _REFERENCED, {"payload_digest": "sha256:" + "A" * 64}, id="referenced: digest upper-cased"
+        ),
+        pytest.param(
+            _LONG_REFERENCED, {"payload_ref": _LONG_REF.lower()}, id="long reference: case folded"
+        ),
+        pytest.param(
+            _LONG_REFERENCED, {"payload_ref": f" {_LONG_REF} "}, id="long reference: padded"
+        ),
+        pytest.param(
+            _LONG_REFERENCED, {"payload_ref": _LONG_REF[:-1] + "x"}, id="long reference: tail changed"
+        ),
+        pytest.param(
+            _LONG_REFERENCED, {"payload_ref": _LONG_REF + "#other"}, id="long reference: fragment added"
+        ),
+    ],
+)
+def test_inline_payload_and_raw_original_reference_are_bound(
+    signer_and_resolver, signed_with, mutation
+):
+    """Whatever form the envelope was signed in, the inline payload, the
+    reference and the digest are each fixed by the signature: none can be
+    added, changed or removed afterwards."""
+    signer, resolver = signer_and_resolver
+    env = _signed_outbound(signer, **signed_with)
+    assert verify_chain(env, resolver).ok
+    result = verify_chain(env.model_copy(update=mutation), resolver)
+    assert not result.ok and result.reason == SIGNATURE_INVALID
+
+
+def _nested(mutate) -> dict:
+    payload = copy.deepcopy(_NESTED_PAYLOAD)
+    mutate(payload)
+    return payload
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda p: p["order"]["legs"][1].update(qty=3), id="leaf inside a list changed"),
+        pytest.param(lambda p: p["order"]["legs"].reverse(), id="list reordered"),
+        pytest.param(lambda p: p["order"]["legs"].pop(), id="list element removed"),
+        pytest.param(lambda p: p["order"].update(extra=True), id="nested key added"),
+        pytest.param(lambda p: p["order"].update(note="cafe"), id="non-ASCII value changed"),
+    ],
+)
+def test_nested_payload_content_is_bound(signer_and_resolver, mutate):
+    """The payload hash covers the whole structure, not its top level."""
+    signer, resolver = signer_and_resolver
+    env = _signed_outbound(signer, payload=_NESTED_PAYLOAD)
+    assert verify_chain(env, resolver).ok
+    result = verify_chain(env.model_copy(update={"payload": _nested(mutate)}), resolver)
+    assert not result.ok and result.reason == SIGNATURE_INVALID
+
+
+def test_forged_payload_ref_envelope_drops_at_the_webhook_gate(signer_and_resolver):
+    """The same forgery through the shipped receive path with verification ON:
+    wire JSON, the real webhook adapter's schema gate, then gate 3.5."""
+    signer, resolver = signer_and_resolver
+    token = "s3cr3t-token"
+    adapter = SignedWebhookAdapter(WebhookAdapterConfig(), token)
+
+    def receive(wire: dict):
+        drops: list[Any] = []
+        out = dispatch(
+            WebhookRequest(headers={"x-airlock-token": token}, body=json.dumps(wire)),
+            adapter=adapter,
+            trust_map=_trust_map(),
+            screen=None,
+            verify_chain=make_gate(resolver),
+            dedupe_store=set(),
+            drops=drops,
+            now=_NOW,
+            zone="recv",
+        )
+        return out, [d.reason for d in drops]
+
+    honest = json.loads(_signed_outbound(signer).model_dump_json())
+    out, reasons = receive(honest)
+    assert out is not None and reasons == []  # the path accepts what was signed
+
+    forged = {
+        **honest,
+        "payload": _SWAPPED_PAYLOAD,
+        "payload_ref": _RAW_REF,
+        "payload_digest": _payload_hash(_ORIGINAL_PAYLOAD),
+    }
+    out, reasons = receive(forged)
+    assert out is None
+    assert reasons == [SIGNATURE_INVALID]
+
+
+def _context(**overrides) -> BoundContext:
+    fields = {
+        "payload": _ORIGINAL_PAYLOAD,
+        "payload_digest": None,
+        "payload_ref": None,
+        "event_id": "evt-1",
+        "principal": "example-agent",
+        "expiry": _EXPIRY,
+        "sender_channel_identity": "peer:example",
+    }
+    return BoundContext(**{**fields, **overrides})
+
+
+_HOP = ProvenanceEntry(zone="zone-a", source="peer:example", label="trusted", ts=_TS)
+_INLINE_SUBJECT = {
+    "name": "payload",
+    "digest": {"sha256": _payload_hash(_ORIGINAL_PAYLOAD).removeprefix("sha256:")},
+}
+
+
+@pytest.mark.parametrize(
+    "raw_original, expected_subjects",
+    [
+        pytest.param({}, [_INLINE_SUBJECT], id="inline"),
+        pytest.param(
+            _DIGEST_ONLY,
+            [_INLINE_SUBJECT, {"name": "raw_original", "digest": {"sha256": "a" * 64}}],
+            id="digest only",
+        ),
+        pytest.param(
+            _REFERENCED,
+            [
+                _INLINE_SUBJECT,
+                {"name": "raw_original", "uri": _RAW_REF, "digest": {"sha256": "a" * 64}},
+            ],
+            id="referenced",
+        ),
+    ],
+)
+def test_statement_subjects(raw_original, expected_subjects):
+    statement = json.loads(
+        build_statement([_HOP], _context(**raw_original), key_id="broker:A", zone="zone-a")
+    )
+    assert statement["predicateType"] == PREDICATE_TYPE
+    assert PREDICATE_TYPE == "https://safe-agents.dev/provenance-chain/v2"
+    assert statement["subject"] == expected_subjects
+
+
+def test_statement_and_payload_hash_are_canonical_json():
+    """Sign and verify agree only because both sides produce one byte string:
+    sorted keys, no whitespace, ASCII escapes. Key order on the wire is not content."""
+    raw = build_statement(
+        [_HOP], _context(payload=_NESTED_PAYLOAD), key_id="broker:A", zone="zone-a"
+    )
+    statement = json.loads(raw)
+    canonical = json.dumps(statement, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    assert raw == canonical.encode("utf-8")
+    assert statement["subject"][0]["digest"]["sha256"] == _payload_hash(
+        _NESTED_PAYLOAD
+    ).removeprefix("sha256:")
+
+    reordered = json.loads(json.dumps(_NESTED_PAYLOAD, sort_keys=True))
+    assert list(reordered) != list(_NESTED_PAYLOAD)  # the fixture really is unsorted
+    assert (
+        build_statement([_HOP], _context(payload=reordered), key_id="broker:A", zone="zone-a")
+        == raw
+    )
+
+
+@pytest.mark.parametrize(
+    "raw_original",
+    [
+        pytest.param({"payload_ref": _RAW_REF}, id="reference without a digest"),
+        pytest.param({"payload_digest": "md5:" + "a" * 32}, id="digest of another algorithm"),
+        pytest.param({"payload_digest": "sha256:"}, id="digest with no value"),
+        pytest.param({"payload_digest": "sha256:not-hex"}, id="digest that is not hex"),
+        pytest.param({"payload_digest": "sha256:" + "A" * 64}, id="digest in upper case"),
+        pytest.param({"payload_digest": "sha256:" + "a" * 63}, id="digest too short"),
+        pytest.param({"payload_digest": "sha256:" + "a" * 64 + "\n"}, id="digest with a newline"),
+        pytest.param({"payload_digest": "sha256:" + "a" * 60 + ":b:c"}, id="digest with colons"),
+    ],
+)
+def test_statement_refuses_a_raw_original_it_cannot_bind(raw_original):
+    """A reference the statement cannot name is refused loudly at signing time,
+    never signed with the reference silently left out of the bound set."""
+    with pytest.raises(ValueError):
+        build_statement([_HOP], _context(**raw_original), key_id="broker:A", zone="zone-a")
