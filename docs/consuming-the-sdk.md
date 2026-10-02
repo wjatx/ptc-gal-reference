@@ -7,49 +7,87 @@ through the broker, declare an envelope. Read that one for the *why*, and this o
 install and invoke it*.
 
 The platform is packaged as a single distribution named **`safe-agents`**, importable under the
-**`safe_agents.*`** namespace. It is git-installable from this repository. There is no PyPI
-release, so every example below pins a git ref.
+**`safe_agents.*`** namespace, and published to [PyPI](https://pypi.org/project/safe-agents/).
 
 ---
 
 ## 1. Install
 
-Pin by tag or commit SHA — never an unpinned branch (the risk envelope must be reproducible):
+The distribution's own metadata states version ranges for its dependencies, as a library should:
+a range lets your resolver fit `safe-agents` beside everything else you depend on. A range cannot
+carry a hash, though, so the guarantee that you get exactly the files that were tested comes from
+a lock file installed with `--require-hashes`. There are two ways to have one.
+
+### Installing `safe-agents` by itself
+
+Each release publishes a requirements file that pins `safe-agents` and every package its `aws`
+and `mcp` extras depend on, each at an exact version and the sha256 of its published files:
 
 ```bash
-pip install "safe-agents @ git+https://github.com/wjatx/ptc-gal-reference.git@v0.72.0"
+curl -fsSLO https://github.com/wjatx/ptc-gal-reference/releases/download/v0.73.0/safe-agents-0.73.0-requirements.txt
+python -m pip install --require-hashes -r safe-agents-0.73.0-requirements.txt
 ```
 
-Or, from a clone, for reading and modifying alongside your own work:
+With `--require-hashes`, pip refuses any file whose hash is not in the list and any requirement
+that has no hash at all, so nothing arrives that the file does not name. The release workflow
+installs from this same file, with `--require-hashes`, before it publishes anything
+(`.github/workflows/release.yml`). `SHA256SUMS` on the release page lists the sha256 of the wheel,
+the sdist and the requirements file.
 
-```bash
-pip install -e .
-```
+### Depending on `safe-agents` from your own project
 
-To actually reach AWS (provision/deploy, DynamoDB/S3 stores, live broker), install the **`aws`**
-extra — it adds `boto3`. The base install deliberately omits `boto3` so the SDK stays importable and
-unit-testable with no cloud SDK or credentials present; every AWS call site imports `boto3` lazily:
-
-```bash
-pip install "safe-agents[aws] @ git+https://github.com/wjatx/ptc-gal-reference.git@v0.72.0"
-```
-
-In a `pyproject.toml` / `requirements.txt`, pin the same way:
+Pin an exact version in your own metadata, never a range (the risk envelope must be
+reproducible), and name the extras you use:
 
 ```toml
 # pyproject.toml
 dependencies = [
-  "safe-agents[aws] @ git+https://github.com/wjatx/ptc-gal-reference.git@v0.72.0",
+  "safe-agents[mcp]==0.73.0",
 ]
 ```
 
-```
-# requirements.txt
-safe-agents[aws] @ git+https://github.com/wjatx/ptc-gal-reference.git@v0.72.0
+Then compile a lock for your whole project with hashes, and install from it:
+
+```bash
+uv pip compile pyproject.toml --generate-hashes -o requirements.txt
+python -m pip install --require-hashes -r requirements.txt
 ```
 
-Bump the pin to a newer tag deliberately, when you want a platform upgrade. That pin *is* the
+`pip-compile --generate-hashes` from pip-tools produces the same kind of file. Your lock takes
+the `safe-agents` wheel's hash from PyPI; compare it with the one in the release's `SHA256SUMS`
+if you want a second source for it.
+
+The extras:
+
+- **`aws`** adds `boto3`, needed to reach AWS (provision and deploy, the DynamoDB and S3 stores,
+  a live broker). The base install omits it so the SDK stays importable and unit-testable with no
+  cloud SDK or credentials present; every AWS call site imports `boto3` lazily.
+- **`mcp`** adds the MCP SDK, which the stdio gateway and the reference MCP host client need and
+  nothing else does.
+
+### Without a lock
+
+```bash
+pip install "safe-agents==0.73.0"
+```
+
+This works, and it pins `safe-agents` alone. Its dependencies resolve to whatever is newest
+within the stated ranges on the day you run it, with no hash checked. That is acceptable for a
+first look and is not how to install a trusted floor.
+
+### What else you can check
+
+The files are uploaded to PyPI by trusted publishing from this repository's `release.yml`, with
+no stored API token. The upload step is configured to record a provenance attestation for each
+file (PEP 740), which names this repository and that workflow; PyPI shows it on the file's page.
+
+Bump the pin to a newer version deliberately, when you want a platform upgrade. That pin *is* the
 version of the trusted floor your agent stands on.
+
+To stand on a commit that has not been released, pin the commit SHA by git URL instead:
+`safe-agents @ git+https://github.com/wjatx/ptc-gal-reference.git@<40-hex SHA>`. A package with a
+dependency of that form cannot itself be published to PyPI, which refuses direct-URL dependencies.
+From a clone, `CONTRIBUTING.md` gives the hash-locked development install.
 
 ## 2. What the install exposes
 
@@ -99,7 +137,7 @@ smoke fixtures, the package sitting next to the manifest, both under `agents/`:
 
 ```
 example-agent/                      # your repo
-├── pyproject.toml                  # depends on safe-agents[aws] @ <tag>
+├── pyproject.toml                  # depends on safe-agents[aws]==<version>
 ├── policies/
 │   └── example-agent.yaml          # the network-egress confinement policy
 └── agents/

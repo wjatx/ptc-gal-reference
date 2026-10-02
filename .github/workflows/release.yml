@@ -33,7 +33,18 @@
 #
 # The build job holds no credential and the publish job runs no project code:
 # it downloads the files the build job checked and hands them to the upload
-# action. That split is why they are two jobs.
+# action. That split is why they are separate jobs. A third job attaches the
+# same files to a GitHub release, with the consumer lock beside them; it holds
+# write access to this repository's releases and also runs no project code.
+#
+# The consumer lock. Wheel metadata carries version ranges, and a range cannot
+# carry a hash. So the release also publishes one requirements file that pins
+# `safe-agents` itself, at the hash of the wheel built here, and every package
+# its `aws` and `mcp` extras depend on, at the hashes in requirements/runtime.txt.
+# A consumer installs it with `--require-hashes` (docs/consuming-the-sdk.md).
+#
+# If the last job fails after the upload to PyPI succeeded, re-run that job
+# alone. The PyPI version is already spent and must not be rebuilt.
 
 name: Release
 
@@ -167,10 +178,53 @@ jobs:
           PY
           venv/bin/safe-agents --help > /dev/null
 
+      # requirements/runtime.txt already pins every dependency of both extras.
+      # This adds the one line it cannot hold, the distribution itself at the
+      # hash of the wheel built above, and records the checksum of every file
+      # the release publishes.
+      - name: Write the consumer lock and the checksums
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          wheel_sha=$(sha256sum dist/*.whl | cut -d' ' -f1)
+          lock="safe-agents-$version-requirements.txt"
+          mkdir release
+          {
+            echo "# safe-agents $version with the aws and mcp extras, and everything they depend on,"
+            echo "# each at an exact version and the sha256 of its published files."
+            echo "#"
+            echo "#   python -m pip install --require-hashes -r $lock"
+            echo "#"
+            echo "safe-agents[aws,mcp]==$version \\"
+            echo "    --hash=sha256:$wheel_sha"
+            cat requirements/runtime.txt
+          } > "release/$lock"
+          (cd dist && sha256sum -- *) > release/SHA256SUMS
+          (cd release && sha256sum -- "$lock") >> release/SHA256SUMS
+          cat release/SHA256SUMS
+
+      # The command a consumer runs, against the file a consumer downloads. The
+      # wheel is not on PyPI yet, so pip finds it in dist/; it still has to
+      # match the hash in the lock, and every dependency still comes from the
+      # index by hash. A dependency the lock does not pin fails here, because
+      # `--require-hashes` refuses any requirement without one.
+      - name: The consumer lock installs the wheel by hash
+        run: |
+          python -m venv "$RUNNER_TEMP/consumer"
+          "$RUNNER_TEMP/consumer/bin/python" -m pip install --require-hashes \
+            --find-links "$PWD/dist" -r release/safe-agents-*-requirements.txt
+          cd "$RUNNER_TEMP"
+          consumer/bin/python -c 'from safe_agents.broker.api import GatewayClient, build_runtime'
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist
           path: dist/
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release
+          path: release/
           if-no-files-found: error
 
   publish:
@@ -196,3 +250,47 @@ jobs:
       # Pinned to a commit rather than the moving `release/v1` ref, because this
       # is the one step that runs holding the publish identity.
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+
+  github-release:
+    name: "release: attach the files and the consumer lock"
+    needs: [build, publish]
+    if: github.ref_type == 'tag' && github.event.repository.fork == false
+    runs-on: ubuntu-latest
+    permissions:
+      # Creates the release for the tag and uploads its files. This job checks
+      # nothing out and runs nothing from the repository.
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release
+          path: release/
+
+      # `--verify-tag` refuses to create the tag: the release attaches to the
+      # tag this run was dispatched against or not at all.
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          {
+            echo "Published to PyPI as \`safe-agents==$version\`."
+            echo
+            echo "To install with every dependency checked against a pinned hash, download"
+            echo "\`safe-agents-$version-requirements.txt\` from this release and run:"
+            echo
+            echo '```'
+            echo "python -m pip install --require-hashes -r safe-agents-$version-requirements.txt"
+            echo '```'
+            echo
+            echo "\`SHA256SUMS\` lists the sha256 of the wheel, the sdist and that file."
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --title "safe-agents $version" --notes-file notes.md \
+            dist/* release/*

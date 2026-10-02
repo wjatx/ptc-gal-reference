@@ -122,7 +122,9 @@ refuse a file whose hash is not listed.
 - `requirements/runtime.txt` is the `aws` and `mcp` extras with no development
   tools. The release workflow installs the built wheel against it, and the
   example broker images that host an MCP server install it on top of the base
-  broker image.
+  broker image. The release workflow also publishes it, with one line added
+  for `safe-agents` itself at the hash of the released wheel, as the file a
+  consumer installs with `--require-hashes` (`docs/consuming-the-sdk.md`).
 - `requirements/aws.txt` is the `aws` extra alone. The base broker image
   (`safe_agents/arms/local/Containerfile.broker`) and the two channel Lambda
   images (`safe_agents/channels/airlock/Containerfile` and
