@@ -40,13 +40,13 @@ BUCKET_NAME = f"safe-agents-{ENV}-deploy"
 
 # Representative ARNs that match the real naming convention.
 PIPELINE_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:image-pipeline/safe-agents-base-pipeline"
-IMAGE_VERSION_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:image/safe-agents-base/1.0.0/1"
-IMAGE_BUILD_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:image/safe-agents-base/1.0.0/1/1"
-RECIPE_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:image-recipe/safe-agents-base/1.0.0"
+IMAGE_VERSION_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:image/safe-agents-base/2.0.0/1"
+IMAGE_BUILD_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:image/safe-agents-base/2.0.0/1/1"
+RECIPE_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:image-recipe/safe-agents-base/2.0.0"
 INFRA_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:infrastructure-configuration/safe-agents-base-infra"
 DIST_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:distribution-configuration/safe-agents-base-dist"
-COMPONENT_VERSION_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:component/safe-agents-base/1.0.0"
-COMPONENT_BUILD_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:component/safe-agents-base/1.0.0/1"
+COMPONENT_VERSION_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:component/safe-agents-base/2.0.0"
+COMPONENT_BUILD_ARN = "arn:aws:imagebuilder:us-east-1:123456789012:component/safe-agents-base/2.0.0/1"
 
 AMI_ID = "ami-0basetestami001"
 SNAPSHOT_ID = "snap-0abc123def456789a"

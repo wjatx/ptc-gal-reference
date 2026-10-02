@@ -80,7 +80,7 @@ confine-and-run: ALL ASSERTIONS PASSED
 
 | File | Role |
 |------|------|
-| `Containerfile` | The **agent box** image: node + the Claude CLI + iproute2; the unprivileged `agent` user runs `claude`. |
+| `Containerfile` | The **agent box** image: the pinned Claude Code binary + iproute2, with no Node.js; the unprivileged `agent` user runs `claude`. |
 | `Containerfile.broker` | The **broker box** image: python + the `broker` package + the model-proxy stub; serves both surfaces. |
 | `broker-entrypoint.sh` | Broker box entrypoint: runs `:8443` model-proxy (bg) + `:8080` tool-call API (`broker.prototype.broker_server`). |
 | `confine-and-run.sh` | Runs **inside** the agent box (`--cap-add NET_ADMIN`): blackhole default + a route to the broker only; then asserts smoke-egress, `claude -p`, an allowed + idempotently-replayed `github.whoami`, and a fail-closed deny on ungranted `alpaca.read`. Exits non-zero on any failure. |

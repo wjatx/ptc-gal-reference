@@ -6,15 +6,46 @@
 # egress is the broker model-proxy on the host (HTTPS_PROXY). iproute2 is included so the
 # in-container confinement step can blackhole the default route and leave only the broker
 # reachable (Stage 2).
-FROM node:22-slim
+#
+# Every download is pinned (safe_agents/arms/toolchain/README.md). The Claude Code binary is a
+# line of toolchain/artifacts.lock, fetched with the canonical inline form: a hash mismatch or a
+# pruned URL fails the build. It is published per architecture and this image builds for the
+# host's, so the RUN below picks the pin for the architecture the image is being built for:
+# arm64 on an Apple Silicon Mac, amd64 on an Intel host and in CI.
+#
+# The base is pinned by digest, and the tag is kept only so a reader can see which image the
+# digest names. The digest is the multi-arch index, so a linux/arm64 build and a linux/amd64
+# build both resolve through it. It is the same base the broker box builds from
+# (Containerfile.broker): this image needs a Debian userland and nothing from Python, and reuses
+# the base this repository already pins. It carries no Node.js. Claude Code is a native binary
+# and needs none, and confine-and-run.sh uses nothing else that would.
+# Re-resolve: skopeo inspect --raw docker://docker.io/library/python:3.12-slim | shasum -a 256
+FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends iproute2 curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# The model brain — same CLI the autonomous arms install.
-RUN npm install -g @anthropic-ai/claude-code
+# The model brain: the Claude Code native binary, the same pin the autonomous arms install. It is
+# never installed with npm. The managed settings and the image environment both set
+# DISABLE_UPDATES=1, so the binary does not update itself past the pin.
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        arm64) u=https://downloads.claude.ai/claude-code-releases/2.1.285/linux-arm64/claude; h=24fac77749bed3d91365d6b6915aa4b824e14318ecb6bc17adbc192f01c9173d; d=/tmp/claude; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; } ;; \
+        amd64) u=https://downloads.claude.ai/claude-code-releases/2.1.285/linux-x64/claude; h=33dad1ec615a2e08cc78b494f05c110e49916de2c79d78ec8799ebf46b233d29; d=/tmp/claude; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; } ;; \
+        *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    install -m 0755 /tmp/claude /usr/local/bin/claude; \
+    rm -f /tmp/claude; \
+    install -d -m 0755 /etc/claude-code; \
+    printf '%s\n' '{"env": {"DISABLE_UPDATES": "1"}}' > /etc/claude-code/managed-settings.json; \
+    chmod 0644 /etc/claude-code/managed-settings.json
+ENV DISABLE_UPDATES=1
 
 RUN useradd -m agent
 USER agent
 WORKDIR /home/agent
+
+# Run the binary once, as the user that runs it. A file that cannot execute on this architecture
+# fails the build here and never reaches a run.
+RUN claude --version

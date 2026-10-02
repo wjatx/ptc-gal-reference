@@ -1,0 +1,6 @@
+# What the EC2 arm's base AMI installs into /opt/boto3-venv.
+# Compiled to boto3-venv.txt. README.md in this directory has the command.
+#
+# The venv is built by the system Python of Amazon Linux 2023, which is 3.9.
+# 1.42.97 is the last boto3 release that supports Python 3.9.
+boto3==1.42.97

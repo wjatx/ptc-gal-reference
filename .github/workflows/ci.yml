@@ -13,7 +13,9 @@
 #   infra       CDK synth plus the conformance assertions, and the committed
 #               egress snapshots matching a fresh regeneration.
 #   container   the ceremony arc running in a plain Linux container as a UID the
-#               image was not built for, with no AWS anything.
+#               image was not built for, with no AWS anything. Also builds the two
+#               confined-agent images for amd64, which runs the pinned x86_64
+#               Claude Code binary once. Nothing is pushed.
 #   laptop      the path a tester follows on their own machine, on macOS and on
 #               native Windows: install, the full suite from the root with the
 #               specifications present, the clause summary, the embedded example,
@@ -219,6 +221,27 @@ jobs:
           PLATFORM: linux/amd64
           ARBITRARY_UID: "60000"
         run: ./safe_agents/arms/local/container-arc-run.sh
+
+      # Build only: no push, no registry login, and the images are never run. Each
+      # Containerfile fetches its pinned downloads, checks their hashes, and ends
+      # with `RUN claude --version`, so a pin that no longer matches or a binary
+      # that does not execute fails the build. The runner is amd64, so these
+      # exercise the linux-x86_64 pins. The arm64 pins, which are what the Fargate
+      # task and an Apple Silicon laptop use, are not built here.
+      #
+      # `!cancelled()` so each build reports even when the step before it failed:
+      # the three results are independent.
+      - name: Build the Fargate agent image (amd64, build only)
+        if: ${{ !cancelled() }}
+        run: |
+          podman build --platform linux/amd64 -t safe-agents-fargate-agent:ci \
+            -f safe_agents/arms/fargate/Containerfile.agent safe_agents/arms/fargate/
+
+      - name: Build the local agent image (amd64, build only)
+        if: ${{ !cancelled() }}
+        run: |
+          podman build --platform linux/amd64 -t safe-agents-local-agent:ci \
+            -f safe_agents/arms/local/Containerfile safe_agents/arms/local/
 
   laptop:
     name: "laptop — ${{ matrix.os }}, the tester's path"

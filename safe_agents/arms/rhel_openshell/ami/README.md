@@ -24,7 +24,7 @@ box **config-only**, exactly like the EC2 arm: it boots ready to run with no int
 | Root device | `/dev/xvda` | **`/dev/sda1`** |
 | Package manager | `dnf` (AL2023) | `dnf` (RHEL 9 + EPEL/CRB) |
 | NAT firewall tool | `iptables-nft` (baked) | **`nftables`** (already on the RHEL AMI — **do NOT bake iptables**) |
-| AWS CLI installer | `awscli-exe-linux-aarch64.zip` | pinned `awscli-exe-linux-x86_64-<version>.zip` |
+| AWS CLI installer | pinned `awscli-exe-linux-aarch64-<version>.zip` | pinned `awscli-exe-linux-x86_64-<version>.zip` |
 | SSM agent | present on AL2023 | **baked** (RHEL AMIs omit it) |
 | AMI tag | `safe-agents:ami=base` | `safe-agents:ami=base-rhel` |
 | IB resource prefix | `safe-agents-base` | `safe-agents-base-rhel` |
@@ -66,7 +66,7 @@ The component and the boot scripts install each tool from the same pin by the sa
 commands, and `tests/test_rhel_ami.py` fails if the two sets of pins differ. Move a pin with
 `scripts/update-artifact-pin.py`, which rewrites both. A changed component needs a new
 `--semantic-version` (and the recipe's `componentArn` to match) before Image Builder will
-take it.
+take it. The component and the recipe are both at 2.0.0.
 
 The component's `VerifyInstalls` step runs each pinned binary. That step is the first
 place the x86_64 Claude Code binary executes; it has been hashed, and not run.
@@ -112,7 +112,7 @@ Substitute `${AWS_REGION}`, `${AWS_ACCOUNT_ID}`, `${RHEL9_PARENT_AMI}`,
 # 1. Component
 aws imagebuilder create-component \
   --name safe-agents-base-rhel \
-  --semantic-version 1.0.0 \
+  --semantic-version 2.0.0 \
   --platform Linux \
   --supported-os-versions '["Red Hat Enterprise Linux 9"]' \
   --data file://image-builder/component-base.yaml \
@@ -143,8 +143,22 @@ aws imagebuilder start-image-pipeline-execution \
 ```
 
 A bake runs roughly **20–35 minutes** (RHEL `dnf update` + the full toolchain install + the
-validate phase). The pipeline also runs weekly (Sunday 03:00 UTC) when RHEL component updates
-are available.
+validate phase).
+
+### The weekly schedule ships off
+
+`pipeline.json` carries a weekly schedule (Sunday 03:00 UTC, when RHEL updates are
+available) and `"status": "DISABLED"`, so a pipeline created from it never bakes on a
+timer. A bake is a deliberate act. Provisioning
+launches from the newest AMI carrying the bake tag, so a scheduled bake would change what the
+next provision picks up without anyone having decided that it should.
+
+Run a bake by hand with the command above. `start-image-pipeline-execution` starts a build
+whether the pipeline is enabled or disabled (AWS documents this in the Image Builder API
+reference for `StartImagePipelineExecution`). To turn the schedule on for an account, set
+`"status": "ENABLED"` in the deployed pipeline with `aws imagebuilder update-image-pipeline`;
+the copy in this repository stays `DISABLED`, and
+`safe_agents/arms/tests/test_image_builder_definitions.py` fails if it does not.
 
 ## Tearing down bake artifacts
 

@@ -46,6 +46,7 @@ import pytest
 # Imports (core/ is on sys.path via conftest.py)
 # ---------------------------------------------------------------------------
 
+from safe_agents.arms.tests.fetch_rules import pins
 from safe_agents.arms.ec2.provision import (
     BROKER_CONNECTOR_KEYS_RESOURCE_PATTERN,
     agent_role_extensions,
@@ -755,8 +756,8 @@ class TestAmiComponentContent:
         must be used instead. user-data calls 'aws s3 cp' and 'aws secretsmanager'.
         """
         content = _COMPONENT_PATH.read_text(encoding="utf-8")
-        assert "awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" in content, (
-            "component-base.yaml must install AWS CLI v2 via the official arm64 installer "
+        assert "awscli.amazonaws.com/awscli-exe-linux-aarch64-" in content, (
+            "component-base.yaml must install AWS CLI v2 from the versioned arm64 archive "
             "(awscli2 is not a valid AL2023 dnf package)"
         )
 
@@ -814,6 +815,80 @@ class TestAmiComponentContent:
             "component-base.yaml must install python3-pyyaml so the system python3 "
             "can run the harness (harness.py imports yaml at the top level)"
         )
+
+    def test_every_download_is_an_arm64_lock_line(self) -> None:
+        """The base AMI is arm64, so each pinned download is the lock's linux-aarch64 line.
+
+        test_pinned_fetches.py already fails on a pair the lock does not have. This fails
+        on a pair the lock has for the wrong architecture, which would hash correctly and
+        then not run.
+        """
+        lock = pins.parse_lock((REPO_ROOT / pins.LOCK_RELPATH).read_text(encoding="utf-8"))
+        by_pair = {(pin.url, pin.sha256): pin for pin in lock.pins}
+        used = [by_pair[(pair.url, pair.sha256)] for pair in pins.find_pairs(_COMPONENT_PATH.read_text(encoding="utf-8"))]
+        assert {pin.name for pin in used} == {"awscli", "claude-code"}
+        assert {pin.platform for pin in used} == {"linux-aarch64"}, [pin.line() for pin in used]
+
+    def test_claude_code_is_the_pinned_binary_in_the_harness_block(self) -> None:
+        content = _COMPONENT_PATH.read_text(encoding="utf-8")
+        start = content.find("HARNESS-COUPLING BLOCK START")
+        end = content.find("HARNESS-COUPLING BLOCK END")
+        assert -1 < start < end, "component must bracket the Claude install with HARNESS-COUPLING markers"
+        block = content[start:end]
+        assert "downloads.claude.ai/claude-code-releases/" in block and "/linux-arm64/claude" in block, (
+            "the pinned Claude Code native binary (arm64) must be installed inside the "
+            "HARNESS-COUPLING block"
+        )
+        assert "DISABLE_UPDATES" in block and "/etc/claude-code/managed-settings.json" in block, (
+            "the block must write DISABLE_UPDATES into the managed settings, or the baked "
+            "CLI could update itself past the pin"
+        )
+
+    def test_does_not_bake_node(self) -> None:
+        """Claude Code is a native binary and nothing else on the box uses Node.js."""
+        commands = "\n".join(
+            line for line in _COMPONENT_PATH.read_text(encoding="utf-8").splitlines() if not line.strip().startswith("#")
+        ).lower()
+        for token in ("nodejs", "nodesource", "npm install", "@anthropic-ai/claude-code", "node --version"):
+            assert token not in commands, f"component must not bake Node.js or use npm: found {token!r}"
+        assert "command -v node || command -v npm" in commands, (
+            "the validate phase must fail the bake if node or npm is on the image"
+        )
+
+    def test_boto3_requirements_are_exactly_the_lock(self) -> None:
+        """The component writes its own requirements file (no repository file is on the
+        build instance). Every entry must be an entry of toolchain/boto3-venv.txt, with the
+        same version, marker and hashes, and none may be missing: pip then installs what
+        the lock says or nothing.
+        """
+        def entries(lines: list[str]) -> dict[str, frozenset[str]]:
+            found: dict[str, frozenset[str]] = {}
+            for line in lines:
+                spec, *hashes = [part.strip() for part in line.split("--hash=")]
+                assert spec not in found, f"{spec} is listed twice"
+                found[spec] = frozenset(hashes)
+            return found
+
+        lock_text = (REPO_ROOT / "safe_agents" / "arms" / "toolchain" / "boto3-venv.txt").read_text(encoding="utf-8")
+        locked = entries([
+            line for line in lock_text.replace("\\\n", " ").splitlines()
+            if line.strip() and not line.lstrip().startswith(("#", "--"))
+        ])
+
+        content = _COMPONENT_PATH.read_text(encoding="utf-8")
+        written = re.search(r"cat > /tmp/boto3-venv\.txt <<'REQ'\n(.*?)\n\s*REQ\n", content, re.DOTALL)
+        assert written, "component must write /tmp/boto3-venv.txt from a quoted here-document"
+        lines = [line.strip() for line in written.group(1).splitlines()]
+        assert lines[0] == "--only-binary :all:", "the requirements must refuse source builds, as the lock does"
+        baked = entries(lines[1:])
+
+        assert locked and any(spec.startswith("boto3==") for spec in locked)
+        assert all(len(hashes) >= 1 and all(re.fullmatch(r"sha256:[0-9a-f]{64}", h) for h in hashes) for hashes in locked.values())
+        assert baked == locked, (
+            f"baked only: {sorted(set(baked) - set(locked))}; locked only: {sorted(set(locked) - set(baked))}; "
+            f"hashes differ: {sorted(spec for spec in set(baked) & set(locked) if baked[spec] != locked[spec])}"
+        )
+        assert "/opt/boto3-venv/bin/python -m pip install --no-cache-dir --require-hashes -r /tmp/boto3-venv.txt" in content
 
     def test_remote_smoke_harness_path_matches_boot_extracted_path(self) -> None:
         """Gap 2: phases.py remote-smoke path must match the path user-data extracts.

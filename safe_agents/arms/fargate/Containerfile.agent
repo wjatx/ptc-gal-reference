@@ -7,33 +7,58 @@
 # iproute2 and the runner does NO route surgery: it just proves the confinement holds (smoke-egress)
 # and does the brokered round-trip (model proxy :8443 + tool API :8080).
 #
-# node:22-slim matches the local agent image. The agent reaches DynamoDB (its run record) over the
-# VPC gateway endpoint, so the AWS CLI v2 is installed for that one write.
-FROM node:22-slim
+# The agent reaches DynamoDB (its run record) over the VPC gateway endpoint, so the AWS CLI v2 is
+# installed for that one write.
+#
+# Every download is pinned (safe_agents/arms/toolchain/README.md). The AWS CLI and the Claude Code
+# binary are lines of toolchain/artifacts.lock, fetched with the canonical inline form: a hash
+# mismatch or a pruned URL fails the build. Each is published per architecture, so each RUN picks
+# the pin for the architecture the image is being built for. The task definition runs arm64; an
+# amd64 build is what CI does, and the only place the x86_64 pins are exercised.
+#
+# The base is pinned by digest, and the tag is kept only so a reader can see which image the digest
+# names. The digest is the multi-arch index, so a linux/arm64 build and a linux/amd64 build both
+# resolve through it. It is the same base the broker image builds from
+# (safe_agents/arms/local/Containerfile.broker): this image needs a Debian userland and nothing
+# from Python, and reuses the base this repository already pins. It carries no Node.js. Claude
+# Code is a native binary and needs none, and run.sh uses nothing else that would.
+# Re-resolve: skopeo inspect --raw docker://docker.io/library/python:3.12-slim | shasum -a 256
+FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
 
-# curl + ca-certificates for the smoke-egress probes and the brokered tool call; unzip for the
-# AWS CLI v2 bundle install.
+# curl + ca-certificates for the pinned downloads below, the smoke-egress probes and the brokered
+# tool call; unzip for the AWS CLI v2 bundle install.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # AWS CLI v2 — for the run-record PutItem to DynamoDB via the VPC gateway endpoint (the agent is in
-# an isolated subnet; the gateway endpoint is its only path to the service). The bundle is
-# arch-specific; pick by dpkg architecture so the image builds on both arm64 and amd64.
+# an isolated subnet; the gateway endpoint is its only path to the service).
 RUN set -eux; \
     case "$(dpkg --print-architecture)" in \
-        arm64) awscli_arch="aarch64" ;; \
-        amd64) awscli_arch="x86_64" ;; \
+        arm64) u=https://awscli.amazonaws.com/awscli-exe-linux-aarch64-2.37.8.zip; h=00c4bac1cac8624b728d991f821428d5de1e0cb56e3803045b85bff63bedee8b; d=/tmp/awscliv2.zip; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; } ;; \
+        amd64) u=https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.37.8.zip; h=6a2f98fee0901ff623ff9abb5c80f4d67c40e5c0ac5e2ad7afa2ba756a7d5088; d=/tmp/awscliv2.zip; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; } ;; \
         *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${awscli_arch}.zip" -o /tmp/awscliv2.zip; \
     unzip -q /tmp/awscliv2.zip -d /tmp; \
     /tmp/aws/install; \
     rm -rf /tmp/awscliv2.zip /tmp/aws; \
     aws --version
 
-# The model brain — same CLI the local + autonomous arms install.
-RUN npm install -g @anthropic-ai/claude-code
+# The model brain: the Claude Code native binary, the same pin the autonomous arms install. It is
+# never installed with npm. The managed settings and the image environment both set
+# DISABLE_UPDATES=1, so the binary does not update itself past the pin.
+RUN set -eux; \
+    case "$(dpkg --print-architecture)" in \
+        arm64) u=https://downloads.claude.ai/claude-code-releases/2.1.285/linux-arm64/claude; h=24fac77749bed3d91365d6b6915aa4b824e14318ecb6bc17adbc192f01c9173d; d=/tmp/claude; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; } ;; \
+        amd64) u=https://downloads.claude.ai/claude-code-releases/2.1.285/linux-x64/claude; h=33dad1ec615a2e08cc78b494f05c110e49916de2c79d78ec8799ebf46b233d29; d=/tmp/claude; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; } ;; \
+        *) echo "unsupported arch: $(dpkg --print-architecture)" >&2; exit 1 ;; \
+    esac; \
+    install -m 0755 /tmp/claude /usr/local/bin/claude; \
+    rm -f /tmp/claude; \
+    install -d -m 0755 /etc/claude-code; \
+    printf '%s\n' '{"env": {"DISABLE_UPDATES": "1"}}' > /etc/claude-code/managed-settings.json; \
+    chmod 0644 /etc/claude-code/managed-settings.json
+ENV DISABLE_UPDATES=1
 
 # The runner, owned by root but world-readable/executable.
 COPY run.sh /app/run.sh
@@ -44,6 +69,10 @@ RUN chmod 0755 /app/run.sh
 RUN useradd -m agent
 USER agent
 WORKDIR /home/agent
+
+# Run the binary once, as the user that runs it. A file that cannot execute on this architecture
+# fails the build here and never reaches a task.
+RUN claude --version
 
 # Line-buffer stdout/stderr (stdbuf, from coreutils) so the runner's output reaches the awslogs
 # driver incrementally rather than in one block-buffered flush at exit — Fargate's awslogs driver

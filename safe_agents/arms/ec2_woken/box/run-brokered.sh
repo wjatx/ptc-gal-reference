@@ -30,6 +30,9 @@
 #   SA_OAUTH_SECRET_ID    Secrets Manager id of the model oauth token (resolve-at-runtime)
 #   SA_RUN_SMOKE          "1" to run the four smoke-egress assertions before the run (default off)
 set -uo pipefail
+# The Claude Code binary is pinned (safe_agents/arms/toolchain/README.md) and must not update
+# itself. The base AMI's managed settings say the same; this covers the process environment.
+export DISABLE_UPDATES=1
 
 # Line-buffer stdout/stderr so logs survive an abrupt `stop-instances` — re-exec self once
 # under stdbuf (the same durable-logging fix pattern used across the arms).

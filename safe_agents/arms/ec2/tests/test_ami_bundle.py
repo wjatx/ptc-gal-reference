@@ -520,10 +520,13 @@ def test_component_does_not_clone_private_repo() -> None:
 
 
 def test_component_installs_aws_cli_via_official_installer() -> None:
-    """AWS CLI v2 must be installed via the official aarch64 upstream installer."""
+    """AWS CLI v2 must be installed from the official aarch64 archive, at a pinned version."""
     combined = " ".join(_component_commands())
-    assert "awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" in combined, (
-        "Component must download the official arm64 AWS CLI v2 installer"
+    assert re.search(r"awscli\.amazonaws\.com/awscli-exe-linux-aarch64-\d+\.\d+\.\d+\.zip", combined), (
+        "Component must download the official arm64 AWS CLI v2 archive by version"
+    )
+    assert "awscli-exe-linux-aarch64.zip" not in combined, (
+        "the unversioned archive name is whatever is newest; it is not a pin"
     )
     assert "/tmp/aws/install" in combined, (
         "Component must run the /tmp/aws/install step"

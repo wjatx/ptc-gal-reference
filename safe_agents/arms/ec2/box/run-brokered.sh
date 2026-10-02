@@ -41,6 +41,9 @@
 #   SA_RUN_SMOKE          "1" to run the four smoke-egress assertions before the turn (default off)
 #   CLAUDE_CODE_OAUTH_TOKEN  model token; if unset, resolved at runtime from SA_OAUTH_SECRET_ID
 set -uo pipefail
+# The Claude Code binary is pinned (safe_agents/arms/toolchain/README.md) and must not update
+# itself. Set at the top so both phases get it: phase 2 re-execs this script inside the netns.
+export DISABLE_UPDATES=1
 
 # Load the env contract when present so on-demand (SSM) invocations get the same config the
 # systemd service does. Existing environment wins (set -a exports what the file defines).

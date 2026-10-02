@@ -402,7 +402,7 @@ class TestRhelBakeTeardown:
             f"{prefix}-pipeline",
         )
         aws.seed_imagebuilder_recipe(
-            f"arn:aws:imagebuilder:us-east-1:123456789012:image-recipe/{prefix}/1.0.0", prefix
+            f"arn:aws:imagebuilder:us-east-1:123456789012:image-recipe/{prefix}/2.0.0", prefix
         )
         aws.seed_imagebuilder_infra_config(
             f"arn:aws:imagebuilder:us-east-1:123456789012:infrastructure-configuration/{prefix}-infra",
@@ -412,7 +412,7 @@ class TestRhelBakeTeardown:
             f"arn:aws:imagebuilder:us-east-1:123456789012:distribution-configuration/{prefix}-dist",
             f"{prefix}-dist",
         )
-        comp_version = f"arn:aws:imagebuilder:us-east-1:123456789012:component/{prefix}/1.0.0"
+        comp_version = f"arn:aws:imagebuilder:us-east-1:123456789012:component/{prefix}/2.0.0"
         aws.seed_imagebuilder_component(comp_version, [f"{comp_version}/1"])
         aws.seed_s3_bucket(
             f"safe-agents-{self.ENV}-deploy",

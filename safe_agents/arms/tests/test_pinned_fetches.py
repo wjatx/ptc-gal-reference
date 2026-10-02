@@ -58,7 +58,7 @@ made by anything but curl or wget (`git clone`, `go install`, `helm repo add`, a
 agent manifests, Kubernetes manifests, workflow files).
 
 The rules are implemented in fetch_rules.py, beside this module. This module holds
-their statement, the allow-list of today's violations, and the tests.
+their statement, the allow-list (empty, and held empty), and the tests.
 """
 
 from __future__ import annotations
@@ -78,19 +78,15 @@ from safe_agents.arms.tests.fetch_rules import HELPER_RELPATH, REPO_ROOT, RULES,
 
 TOOLCHAIN = REPO_ROOT / "safe_agents" / "arms" / "toolchain"
 
-# ALLOWED: the unpinned fetches that exist TODAY, as a count per rule per file.
+# ALLOWED: unpinned fetches the suite tolerates, as a count per rule per file.
 #
-# Every entry is debt. The install scripts have not been converted to verified
-# fetches yet, and this list is what keeps the suite green until they are. It may
-# only shrink: the test fails when a file has a violation not counted here, and
-# equally when a count here is no longer reached, so converting a file forces its
-# entry down or out in the same change. One file per line, so conversions that land
-# separately merge without conflict. Never add to it to make a new fetch pass.
-ALLOWED: dict[str, dict[str, int]] = {
-    "safe_agents/arms/ec2/ami/image-builder/component-base.yaml": {"npm-install": 1, "pip-install": 1, "unverified-fetch": 1},
-    "safe_agents/arms/fargate/Containerfile.agent": {"image-unpinned": 1, "npm-install": 1, "unverified-fetch": 1},
-    "safe_agents/arms/local/Containerfile": {"image-unpinned": 1, "npm-install": 1},
-}
+# It is empty and stays empty. While the install scripts were being converted to
+# verified fetches it listed the violations that still existed, and it could only
+# shrink: the audit fails when a file has a violation not counted here, and equally
+# when a count here is no longer reached. The last entries went when the EC2
+# component and the two agent images were converted. test_the_allow_list_is_empty
+# fails if an entry comes back, so a new fetch has to be pinned to pass.
+ALLOWED: dict[str, dict[str, int]] = {}
 
 
 def audit(root: Path = REPO_ROOT, allowed: dict[str, dict[str, int]] | None = None) -> list[str]:
@@ -137,9 +133,10 @@ def test_the_lock_is_in_the_form_the_updater_writes():
     assert pins.parse_lock(text).render() == text
 
 
-def test_allow_list_names_only_known_rules_and_is_sorted():
-    assert list(ALLOWED) == sorted(ALLOWED)
-    assert {rule for debt in ALLOWED.values() for rule in debt} <= set(RULES)
+def test_the_allow_list_is_empty():
+    """Every scanned file is clean, so nothing is allowed. An entry here would let an
+    unpinned fetch pass; pin the fetch instead (toolchain/README.md)."""
+    assert ALLOWED == {}, f"ALLOWED must stay empty; pin these fetches instead: {sorted(ALLOWED)}"
 
 
 @pytest.mark.parametrize(
@@ -262,6 +259,12 @@ CLEAN_CONTAINERFILE = [
 
 def _rules(relpath: str, text: str) -> list[str]:
     return [violation.rule for violation in scan(relpath, text)]
+
+
+def test_every_rule_has_a_violation_fixture():
+    """With nothing allowed, no real file trips a rule any more. These fixtures are
+    then the only evidence that each rule still fires, so none may be missing."""
+    assert {rule for rule, _ in SHELL_VIOLATIONS + CONTAINERFILE_VIOLATIONS} == set(RULES)
 
 
 @pytest.mark.parametrize(("rule", "line"), SHELL_VIOLATIONS)

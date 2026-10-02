@@ -48,7 +48,7 @@ schemaVersion: 1.0
 # Deploy with:
 #   aws imagebuilder create-component \
 #     --name safe-agents-base-rhel \
-#     --semantic-version 1.0.0 \
+#     --semantic-version 2.0.0 \
 #     --platform Linux \
 #     --supported-os-versions '["Red Hat Enterprise Linux 9"]' \
 #     --data file://component-base.yaml \

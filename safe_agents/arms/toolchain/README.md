@@ -114,6 +114,24 @@ so it writes the one requirement line its platform needs, and
 `safe_agents/arms/rhel_openshell/tests/test_rhel_ami.py` fails unless that
 version and hash are in this lock.
 
+`boto3-venv.txt` is a second lock of the same kind, compiled from `boto3-venv.in`
+by the same command with the two file names changed. It is boto3 and its
+dependencies, which the EC2 arm's component installs into `/opt/boto3-venv`. The
+interpreter is the system Python of Amazon Linux 2023, also 3.9, and boto3 1.42.97
+is the last release that supports it, so this pin cannot move forward until the
+venv is built with a newer Python. The component writes the lock's requirement
+lines out itself, and `safe_agents/arms/ec2/tests/test_ec2_arm.py` fails unless
+they are exactly the lock's.
+
+## Architectures
+
+A file published per architecture has one lock line per platform. A script or
+component that runs on one architecture carries that platform's line: the RHEL
+arm is x86_64, the EC2 arm's base AMI is arm64. A Containerfile that may build for
+either carries both, one per branch of a `case "$(dpkg --print-architecture)"`, so
+the build fetches the line for the architecture the image is being built for and
+stops on any other.
+
 ## Reaching these files on a box
 
 A script that runs from a bundle sources the helper from the bundle. The RHEL
@@ -151,6 +169,6 @@ without `--require-hashes` or `--no-index`, on `uv tool install`, `uvx` and
 and on a `latest` URL. Its docstring states each rule and the distinction between
 a download and a run-time probe.
 
-The test carries a list of the violations that existed when it was written. The
-list can only shrink. Converting a script to verified fetches means deleting its
-entry in the same change.
+The test carries a list of allowed violations, `ALLOWED`. It held the unpinned
+fetches that existed when the test was written, and it is now empty. A test fails
+if an entry is added to it, so a new fetch has to be pinned to pass.

@@ -5,7 +5,7 @@ This directory owns the **prebuilt-AMI bootstrap model** for the always-on EC2 a
 ## Why prebuilt AMI instead of cloud-init internet bootstrap
 
 The deployed instance runs in a subnet with **no internet egress** — only an S3 gateway endpoint
-and the broker VPC endpoints are open. A cloud-init bootstrap that `npm install`s Claude Code or
+and the broker VPC endpoints are open. A cloud-init bootstrap that downloads Claude Code or
 `git clone`s the agent repo at boot is incompatible with this constraint. Instead:
 
 - The **base AMI** is baked in CI (where internet egress exists). It pre-installs the toolchain
@@ -25,6 +25,36 @@ ami/
     ├── dist-config.json          # Image Builder distribution configuration (AMI tags)
     └── pipeline.json             # Image Builder pipeline (ties them together)
 ```
+
+## What the component bakes
+
+`component-base.yaml` installs, on arm64 Amazon Linux 2023:
+
+- **`dnf` packages**: git, python3, python3-pip, unzip, python3-pyyaml, iptables-nft.
+- **AWS CLI v2**, from its pinned aarch64 release archive.
+- **boto3**, into `/opt/boto3-venv`, with `pip install --require-hashes`.
+- **Claude Code CLI** (the native binary), the sole HARNESS-COUPLING step. It also writes
+  `DISABLE_UPDATES=1` into `/etc/claude-code/managed-settings.json`, so the baked binary
+  never updates itself.
+
+The image carries **no Node.js**. Claude Code needs none and nothing else on the box uses
+it, and the validate phase fails the bake if `node` or `npm` is present.
+
+### Every download is pinned
+
+The AWS CLI archive and the Claude Code binary are lines of
+`safe_agents/arms/toolchain/artifacts.lock`, fetched with the inline form that directory's
+README defines: an exact version, checked against a SHA-256, with no fallback. A mismatch
+or a removed URL fails the bake. The boto3 requirement lines are a copy of
+`safe_agents/arms/toolchain/boto3-venv.txt`, and `safe_agents/arms/ec2/tests/test_ec2_arm.py`
+fails if the two differ. `dnf` installs named packages from Amazon Linux's signed repositories.
+
+Move a pin with `scripts/update-artifact-pin.py`, which rewrites the component. A changed
+component needs a new `--semantic-version`, and the recipe's `componentArn` to match,
+before Image Builder will take it. The component and the recipe are both at 2.0.0.
+
+This form of the component has not been baked. The `VerifyInstalls` step runs the Claude
+Code binary, so a file that cannot execute on the build instance fails the bake.
 
 ## AMI tagging convention
 
@@ -71,7 +101,7 @@ instance (see IAM requirements below).
 # 1. Create the AWSTOE component
 aws imagebuilder create-component \
   --name safe-agents-base \
-  --semantic-version 1.0.0 \
+  --semantic-version 2.0.0 \
   --platform Linux \
   --supported-os-versions '["Amazon Linux 2023"]' \
   --data file://image-builder/component-base.yaml \
@@ -97,7 +127,12 @@ aws imagebuilder create-image-pipeline \
 
 **Resolving the AL2023 arm64 parent image ARN:** Image Builder managed parent images follow the
 pattern `arn:aws:imagebuilder:<region>:aws:image/amazon-linux-2023-arm64/x.x.x/1`. Look up the
-current version in the Image Builder console or with:
+current version in the Image Builder console or with the command below.
+
+The `x.x.x` in the recipe's `parentImage` is deliberate. It takes the newest Amazon Linux 2023
+image at bake time, and `dnf update` then takes the newest packages, so the operating system
+is whatever Amazon published on the day of the bake. That content is pinned by the bake's
+output: the AMI id is the pin, and it does not change after the bake.
 
 ```sh
 aws imagebuilder list-images \
@@ -114,8 +149,20 @@ aws imagebuilder start-image-pipeline-execution \
   --image-pipeline-arn <PIPELINE_ARN>
 ```
 
-The pipeline also runs weekly (Sunday 02:00 UTC) when AL2023 component updates are available
-(`pipelineExecutionStartCondition` in `pipeline.json`).
+### The weekly schedule ships off
+
+`pipeline.json` carries a weekly schedule (Sunday 02:00 UTC, when AL2023 updates are
+available) and `"status": "DISABLED"`, so a pipeline created from it never bakes on a
+timer. A bake is a deliberate act. Provisioning
+launches from the newest AMI carrying the bake tag, so a scheduled bake would change what the
+next provision picks up without anyone having decided that it should.
+
+Run a bake by hand with the command above. `start-image-pipeline-execution` starts a build
+whether the pipeline is enabled or disabled (AWS documents this in the Image Builder API
+reference for `StartImagePipelineExecution`). To turn the schedule on for an account, set
+`"status": "ENABLED"` in the deployed pipeline with `aws imagebuilder update-image-pipeline`;
+the copy in this repository stays `DISABLED`, and
+`safe_agents/arms/tests/test_image_builder_definitions.py` fails if it does not.
 
 ## Bundling and uploading agent code
 
@@ -168,7 +215,8 @@ The CI role needs only `s3:PutObject` on `arn:aws:s3:::safe-agents-*-deploy/agen
 ### Build instance profile (used by the Image Builder build instance)
 
 Attach AWS managed policy `EC2InstanceProfileForImageBuilder` plus SSM core actions for console
-access. The build instance needs internet egress to install packages via `dnf` and `npm`. It does
+access. The build instance needs internet egress for `dnf`, the pinned release downloads and
+the hashed `pip` install. It does
 NOT need access to the agent S3 bucket, DynamoDB, or Secrets Manager.
 
 ### CI deploy role (used by the bundle upload script)
