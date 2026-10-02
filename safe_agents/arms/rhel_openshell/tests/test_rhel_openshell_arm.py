@@ -695,10 +695,35 @@ class TestBootstrapStructure:
         )
         assert "8080" not in code, "8080 is not the gateway port"
 
-    def test_openshell_header_does_not_claim_it_is_verified(self) -> None:
-        """The pinned OpenShell release has not been run on RHEL, and the script says so."""
+    def test_openshell_header_states_one_observation_and_its_limits(self) -> None:
+        """The pinned OpenShell release ran on RHEL once, and the header claims that and no more.
+
+        Until 2026-10-02 the header said NOT VERIFIED ON RHEL AT THIS PIN, and this test pinned
+        that. The script then ran once on a RHEL 9.8 host, so the header records a dated
+        observation: what the gateway reported, and one sandbox round-trip. It must still say
+        what that run did not cover (this arm's own policy and run-agent-sandbox.sh, a subnet
+        without egress), and it must not turn one run into a standing guarantee.
+        """
         content = INSTALL_OPENSHELL_SCRIPT.read_text(encoding="utf-8")
-        assert "NOT VERIFIED ON RHEL" in content
+        header = content.split("set -euo pipefail", 1)[0]
+
+        # What was observed: dated, counted, and specific about what the gateway printed.
+        assert "OBSERVED ONCE ON RHEL AT THIS PIN" in header
+        assert "2026-10-02" in header, "the observation must carry its date"
+        assert "Status: Connected" in header and "Version: 0.1.2" in header
+        assert "SANDBOX_OK" in header, "the header must record the sandbox round-trip"
+        # The line an operator will take for a failure is named as expected output.
+        assert "Gateway is not reachable" in header and "EXPECTED OUTPUT" in header
+
+        # What was not observed is still stated.
+        limits = header.split("NOT COVERED BY THAT RUN", 1)
+        assert len(limits) == 2, "the header must keep a list of what the run did not cover"
+        for uncovered in ("policy", "run-agent-sandbox.sh", "without egress", "one day"):
+            assert uncovered in limits[1], f"the header's limits must still name: {uncovered}"
+
+        # Neither the old statement nor a standing guarantee.
+        assert "NOT VERIFIED ON RHEL" not in content
+        assert "not verified on RHEL" not in content, "the install log line is stale"
         assert "LIVE-VERIFIED" not in content
 
     @pytest.mark.parametrize("script", FETCHING_SCRIPTS, ids=lambda p: p.name)

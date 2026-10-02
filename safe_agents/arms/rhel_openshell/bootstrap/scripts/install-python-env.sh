@@ -12,6 +12,11 @@
 #     pip refuses any file whose hash the lock does not list.
 #   - pip is the python3-pip package dnf ships. It is not upgraded from PyPI.
 #   - A failed fetch or a hash mismatch stops the bootstrap; there is no fallback.
+#
+# Ran once on a host, on 2026-10-02 (RHEL 9.8, launched from the baked image; see
+# ami/README.md). Its tools were already baked, so it skipped every install and downloaded
+# nothing. The install branches below have not run on a host in this pinned form. The
+# baked copies came from the component's lines, which use the same pins.
 set -euo pipefail
 
 log() { echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $*"; }

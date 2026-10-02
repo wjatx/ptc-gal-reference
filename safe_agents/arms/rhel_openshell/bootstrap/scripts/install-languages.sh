@@ -13,6 +13,11 @@
 #   - Rust is the standalone toolchain archive, installed under /usr/local. rustup is not
 #     installed: its job is to download toolchains, and none of those would be pinned.
 #   - Node.js is the nodejs.org release archive, not a NodeSource repo or a dnf module.
+#
+# Ran once on a host, on 2026-10-02 (RHEL 9.8, launched from the baked image, in a subnet
+# with egress, interactive profile; see ami/README.md). The three downloads below ran, and
+# the tools then reported Go 1.27.1, Rust 1.99.0 (rustc and cargo) and Node v22.23.3 with
+# npm 10.9.9. That is one run on one day.
 set -euo pipefail
 
 log() { echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $*"; }

@@ -18,6 +18,11 @@
 #     autonomous profile has no Node. The interactive profile gets it from
 #     install-languages.sh.
 #   - This arm is x86_64 only, and so is every pin below.
+#
+# Ran once on a host, on 2026-10-02 (RHEL 9.8, launched from the baked image; see
+# ami/README.md). Every tool here was already baked, so every guard skipped and nothing was
+# downloaded. The download branches below have not run on a host in this pinned form. The
+# baked copies came from the component's lines, which use the same pins.
 set -euo pipefail
 
 log() { echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $*"; }

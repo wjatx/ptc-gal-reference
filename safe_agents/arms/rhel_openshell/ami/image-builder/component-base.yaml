@@ -50,10 +50,13 @@ schemaVersion: 1.0
 # build step ran and the validate phase passed. VerifyInstalls printed `2.1.285 (Claude Code)`,
 # `aws-cli/2.37.8`, `bat 0.26.1`, `ripgrep 15.2.0`, `gh version 2.102.0`, `uv 0.12.22` and
 # `ruff 0.15.20`, and found htop and nft. That is one build on one day, and it ran this
-# component only: the boot scripts named above have not run on a host in their pinned
-# form, and nothing that only the interactive profile installs was exercised. This note
-# was written after that bake, so the header of the component that was baked does not
-# contain it.
+# component only. Three of the boot scripts named above (install-tools.sh,
+# install-python-env.sh, setup-claude.sh) ran once the same day, on a host launched from
+# the baked image. Each found its tools present and skipped its own downloads, so those
+# download branches have still not run on a host. user-data.sh.tmpl step 1 ran too, on its
+# fallback branch, because that image had no SSM agent (see InstallSSMAgent below). Step 4
+# was not exercised. ../README.md has the run and what it left untested. This note was written
+# after that bake, so the header of the component that was baked does not contain it.
 #
 # Deploy with the two commands below. create-component accepts at most 16,000 characters
 # through --data, and this file is larger, so it is uploaded to the environment's deploy
@@ -142,6 +145,15 @@ phases:
             # installs it at boot on a marketplace AMI). Bake it so the no-NAT box is
             # SSM-manageable immediately. x86_64 RPM (this arm is x86_64 only), from the
             # same pin user-data uses.
+            #
+            # This step alone does NOT put the agent in the image. Image Builder installs
+            # its own copy on a parent that lacks one, so that it can run the build, and
+            # removes it again before it creates the AMI. The first bake (2026-10-02) found
+            # the package "already installed" here, did nothing, and produced an AMI with
+            # no agent. The recipe's additionalInstanceConfiguration sets
+            # systemsManagerAgent.uninstallAfterBuild to false so the agent stays; without
+            # that setting this step is cancelled out. The dnf line below installs the
+            # pinned build when none is present and leaves a present one alone.
             - u=https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/3.3.5390.0/linux_amd64/amazon-ssm-agent.rpm; h=85369679511b67f8f01824043ae17a679b6f21edd78229ccd1d5acd6c347f82f; d=/tmp/amazon-ssm-agent.rpm; a=; curl --proto '=https' --tlsv1.2 -fsSL --retry 3 -o "$d" "$u" && a=$(sha256sum "$d" | cut -d' ' -f1); [ "$a" = "$h" ] || { echo "fetch_verified FAILED $u expected sha256 $h, got ${a:-no file}" >&2; rm -f "$d"; exit 1; }
             - dnf install -y /tmp/amazon-ssm-agent.rpm
             - rm -f /tmp/amazon-ssm-agent.rpm

@@ -21,6 +21,12 @@
 #   - AWS CLI v2 is not installed here. user-data installs it from its pinned archive
 #     before bootstrap.sh runs (the bundle pull needs it), and the prebuilt AMI bakes the
 #     same archive, so a second install procedure here would be a third copy.
+#
+# Ran once on a host, on 2026-10-02 (RHEL 9.8, launched from the baked image, in a subnet
+# with egress, interactive profile; see ami/README.md). The downloads below ran, and the
+# tools then reported oc 4.22.15 (kubectl v1.35.2, from the same archive), helm v4.3.0,
+# argocd v3.5.3, terraform v1.16.4, yq v4.54.1 and gitleaks 8.30.1 (in ~/bin). The AWS CLI
+# check found the baked 2.37.8. That is one run on one day.
 set -euo pipefail
 
 log() { echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $*"; }

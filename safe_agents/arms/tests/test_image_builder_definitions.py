@@ -137,6 +137,26 @@ def test_component_and_recipe_versions_agree_everywhere(arm):
         )
 
 
+def test_the_rhel_recipe_keeps_the_ssm_agent_in_the_image():
+    """A RHEL parent has no SSM agent. Image Builder installs one to run the build and
+    removes it before it creates the AMI, unless the recipe says to leave it. The component's
+    own install step finds the package present and does nothing, so without this setting the
+    baked image has no agent and the box cannot be reached in a subnet with no egress. The
+    first bake (2026-10-02) produced exactly that image. The Amazon Linux parent ships the
+    agent, so Image Builder installs nothing there and removes nothing."""
+    recipe = _load("rhel_openshell", "recipe-base.json")
+    agent = recipe.get("additionalInstanceConfiguration", {}).get("systemsManagerAgent", {})
+    assert agent.get("uninstallAfterBuild") is False, (
+        "rhel_openshell recipe must set additionalInstanceConfiguration.systemsManagerAgent."
+        "uninstallAfterBuild to false, or Image Builder removes the agent from the image"
+    )
+    component = _component_text("rhel_openshell")
+    assert "uninstallAfterBuild" in component, (
+        "the component's InstallSSMAgent step must say that the recipe setting is what keeps "
+        "the agent, so nobody reads the step as sufficient"
+    )
+
+
 def _build_version_follows_a_wildcard(image: str) -> bool:
     """True for a parent image `create-image-recipe` refuses: an Image Builder image ARN
     whose version has a wildcard node and is followed by a build version."""

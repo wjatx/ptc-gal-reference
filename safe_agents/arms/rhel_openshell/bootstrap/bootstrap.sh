@@ -260,9 +260,14 @@ sudo systemctl enable "broker-${SA_AGENT_NAME}.service" || true
 # k8s/DevOps tools, Go, Rust, Remote Control).
 if [ "${SA_PROFILE}" = "interactive" ]; then
     # OpenShell sandbox runtime: rootless podman + OpenShell gateway (systemd --user
-    # service, registered on :17670). Installed from pinned release RPMs, and not yet
-    # verified on RHEL at that pin (see install-openshell.sh). This is
+    # service, registered on :17670). Installed from pinned release RPMs. This is
     # the dev-box confinement mechanism — autonomous agents use netns instead.
+    #
+    # This interactive branch ran once on a host, on 2026-10-02 (RHEL 9.8, from the baked
+    # image, with egress), and the script exited 0. The header of install-openshell.sh has
+    # what OpenShell printed at its pin, and ami/README.md has the whole run and its limits.
+    # The autonomous branch above (netns setup, run-brokered.sh, broker wiring) did not run
+    # in that test.
     log "[interactive] installing OpenShell sandbox runtime"
     "${SCRIPT_DIR}/scripts/install-openshell.sh" 2>&1 | tee -a "$LOG"
 

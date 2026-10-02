@@ -178,8 +178,8 @@ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] RHEL bootstrap bundle extracted to ${BOOT
 # bootstrap.sh is the snapshotted install script. It runs as dev
 # (required for rootless podman + OpenShell user bus). The SA_* env vars are
 # passed through so bootstrap.sh can write the correct systemd units and sidecar.
-# Its install scripts were moved to pinned downloads after the last live run and have
-# not been run on a host since.
+# Step 1 ran verbatim once (2026-10-02), on its fallback branch, and bootstrap.sh ran once
+# on the interactive profile. This file has not run end to end: see ami/README.md.
 #
 # XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS are set so that `systemctl --user`
 # commands inside bootstrap.sh (and install-openshell.sh) can reach the dev user's

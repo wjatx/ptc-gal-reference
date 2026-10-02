@@ -1,7 +1,7 @@
 {
   "name": "safe-agents-base-rhel-pipeline",
   "description": "Builds the safe-agents rhel-openshell base AMI (RHEL 9 x86_64) on demand. The weekly schedule ships DISABLED: a bake is a deliberate act, started by hand. The bake runs in CI where internet + RHUI egress exists; the resulting AMI is referenced by rhel_openshell_provision at deploy time (tag safe-agents:ami=base-rhel).",
-  "imageRecipeArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:image-recipe/safe-agents-base-rhel/2.0.0",
+  "imageRecipeArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:image-recipe/safe-agents-base-rhel/2.0.1",
   "infrastructureConfigurationArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:infrastructure-configuration/safe-agents-base-rhel-infra",
   "distributionConfigurationArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:distribution-configuration/safe-agents-base-rhel-dist",
   "enhancedImageMetadataEnabled": false,

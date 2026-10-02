@@ -51,8 +51,10 @@ export DISABLE_UPDATES=1
 
 if ! command -v claude &>/dev/null; then
     # x86_64 only, like the arm. The binary at this pin ran on RHEL 9 in the component bake
-    # of 2026-10-02 (ami/README.md). This script's own download and install has not run on
-    # a host in this form.
+    # of 2026-10-02. This script ran once on a host launched from that image the same day
+    # (ami/README.md): it found the baked binary, skipped this branch, printed
+    # `2.1.285 (Claude Code)`, and skipped the token check because SA_OAUTH_TOKEN_SECRET
+    # was unset. So this download and install has still not run on a host.
     fetch_verified \
         https://downloads.claude.ai/claude-code-releases/2.1.285/linux-x64/claude \
         33dad1ec615a2e08cc78b494f05c110e49916de2c79d78ec8799ebf46b233d29 \

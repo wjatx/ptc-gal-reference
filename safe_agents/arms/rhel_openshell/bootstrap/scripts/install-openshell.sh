@@ -1,12 +1,40 @@
 #!/bin/bash
 # install-openshell.sh — OpenShell sandbox runtime for RHEL 9.
 #
-# NOT VERIFIED ON RHEL AT THIS PIN. An earlier, unpinned form of this script (the upstream
-# installer piped to a shell, taking whatever release was newest) was verified end-to-end
-# on a live RHEL 9.8 box. This form installs the pinned 0.1.2 release and has not been run
-# on a RHEL host. The 0.1.2 packages are built for Fedora (`fc44`); whether they install
-# and run on RHEL 9 is not established. Treat the first interactive-profile boot as the
-# test.
+# OBSERVED ONCE ON RHEL AT THIS PIN. On 2026-10-02, in us-east-1, this script ran on one
+# m7i.large launched from the baked RHEL 9.8 image, in a subnet with internet egress. It was
+# called by bootstrap.sh, run as dev with SA_PROFILE=interactive by a test harness over
+# Systems Manager (user-data.sh.tmpl step 8 did not start it). In that run:
+#
+#   - The three pinned 0.1.2 RPMs (openshell, openshell-gateway, openshell-prover, each
+#     `-1.fc44.x86_64`) were fetched by fetch_verified and installed by dnf. They are built
+#     for Fedora, and they installed and ran on RHEL 9.8.
+#   - The gateway user service was enabled and started, and
+#     `systemctl --user is-active openshell-gateway` printed `active`.
+#   - `openshell gateway add` printed "Gateway is not reachable ... Verify the gateway is
+#     running" and then "Gateway 'openshell' added and set as active". The first line is
+#     EXPECTED OUTPUT here. Do not read it as a failure: the gateway starts
+#     asynchronously, and the poll at the end of this script is the check.
+#   - That poll saw `Status: Connected`, `Authentication: Authenticated (mTLS transport)`
+#     and `Version: 0.1.2`.
+#   - Afterwards, outside this script, one sandbox round-trip worked:
+#     `openshell sandbox create --name bootpath --no-tty -- sh -c "echo SANDBOX_OK; uname -m; id -u"`
+#     printed `SANDBOX_OK`, `x86_64` and `1000` and exited 0, `openshell sandbox list`
+#     showed it `Completed`, and `openshell sandbox delete bootpath` was accepted and left
+#     the list empty.
+#
+# NOT COVERED BY THAT RUN:
+#
+#   - This arm's own policy. The sandbox used the default image the OpenShell CLI chooses
+#     and no policy file. openshell_policy.py and run-agent-sandbox.sh did not run.
+#   - A subnet without egress. This script downloads, so it needs egress wherever the
+#     packages are not already installed.
+#   - A boot started by user-data.sh.tmpl, and a boot from a marketplace image.
+#   - More than one run, one day and one RHEL minor release.
+#
+# An earlier, unpinned form of this script (the upstream installer piped to a shell, taking
+# whatever release was newest) was verified end-to-end on a live RHEL 9.8 box. That was a
+# different install path, and it pinned no release.
 #
 # Load-bearing details:
 #
@@ -82,7 +110,7 @@ systemctl --user enable --now podman.socket 2>/dev/null \
 
 # OpenShell CLI + gateway + prover from the pinned 0.1.2 release RPMs (x86_64).
 if ! command -v openshell >/dev/null 2>&1; then
-    log "installing OpenShell 0.1.2 from pinned release RPMs (not verified on RHEL)"
+    log "installing OpenShell 0.1.2 from pinned release RPMs"
     fetch_verified \
         https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell-0.1.2-1.fc44.x86_64.rpm \
         fd30a8340c0208559e874e86382c488b85d4f19b50932b97d1dede98a690141f \
@@ -101,10 +129,14 @@ if ! command -v openshell >/dev/null 2>&1; then
         "${WORK}/openshell-prover.rpm"
 
     # Bring the gateway up as the upstream installer does on an RPM host, then register it.
-    # This is the one registration (see 2 above).
+    # This is the one registration (see 2 above). `gateway add` prints "Gateway is not
+    # reachable ... Verify the gateway is running" before "Gateway 'openshell' added and set
+    # as active" (2026-10-02 run). That first line is expected here and is not a failure;
+    # the poll below is the check.
     systemctl --user daemon-reload
     systemctl --user enable openshell-gateway
     systemctl --user restart openshell-gateway
+    log "registering the gateway; a 'Gateway is not reachable' notice from this step is expected, the status poll below is the check"
     openshell gateway add "$GATEWAY_ENDPOINT" --local --name openshell
 else
     log "OpenShell already installed: $(openshell --version 2>/dev/null || echo present)"

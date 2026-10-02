@@ -25,7 +25,7 @@ box **config-only**, exactly like the EC2 arm: it boots ready to run with no int
 | Package manager | `dnf` (AL2023) | `dnf` (RHEL 9 + EPEL/CRB) |
 | NAT firewall tool | `iptables-nft` (baked) | **`nftables`** (already on the RHEL AMI — **do NOT bake iptables**) |
 | AWS CLI installer | pinned `awscli-exe-linux-aarch64-<version>.zip` | pinned `awscli-exe-linux-x86_64-<version>.zip` |
-| SSM agent | present on AL2023 | **baked** (RHEL AMIs omit it) |
+| SSM agent | present on AL2023 | **baked** (RHEL AMIs omit it), and kept only because the recipe sets `uninstallAfterBuild: false` |
 | AMI tag | `safe-agents:ami=base` | `safe-agents:ami=base-rhel` |
 | IB resource prefix | `safe-agents-base` | `safe-agents-base-rhel` |
 
@@ -66,7 +66,7 @@ The component and the boot scripts install each tool from the same pin by the sa
 commands, and `tests/test_rhel_ami.py` fails if the two sets of pins differ. Move a pin with
 `scripts/update-artifact-pin.py`, which rewrites both. A changed component needs a new
 `--semantic-version` (and the recipe's `componentArn` to match) before Image Builder will
-take it. The component and the recipe are both at 2.0.0.
+take it. The component is at 2.0.0 and the recipe is at 2.0.1.
 
 Component 2.0.0 has been baked once: on 2026-10-02, in us-east-1, on an `m7i.large` build
 instance, from parent `RHEL-9.8.0_HVM-20260908-x86_64-0-Hourly2-GP3`, created from an S3
@@ -79,12 +79,96 @@ printed `2.1.285 (Claude Code)`, `aws-cli/2.37.8` (reporting `exe/x86_64.rhel.9`
 `pip install` of ruff worked on the system Python 3.9 (pip 21.3.1, which printed an upgrade
 notice and nothing else). That is one build on one day.
 
-The bake runs the component and nothing else. The boot-path scripts under `bootstrap/scripts/`
-and `user-data.sh.tmpl` have not run on a host in their pinned form. Neither has anything that
-only the interactive profile installs: Node.js, Go, Rust, the Kubernetes tools (oc, helm,
-argocd, terraform, yq, gitleaks) and OpenShell. The OpenShell 0.1.2 packages are built for
-Fedora and remain untested on RHEL 9; `bootstrap/scripts/install-openshell.sh` says so in its
-header.
+**That AMI had no SSM agent**, and the bake did not show it. A RHEL parent has no agent, so
+Image Builder installs its own to run the build. The component's `InstallSSMAgent` step then
+finds the package present and does nothing, and Image Builder removes the agent it installed
+before it creates the AMI. An instance launched from that image on 2026-10-02 never registered
+with Systems Manager. The boot-path test below used the same image, and the fallback in
+`user-data.sh.tmpl` step 1 is what made its instance reachable: finding no agent, it installed
+the pinned RPM at boot, which needs egress. Recipe 2.0.1 sets
+`additionalInstanceConfiguration.systemsManagerAgent.uninstallAfterBuild` to `false`, which
+leaves the agent in the image. The agent a bake keeps is
+the one Image Builder installed, at whatever version it installs that day; the component's
+pinned RPM is used only when none is present. Nothing inside a bake can check this, because
+the removal happens after the component's last step. Launch an instance from a new AMI and
+confirm it registers before relying on it.
+
+That check was run for recipe 2.0.1 on 2026-10-02. The build's sanitize step logged "Uninstall
+after build set to false...Skip Uninstall ssm agent", and an instance launched from the
+resulting image with no agent install in its user data registered with Systems Manager, agent
+version 3.3.5390.0. The first image, the one without the agent, was deregistered.
+
+The bake runs the component and nothing else, so it says nothing about the boot path. That was
+tested separately, once.
+
+### The boot path, tested once
+
+On 2026-10-02, in us-east-1, one `m7i.large` was launched from that image in a subnet with
+internet egress. The image is RHEL 9.8, built from component 2.0.0 and recipe 2.0.0, so it had
+no SSM agent.
+
+`user-data.sh.tmpl` step 1 ran verbatim as the instance's user data and took its fallback
+branch. The inline verified fetch of the pinned SSM agent RPM (3.3.5390.0) matched its hash,
+`dnf -y install /tmp/amazon-ssm-agent.rpm` installed it, `systemctl enable --now` started it,
+and the instance registered with Systems Manager. That was the first run of the fallback on a
+host.
+
+Steps 2, 3, 7 and 8 were then reproduced by a test harness over Systems Manager. The template
+did not run them. The harness set the cgroup delegation, created the `dev` user with
+passwordless sudo, unpacked the rhel-bootstrap bundle to `/home/dev/rhel-bootstrap`, ran
+`loginctl enable-linger dev`, and ran `bootstrap.sh` as `dev` with `SA_PROFILE=interactive`.
+The bundle was built by `bundle_rhel_bootstrap()` from commit `6ed1291` and fetched by
+presigned URL, because the test instance had no read access to the deploy bucket.
+
+`bootstrap.sh` exited 0. In order:
+
+- `install-tools.sh`, `install-python-env.sh` and `setup-claude.sh` each found its tools baked
+  and skipped its downloads. `setup-claude.sh` printed `2.1.285 (Claude Code)` and, with no
+  `SA_OAUTH_TOKEN_SECRET`, skipped the token check.
+- The systemd service and timer for the agent name were written and the timer was enabled. No
+  unit failed.
+- `install-openshell.sh` fetched the three pinned OpenShell 0.1.2 RPMs (`openshell`,
+  `openshell-gateway`, `openshell-prover`, each `-1.fc44.x86_64`) with `fetch_verified`,
+  installed them with `dnf`, and enabled and started the gateway user service. The packages are
+  built for Fedora; they installed and ran on RHEL 9.8. `openshell gateway add` printed "Gateway
+  is not reachable ... Verify the gateway is running" and then "Gateway 'openshell' added and
+  set as active". The first of those lines is expected at that point and is not a failure. The
+  script's poll then saw `Status: Connected`, `Authentication: Authenticated (mTLS transport)`
+  and `Version: 0.1.2`, and `systemctl --user is-active openshell-gateway` printed `active`.
+- `install-languages.sh` installed Go 1.27.1, Rust 1.99.0 (rustc and cargo) and Node v22.23.3
+  with npm 10.9.9, from their pins.
+- `install-k8s-tools.sh` installed oc 4.22.15 (kubectl v1.35.2, from the same archive), helm
+  v4.3.0, argocd v3.5.3, terraform v1.16.4, yq v4.54.1 and gitleaks 8.30.1 (in `~/bin`), from
+  their pins. Its AWS CLI presence check passed (2.37.8).
+- The shell configuration overlay and the Remote Control unit were installed. The unit was not
+  enabled, which is the design.
+
+Afterwards each tool, run as `dev`, printed the version above. `getenforce` printed
+`Enforcing`, and `/etc/claude-code/managed-settings.json` contained
+`{"env": {"DISABLE_UPDATES": "1"}}`.
+
+One OpenShell sandbox round-trip worked.
+`openshell sandbox create --name bootpath --no-tty -- sh -c "echo SANDBOX_OK; uname -m; id -u"`
+printed `SANDBOX_OK`, `x86_64` and `1000` and exited 0. `openshell sandbox list` showed the
+sandbox `Completed`, and `openshell sandbox delete bootpath` was accepted and left the list
+empty. The sandbox used the default image the OpenShell CLI chooses, and no policy file was
+passed.
+
+That is one run, on one day, on one RHEL minor release. It left the following untested:
+
+- **The autonomous profile's boot path.** The netns setup, `run-brokered.sh`, the broker wiring
+  and a brokered run did not run. Only the three always-steps that profile shares with the
+  interactive one did.
+- **The download branches of `install-tools.sh`, `install-python-env.sh` and `setup-claude.sh`
+  on a host.** The tools were baked, so the branches were skipped. A boot from a marketplace
+  image, where they would run, is untested for the same reason.
+- **`user-data.sh.tmpl` end to end.** Step 4 was not exercised: the AWS CLI was already baked,
+  so the fallback had nothing to install, and the only check of the CLI was the presence check
+  in `install-k8s-tools.sh`. Steps 5 and 6, the agent and platform-contract bundle pulls from
+  S3, did not run. Step 7's bundle arrived by presigned URL, so its S3 pull did not run either.
+- **Anything in a subnet without egress.**
+- **`run-agent-sandbox.sh`, and OpenShell with this arm's own policy.**
+- **Remote Control.**
 
 ## AMI tagging convention
 
