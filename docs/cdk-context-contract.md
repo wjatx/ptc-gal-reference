@@ -214,8 +214,10 @@ These are off unless you switch them on. That is deliberate (see `docs/friction-
 non-negotiable floor, every other bound an envelope knob shipping off), but each one is a control
 you may believe you have and do not.
 
-**`channelsVerifyKeysArn`** points at a Secrets Manager secret holding peer verification keys. The
-stack never creates it. Omitted, the execution role gets no second `GetSecretValue` statement and
+**`channelsVerifyKeysArn`** points at a Secrets Manager secret holding peer verification keys, as
+JSON of the form `{key_id: {"public_key": PEM, "zone": ..., "sender_identities": [...]}}`
+(`channels/SIGNING.md` S8). A secret in any other shape, including the earlier `{key_id: PEM}`,
+fails the airlock closed at cold start. The stack never creates it. Omitted, the execution role gets no second `GetSecretValue` statement and
 `BROKER_VERIFY_KEYS_SECRET_ARN` is unset, so key resolution returns nothing and **unsigned peers
 pass**. This key is the one that was documented nowhere before this file existed.
 

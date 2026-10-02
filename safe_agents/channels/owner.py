@@ -70,6 +70,10 @@ class OwnerInboundAdapter(InboundAdapter):
     fresh-chain `EventTrigger` with a single seed provenance hop.
     """
 
+    # The envelope is built here, from a human's message. No broker sent it, so
+    # there is no chain signature to verify (channels/ADAPTERS.md).
+    originates_envelope = True
+
     def __init__(
         self, config: "OwnerAdapterConfig", token: str, routing: dict[str, str]
     ) -> None:

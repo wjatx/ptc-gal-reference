@@ -643,20 +643,21 @@ def _mapped(identity: str, sender_class: str = "peer-agent") -> ChannelTrustMap:
     )
 
 
-def test_wire_sender_class_is_discarded_before_any_gate_reads_it():
+@pytest.mark.parametrize("asserted", ["owner", "peer-agent", "external"])
+def test_wire_sender_class_is_discarded_before_any_gate_reads_it(asserted):
     """A sender that asserts its own class must not have that value seen by the
     screen, which runs before gate 8 sets the receiver's own."""
-    identity = "chat:asserts-owner"
+    identity = "chat:asserts-a-class"
     envelope = _envelope(
         sender={"channel_type": "stub-channel", "channel_identity": identity, "evidence": []},
-        sender_class="owner",
+        sender_class=asserted,
     )
     screen = _StubScreen(result=True)
 
     result = dispatch(
         "request",
         adapter=StubInboundAdapter(identity=identity, envelope=envelope),
-        trust_map=_mapped(identity, "peer-agent"),
+        trust_map=_mapped(identity, "external"),
         screen=screen,
         dedupe_store=set(),
         drops=[],
@@ -665,17 +666,34 @@ def test_wire_sender_class_is_discarded_before_any_gate_reads_it():
     )
 
     assert [seen.sender_class for seen in screen.calls] == [None]
-    assert result is not None and result.sender_class == "peer-agent"
+    assert result is not None and result.sender_class == "external"
 
 
-def test_unserializable_envelope_drops_before_it_claims_a_dedupe_key():
-    """A lone surrogate parses and validates but cannot be serialized onward.
+def _nested(depth: int) -> dict:
+    payload: dict = {"leaf": 1}
+    for _ in range(depth):
+        payload = {"k": payload}
+    return payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"key": "\ud800"}, id="lone surrogate"),
+        pytest.param({"key": float("nan")}, id="NaN"),
+        pytest.param({"key": float("inf")}, id="Infinity"),
+        # The airlock's parser accepts this depth; the worker's stops short of it.
+        pytest.param(_nested(220), id="nested past the worker parser's limit"),
+    ],
+)
+def test_unforwardable_envelope_drops_before_it_claims_a_dedupe_key(payload):
+    """Each of these parses and validates here and is then lost at the next hop.
     Refused after dedupe, it would lose the message and shadow the honest copy."""
     identity = "chat:poisoned"
     sender = {"channel_type": "stub-channel", "channel_identity": identity, "evidence": []}
-    poisoned = _envelope(sender=sender, payload={"key": "\ud800"})
-    with pytest.raises(Exception):
-        poisoned.model_dump_json()
+    poisoned = _envelope(sender=sender, payload=payload)
+    with pytest.raises(ValueError):
+        poisoned.to_wire()
     dedupe_store: set = set()
     drops: list = []
     screen = _StubScreen(result=True)
@@ -693,7 +711,7 @@ def test_unserializable_envelope_drops_before_it_claims_a_dedupe_key():
         )
 
     assert receive(poisoned) is None
-    assert [(d.reason, d.detail) for d in drops] == [("malformed", "not_serializable")]
+    assert [(d.reason, d.detail) for d in drops] == [("malformed", "not_forwardable")]
     assert dedupe_store == set() and screen.calls == []
     # The honest copy with the same dedupe key is still delivered.
     assert receive(_envelope(sender=sender)) is not None

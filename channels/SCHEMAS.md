@@ -43,7 +43,7 @@ interface EventTrigger {
   payload_digest?: string          // "sha256:<hex>" over the raw original artifact
   payload_ref?: string             // opaque pointer to the stored raw original (binding is reference-tier)
   provenance: ProvenanceEntry[]    // append-only chain, min length 1 — taint derives from this
-  chain_signatures: ChainSignature[]   // per-hop signatures over the chain prefix each broker committed to (channels/SIGNING.md); [] on an unsigned chain
+  chain_signatures: ChainSignature[]   // the sending broker's signature over the whole envelope (channels/SIGNING.md); [] on an unsigned chain; at most MAX_CHAIN_SIGNATURES
   sender_class?: "owner" | "peer-agent" | "external"   // RECEIVER-owned; null on the wire
   ts: string                       // ISO-8601 UTC, creation
   expiry: string                   // hard TTL; expired envelopes drop before any budget-spending gate
@@ -52,9 +52,9 @@ interface EventTrigger {
 interface ChainSignature {         // channels/SIGNING.md — authenticates lineage, does NOT replace taint
   key_id: string                   // the signing broker's workload-identity key a receiver resolves to verify
   zone: string                     // the zone that signed (attribution)
-  covers: number                   // prefix length this signature commits to: provenance[:covers]
+  covers: number                   // the chain length signed; must equal provenance.length (a prefix signature is refused)
   payload_type: string             // DSSE payloadType bound into the signed PAE
-  sig: string                      // base64 Ed25519 signature over the DSSE PAE of the in-toto statement
+  sig: string                      // strict base64 of the 64-byte Ed25519 signature over the DSSE PAE of the in-toto statement
 }
 
 interface SenderIdentity {
@@ -93,8 +93,9 @@ Per-field notes:
 - **provenance** — append-only. A hop appends via the `stamped()` helper (the model is frozen;
   there is no mutation path); no operation edits or removes prior entries. `source` values are
   namespaced `{scheme}:{value}` strings — same genre as the broker's `connector:{tool}.{op}`.
-- **chain_signatures** — per-hop signatures authenticating the provenance chain (`channels/SIGNING.md`).
-  Each commits to the chain prefix as it left the signing broker's zone (`covers`); empty on an
+- **chain_signatures** — the sending broker's signature authenticating the envelope (`channels/SIGNING.md`).
+  It commits to the whole chain as it left the signing broker's zone and to every other field of the
+  envelope except `sender_class` and the signatures themselves; empty on an
   unsigned chain. Receiver verification is a knob shipping OFF, and it authenticates *who asserted a
   hop* — it never replaces the derived taint, which is still recomputed from the chain regardless.
 - **sender_class** — the *output* of the receiver's trust-map gate, never a sender claim.

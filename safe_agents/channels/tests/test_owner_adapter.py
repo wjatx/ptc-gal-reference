@@ -372,3 +372,41 @@ def test_owner_unknown_identity_drops_unmapped():
 
     assert result is None
     assert drops[-1].reason == "unmapped"
+
+
+def test_owner_command_is_delivered_with_chain_verification_on():
+    """The owner adapter builds its envelope from a human's message, so there is
+    no sending broker and no chain signature. Turning verification on for the
+    airlock must not drop every owner command, and must not record a signature
+    check that never ran."""
+    from safe_agents.channels.signing import make_gate
+
+    identity = "maintainer"
+    adapter = _adapter(routing={"/trader": "example-agent"})
+    assert adapter.originates_envelope is True
+    drops: list = []
+
+    result = dispatch(
+        _req(body=_owner_body("/trader buy AAPL", identity=identity)),
+        adapter=adapter,
+        trust_map=ChannelTrustMap(
+            entries=[
+                TrustMapEntry(
+                    channel_type="owner",
+                    channel_identity=identity,
+                    principal="example-agent",
+                    sender_class="owner",
+                )
+            ]
+        ),
+        screen=None,
+        verify_chain=make_gate(lambda key_id: None),  # ON, with no key that could match
+        dedupe_store=set(),
+        drops=drops,
+        now=_NOW,
+        zone="channels",
+    )
+
+    assert drops == []
+    assert result is not None and result.sender_class == "owner"
+    assert "sig:pass" not in result.provenance[-1].evidence

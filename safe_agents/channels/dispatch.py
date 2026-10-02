@@ -80,13 +80,14 @@ def dispatch(
     if envelope.sender_class is not None:
         envelope = envelope.model_copy(update={"sender_class": None})
 
-    # Gate 3 (wire-safe) — an accepted envelope is serialized onward to the
-    # worker. One that cannot be serialized is malformed, and it has to be
+    # Gate 3 (forwardable) — an accepted envelope is handed onward to the worker
+    # in wire form. One that cannot make that trip is malformed, and it has to be
     # refused HERE: past gate 6 its dedupe key is already claimed, so the failure
     # would lose the message, shadow every later copy of it, and leave no drop
-    # record.
+    # record. `to_wire` is the same call the transport binding forwards with, and
+    # it proves the result is within the size ceiling and parses back unchanged.
     try:
-        envelope.model_dump_json()
+        envelope.to_wire()
     except Exception:
         drops.append(
             make_drop_record(
@@ -94,7 +95,7 @@ def dispatch(
                 identity,
                 "malformed",
                 now.isoformat(),
-                detail="not_serializable",
+                detail="not_forwardable",
             )
         )
         return None
@@ -136,9 +137,15 @@ def dispatch(
     # `chain_verified`/`signer_key_id` — a failed or skipped verification
     # keeps every later record at its default (unverified), never asserting a
     # check that didn't happen.
+    #
+    # An adapter that builds the envelope itself (`originates_envelope`) has no
+    # sending broker and so no chain to verify: its envelope is one seed hop the
+    # receiver wrote. The gate is skipped for it and no `sig:pass` is recorded.
+    # Which adapter an airlock runs is fixed in its image-baked manifest, so
+    # nothing on the wire can select this path.
     chain_verified = False
     signer_key_id: str | None = None
-    if verify_chain is not None:
+    if verify_chain is not None and not getattr(adapter, "originates_envelope", False):
         result = verify_chain(envelope)
         if not result.ok:
             drops.append(
@@ -249,7 +256,7 @@ def dispatch(
     # passed — evidence of a check performed, never asserted for an unverified
     # chain (the same discipline as `sender.evidence`).
     evidence = ["token:pass"]
-    if verify_chain is not None:
+    if chain_verified:
         evidence.append("sig:pass")
     return stamp_inbound(
         envelope,

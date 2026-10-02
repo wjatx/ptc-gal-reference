@@ -96,42 +96,50 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   added to the envelope later is signed without anyone adding it to a list, and
   `test_every_envelope_field_is_signed_or_named_as_unsigned` fails if the partition stops covering
   the model. The signer is handed the finished envelope (`ChainSigner.sign_envelope`), never a set
-  of values beside it, so what is signed and what is sent cannot differ. Signing refuses a payload
-  JSON cannot carry as given (NaN, Infinity, a non-string key), because serializing it would change
-  it after the signature was made.
-  **Why the predicate type is v2 (2026-10-01).** The v1 statement had two faults with one cause, an
+  of values beside it, so what is signed and what is sent cannot differ. Signing refuses an envelope
+  that cannot make the trip in wire form (`EventTrigger.to_wire`): a NaN or Infinity, a non-string
+  key, a lone surrogate, nesting past what the receiving parser accepts, or a size past the envelope
+  ceiling. Serializing one of those changes it or fails, after the signature exists.
+  **Why the predicate type is v3 (2026-10-02).** The v1 statement had two faults with one cause, an
   enumerated list of what to sign. It bound the declared digest *in place of* the inline payload
   whenever a `payload_ref` was present and did not bind the reference, so a signed inline envelope
   verified with its payload swapped, a `payload_ref` attached, and `payload_digest` set to the hash
   of the original payload (GHSA-wfrf-hcqh-pw8x). It also left `ts`, `sender.channel_type`,
   `sender.evidence` and `schema_version` outside the signature, so a party with no key could change
-  them, and receivers record `ts`. The statement changed shape, so `PREDICATE_TYPE` moved to
-  `provenance-chain/v2` and was not redefined in place. The verifier rebuilds the statement and the
-  wire does not carry its type, so a v2 verifier reports a v1 signature as `SIGNATURE_INVALID`.
+  them, and receivers record `ts`. Each change of shape moved `PREDICATE_TYPE` and did not redefine
+  it in place: v2 was the first fix alone and was on the main branch for a day, and v3 is the
+  statement described here. The verifier rebuilds the statement and the wire does not carry its
+  type, so a signature made under another version is reported as `SIGNATURE_INVALID`.
 - **S2 — per-envelope signing, non-malleable attribution.** The sending broker signs the full chain as
   it leaves (`ChainSigner.sign_envelope`, `covers = len(provenance)`), including preserved upstream hops.
   The signature's own `key_id`/`zone` are bound into the signed bytes and the verifier requires the
   `zone` to equal the top hop it covers, so attribution within the envelope cannot be forged or
   relabelled. Inbound signatures are not carried across a relay (it re-packages the envelope);
-  cross-relay per-signer attribution is deferred to the normative spec.
+  cross-relay per-signer attribution is deferred to the normative spec. **Every signature covers
+  the whole chain.** `covers` must equal `len(provenance)`, and a signature over a prefix is refused.
+  A statement over the first k hops says nothing about the hops after them, and it is byte-identical
+  to a full-cover statement for the envelope with those hops removed, so a party with no key could
+  cut a chain back to it and strip a later `untrusted` hop.
 - **S3 — broker-keyed, the agent never signs.** The private key is the broker's workload identity,
   resolved at cold start from Secrets Manager (`keys.resolve_signer`, `BROKER_SIGNING_KEY_SECRET_ARN`
   → PEM, `BROKER_SIGNING_KEY_ID` → `key_id`) and injected into `stamp_outbound` as the `signer`
   param. It is never in the agent image and never a caller/agent assertion — the same floor
   `channels/PUBLISH.md` P1/P3 stands on.
 - **S4 — receiver verification & quarantine, fail-closed.** `verify_chain` rejects a chain with no
-  signatures (`SIGNATURE_MISSING`), an unknown signer (`SIGNER_UNKNOWN`), a `covers` outside
-  `[1, len(provenance)]` or a bad signature (`SIGNATURE_INVALID`), or no signature covering the full
-  chain (the sending broker did not commit to the hop it just added → `SIGNATURE_INVALID`). Every
-  present signature must verify — a valid full-cover signature does not excuse a forged prefix
-  signature riding alongside it. A failure drops and quarantines, mirroring the grant-HMAC loud
+  signatures (`SIGNATURE_MISSING`), an unknown signer (`SIGNER_UNKNOWN`), and, as
+  `SIGNATURE_INVALID`, a `covers` that is not the full chain, a signature whose `zone` is not the top
+  hop's, a key outside its scope (S8), or a bad signature. Every present signature must pass every
+  check: one good signature does not excuse another that fails. `sig` is strict base64 of exactly
+  64 bytes, so a signature has one spelling and cannot carry padding, and an envelope carries at most
+  `MAX_CHAIN_SIGNATURES`, so one captured signature cannot be repeated to make a receiver verify it
+  thousands of times ahead of the budget gates. A failure drops and quarantines, mirroring the grant-HMAC loud
   quarantine; it authenticates lineage but does **not** clean taint — the receiver still
   applies its own trust map and re-derives taint from the chain (`broker/TAINT.md`,
   `channels/TRUST-MAPPING.md`).
 - **S8 — a key verifies only for the zone and sender it is enrolled for.** Being known to the
   receiver does not let a key speak for every peer. Each verification key is enrolled with one
   `zone` and a non-empty list of `sender_identities` (`signing.PeerKey`). A signature whose `zone`
-  is not its key's zone fails, and a full-cover signature fails unless its key is enrolled for the
+  is not its key's zone fails, and a signature fails unless its key is enrolled for the
   envelope's canonical `sender.channel_identity`. Both are `SIGNATURE_INVALID`, with the drop
   record's `detail` set to `signer_zone_mismatch` or `signer_identity_out_of_scope`. The scope comes
   from the receiver's own configuration and never from the envelope. Without it, any enrolled broker
@@ -140,13 +148,23 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   JSON of the form `{key_id: {"public_key": PEM, "zone": ..., "sender_identities": [...]}}`
   (`keys.peer_key_resolver_from_map`). An entry with a missing, empty or unrecognized field is a
   `SigningConfigError` naming the key, including a bare PEM string, which was the format before keys
-  had a scope: an unscoped key would be trusted for every zone and sender.
+  had a scope: an unscoped key would be trusted for every zone and sender. A `key_id` listed twice is
+  refused too, since a JSON parser would keep the second entry silently. An empty map is verification
+  ON with nobody enrolled, so every signer is unknown; it is never read as OFF. Sender identities are
+  compared after `canonical_identity` (strip and casefold), so two peers whose identities differ only
+  by case or by a casefold pair such as `ß` and `ss` cannot be enrolled as distinct senders.
 - **S5 — ships OFF (friction doctrine).** With no verification-keys ARN configured
   (`BROKER_VERIFY_KEYS_SECRET_ARN` unset → `resolve_verification_keys()` returns `None` →
   `make_gate(None)` returns `None`), the airlock skips the verify gate (Gate 3.5) and unsigned peers
   pass — today's trust-by-transport behavior. Enabling verification is a deploy-config knob, exactly
   as every non-floor bound is (`docs/friction-doctrine.md`). A set-but-unfetchable or malformed ARN
   fails **closed** loudly (`SigningConfigError`) rather than silently degrading to no verification.
+  **Verification applies to envelopes a sending broker produced.** An adapter that builds the
+  envelope itself from a raw message (`InboundAdapter.originates_envelope`, the owner adapter) has
+  no sending broker and no chain signature, so gate 3.5 does not run for it and its hop records no
+  `sig:pass`. Without that, turning verification on for an owner airlock dropped every owner command
+  as `chain_signature_missing`. Which adapter an airlock runs is fixed in its image-baked manifest,
+  so nothing on the wire selects this path.
 - **S6 — what signing does NOT do.** A signature is non-repudiation of *who asserted a hop* — never
   correctness-of-propagation. Whether a model faithfully carried taint through a transform is the
   banked §8 problem (`docs/tce-signing-shape.md`, `channels/PUBLISH.md` P8), unsolved by signing.
@@ -186,12 +204,12 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 | S1 (shape) | `test_valid_signed_chain_verifies` · `test_tampered_payload_fails_closed` · `test_payload_swap_with_pinned_digest_fails_closed` · `test_replay_with_fresh_event_id_or_extended_expiry_fails_closed` |
 | S1b (`sender.channel_identity` bound — campaign-watchdog residual closure) | `test_mutated_sender_after_signing_fails_verify_chain` · `test_mutated_sender_replay_fails_verification_no_second_attributed_record` · `test_sign_verify_round_trip_with_non_canonical_sender_spelling` · `test_relay_resign_binds_the_relays_own_sender_not_the_inbounds` |
 | S1c (inline payload always bound; raw-original reference and its presence bound) | `test_payload_swap_behind_an_added_payload_ref_fails_closed` · `test_inline_payload_and_raw_original_reference_are_bound` · `test_forged_payload_ref_envelope_drops_at_the_webhook_gate` · `test_nested_payload_content_is_bound` · `test_statement_subjects` · `test_statement_and_payload_hash_are_canonical_json` · `test_statement_refuses_a_raw_original_it_cannot_bind` |
-| S1d (whole envelope signed by default) | `test_every_envelope_field_is_signed_or_named_as_unsigned` · `test_the_mutation_table_covers_every_signed_field` · `test_no_signed_field_can_change_after_signing` · `test_the_receiver_owned_class_is_outside_the_signature` · `test_signing_refuses_a_payload_json_cannot_carry` |
-| S2 (per-envelope signing, non-malleable attribution) | `test_relay_signs_full_chain_over_preserved_hops` · `test_tampered_hop_fails_closed` · `test_signature_attribution_is_not_malleable` |
+| S1d (whole envelope signed by default) | `test_every_envelope_field_is_signed_or_named_as_unsigned` · `test_the_mutation_table_covers_every_signed_field` · `test_no_signed_field_can_change_after_signing` · `test_the_receiver_owned_class_is_outside_the_signature` · `test_bound_values_are_bound_exactly` · `test_signing_refuses_a_payload_the_wire_cannot_carry` · `test_wire_form_is_ascii_and_reads_back_equal` |
+| S2 (per-envelope signing, non-malleable attribution, full-chain cover only) | `test_relay_signs_full_chain_over_preserved_hops` · `test_tampered_hop_fails_closed` · `test_signature_attribution_is_not_malleable` · `test_the_signer_named_in_a_signature_is_bound` · `test_a_signature_that_does_not_cover_the_whole_chain_is_invalid` · `test_a_chain_cannot_be_cut_back_to_an_earlier_hop` · `test_no_field_of_an_upstream_hop_can_change_after_signing` · `test_the_order_of_the_hops_is_signed` |
 | S3 (broker-keyed, agent never signs) | `test_broker_signs_agent_has_no_key` · `test_signing_key_resolved_at_cold_start_from_secret` |
-| S4 (verify & quarantine, fail-closed) | `test_tampered_hop_fails_closed` · `test_tampered_payload_fails_closed` · `test_unknown_signer_quarantines` · `test_unsigned_chain_missing` · `test_covers_out_of_range_invalid` · `test_no_full_cover_signature_invalid` · `test_forged_chain_drops_before_trust_map` |
-| S8 (a key verifies only within its enrolled zone and sender identities) | `test_an_enrolled_key_cannot_sign_for_another_zone` · `test_an_enrolled_key_cannot_sign_for_another_sender` · `test_each_peer_still_verifies_within_its_own_scope` · `test_a_verification_key_without_a_full_scope_is_refused` · `test_verification_keys_resolve_and_fail_closed` |
-| S5 (ships OFF) | `test_verification_ships_off_unsigned_passes` |
+| S4 (verify & quarantine, fail-closed) | `test_tampered_hop_fails_closed` · `test_tampered_payload_fails_closed` · `test_unknown_signer_quarantines` · `test_unsigned_chain_missing` · `test_covers_out_of_range_invalid` · `test_a_signature_has_one_spelling_and_a_bounded_count` · `test_verification_does_not_accept_a_padded_signature` · `test_forged_chain_drops_before_trust_map` |
+| S8 (a key verifies only within its enrolled zone and sender identities) | `test_an_enrolled_key_cannot_sign_for_another_zone` · `test_an_enrolled_key_cannot_sign_for_another_sender` · `test_a_signature_must_name_the_zone_of_the_hop_it_adds` · `test_scope_is_checked_on_every_signature_however_many_ride` · `test_identity_scope_is_checked_however_many_signatures_ride` · `test_each_peer_still_verifies_within_its_own_scope` · `test_casefold_is_the_identity_rule_on_both_sides` · `test_a_verification_key_without_a_full_scope_is_refused` · `test_a_key_id_listed_twice_is_refused` · `test_a_bad_public_key_names_the_key_and_nothing_else` · `test_an_empty_key_map_is_verification_on_with_nobody_enrolled` · `test_a_secret_that_is_not_a_map_fails_closed` · `test_verification_keys_resolve_and_fail_closed` |
+| S5 (ships OFF; locally built envelopes are not chain-verified) | `test_verification_ships_off_unsigned_passes` · `test_owner_adapter.py::test_owner_command_is_delivered_with_chain_verification_on` |
 | S4/S5 (gate placement + evidence) | `test_verify_gate_runs_after_normalize_before_expiry` · `test_sig_pass_evidence_recorded` |
 | S6 (non-repudiation ≠ correctness) | the absence of any propagation-correctness claim is the contract text itself (the banked §8 problem) |
 | S7 (tiering) | tiering is doctrine (`docs/contract-vs-reference.md`), asserted by the suite existing as the contract's teeth, not a single test |

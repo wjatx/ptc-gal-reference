@@ -5,6 +5,8 @@ for the authoritative field-by-field contract. This module is the canonical
 typed encoding — the markdown's TypeScript block is illustrative only.
 """
 
+import base64
+import binascii
 import json
 import re
 from datetime import datetime
@@ -15,6 +17,19 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # Contract ceiling on the serialized `payload` size (channels/SCHEMAS.md
 # §"payload / payload_ref / payload_digest"). Consumers may bound lower.
 MAX_PAYLOAD_BYTES = 65536
+
+# Ceiling on the whole envelope in wire form (`EventTrigger.to_wire`). Well under
+# the smallest queue message limit a reference transport has, so an envelope the
+# airlock accepts can always be forwarded with the receiver's hop added.
+MAX_ENVELOPE_BYTES = 262144
+
+# An envelope is signed once, by the broker that sends it. The cap leaves room
+# for co-signers and stops one captured signature being repeated to make a
+# receiver verify it thousands of times before any budget gate runs.
+MAX_CHAIN_SIGNATURES = 8
+
+# An Ed25519 signature is 64 bytes.
+_SIGNATURE_BYTES = 64
 
 # Matched with `fullmatch`: under `match`, a trailing `$` also accepts one
 # trailing newline, which let a digest with "\n" appended through the schema gate.
@@ -91,7 +106,7 @@ class ProvenanceEntry(BaseModel):
 
 
 class ChainSignature(BaseModel):
-    """One broker's cryptographic signature over a prefix of the chain.
+    """One broker's cryptographic signature over the envelope it sends.
 
     Turns provenance from *asserted* into *authenticated*: a receiver can verify
     which broker committed to the chain-as-it-left-that-zone instead of trusting
@@ -120,6 +135,20 @@ class ChainSignature(BaseModel):
     def _non_blank(cls, v: str, info) -> str:
         return _non_blank(v, info.field_name)
 
+    @field_validator("sig")
+    @classmethod
+    def sig_is_strict_base64_of_a_signature(cls, v: str) -> str:
+        """Exactly one spelling per signature. A lenient decoder discards
+        characters outside the alphabet, which leaves `sig` free to carry
+        arbitrary padding on an envelope that still verifies."""
+        try:
+            raw = base64.b64decode(v, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("sig must be strict base64") from exc
+        if len(raw) != _SIGNATURE_BYTES:
+            raise ValueError(f"sig must decode to {_SIGNATURE_BYTES} bytes, got {len(raw)}")
+        return v
+
 
 class EventTrigger(BaseModel):
     """The normalized envelope any inbound (or outbound) signal becomes.
@@ -140,10 +169,12 @@ class EventTrigger(BaseModel):
     payload_ref: str | None = None
     # append-only chain, min length 1 — taint derives from this (§"Taint")
     provenance: list[ProvenanceEntry] = Field(min_length=1)
-    # per-hop signatures over the chain prefix each broker committed to
+    # the sending broker's signature over the whole envelope
     # (channels/SIGNING.md). Empty on an unsigned chain; verification is a
     # receiver-side knob that ships OFF (docs/friction-doctrine.md).
-    chain_signatures: list[ChainSignature] = []
+    chain_signatures: list[ChainSignature] = Field(
+        default_factory=list, max_length=MAX_CHAIN_SIGNATURES
+    )
     # receiver-owned (§C4): absent on the wire, set only by the trust-map gate
     sender_class: Literal["owner", "peer-agent", "external"] | None = None
     ts: str
@@ -201,6 +232,26 @@ class EventTrigger(BaseModel):
         always recomputed from the provenance chain, never asserted.
         """
         return any(entry.label == "untrusted" for entry in self.provenance)
+
+    def to_wire(self, *, max_bytes: int | None = MAX_ENVELOPE_BYTES) -> str:
+        """The envelope as the JSON text one zone hands to the next.
+
+        The one serialization every hop uses, so that "this envelope can be
+        forwarded" is a property checked once instead of assumed at each send.
+        The text is ASCII (every other character escaped), within ``max_bytes``,
+        and parses back to an equal envelope with the parser a receiving worker
+        uses. An envelope that fails any of those raises ``ValueError``: a NaN, a
+        lone surrogate, nesting deeper than the parser accepts, or a size past
+        the ceiling would otherwise be accepted here and lost at the next hop.
+        """
+        body = json.dumps(
+            self.model_dump(mode="json"), ensure_ascii=True, separators=(",", ":"), allow_nan=False
+        )
+        if max_bytes is not None and len(body) > max_bytes:
+            raise ValueError(f"envelope is {len(body)} bytes in wire form, over {max_bytes}")
+        if EventTrigger.model_validate_json(body) != self:
+            raise ValueError("envelope does not survive its own wire form unchanged")
+        return body
 
     def dedupe_key(self) -> tuple[str, str]:
         """The C1 dedupe key: (sender.channel_identity, event_id)."""

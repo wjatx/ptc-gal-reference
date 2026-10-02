@@ -27,6 +27,12 @@ class InboundAdapter(ABC):
 
     channel_type: str
 
+    # True for an adapter whose `normalize` BUILDS the envelope from a raw
+    # message (an owner command), False for one that parses an envelope a
+    # sending broker produced. Only the second kind has a signed chain, so only
+    # it is subject to chain verification (channels/SIGNING.md S5).
+    originates_envelope: bool = False
+
     @abstractmethod
     def verify_token(self, request: Any) -> bool:
         """Verify the transport-layer authenticity proof.

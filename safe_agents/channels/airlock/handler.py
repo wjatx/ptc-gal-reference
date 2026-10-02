@@ -20,8 +20,9 @@ Env contract (fixed; the infra side binds these):
   CHANNELS_VERDICT_PREFIX      verdict key prefix (default channels/verdicts/)
   CHANNELS_ACCEPTED_QUEUE_URL  SQS queue for accepted, stamped envelopes
   CHANNELS_WEBHOOK_SECRET_ARN  Secrets Manager ARN of the shared webhook token
-  BROKER_VERIFY_KEYS_SECRET_ARN  optional; ARN of the JSON {key_id: pubkey_pem}
-                               chain-verification map (unset ⇒ verification OFF)
+  BROKER_VERIFY_KEYS_SECRET_ARN  optional; ARN of the JSON chain-verification map
+                               {key_id: {public_key, zone, sender_identities}}
+                               (channels/SIGNING.md S8; unset ⇒ verification OFF)
 """
 
 from __future__ import annotations
@@ -246,7 +247,7 @@ def _handle(event: dict) -> dict:
 
     if accepted is not None:
         state.sqs.send_message(
-            QueueUrl=state.queue_url, MessageBody=accepted.model_dump_json()
+            QueueUrl=state.queue_url, MessageBody=accepted.to_wire(max_bytes=None)
         )
         logger.info(
             json.dumps(

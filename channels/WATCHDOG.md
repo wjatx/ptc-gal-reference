@@ -88,11 +88,11 @@ reads these fields; it never infers, recomputes, or overrides them from runner c
 observer that could assert its own view of what was verified would be exactly the confused-deputy
 hole the provenance chain exists to close. When `chain_verified=True`, `signer_key_id` is the
 **full-cover signer's** `key_id` as `verify_chain` reports it (`channels/SIGNING.md` S4) — the broker
-that committed to the entire chain as it left its own zone, never a partial-cover or non-existent
-signature; a chain lacking a full-cover signature fails verification outright and never reaches the
-airlock's evidence-of-check fields at all. When more than one enrolled key produces a valid full-cover
-signature over the same chain, `verify_chain` reports the first match and the watchdog attributes to
-that `key_id` — this is not a reflected-DoS gap: every full-cover signer must be a key enrolled for
+that committed to the entire chain as it left its own zone. Every signature must cover the whole
+chain; one that covers a prefix fails verification outright and never reaches the
+airlock's evidence-of-check fields at all. When more than one enrolled key signs the same
+envelope, `verify_chain` reports the first and the watchdog attributes to
+that `key_id` — this is not a reflected-DoS gap: every signer must be a key enrolled for
 that top-hop zone AND for the envelope's sender identity (`channels/SIGNING.md` S8), so attributing
 among them picks between parties the receiver enrolled for exactly this sender, never a peer
 signing in another's name.

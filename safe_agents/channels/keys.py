@@ -104,6 +104,20 @@ _PEER_KEY_SHAPE = (
 )
 
 
+def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Refuse a JSON object that names a key twice.
+
+    The default parser keeps the last one silently, so a second entry for a
+    ``key_id`` would replace the first, key and scope both, with nothing said.
+    """
+    seen: dict[str, object] = {}
+    for name, value in pairs:
+        if name in seen:
+            raise SigningConfigError(f"verification-keys secret names {name!r} more than once")
+        seen[name] = value
+    return seen
+
+
 def _peer_key(key_id: str, entry: object) -> PeerKey:
     """Parse one verification-key entry, naming the key and the fault on error.
 
@@ -127,8 +141,16 @@ def _peer_key(key_id: str, entry: object) -> PeerKey:
             f"verification key {key_id!r}: sender_identities must be a non-empty list of "
             "non-empty strings"
         )
+    try:
+        public_key = load_public_key(entry["public_key"])
+    except Exception as exc:
+        # The exception type only: a parser's message can echo what it was given.
+        raise SigningConfigError(
+            f"verification key {key_id!r}: public_key is not a PEM-encoded Ed25519 "
+            f"public key ({type(exc).__name__})"
+        ) from None
     return PeerKey(
-        public_key=load_public_key(entry["public_key"]),
+        public_key=public_key,
         zone=zone,
         sender_identities=frozenset(canonical_identity(identity) for identity in identities),
     )
@@ -159,7 +181,7 @@ def resolve_verification_keys() -> PeerKeyResolver | None:
     if not secret_arn:
         return None
     try:
-        entry_by_key_id = json.loads(_fetch_secret(secret_arn))
+        entry_by_key_id = json.loads(_fetch_secret(secret_arn), object_pairs_hook=_no_duplicate_keys)
         if not isinstance(entry_by_key_id, dict):
             raise ValueError("verification-keys secret must be a JSON object")
         return peer_key_resolver_from_map(entry_by_key_id)
