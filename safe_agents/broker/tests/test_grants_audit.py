@@ -215,6 +215,32 @@ def test_unparseable_lifecycle_items_become_findings():
     assert {v.rule for v in report.violations} == {UNPARSEABLE_ITEM}
 
 
+def test_a_stored_demotion_that_raises_the_level_is_a_finding():
+    """A demotion is signed by the evaluator's key, and the audit picks that key
+    from the record's type. A row typed `demotion` whose level goes UP is
+    therefore refused as a record at all, never read as a level change."""
+    honest = _make_record(
+        "demotion",
+        ts="2026-07-02T00:00:00+00:00",
+        fromLevel="on-loop",
+        toLevel="in-loop",
+        proposedBy="system:demotion-evaluator",
+        ratifiedBy="system:demotion-evaluator",
+        triggeredBy=["budget_breach"],
+        demotionReason="failing",
+    )
+    raising = json.loads(canonical_record_payload(honest))
+    raising["fromLevel"], raising["toLevel"] = "in-loop", "on-loop"
+
+    dataset = dataset_from_items(
+        [{"pk": _RECORD_PK, "sk": honest.ts, "data": json.dumps(raising, sort_keys=True)}]
+    )
+
+    assert dataset.records == ()
+    assert [v.rule for v in dataset.parse_violations] == [UNPARSEABLE_ITEM]
+    assert "must not raise the level" in dataset.parse_violations[0].detail
+
+
 def test_non_lifecycle_item_kinds_are_ignored():
     dataset = dataset_from_items(
         [

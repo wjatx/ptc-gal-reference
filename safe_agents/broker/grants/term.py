@@ -27,14 +27,10 @@ from __future__ import annotations
 import datetime
 
 from safe_agents.broker.schemas import Grant
-from safe_agents.broker.schemas.common import AutonomyLevel
+from safe_agents.broker.schemas.common import AUTONOMY_RANK, AutonomyLevel
 from safe_agents.broker.schemas.grant import parse_certified_until
 
-_LEVEL_RANK: dict[AutonomyLevel, int] = {
-    AutonomyLevel.in_loop: 0,
-    AutonomyLevel.on_loop: 1,
-    AutonomyLevel.out_of_loop: 2,
-}
+_LEVEL_RANK = AUTONOMY_RANK
 
 
 def _require_aware(now: datetime.datetime) -> datetime.datetime:

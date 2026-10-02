@@ -524,8 +524,21 @@ TIGHTENING_VALID_BASE = {
     "ts": "2026-06-28T00:00:00Z",
 }
 
+LAPSE_VALID_BASE = {
+    **{k: v for k, v in DEMOTION_VALID_BASE.items() if k != "triggeredBy"},
+    "recordType": "lapse",
+    "demotionReason": "pending-evidence",
+}
+
 PROMOTION_VALID_CASES = [
     ("in_loop_to_on_loop", PROMOTION_VALID_BASE),
+    ("demotion_two_rungs_down", {**DEMOTION_VALID_BASE, "fromLevel": "out-of-loop"}),
+    (
+        # a repeat breach recorded against a grant already at its floor
+        "demotion_level_unchanged",
+        {**DEMOTION_VALID_BASE, "fromLevel": "in-loop", "toLevel": "in-loop"},
+    ),
+    ("lapse_one_rung_down", LAPSE_VALID_BASE),
     (
         "on_loop_to_out_of_loop",
         {**PROMOTION_VALID_BASE, "fromLevel": "on-loop", "toLevel": "out-of-loop"},
@@ -655,6 +668,27 @@ PROMOTION_INVALID_CASES = [
         "demotion_null_fromLevel",
         {**DEMOTION_VALID_BASE, "fromLevel": None},
         "cannot originate from the Recommend rung",
+    ),
+    # demotion and lapse never raise the level, and never land on out-of-loop
+    (
+        "demotion_raises_one_rung",
+        {**DEMOTION_VALID_BASE, "fromLevel": "in-loop", "toLevel": "on-loop"},
+        "must not raise the level",
+    ),
+    (
+        "demotion_raises_to_out_of_loop",
+        {**DEMOTION_VALID_BASE, "fromLevel": "in-loop", "toLevel": "out-of-loop"},
+        "toLevel must not be 'out-of-loop' for a demotion record",
+    ),
+    (
+        "demotion_stays_at_out_of_loop",
+        {**DEMOTION_VALID_BASE, "fromLevel": "out-of-loop", "toLevel": "out-of-loop"},
+        "toLevel must not be 'out-of-loop' for a demotion record",
+    ),
+    (
+        "lapse_raises_one_rung",
+        {**LAPSE_VALID_BASE, "fromLevel": "in-loop", "toLevel": "on-loop"},
+        "must not raise the level",
     ),
     # bootstrap-typed shape rules
     (

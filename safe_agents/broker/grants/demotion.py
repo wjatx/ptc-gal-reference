@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from safe_agents.broker.schemas import Grant, PromotionRecord
-from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger
+from safe_agents.broker.schemas.common import AUTONOMY_RANK, AutonomyLevel, DemotionTrigger
 from safe_agents.broker.schemas.promotion_record import DEMOTION_RATIFIER
 from safe_agents.broker.grants.ceremony import PromotionRecordStore
 from safe_agents.broker.grants.ledger_clock import next_ledger_ts
@@ -43,15 +43,8 @@ from safe_agents.broker.grants.store import (
 # Level ordering — demotion moves toward lower autonomy (higher supervision)
 # ---------------------------------------------------------------------------
 
-_LEVEL_RANK: dict[AutonomyLevel, int] = {
-    AutonomyLevel.in_loop: 0,       # lowest autonomy (most supervised)
-    AutonomyLevel.on_loop: 1,
-    AutonomyLevel.out_of_loop: 2,   # highest autonomy
-}
-
-
 def _rank(level: AutonomyLevel) -> int:
-    return _LEVEL_RANK[level]
+    return AUTONOMY_RANK[level]
 
 
 def demotion_target_level(grant: Grant) -> AutonomyLevel:

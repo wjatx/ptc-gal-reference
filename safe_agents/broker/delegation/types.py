@@ -15,17 +15,13 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 from safe_agents.broker.schemas import AuditRecord
-from safe_agents.broker.schemas.common import AutonomyLevel, Principal
+from safe_agents.broker.schemas.common import AUTONOMY_RANK, AutonomyLevel, Principal
 
 # ---------------------------------------------------------------------------
 # Oversight-rung ordering: lower index = more supervised
 # ---------------------------------------------------------------------------
 
-LEVEL_ORDER: dict[AutonomyLevel, int] = {
-    AutonomyLevel.in_loop: 0,
-    AutonomyLevel.on_loop: 1,
-    AutonomyLevel.out_of_loop: 2,
-}
+LEVEL_ORDER: dict[AutonomyLevel, int] = AUTONOMY_RANK
 
 
 # ---------------------------------------------------------------------------

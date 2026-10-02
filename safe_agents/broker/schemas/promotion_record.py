@@ -16,16 +16,18 @@ Five record types share one ledger (see SCHEMAS.md §7):
                    NOT a demotion: triggeredBy stays empty, because a lapse is
                    the absence of renewal, never a fired condition.
 
-This schema enforces field-SHAPE rules per record type only. Transition
-validity (one-rung-up, level ordering) is the state machine's job
-(broker/grant-lifecycle.md), never duplicated here.
+This schema enforces field-SHAPE rules per record type, plus one direction rule:
+a demotion or lapse never raises the level (see the class docstring for why
+that one lives here). Every other transition rule (one rung up, the dwell and
+evidence gates) is the state machine's job (broker/grant-lifecycle.md) and is
+not duplicated here.
 """
 
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .common import AutonomyLevel, Principal
+from .common import AUTONOMY_RANK, AutonomyLevel, Principal
 from .grant import parse_certified_until
 
 # System identity that ratifies all automatic demotions (no human, no model).
@@ -45,7 +47,8 @@ class PromotionRecord(BaseModel):
                   first promotion from the Recommend rung).
     - demotion:   ratifiedBy is the system demotion evaluator; triggeredBy
                   non-empty; demotionReason set; predicate absent; fromLevel
-                  non-None (no grant exists at Recommend to demote).
+                  non-None (no grant exists at Recommend to demote); toLevel is
+                  never above fromLevel and never out-of-loop.
     - bootstrap:  fromLevel is None (the Recommend rung — the seed creates the
                   grant); maker ≠ checker NOT enforced (single-operator seed is
                   sanctioned); predicate absent; no demotion fields.
@@ -57,7 +60,16 @@ class PromotionRecord(BaseModel):
                   names no condition, it records that none renewed the term);
                   demotionReason is "pending-evidence" (nothing is proven
                   broken); predicate absent; fromLevel non-None; toLevel is never
-                  out-of-loop (it is the grant's lastSafeLevel, which never is).
+                  out-of-loop (it is the grant's lastSafeLevel, which never is)
+                  and never above fromLevel.
+
+    The demotion and lapse direction rule is the one level-ordering rule that
+    lives here. These two types are signed by the evaluator's key, and a
+    verifier picks the acceptable key from the record's type alone, so "this
+    type never raises" has to be a property of the record: otherwise the
+    evaluator's key could sign a record that raises authority and an audit
+    would accept it. A demotion may leave the level unchanged (a repeat breach
+    recorded against a grant already at its floor).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -165,6 +177,12 @@ class PromotionRecord(BaseModel):
                     "fromLevel is required (non-None) for a demotion record: a demotion "
                     "cannot originate from the Recommend rung — no grant exists there."
                 )
+            if self.toLevel is AutonomyLevel.out_of_loop:
+                raise ValueError(
+                    "toLevel must not be 'out-of-loop' for a demotion record: a demotion "
+                    "never lands on the highest rung (GAL §4.3)."
+                )
+            self._require_no_raise()
             self._forbid_predicate()
 
         elif self.recordType == "bootstrap":
@@ -206,6 +224,7 @@ class PromotionRecord(BaseModel):
                     "toLevel must not be 'out-of-loop' for a lapse record: a lapse "
                     "lands on the grant's lastSafeLevel, which is never out-of-loop."
                 )
+            self._require_no_raise()
             self._forbid_predicate()
 
         else:  # tightening
@@ -223,6 +242,15 @@ class PromotionRecord(BaseModel):
             self._forbid_demotion_fields()
 
         return self
+
+    def _require_no_raise(self) -> None:
+        """A demotion or lapse may lower the level or leave it; it never raises it."""
+        if AUTONOMY_RANK[self.toLevel] > AUTONOMY_RANK[self.fromLevel]:
+            raise ValueError(
+                f"a {self.recordType} record must not raise the level: got "
+                f"fromLevel='{self.fromLevel.value}', toLevel='{self.toLevel.value}'. "
+                "Only a record the issuer signs may raise authority (GAL §6.10)."
+            )
 
     def _forbid_predicate(self) -> None:
         if self.predicate is not None:

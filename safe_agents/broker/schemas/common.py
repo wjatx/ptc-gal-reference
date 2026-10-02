@@ -18,6 +18,15 @@ class AutonomyLevel(str, Enum):
     out_of_loop = "out-of-loop"  # fully autonomous within the envelope
 
 
+# The order of the rungs: a higher rank is more autonomy and less supervision.
+# The one definition every comparison of two levels reads.
+AUTONOMY_RANK: dict[AutonomyLevel, int] = {
+    AutonomyLevel.in_loop: 0,
+    AutonomyLevel.on_loop: 1,
+    AutonomyLevel.out_of_loop: 2,
+}
+
+
 class DemotionTrigger(str, Enum):
     """Deterministic conditions that trip automatic demotion. See SCHEMAS.md §1."""
 
