@@ -628,3 +628,72 @@ def test_sender_identity_match_is_unaffected():
     )
 
     assert result is not None
+
+
+def _mapped(identity: str, sender_class: str = "peer-agent") -> ChannelTrustMap:
+    return ChannelTrustMap(
+        entries=[
+            TrustMapEntry(
+                channel_type="stub-channel",
+                channel_identity=identity,
+                principal="test-principal",
+                sender_class=sender_class,
+            )
+        ]
+    )
+
+
+def test_wire_sender_class_is_discarded_before_any_gate_reads_it():
+    """A sender that asserts its own class must not have that value seen by the
+    screen, which runs before gate 8 sets the receiver's own."""
+    identity = "chat:asserts-owner"
+    envelope = _envelope(
+        sender={"channel_type": "stub-channel", "channel_identity": identity, "evidence": []},
+        sender_class="owner",
+    )
+    screen = _StubScreen(result=True)
+
+    result = dispatch(
+        "request",
+        adapter=StubInboundAdapter(identity=identity, envelope=envelope),
+        trust_map=_mapped(identity, "peer-agent"),
+        screen=screen,
+        dedupe_store=set(),
+        drops=[],
+        now=_NOW,
+        zone="test-zone",
+    )
+
+    assert [seen.sender_class for seen in screen.calls] == [None]
+    assert result is not None and result.sender_class == "peer-agent"
+
+
+def test_unserializable_envelope_drops_before_it_claims_a_dedupe_key():
+    """A lone surrogate parses and validates but cannot be serialized onward.
+    Refused after dedupe, it would lose the message and shadow the honest copy."""
+    identity = "chat:poisoned"
+    sender = {"channel_type": "stub-channel", "channel_identity": identity, "evidence": []}
+    poisoned = _envelope(sender=sender, payload={"key": "\ud800"})
+    with pytest.raises(Exception):
+        poisoned.model_dump_json()
+    dedupe_store: set = set()
+    drops: list = []
+    screen = _StubScreen(result=True)
+
+    def receive(envelope: EventTrigger):
+        return dispatch(
+            "request",
+            adapter=StubInboundAdapter(identity=identity, envelope=envelope),
+            trust_map=_mapped(identity),
+            screen=screen,
+            dedupe_store=dedupe_store,
+            drops=drops,
+            now=_NOW,
+            zone="test-zone",
+        )
+
+    assert receive(poisoned) is None
+    assert [(d.reason, d.detail) for d in drops] == [("malformed", "not_serializable")]
+    assert dedupe_store == set() and screen.calls == []
+    # The honest copy with the same dedupe key is still delivered.
+    assert receive(_envelope(sender=sender)) is not None

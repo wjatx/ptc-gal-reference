@@ -132,7 +132,7 @@ reasons.
 |---|---|---|---|
 | 1 | `verify_token` | drop: `authenticity_failed` | unauthenticated bytes never reach a parser |
 | 2 | `extract_identity` | drop: `malformed` | the identity keys every later gate |
-| 3 | **schema check** (`normalize`) | drop: `malformed` | nothing downstream handles untyped bytes |
+| 3 | **schema check** (`normalize`), then discard any wire `sender_class` and refuse an envelope that cannot be serialized onward | drop: `malformed` | nothing downstream handles untyped bytes, reads a class the sender asserted, or claims a dedupe key for a message it cannot forward |
 | 4 | expiry check (`is_expired`, caller-supplied time) | drop: `expired` | expired replays must not spend any budget |
 | 5 | **trust-map** (`resolve`; principal match) | drop: `unmapped` / `principal_mismatch` | unmapped senders get no further processing at all |
 | 6 | dedupe on `(sender.channel_identity, event_id)` | silent no-op | after trust-map so only mapped senders can write the dedupe store; before the screen so replays cannot drain the screening budget |

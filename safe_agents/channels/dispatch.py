@@ -72,6 +72,33 @@ def dispatch(
         )
         return None
 
+    # Gate 3 (receiver-owned field) — `sender_class` is the receiver's to set and
+    # is absent on the wire (channels/SCHEMAS.md C4). Whatever arrived is discarded
+    # here, so no later gate can read a class the sender asserted: the screen runs
+    # before gate 8 writes the real one, and the signature does not cover this
+    # field.
+    if envelope.sender_class is not None:
+        envelope = envelope.model_copy(update={"sender_class": None})
+
+    # Gate 3 (wire-safe) — an accepted envelope is serialized onward to the
+    # worker. One that cannot be serialized is malformed, and it has to be
+    # refused HERE: past gate 6 its dedupe key is already claimed, so the failure
+    # would lose the message, shadow every later copy of it, and leave no drop
+    # record.
+    try:
+        envelope.model_dump_json()
+    except Exception:
+        drops.append(
+            make_drop_record(
+                adapter.channel_type,
+                identity,
+                "malformed",
+                now.isoformat(),
+                detail="not_serializable",
+            )
+        )
+        return None
+
     # Gate 3 (sender-transport binding) — an adapter's `normalize` MUST produce
     # `sender.channel_identity` equal to the SAME request's gate-2
     # `extract_identity` result (channels/ADAPTERS.md §"InboundAdapter"). This
