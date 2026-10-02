@@ -20,8 +20,8 @@ both are written from the same `if not passed:` branch), so reading both
 sinks would double-count the identical event under the engine's attribution
 table.
 
-Satisfies the meta-alarm standard (`reliability/META-ALARM-STANDARD.md`,
-`reliability.meta_alarm`) exactly:
+Satisfies the meta-alarm standard (`safe_agents/reliability/META-ALARM-STANDARD.md`,
+`safe_agents.reliability.meta_alarm`) exactly:
     heartbeat_fn      → emitted once, before any detection work
     any runner-internal failure (an unreachable bucket/log group, a bad
         --min-attempts/--window-seconds config)
@@ -43,8 +43,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from reliability import emit_content_alarm, emit_heartbeat, emit_meta_alarm
 from safe_agents.channels.trust_map import DropRecord
+from safe_agents.reliability import emit_content_alarm, emit_heartbeat, emit_meta_alarm
 from safe_agents.watcher.campaign import (
     CampaignReport,
     CampaignThresholds,

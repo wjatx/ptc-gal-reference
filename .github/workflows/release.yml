@@ -107,15 +107,15 @@ jobs:
       - name: Metadata renders on PyPI
         run: python -m twine check --strict dist/*
 
-      # pyproject.toml excludes the test packages and names two top-level
-      # packages. This reads the wheel rather than trusting that configuration,
+      # pyproject.toml excludes the test packages and names one top-level
+      # package. This reads the wheel rather than trusting that configuration,
       # so a later edit to it cannot quietly change what ships.
       - name: The wheel carries the packages it should and no test suites
         run: |
           python - <<'PY'
           import pathlib, sys, zipfile
 
-          EXPECTED_TOP_LEVEL = {"safe_agents", "reliability"}
+          EXPECTED_TOP_LEVEL = {"safe_agents"}
 
           wheels = list(pathlib.Path("dist").glob("*.whl"))
           if len(wheels) != 1:

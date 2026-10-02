@@ -42,8 +42,7 @@ it there is that project's call, under whatever rules it works under.
 
 ## Working here
 
-- Run `pytest` from the repository root, not narrowed to `safe_agents/`. The reliability library
-  the watcher depends on carries tests the narrower path silently skips.
+- Run `pytest` from the repository root with no path argument, which is what CI does.
 - The conformance statement reads the specifications, which are not vendored. Clone
   [wjatx/ptc-gal-standards](https://github.com/wjatx/ptc-gal-standards) alongside and pass
   `--spec-dir`. Without it the suite still runs green, and the tests that compare spec text

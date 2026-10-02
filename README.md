@@ -56,9 +56,8 @@ the virtual environment active.
 python -m pytest
 ```
 
-The suite is a few thousand tests and takes about a minute. Run it from the repository root: the
-reliability library the watcher depends on carries tests that a narrower path such as
-`pytest safe_agents/` silently skips. Some tests skip on purpose, each with a reason;
+The suite is a few thousand tests and takes about a minute. Run it from the repository root, which
+is what CI does. Some tests skip on purpose, each with a reason;
 `python -m pytest -rs` lists them (see [Troubleshooting](#troubleshooting)).
 
 ## Check the conformance statement

@@ -64,7 +64,7 @@ safe-agents = "safe_agents.pipeline.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["safe_agents*", "reliability*"]
+include = ["safe_agents*"]
 # Tests ship with the source tree (and stay collectible under an editable
 # install) but are excluded from the built distribution.
 exclude = ["*.tests", "*.tests.*"]
@@ -93,7 +93,7 @@ exclude = ["*.tests", "*.tests.*"]
 [tool.pytest.ini_options]
 # Bare `pytest` from the repo root runs the whole platform suite. The no-sleep
 # fixture in safe_agents/conftest.py is scoped to the safe_agents subtree only.
-testpaths = ["safe_agents", "reliability", "observability"]
+testpaths = ["safe_agents"]
 markers = [
     "stdio: spawns a real MCP server child process over stdio transport (#219)",
     "corpus: exhaustive sweep over a whole input space (#177/#178 PDP differential corpus)",

@@ -1,11 +1,11 @@
-"""Tests for reliability.predicates — file_exists, policy_matches, and
+"""Tests for safe_agents.reliability.predicates — file_exists, policy_matches, and
 the AWS-backed predicates via mock clients."""
 
 from unittest.mock import MagicMock
 
 import pytest
 
-from reliability.predicates import (
+from safe_agents.reliability.predicates import (
     dynamodb_item_exists,
     file_exists,
     policy_matches,

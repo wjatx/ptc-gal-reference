@@ -1,4 +1,4 @@
-"""Tests for reliability.meta_alarm — emit_heartbeat, emit_meta_alarm, emit_content_alarm.
+"""Tests for safe_agents.reliability.meta_alarm — emit_heartbeat, emit_meta_alarm, emit_content_alarm.
 
 The core invariant being tested: "watchdog broken" and "watchdog fired"
 produce different exit codes and different output streams. They must not be
@@ -8,7 +8,7 @@ indistinguishable.
 import json
 import pytest
 
-from reliability.meta_alarm import emit_content_alarm, emit_heartbeat, emit_meta_alarm
+from safe_agents.reliability.meta_alarm import emit_content_alarm, emit_heartbeat, emit_meta_alarm
 
 
 # ---------------------------------------------------------------------------

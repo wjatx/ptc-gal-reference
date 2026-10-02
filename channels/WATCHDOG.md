@@ -37,7 +37,7 @@ It is a **watchdog, never a screen**:
   (`docs/friction-doctrine.md` §Availability/forced-abstention), silence from the watchdog *is* the
   harm it exists to prevent — a live campaign nobody is told about is exactly as bad as no watchdog
   at all. Any scheduled runner MUST satisfy the meta-alarm standard
-  (`reliability/META-ALARM-STANDARD.md`): heartbeat, meta-alarm, and content-alarm on three separate
+  (`safe_agents/reliability/META-ALARM-STANDARD.md`): heartbeat, meta-alarm, and content-alarm on three separate
   channels, so a broken watchdog and a silent-because-nothing-fired watchdog are never confused.
 
 ## Inverting the attack economics
@@ -329,7 +329,7 @@ mints authority.
 - `docs/friction-doctrine.md` §Availability/forced-abstention — the availability-doctrine / liveness / campaign-watchdog lineage; the
   approval-queue-flood signal this watchdog also correlates; the watchdog's own positive-safe-action
   obligation.
-- `reliability/META-ALARM-STANDARD.md` — the three-channel discipline any scheduled runner
+- `safe_agents/reliability/META-ALARM-STANDARD.md` — the three-channel discipline any scheduled runner
   (W7) must satisfy.
 - `docs/contract-vs-reference.md`, `docs/config-provenance.md` — the packaging and placement doctrine
   this document is scoped against.

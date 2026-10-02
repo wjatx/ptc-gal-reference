@@ -31,9 +31,9 @@ import pytest
 # safe_agents/broker/tests/<this>  parents[3] = repository root
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
-# Every root whose Python runs on a tester's laptop: the package, its tests, the
-# reliability library, the examples, the runner-contract stub and the scripts.
-SCANNED_ROOTS = ("safe_agents", "reliability", "examples", "scripts", "agents")
+# Every root whose Python runs on a tester's laptop: the package (its tests and the
+# reliability library included), the examples, the runner-contract stub and the scripts.
+SCANNED_ROOTS = ("safe_agents", "examples", "scripts", "agents")
 
 _OPENERS_WITHOUT_ENCODING = {"os", "tarfile", "_tarfile", "zipfile", "gzip", "io", "webbrowser"}
 _TEXT_IO_METHODS = {"read_text", "write_text", "open", "fdopen"}

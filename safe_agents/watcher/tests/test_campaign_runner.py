@@ -21,7 +21,7 @@ Covers:
      module docstring / channels/dispatch.py gate 7)
   7. execute() zero campaigns: no content alarm, clean return
   8. execute() reader exception: routes to emit_meta_alarm (SystemExit(1),
-     structured stderr JSON per reliability/META-ALARM-STANDARD.md)
+     structured stderr JSON per safe_agents/reliability/META-ALARM-STANDARD.md)
 """
 from __future__ import annotations
 

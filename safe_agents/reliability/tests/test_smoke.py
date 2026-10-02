@@ -1,4 +1,4 @@
-"""Tests for reliability.smoke — forced-failure smoke-test base harness (#52).
+"""Tests for safe_agents.reliability.smoke — forced-failure smoke-test base harness (#52).
 
 Acceptance criteria verified here:
   1. Harness runs a set of checks and aggregates results without exiting mid-run.
@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from reliability.smoke import SmokeHarness
+from safe_agents.reliability.smoke import SmokeHarness
 
 
 # ---------------------------------------------------------------------------

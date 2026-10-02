@@ -16,8 +16,8 @@ positively exercises `broker.api`. An example that quietly stopped importing the
 public surface would keep the guard green and stop demonstrating anything.
 
 Lives here rather than beside the example because `examples/` is not on any pytest
-path — `testpaths` (pyproject.toml) names `safe_agents`, `reliability`,
-`observability`, and no CI job names `examples/`. The convention this file follows
+path — `testpaths` (pyproject.toml) names `safe_agents` alone, and no CI job names
+`examples/`. The convention this file follows
 is `test_example_confidence_budget.py`'s: example code in `examples/`, its test here.
 """
 from __future__ import annotations

@@ -1,5 +1,5 @@
 """
-reliability — assert-the-artifact / loud-failure pattern library.
+safe_agents.reliability — assert-the-artifact / loud-failure pattern library.
 
 Base platform package for reliability & testing. Agent-agnostic.
 
@@ -21,15 +21,15 @@ Predicate helpers (pass directly to assert_artifact or SmokeHarness.check):
     policy_matches(policy_doc, expected)
 """
 
-from reliability.loud_failure import assert_artifact, require_evidence
-from reliability.meta_alarm import emit_content_alarm, emit_heartbeat, emit_meta_alarm
-from reliability.predicates import (
+from safe_agents.reliability.loud_failure import assert_artifact, require_evidence
+from safe_agents.reliability.meta_alarm import emit_content_alarm, emit_heartbeat, emit_meta_alarm
+from safe_agents.reliability.predicates import (
     dynamodb_item_exists,
     file_exists,
     policy_matches,
     s3_object_exists,
 )
-from reliability.smoke import CheckResult, SmokeHarness
+from safe_agents.reliability.smoke import CheckResult, SmokeHarness
 
 __all__ = [
     "assert_artifact",

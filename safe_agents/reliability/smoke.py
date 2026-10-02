@@ -62,7 +62,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Any, Callable
 
-from reliability.meta_alarm import emit_content_alarm, emit_heartbeat, emit_meta_alarm
+from safe_agents.reliability.meta_alarm import emit_content_alarm, emit_heartbeat, emit_meta_alarm
 
 
 @dataclasses.dataclass

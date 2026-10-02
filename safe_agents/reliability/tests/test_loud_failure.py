@@ -1,4 +1,4 @@
-"""Tests for reliability.loud_failure — assert_artifact and require_evidence.
+"""Tests for safe_agents.reliability.loud_failure — assert_artifact and require_evidence.
 
 Both directions (pass and fail) are verified. Data-driven where it reads well.
 """
@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from reliability.loud_failure import assert_artifact, require_evidence
+from safe_agents.reliability.loud_failure import assert_artifact, require_evidence
 
 
 # ------------------------------------------------------------------

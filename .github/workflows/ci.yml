@@ -74,9 +74,9 @@ jobs:
         # exercise the real Condition and Update expressions rather than a fake.
         run: pip install -e ".[dev]"
 
-      # From the root, not narrowed to safe_agents/: the reliability library the
-      # watcher depends on carries tests a narrower path silently skips
-      # (CONTRIBUTING.md). Narrowing here would reintroduce exactly that.
+      # From the root with no path argument, so pytest collects whatever
+      # `testpaths` in pyproject.toml declares. This is the command
+      # CONTRIBUTING.md gives contributors, and the two should stay the same.
       - name: Run the suite
         run: python3 -m pytest -q
 

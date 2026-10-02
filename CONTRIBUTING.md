@@ -84,9 +84,8 @@ there, each naming the POSIX tool it needs (`pgrep`, `bash`, or the runner-contr
 harness's shell scripts). CI runs this same path on Windows and macOS.
 
 The suite is a few thousand tests and needs no cloud account, no container
-runtime, and no credentials. Run `pytest` from the repository root rather than
-narrowing it to `safe_agents/` — the reliability library the watcher depends on
-carries tests the narrower path silently skips.
+runtime, and no credentials. Run `pytest` from the repository root with no path
+argument, which is what CI does.
 
 Some tests skip when the specifications are not present. They live in
 [wjatx/ptc-gal-standards](https://github.com/wjatx/ptc-gal-standards) and are not

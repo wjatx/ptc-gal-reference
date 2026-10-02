@@ -103,7 +103,7 @@ Per the base/consumer split, the base ships **mechanism only**:
 - a **deterministic** monitor predicate (`Liveness.overdue()`) — pure timestamp comparison, no
   model in the path.
 
-The predicate's verdict pages onto the existing alarm surface (the log-metric alarm surface / the `reliability`
+The predicate's verdict pages onto the existing alarm surface (the log-metric alarm surface / the `safe_agents.reliability`
 meta-alarm primitives) — that wiring already exists and is not re-shipped here; this change
 adds only the typed field and the predicate.
 

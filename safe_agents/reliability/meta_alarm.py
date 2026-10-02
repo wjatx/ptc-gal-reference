@@ -30,7 +30,7 @@ def _now_utc() -> str:
 
 def emit_heartbeat(
     *,
-    component: str = "reliability.meta_alarm",
+    component: str = "safe_agents.reliability.meta_alarm",
     heartbeat_fn: Callable[[], None] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
@@ -66,7 +66,7 @@ def emit_heartbeat(
 def emit_meta_alarm(
     msg: str,
     *,
-    component: str = "reliability.meta_alarm",
+    component: str = "safe_agents.reliability.meta_alarm",
     extra: dict[str, Any] | None = None,
 ) -> None:
     """The watchdog itself is broken. Publish the META-alarm.
@@ -107,7 +107,7 @@ def emit_content_alarm(
     msg: str,
     *,
     notify_fn: Callable[[str], None],
-    component: str = "reliability.meta_alarm",
+    component: str = "safe_agents.reliability.meta_alarm",
     extra: dict[str, Any] | None = None,
 ) -> None:
     """The watchdog detected a real condition. Deliver the content alarm.

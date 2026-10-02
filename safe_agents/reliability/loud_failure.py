@@ -16,7 +16,7 @@ import json
 import sys
 from typing import Any, Callable, Union
 
-_DEFAULT_COMPONENT = "reliability.loud_failure"
+_DEFAULT_COMPONENT = "safe_agents.reliability.loud_failure"
 
 
 def _now_utc() -> str:

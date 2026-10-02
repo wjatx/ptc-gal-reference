@@ -101,7 +101,7 @@ to concrete channels.
 
 ```python
 import boto3
-from reliability import emit_heartbeat, emit_meta_alarm, emit_content_alarm
+from safe_agents.reliability import emit_heartbeat, emit_meta_alarm, emit_content_alarm
 
 cloudwatch = boto3.client("cloudwatch")
 sns = boto3.client("sns")
@@ -159,10 +159,10 @@ Slack) for both; the base platform does not mandate a provider.
 
 ## Implementation (this package)
 
-`reliability.meta_alarm` provides the three primitives. Import from the package:
+`safe_agents.reliability.meta_alarm` provides the three primitives. Import from the package:
 
 ```python
-from reliability import emit_heartbeat, emit_meta_alarm, emit_content_alarm
+from safe_agents.reliability import emit_heartbeat, emit_meta_alarm, emit_content_alarm
 ```
 
 The exit-code contract is enforced by the primitives:

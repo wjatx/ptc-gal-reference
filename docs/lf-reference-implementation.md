@@ -136,9 +136,8 @@ python3 -m safe_agents.contract.spec_clauses --summary --spec-dir spec   # 83 ro
 python3 -m pytest                                                        # the full suite
 ```
 
-Run `pytest` from the repository root rather than `pytest safe_agents/`: the reliability library the
-watcher depends on and the observability package carry their own tests, which the narrower path
-silently skips. The specifications are cloned to `spec/` because that is where the tests look for
+Run `pytest` from the repository root with no path argument, which is what CI does. The
+specifications are cloned to `spec/` because that is where the tests look for
 them; without the clone, the tests that compare specification text against shipped schemas skip.
 
 The live demonstrations require deployed infrastructure and are not reproducible from a checkout
