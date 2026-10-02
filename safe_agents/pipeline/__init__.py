@@ -1,6 +1,7 @@
 """safe_agents.pipeline — manifest-driven provision/deploy/smoke/teardown pipeline for safe-agents."""
 
 from .aws_interface import AWSInterface, FakeAWS, LiveAWS
+from .image_pin import ImagePinError, ImageSelection
 from .manifest import DeploymentManifest, ManifestError, load_manifest, manifest_get
 from .phases import (
     SMOKE_MODE_LOCAL,
@@ -20,6 +21,8 @@ __all__ = [
     "AWSInterface",
     "DeploymentManifest",
     "FakeAWS",
+    "ImagePinError",
+    "ImageSelection",
     "LiveAWS",
     "ManifestError",
     "PHASES_ORDERED",

@@ -130,7 +130,7 @@ grant, and the failure mode is a runtime `AccessDenied` no schema check catches.
 - **Agent-runner secrets — outstanding.** The pipeline manifest's `secrets:` block takes **full
   secret ids** typed by the author (`my-agent/deploy-key`) [read:
   `safe_agents/pipeline/manifest.py:32-68`], while the Fargate arm *constructs* an env-prefixed
-  path for the same logical secret [read: `safe_agents/arms/fargate/provision.py:201`]. That
+  path for the same logical secret [read: `safe_agents/arms/fargate/provision.py:207`]. That
   divergence is tracked in #136, and it lives entirely here. This lane **migrates to the leaf
   rule**; the cloud-side rename and env-prefixing is deliberately deferred (#136 records the missing
   environment scope).

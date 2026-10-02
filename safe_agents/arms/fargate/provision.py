@@ -55,6 +55,12 @@ import logging
 import time
 from typing import TYPE_CHECKING, Optional
 
+from safe_agents.pipeline.image_pin import (
+    ImageSelection,
+    record_override,
+    select_container_image,
+)
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -399,6 +405,30 @@ def _resolve_network_mode(aws: "AWSInterface", environment: str) -> str:
 # Provisioning
 # ---------------------------------------------------------------------------
 
+def resolve_task_image(
+    image_uri: Optional[str],
+    *,
+    allow_mutable_image_tag: bool = False,
+    environment: str = "development",
+) -> ImageSelection:
+    """Decide the image the task definition names, and say how it was chosen.
+
+    Pure: no AWS call and no log line, so the pipeline's dry run gives the same answer as a
+    real run. ``image_uri`` must be a digest reference
+    (``<repository-uri>@sha256:<64 lowercase hex>``). With no reference the call refuses
+    (ImagePinError): there is no default, and in particular no ``latest``. A tag reference is
+    accepted only with ``allow_mutable_image_tag=True``; fargate_provision logs that override
+    at WARNING. See safe_agents/pipeline/image_pin.py.
+    """
+    return select_container_image(
+        "fargate arm",
+        "fargate_provision",
+        image_uri,
+        allow_mutable_image_tag,
+        environment=environment,
+    )
+
+
 def fargate_provision(
     manifest: "DeploymentManifest",
     aws: "AWSInterface",
@@ -407,14 +437,17 @@ def fargate_provision(
     schedule_expression: str = DEFAULT_SCHEDULE_EXPRESSION,
     timezone: str = DEFAULT_TIMEZONE,
     image_uri: Optional[str] = None,
+    allow_mutable_image_tag: bool = False,
     region: str = "us-east-1",
     state: str = "DISABLED",
 ) -> dict:
     """Provision the scheduled Fargate task for arm=fargate.
 
     Steps (all via the injected AWSInterface — FakeAWS in tests):
+      0. Decide the image (resolve_task_image). No AWS call; refuses here, before anything
+         is created, when no image is named.
       1. Resolve infra exports (cluster-arn, broker-service-dns, agent-subnet-ids,
-         agent-sg-id, agent-runs-table-name/arn, ecr-agent-repo-uri).
+         agent-sg-id, agent-runs-table-name/arn).
       2. Create the per-agent taskRole (ecs-tasks trust) + its arm-extension inline
          policy (run-record PutItem + oauth-token GetSecretValue ONLY).
       3. Create the executionRole (ecs-tasks trust) + attach the managed
@@ -438,8 +471,15 @@ def fargate_provision(
     environment:            Deployment environment (resolves infra SSM exports).
     schedule_expression:    cron(...) / rate(...) — a PARAMETER, not hardcoded policy.
     timezone:               IANA timezone for the schedule — a PARAMETER.
-    image_uri:              Full container image URI. When None, resolved as
-                            <ecr-agent-repo-uri>:latest from infra SSM.
+    image_uri:              The container image, by digest:
+                            <repository-uri>@sha256:<64 lowercase hex>. Required: with no
+                            image the call raises ImagePinError before any AWS call. There
+                            is no default and no implicit `latest`.
+    allow_mutable_image_tag: Override. When True, image_uri may name a tag
+                            (<repository-uri>:<tag>) instead of a digest; logged at WARNING
+                            and reported in the summary. image_uri is still required. A
+                            per-run switch: pass it from the caller, never from a manifest
+                            or the environment.
     region:                 AWS region (for logs + the in-container AWS_DEFAULT_REGION).
     state:                  Initial EventBridge Scheduler state. Defaults to DISABLED —
                             deliberately different from create_schedule's own ENABLED
@@ -451,9 +491,20 @@ def fargate_provision(
     Returns
     -------
     Summary dict: task_definition_arn, task_role_arn, execution_role_arn,
-    scheduler_role_arn, schedule_arn, family, schedule_state.
+    scheduler_role_arn, schedule_arn, family, schedule_state, plus the image that was
+    registered and how it was chosen: image_uri, image_source ("explicit" for a digest,
+    "mutable-tag" under the override) and image_selection (the one-line statement of the
+    choice, the same line the override logs).
     """
     agent_name = manifest.name
+
+    # -- Step 0: decide the image (no AWS call; refuses before anything is created) ----
+    image = resolve_task_image(
+        image_uri, allow_mutable_image_tag=allow_mutable_image_tag, environment=environment
+    )
+    image_uri = image.reference
+    record_override(logger, image)
+
     _ssm = _make_ssm_resolver(aws, environment)
 
     # -- Step 1: resolve infra exports ----------------------------------------
@@ -468,8 +519,6 @@ def fargate_provision(
     # public IP; 'secure' (default) keeps it disabled. Resolved once, plumbed below.
     network_mode = _resolve_network_mode(aws, environment)
     assign_public_ip = "ENABLED" if network_mode == NETWORK_MODE_OPEN else "DISABLED"
-    if image_uri is None:
-        image_uri = f"{_ssm('ecr-agent-repo-uri')}:latest"
 
     names = _fargate_resource_names(environment, agent_name)
     tags = _arm_tags(environment, agent_name)
@@ -593,6 +642,9 @@ def fargate_provision(
         "schedule_arn": schedule_arn,
         "family": names["family"],
         "schedule_state": state,
+        "image_uri": image.reference,
+        "image_source": image.source,
+        "image_selection": image.describe(),
     }
 
 
@@ -615,6 +667,10 @@ def fargate_run_once(
     task-def revision for the agent's family, and RunTask's it with RUN_ID overridden
     and public IP set per the NetworkStack network-mode (disabled for 'secure', the
     default; enabled for 'open' public subnets). Returns the task ARN.
+
+    "Newest revision" is a pointer to the last fargate_provision for this agent, not an image
+    choice: the revision names the image that provision registered, by digest unless that
+    provision used the mutable-tag override. This function selects no image of its own.
 
     extra_env adds container env overrides for this run only (e.g. the run.sh
     SA_SMOKE_* knobs, to point the brokered-call proof at a really-granted action

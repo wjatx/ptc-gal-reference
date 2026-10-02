@@ -137,8 +137,11 @@ class AWSInterface(abc.ABC):
         Each entry is a dict with at least:
             {"image_id": str, "tags": dict[str, str], "creation_date": str}
 
-        Used by the EC2 arm to find the newest prebuilt base AMI (tagged
-        safe-agents:ami=base) rather than resolving a public SSM parameter.
+        Used by the arms' newest-AMI override (allow_newest_ami=True) to list the prebuilt base
+        AMIs, and by the bake teardown to find the AMIs to deregister.
+
+        An AWS error MUST propagate. An empty list means "no such image" and nothing else: a
+        caller that falls back, or that reports nothing left to remove, acts on that answer.
         """
 
     @abc.abstractmethod
@@ -150,9 +153,11 @@ class AWSInterface(abc.ABC):
         Each entry is a dict with at least:
             {"image_id": str, "name": str, "creation_date": str}
 
-        Used by the rhel-openshell arm to look up RHEL 9 marketplace AMIs by
-        Red Hat's owner ID (309956199498) and a name pattern, since those AMIs
-        are not tagged with safe-agents bakery tags.
+        Used by the rhel-openshell arm's newest-AMI override to look up RHEL 9 marketplace AMIs
+        by Red Hat's owner ID (309956199498) and a name pattern, since those AMIs are not tagged
+        with safe-agents bakery tags.
+
+        An AWS error MUST propagate, for the same reason as describe_images.
 
         To refresh the RHEL 9 AMI for a region:
             aws ec2 describe-images --owners 309956199498 \\
@@ -743,14 +748,15 @@ class LiveAWS(AWSInterface):
         return resp["Instances"][0]["InstanceId"]
 
     def describe_images(self, tag_filters: dict[str, str]) -> list[dict]:
-        """Return AMI images owned by this account matching all tag filters."""
+        """Return AMI images owned by this account matching all tag filters.
+
+        An AWS error propagates. It used to be logged and returned as an empty list, which made
+        a throttled or denied call read as "no baked AMI": the RHEL arm then launched from the
+        marketplace image, and the bake teardown reported nothing left to deregister.
+        """
         ec2 = self._ec2_client()
         filters = [{"Name": f"tag:{k}", "Values": [v]} for k, v in tag_filters.items()]
-        try:
-            resp = ec2.describe_images(Owners=["self"], Filters=filters)
-        except Exception as exc:
-            logger.warning("describe_images failed: %s", exc)
-            return []
+        resp = ec2.describe_images(Owners=["self"], Filters=filters)
         result = []
         for image in resp.get("Images", []):
             image_tags = {t["Key"]: t["Value"] for t in image.get("Tags", [])}
@@ -768,19 +774,14 @@ class LiveAWS(AWSInterface):
 
         Used by the rhel-openshell arm to look up RHEL marketplace AMIs
         (owner 309956199498) without needing safe-agents bakery tags.
+
+        An AWS error propagates; an empty list means only that no image matched.
         """
         ec2 = self._ec2_client()
-        try:
-            resp = ec2.describe_images(
-                Owners=[owner_id],
-                Filters=[{"Name": "name", "Values": [name_pattern]}],
-            )
-        except Exception as exc:
-            logger.warning(
-                "describe_images_by_owner_name(%r, %r) failed: %s",
-                owner_id, name_pattern, exc,
-            )
-            return []
+        resp = ec2.describe_images(
+            Owners=[owner_id],
+            Filters=[{"Name": "name", "Values": [name_pattern]}],
+        )
         result = []
         for image in resp.get("Images", []):
             result.append({
@@ -1838,6 +1839,7 @@ class FakeAWS(AWSInterface):
         self._instances[instance_id] = {
             "tags": tags,
             "state": "running",
+            "image_id": image_id,
             "subnet_id": subnet_id,
             "block_device_mappings": block_device_mappings,
         }

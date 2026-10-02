@@ -82,10 +82,40 @@ Every baked AMI carries these tags (set by `dist-config.json`):
 | `Project` | `safe-agents` |
 | `ManagedBy` | `safe-agents-image-builder` |
 
-`rhel_openshell_provision` selects the **newest self-owned AMI** tagged
-`safe-agents:ami=base-rhel` (via `_resolve_base_ami`). When no bake exists it falls back to the
-RHEL 9 marketplace AMI (Red Hat owner `309956199498` + name filter) — the behavior before the prebuilt AMI,
-which only completes bootstrap in a subnet with egress.
+`rhel_openshell_provision` launches the AMI the operator names by id: `--ami-id ami-...` on the
+pipeline CLI, `image_id=` in code. It has no default. With no id the provision refuses before any
+AWS call, and a dry run fails the same way. The id is the output of the bake. Read it from the
+finished build:
+
+```sh
+aws imagebuilder get-image --image-build-version-arn <BUILD_ARN> \
+  --query 'image.outputResources.amis[0].image' --output text
+```
+
+or list this bakery's AMIs and take the one you reviewed:
+
+```sh
+aws ec2 describe-images --owners self \
+  --filters "Name=tag:safe-agents:ami,Values=base-rhel" \
+  --query 'Images[].[ImageId,CreationDate,Name]' --output table
+```
+
+The tags above identify a bake; on the normal path they do not choose an AMI. They choose one only
+under the override `--allow-newest-ami` (`allow_newest_ami=True`), implemented by
+`resolve_base_ami`:
+
+1. It takes the self-owned AMI tagged `safe-agents:ami=base-rhel` with the latest `CreationDate`.
+2. Only when that lookup returns nothing (a fresh account, or before the first bake), it falls back
+   to the RHEL 9 marketplace AMI: owner `309956199498` (Red Hat), name
+   `RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3`, latest `CreationDate`. That is the behavior before the
+   prebuilt AMI, and it only completes bootstrap in a subnet with egress.
+
+The two steps are different trust statements. The first launches an image this account baked; the
+second launches an image Red Hat published. The override logs the AMI it chose and the rule that
+chose it at WARNING, records the same line in the pipeline plan, and marks the second case
+`MARKETPLACE FALLBACK`. An AWS error in the first lookup stops the run. It is never read as "no
+bake", so a throttled or denied call cannot cause the fallback. The override is a per-run flag;
+nothing reads it from the manifest or the environment.
 
 ## Baking the base AMI
 

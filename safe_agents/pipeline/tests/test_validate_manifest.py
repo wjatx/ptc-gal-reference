@@ -269,7 +269,8 @@ def test_validate_phase_missing_polarity(tmp_path: Path) -> None:
 def test_run_pipeline_preflight_passes_aborts_at_provision(tmp_path: Path) -> None:
     """
     A valid manifest (polarity set) with arm=fargate should pass pre-flight and
-    then abort at 'provision' (fargate unimplemented), not at 'preflight'.
+    then abort at 'provision' (nothing is seeded in FakeAWS, so the provisioner's
+    first infra read fails), not at 'preflight'.
     """
     data = _base_manifest()
     data["arm"] = "fargate"
@@ -280,6 +281,7 @@ def test_run_pipeline_preflight_passes_aborts_at_provision(tmp_path: Path) -> No
         manifest_path,
         dry_run=False,
         aws=fake_aws,
+        image_uri=f"registry.example/agent@sha256:{'a' * 64}",
     )
     assert not result.success
     assert result.aborted_at == "provision", (

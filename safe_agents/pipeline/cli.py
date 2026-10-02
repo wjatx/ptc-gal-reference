@@ -2,10 +2,17 @@
 CLI entrypoint for the manifest-driven provision/deploy/smoke pipeline.
 
 Usage:
-    python3 -m safe_agents.pipeline.cli agents/my-agent.yaml [--dry-run] [--env development]
+    python3 -m safe_agents.pipeline.cli agents/my-agent.yaml [--dry-run] [--env development] \
+        (--ami-id ami-... | --image-uri <repository-uri>@sha256:<64 hex>)
+
+The provision phase launches exactly what the operator names: --ami-id for the arms that launch
+an instance (ec2, rhel-openshell), --image-uri by digest for the fargate arm. With neither it
+refuses. --allow-newest-ami and --allow-mutable-image-tag are the overrides; each is recorded in
+the plan and logged at WARNING. These four are command-line flags only: nothing reads them from
+the manifest or the environment. See safe_agents/pipeline/image_pin.py.
 
 From the repo root (core working directory):
-    python3 -m safe_agents.pipeline.cli ../agents/test-stub.yaml --dry-run
+    python3 -m safe_agents.pipeline.cli ../agents/test-stub.yaml --dry-run --ami-id ami-...
 """
 from __future__ import annotations
 
@@ -13,17 +20,26 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Optional, Sequence
 
+from .image_pin import (
+    ALLOW_MUTABLE_IMAGE_TAG_FLAG,
+    ALLOW_NEWEST_AMI_FLAG,
+    AMI_ID_FLAG,
+    IMAGE_URI_FLAG,
+)
 from .pipeline import ALL_PHASES, PHASES_ORDERED, run_pipeline
 
 
-def main() -> None:
+def main(argv: Optional[Sequence[str]] = None) -> None:
     parser = argparse.ArgumentParser(
         prog="pipeline",
         description=(
             "Manifest-driven provision/deploy/smoke pipeline. "
             "Reads agents/<name>.yaml and drives the three phases in order.\n\n"
-            "Pass --dry-run to validate and print the plan without calling AWS."
+            "Pass --dry-run to validate and print the plan without calling AWS.\n\n"
+            "The provision phase launches what you name and has no default: pass "
+            f"{AMI_ID_FLAG} (ec2, rhel-openshell) or {IMAGE_URI_FLAG} by digest (fargate)."
         ),
     )
     parser.add_argument(
@@ -35,6 +51,56 @@ def main() -> None:
         action="store_true",
         default=False,
         help="Validate + print the plan without calling AWS or running smoke",
+    )
+    image = parser.add_argument_group(
+        "what the provision phase launches",
+        "There is no default AMI and no default image. A flag that the manifest's arm does not "
+        "use is an error. The two --allow-* overrides are recorded in the plan and logged at "
+        "WARNING; they are flags of this command only and are not read from the manifest or "
+        "the environment.",
+    )
+    image.add_argument(
+        AMI_ID_FLAG,
+        default=None,
+        dest="ami_id",
+        metavar="AMI_ID",
+        help=(
+            "The AMI to launch from, for the arms that launch an instance (ec2, "
+            'rhel-openshell): "ami-" plus 8 or 17 lowercase hex characters. It is the output of '
+            "the arm's bake."
+        ),
+    )
+    image.add_argument(
+        IMAGE_URI_FLAG,
+        default=None,
+        dest="image_uri",
+        metavar="IMAGE_URI",
+        help=(
+            "The container image for the fargate arm, by digest: "
+            "<repository-uri>@sha256:<64 lowercase hex characters>. Read the digest back after "
+            "the push (podman push --digestfile, or aws ecr describe-images)."
+        ),
+    )
+    image.add_argument(
+        ALLOW_NEWEST_AMI_FLAG,
+        action="store_true",
+        default=False,
+        dest="allow_newest_ami",
+        help=(
+            f"Override: with no {AMI_ID_FLAG}, launch the newest AMI by the arm's tag rule "
+            "(rhel-openshell falls back to the newest Red Hat marketplace AMI when no baked AMI "
+            "exists). What launches may not be what was reviewed."
+        ),
+    )
+    image.add_argument(
+        ALLOW_MUTABLE_IMAGE_TAG_FLAG,
+        action="store_true",
+        default=False,
+        dest="allow_mutable_image_tag",
+        help=(
+            f"Override: {IMAGE_URI_FLAG} may name a tag (<repository-uri>:<tag>) instead of a "
+            f"digest. {IMAGE_URI_FLAG} is still required; there is no implicit latest."
+        ),
     )
     parser.add_argument(
         "--env",
@@ -95,7 +161,7 @@ def main() -> None:
         default=False,
         help="Enable debug logging",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.WARNING,
@@ -115,6 +181,10 @@ def main() -> None:
         agent_root=agent_root,
         phases=phases,
         smoke_mode=args.smoke_mode,
+        ami_id=args.ami_id,
+        image_uri=args.image_uri,
+        allow_newest_ami=args.allow_newest_ami,
+        allow_mutable_image_tag=args.allow_mutable_image_tag,
     )
     result.print_plan()
     sys.exit(0 if result.success else 1)

@@ -28,10 +28,16 @@ Acceptance criteria:
      provision→deploy→smoke in order, with no AWS calls.
 
   7. The live (FakeAWS) provision path through provision_phase succeeds.
+
+  8. The task definition image is named by the caller, by digest. With no image the
+     provision refuses before any AWS call; there is no default and no `latest`. A tag
+     needs the allow_mutable_image_tag override, which is logged at WARNING and
+     reported in the summary and the pipeline plan.
 """
 from __future__ import annotations
 
 import dataclasses
+import logging
 from pathlib import Path
 
 import pytest
@@ -53,8 +59,10 @@ from safe_agents.arms.fargate.provision import (
     fargate_provision,
     fargate_run_once,
     fargate_teardown,
+    resolve_task_image,
 )
 from safe_agents.pipeline import FakeAWS, load_manifest, run_pipeline
+from safe_agents.pipeline.image_pin import ImagePinError
 from safe_agents.pipeline.manifest import Schedule
 from safe_agents.pipeline.phases import provision_phase, teardown_phase
 
@@ -69,6 +77,12 @@ RUN_SH = Path(__file__).parent.parent / "run.sh"
 
 ENV = "development"
 AGENT = "smoke-fargate"
+
+AGENT_REPO_URI = "123456789012.dkr.ecr.us-east-1.amazonaws.com/safe-agents-development-agent"
+# The normal path: the image named by digest.
+IMAGE_URI = f"{AGENT_REPO_URI}@sha256:{'a' * 64}"
+# The override path: the image named by tag.
+TAGGED_IMAGE_URI = f"{AGENT_REPO_URI}:20261002-abc1234"
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -98,10 +112,7 @@ def fake_aws_fargate() -> FakeAWS:
         f"/safe-agents/{ENV}/agent-runs-table-arn",
         "arn:aws:dynamodb:us-east-1:123456789012:table/safe-agents-development-agent-runs",
     )
-    aws.seed_ssm_param(
-        f"/safe-agents/{ENV}/ecr-agent-repo-uri",
-        "123456789012.dkr.ecr.us-east-1.amazonaws.com/safe-agents-development-agent",
-    )
+    aws.seed_ssm_param(f"/safe-agents/{ENV}/ecr-agent-repo-uri", AGENT_REPO_URI)
     return aws
 
 
@@ -117,7 +128,7 @@ def manifest():
 
 class TestProvisionCreatesResources:
     def test_returns_summary_with_all_arns(self, fake_aws_fargate, manifest) -> None:
-        summary = fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        summary = fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         for key in (
             "task_definition_arn",
             "task_role_arn",
@@ -129,27 +140,27 @@ class TestProvisionCreatesResources:
             assert summary[key], f"summary missing/empty key {key!r}: {summary}"
 
     def test_creates_three_roles(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         for role in (names["task_role"], names["exec_role"], names["scheduler_role"]):
             assert fake_aws_fargate.get_role(role) is not None, f"role {role!r} not created"
 
     def test_task_role_trust_is_ecs_tasks(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         trust = fake_aws_fargate.get_role(names["task_role"])["assume_role_policy"]
         principal = trust["Statement"][0]["Principal"]["Service"]
         assert principal == "ecs-tasks.amazonaws.com"
 
     def test_scheduler_role_trust_is_scheduler(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         trust = fake_aws_fargate.get_role(names["scheduler_role"])["assume_role_policy"]
         principal = trust["Statement"][0]["Principal"]["Service"]
         assert principal == "scheduler.amazonaws.com"
 
     def test_execution_role_has_managed_policy(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         attached = fake_aws_fargate.list_attached_role_policies(names["exec_role"])
         assert any("AmazonECSTaskExecutionRolePolicy" in p for p in attached), (
@@ -157,17 +168,17 @@ class TestProvisionCreatesResources:
         )
 
     def test_registers_task_definition(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         assert fake_aws_fargate.was_called("register_task_definition")
         assert len(fake_aws_fargate._ecs_task_definitions) == 1
 
     def test_creates_schedule(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         assert names["schedule"] in fake_aws_fargate._schedules
 
     def test_all_resources_tagged_arm_fargate(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         # roles
         for role in (names["task_role"], names["exec_role"], names["scheduler_role"]):
@@ -183,24 +194,25 @@ class TestProvisionCreatesResources:
         assert fake_aws_fargate._schedules[names["schedule"]]["tags"]["Arm"] == "fargate"
 
     def test_task_def_is_arm64_and_awsvpc(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         td = next(iter(fake_aws_fargate._ecs_task_definitions.values()))
         assert td["cpu"] == DEFAULT_CPU == "256"
         assert td["memory"] == DEFAULT_MEMORY == "512"
         assert td["runtime_platform"]["cpuArchitecture"] == "ARM64"
         assert td["network_mode"] == "awsvpc"
 
-    def test_task_def_image_from_ecr_export(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
-        td = next(iter(fake_aws_fargate._ecs_task_definitions.values()))
-        assert td["image"].endswith("/safe-agents-development-agent:latest")
-
-    def test_image_uri_override(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(
-            manifest, fake_aws_fargate, environment=ENV, image_uri="my.repo/x:abc123"
+    def test_task_def_names_the_given_digest_verbatim(self, fake_aws_fargate, manifest) -> None:
+        summary = fargate_provision(
+            manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI
         )
         td = next(iter(fake_aws_fargate._ecs_task_definitions.values()))
-        assert td["image"] == "my.repo/x:abc123"
+        assert td["image"] == IMAGE_URI
+        assert summary["image_uri"] == IMAGE_URI
+        assert summary["image_source"] == "explicit"
+        # The image is the caller's: the repository export is not read to build one.
+        assert not fake_aws_fargate.was_called(
+            "get_ssm_param", f"/safe-agents/{ENV}/ecr-agent-repo-uri"
+        )
 
     def test_schedule_expression_and_timezone_are_parameters(
         self, fake_aws_fargate, manifest
@@ -208,7 +220,7 @@ class TestProvisionCreatesResources:
         fargate_provision(
             manifest,
             fake_aws_fargate,
-            environment=ENV,
+            environment=ENV, image_uri=IMAGE_URI,
             schedule_expression="cron(0 9 * * ? *)",
             timezone="America/New_York",
         )
@@ -221,7 +233,7 @@ class TestProvisionCreatesResources:
         """With no state kwarg, fargate_provision's own default (DISABLED)
         applies — a provision must never enable a production schedule before its
         first manual proof."""
-        summary = fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        summary = fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         assert fake_aws_fargate._schedules[names["schedule"]]["state"] == "DISABLED"
         assert summary["schedule_state"] == "DISABLED"
@@ -229,7 +241,7 @@ class TestProvisionCreatesResources:
     def test_schedule_state_enabled_override(self, fake_aws_fargate, manifest) -> None:
         """A caller can explicitly opt into ENABLED (post-proof)."""
         summary = fargate_provision(
-            manifest, fake_aws_fargate, environment=ENV, state="ENABLED"
+            manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI, state="ENABLED"
         )
         names = _fargate_resource_names(ENV, AGENT)
         assert fake_aws_fargate._schedules[names["schedule"]]["state"] == "ENABLED"
@@ -243,7 +255,7 @@ class TestProvisionCreatesResources:
 
 class TestNoConnectorCredsInvariant:
     def test_task_role_has_no_connector_path(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         policy = fake_aws_fargate._role_policies[(names["task_role"], names["task_role"])]
         for stmt in policy["Statement"]:
@@ -322,7 +334,7 @@ class TestContainerEnvContract:
         assert env["RUN_ID"]  # placeholder present
 
     def test_task_def_env_matches_contract(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         td = next(iter(fake_aws_fargate._ecs_task_definitions.values()))
         env = td["environment"]
         assert env["SA_BROKER_DNS"] == "broker.safe-agents.local"
@@ -334,7 +346,7 @@ class TestContainerEnvContract:
         assert env["AWS_DEFAULT_REGION"] == "us-east-1"
 
     def test_oauth_token_injected_as_secret_not_env(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         td = next(iter(fake_aws_fargate._ecs_task_definitions.values()))
         # Must be a full Secrets Manager ARN (not a bare name) so ECS routes injection to
         # Secrets Manager + the execution role's GetSecretValue — a bare name is treated as
@@ -355,7 +367,7 @@ class TestScheduleTarget:
     def test_target_uses_isolated_subnets_sg_public_ip_disabled(
         self, fake_aws_fargate, manifest
     ) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         target = fake_aws_fargate._schedules[names["schedule"]]["target"]
         vpc = target["EcsParameters"]["NetworkConfiguration"]["awsvpcConfiguration"]
@@ -364,7 +376,7 @@ class TestScheduleTarget:
         assert vpc["AssignPublicIp"] == "DISABLED"
 
     def test_target_cluster_and_launch_type(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         target = fake_aws_fargate._schedules[names["schedule"]]["target"]
         assert target["Arn"].endswith("cluster/safe-agents-development")
@@ -385,7 +397,7 @@ class TestScheduleTarget:
             fake_aws_fargate.seed_ssm_param(
                 f"/safe-agents/{ENV}/{NETWORK_MODE_KEY}", seeded_mode
             )
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         names = _fargate_resource_names(ENV, AGENT)
         vpc = fake_aws_fargate._schedules[names["schedule"]]["target"][
             "EcsParameters"
@@ -413,7 +425,7 @@ class TestNetworkModeResolution:
 
 class TestTeardown:
     def test_teardown_removes_everything(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         report = fargate_teardown(manifest, fake_aws_fargate, environment=ENV)
         names = _fargate_resource_names(ENV, AGENT)
 
@@ -431,7 +443,7 @@ class TestTeardown:
             assert fake_aws_fargate.get_role(role) is None
 
     def test_teardown_idempotent(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         fargate_teardown(manifest, fake_aws_fargate, environment=ENV)
         report2 = fargate_teardown(manifest, fake_aws_fargate, environment=ENV)
         names = _fargate_resource_names(ENV, AGENT)
@@ -458,7 +470,7 @@ class TestTeardown:
 class TestPipelineDryRun:
     def test_three_phases_in_order(self, fake_aws_fargate) -> None:
         result = run_pipeline(
-            SMOKE_FARGATE_MANIFEST, dry_run=True, aws=fake_aws_fargate
+            SMOKE_FARGATE_MANIFEST, dry_run=True, aws=fake_aws_fargate, image_uri=IMAGE_URI
         )
         phases = [pr.phase for pr in result.phase_results]
         assert phases == ["provision", "deploy", "smoke"]
@@ -466,7 +478,7 @@ class TestPipelineDryRun:
 
     def test_provision_phase_mentions_fargate_ops(self, fake_aws_fargate) -> None:
         result = run_pipeline(
-            SMOKE_FARGATE_MANIFEST, dry_run=True, aws=fake_aws_fargate
+            SMOKE_FARGATE_MANIFEST, dry_run=True, aws=fake_aws_fargate, image_uri=IMAGE_URI
         )
         provision = next(pr for pr in result.phase_results if pr.phase == "provision")
         blob = " ".join(provision.steps).lower()
@@ -476,7 +488,10 @@ class TestPipelineDryRun:
         assert "disabled" in blob  # public IP disabled
 
     def test_dry_run_makes_no_aws_calls(self, fake_aws_fargate) -> None:
-        run_pipeline(SMOKE_FARGATE_MANIFEST, dry_run=True, aws=fake_aws_fargate)
+        result = run_pipeline(
+            SMOKE_FARGATE_MANIFEST, dry_run=True, aws=fake_aws_fargate, image_uri=IMAGE_URI
+        )
+        assert result.success
         assert fake_aws_fargate.calls == [], (
             f"Dry-run made unexpected AWS calls: {fake_aws_fargate.calls}"
         )
@@ -490,14 +505,18 @@ class TestPipelineDryRun:
 class TestPhaseLayerWiring:
     def test_provision_phase_live_succeeds(self, fake_aws_fargate, manifest) -> None:
         result = provision_phase(
-            manifest, fake_aws_fargate, dry_run=False, environment=ENV
+            manifest, fake_aws_fargate, dry_run=False, environment=ENV, image_uri=IMAGE_URI
         )
         assert result.success, result.error
         assert fake_aws_fargate.was_called("register_task_definition")
         assert fake_aws_fargate.was_called("create_schedule")
+        # The image the operator named is the image registered, and the plan says so.
+        td = next(iter(fake_aws_fargate._ecs_task_definitions.values()))
+        assert td["image"] == IMAGE_URI
+        assert f"fargate arm: task definition image {IMAGE_URI}, pinned by digest" in result.steps
 
     def test_teardown_phase_live_succeeds(self, fake_aws_fargate, manifest) -> None:
-        provision_phase(manifest, fake_aws_fargate, dry_run=False, environment=ENV)
+        provision_phase(manifest, fake_aws_fargate, dry_run=False, environment=ENV, image_uri=IMAGE_URI)
         result = teardown_phase(
             manifest, fake_aws_fargate, dry_run=False, environment=ENV
         )
@@ -515,7 +534,7 @@ class TestPhaseLayerWiring:
             ),
         )
         result = provision_phase(
-            scheduled_manifest, fake_aws_fargate, dry_run=False, environment=ENV
+            scheduled_manifest, fake_aws_fargate, dry_run=False, environment=ENV, image_uri=IMAGE_URI
         )
         assert result.success, result.error
         names = _fargate_resource_names(ENV, AGENT)
@@ -531,7 +550,7 @@ class TestPhaseLayerWiring:
         DISABLED default kicks in — DISABLED is the floor no matter what the manifest says."""
         assert manifest.schedule is None  # smoke-fargate.yaml declares no schedule block
         result = provision_phase(
-            manifest, fake_aws_fargate, dry_run=False, environment=ENV
+            manifest, fake_aws_fargate, dry_run=False, environment=ENV, image_uri=IMAGE_URI
         )
         assert result.success, result.error
         names = _fargate_resource_names(ENV, AGENT)
@@ -545,7 +564,7 @@ class TestPhaseLayerWiring:
 
 class TestRunOnce:
     def test_run_once_launches_in_isolated_topology(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         task_arn = fargate_run_once(
             fake_aws_fargate, manifest, environment=ENV, run_id="capstone-1"
         )
@@ -573,7 +592,7 @@ class TestRunOnce:
             fake_aws_fargate.seed_ssm_param(
                 f"/safe-agents/{ENV}/{NETWORK_MODE_KEY}", seeded_mode
             )
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         task_arn = fargate_run_once(
             fake_aws_fargate, manifest, environment=ENV, run_id="capstone-mode"
         )
@@ -584,7 +603,7 @@ class TestRunOnce:
             fargate_run_once(fake_aws_fargate, manifest, environment=ENV)
 
     def test_run_once_extra_env_lands_in_overrides(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         task_arn = fargate_run_once(
             fake_aws_fargate,
             manifest,
@@ -599,7 +618,7 @@ class TestRunOnce:
         assert {"name": "RUN_ID", "value": "capstone-2"} in override_env
 
     def test_run_once_extra_env_cannot_override_run_id(self, fake_aws_fargate, manifest) -> None:
-        fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
         task_arn = fargate_run_once(
             fake_aws_fargate,
             manifest,
@@ -689,7 +708,189 @@ class TestSchedulerIamRaceRetry:
         # End-to-end: a couple of propagation errors don't fail the provision.
         fake_aws_fargate.create_schedule_role_error_count = 2
         summary = fargate_provision(
-            manifest, fake_aws_fargate, environment=ENV,
+            manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI,
             schedule_expression="rate(1 day)", timezone="UTC",
         )
         assert summary["schedule_arn"]
+
+
+# ---------------------------------------------------------------------------
+# Criterion 8: the image is named by the caller, by digest
+# ---------------------------------------------------------------------------
+
+# (image_uri, allow_mutable_image_tag, phrase the refusal must contain)
+_REFUSED_IMAGES = [
+    pytest.param(None, False, "no image was given, and there is no default", id="no-image"),
+    pytest.param(None, True, "no image was given, and there is no default", id="override-alone"),
+    pytest.param(TAGGED_IMAGE_URI, False, "names the image by tag", id="tag-without-override"),
+    pytest.param(f"{AGENT_REPO_URI}:latest", False, "names the image by tag", id="latest"),
+    pytest.param(AGENT_REPO_URI, False, "no implicit `latest`", id="bare-repository"),
+    pytest.param(AGENT_REPO_URI, True, "no implicit `latest`", id="bare-repository-override"),
+    pytest.param(
+        f"{AGENT_REPO_URI}@sha256:{'a' * 63}", False, "not a digest reference", id="short-digest"
+    ),
+    pytest.param(
+        f"{AGENT_REPO_URI}@sha256:{'A' * 64}", False, "not a digest reference", id="upper-digest"
+    ),
+    pytest.param(
+        f"{AGENT_REPO_URI}:v1@sha256:{'a' * 63}", True, "not a digest reference",
+        id="tag-plus-malformed-digest-under-override",
+    ),
+    pytest.param(f"@sha256:{'a' * 64}", False, "not a digest reference", id="no-repository"),
+    pytest.param(IMAGE_URI, True, "named by digest. Drop the override", id="override-unused"),
+    pytest.param(f"{AGENT_REPO_URI}:bad tag", True, "not an image reference", id="whitespace"),
+    pytest.param(f"{AGENT_REPO_URI}:-bad", True, "does not end in an image tag", id="bad-tag"),
+    pytest.param(TAGGED_IMAGE_URI, "true", "must be True or False", id="override-not-a-bool"),
+]
+
+
+class TestImageIsPinned:
+    @pytest.mark.parametrize("image_uri, allow, phrase", _REFUSED_IMAGES)
+    def test_refuses_before_any_aws_call(
+        self, fake_aws_fargate, manifest, image_uri, allow, phrase
+    ) -> None:
+        with pytest.raises(ImagePinError) as excinfo:
+            fargate_provision(
+                manifest,
+                fake_aws_fargate,
+                environment=ENV,
+                image_uri=image_uri,
+                allow_mutable_image_tag=allow,
+            )
+        assert phrase in str(excinfo.value)
+        assert fake_aws_fargate.calls == [], (
+            f"a refused provision must touch nothing; calls: {fake_aws_fargate.calls}"
+        )
+
+    def test_missing_image_message_tells_the_operator_what_to_do(self) -> None:
+        with pytest.raises(ImagePinError) as excinfo:
+            resolve_task_image(None, environment="production")
+        message = str(excinfo.value)
+        for needle in (
+            "--image-uri <repository-uri>@sha256:",   # what to pass
+            "image_uri=",                              # the library spelling
+            "podman push --digestfile",                # how to get the value
+            "imageDetails[0].imageDigest",
+            "/safe-agents/production/ecr-agent-repo-uri",
+            "--allow-mutable-image-tag",               # the override
+        ):
+            assert needle in message, f"refusal does not mention {needle!r}: {message}"
+
+    def test_no_implicit_latest_anywhere(self, fake_aws_fargate, manifest) -> None:
+        """The regression this guards: `image_uri=None` used to mean `<repo>:latest`."""
+        with pytest.raises(ImagePinError):
+            fargate_provision(manifest, fake_aws_fargate, environment=ENV)
+        assert not fake_aws_fargate.was_called("register_task_definition")
+        assert fake_aws_fargate._ecs_task_definitions == {}
+
+    def test_override_registers_the_tag_and_logs_it(
+        self, fake_aws_fargate, manifest, caplog
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="safe_agents.arms.fargate.provision"):
+            summary = fargate_provision(
+                manifest,
+                fake_aws_fargate,
+                environment=ENV,
+                image_uri=TAGGED_IMAGE_URI,
+                allow_mutable_image_tag=True,
+            )
+        td = next(iter(fake_aws_fargate._ecs_task_definitions.values()))
+        assert td["image"] == TAGGED_IMAGE_URI
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1, warnings
+        line = warnings[0]
+        assert "OVERRIDE --allow-mutable-image-tag" in line
+        assert TAGGED_IMAGE_URI in line
+        assert 'tag "20261002-abc1234"' in line
+
+        assert summary["image_uri"] == TAGGED_IMAGE_URI
+        assert summary["image_source"] == "mutable-tag"
+        assert summary["image_selection"] == line
+
+    def test_digest_logs_no_warning(self, fake_aws_fargate, manifest, caplog) -> None:
+        with caplog.at_level(logging.WARNING, logger="safe_agents.arms.fargate.provision"):
+            fargate_provision(manifest, fake_aws_fargate, environment=ENV, image_uri=IMAGE_URI)
+        assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+    def test_registry_port_is_not_mistaken_for_a_tag(self) -> None:
+        with pytest.raises(ImagePinError, match="no implicit `latest`"):
+            resolve_task_image("registry.example:5000/team/agent", allow_mutable_image_tag=True)
+        selection = resolve_task_image(
+            "registry.example:5000/team/agent:v7", allow_mutable_image_tag=True
+        )
+        assert selection.source == "mutable-tag"
+        assert 'tag "v7"' in selection.describe()
+
+
+class TestPipelineImageFlags:
+    def test_phase_refuses_with_no_image_and_makes_no_aws_call(
+        self, fake_aws_fargate, manifest
+    ) -> None:
+        result = provision_phase(manifest, fake_aws_fargate, dry_run=False, environment=ENV)
+        assert not result.success
+        assert "no image was given, and there is no default" in result.error
+        assert fake_aws_fargate.calls == []
+
+    def test_dry_run_refuses_where_a_real_run_would(self, fake_aws_fargate) -> None:
+        result = run_pipeline(SMOKE_FARGATE_MANIFEST, dry_run=True, aws=fake_aws_fargate)
+        assert not result.success
+        assert result.aborted_at == "provision"
+        assert "no image was given" in result.phase_results[-1].error
+        assert fake_aws_fargate.calls == []
+
+    def test_dry_run_plan_states_the_explicit_image(self, fake_aws_fargate) -> None:
+        result = run_pipeline(
+            SMOKE_FARGATE_MANIFEST, dry_run=True, aws=fake_aws_fargate, image_uri=IMAGE_URI
+        )
+        provision = result.phase_results[0]
+        assert f"fargate arm: task definition image {IMAGE_URI}, pinned by digest" in provision.steps
+        assert "latest" not in " ".join(provision.steps)
+
+    @pytest.mark.parametrize("dry_run", [True, False])
+    def test_override_is_recorded_in_the_plan(self, fake_aws_fargate, manifest, dry_run) -> None:
+        result = provision_phase(
+            manifest,
+            fake_aws_fargate,
+            dry_run=dry_run,
+            environment=ENV,
+            image_uri=TAGGED_IMAGE_URI,
+            allow_mutable_image_tag=True,
+        )
+        assert result.success, result.error
+        override_steps = [s for s in result.steps if "OVERRIDE --allow-mutable-image-tag" in s]
+        assert len(override_steps) == 1, result.steps
+        assert TAGGED_IMAGE_URI in override_steps[0]
+        if dry_run:
+            assert fake_aws_fargate.calls == []
+        else:
+            td = next(iter(fake_aws_fargate._ecs_task_definitions.values()))
+            assert td["image"] == TAGGED_IMAGE_URI
+
+    @pytest.mark.parametrize(
+        "kwargs, flag",
+        [
+            ({"ami_id": "ami-0123456789abcdef0"}, "--ami-id"),
+            ({"allow_newest_ami": True}, "--allow-newest-ami"),
+        ],
+    )
+    @pytest.mark.parametrize("dry_run", [True, False])
+    def test_ami_flags_do_not_apply_to_fargate(
+        self, fake_aws_fargate, manifest, kwargs, flag, dry_run
+    ) -> None:
+        result = provision_phase(
+            manifest, fake_aws_fargate, dry_run=dry_run, environment=ENV,
+            image_uri=IMAGE_URI, **kwargs,
+        )
+        assert not result.success
+        assert f"{flag} does not apply to arm 'fargate'" in result.error
+        assert fake_aws_fargate.calls == []
+
+    def test_fargate_deploy_step_promises_nothing_it_does_not_do(self, fake_aws_fargate) -> None:
+        result = run_pipeline(
+            SMOKE_FARGATE_MANIFEST, dry_run=True, aws=fake_aws_fargate, image_uri=IMAGE_URI
+        )
+        deploy = next(pr for pr in result.phase_results if pr.phase == "deploy")
+        blob = " ".join(deploy.steps)
+        assert "update Fargate task definition" not in blob
+        assert "no host deploy for Fargate" in blob

@@ -1,6 +1,6 @@
 {
   "name": "safe-agents-base-rhel-dist",
-  "description": "AMI distribution configuration for the safe-agents rhel-openshell base AMI. Tags the output AMI with the load-bearing safe-agents:ami=base-rhel tag so rhel_openshell_provision can select the newest bake by tag (falling back to the RHEL marketplace AMI when no bake exists).",
+  "description": "AMI distribution configuration for the safe-agents rhel-openshell base AMI. Tags the output AMI with safe-agents:ami=base-rhel so this bakery's AMIs can be listed by tag. Provisioning launches the AMI the operator names by id; the tag chooses an AMI only under the --allow-newest-ami override, which falls back to the RHEL marketplace AMI when no bake exists.",
   "distributions": [
     {
       "region": "${AWS_REGION}",

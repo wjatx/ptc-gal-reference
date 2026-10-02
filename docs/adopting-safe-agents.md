@@ -68,9 +68,13 @@ need **no separate EventBridge-event-plus-Lambda** to kick it off. A daily run i
 
 ```python
 fargate_provision(manifest, aws, environment="production",
+                  image_uri="<ecr-agent-repo-uri>@sha256:<digest>",   # your image, by digest
                   schedule_expression="cron(0 13 * * ? *)",   # e.g. 13:00 daily
                   timezone="America/New_York")
 ```
+
+`image_uri` is required and names the image by digest. There is no default image; see
+`safe_agents/arms/fargate/README.md`.
 
 Each day the scheduler launches a fresh, confined RunTask → broker round-trip → run record → it
 exits (scale-to-zero; cheaper than an always-on EC2 idling 23h/day). This is **proven live** —
@@ -131,12 +135,19 @@ see `safe_agents/connectors/README.md` for the shared-vs-agent-owned split).
 ## 7. Provision + prove it
 
 ```
-# per-agent, via the installed console entrypoint (dry-run first):
-safe-agents agents/<name>.yaml --env development --dry-run
-safe-agents agents/<name>.yaml --env development                  # live
+# per-agent, via the installed console entrypoint (dry-run first).
+# fargate: name the image by digest.
+safe-agents agents/<name>.yaml --env development --dry-run --image-uri "<ecr-agent-repo-uri>@sha256:<digest>"
+safe-agents agents/<name>.yaml --env development --image-uri "<ecr-agent-repo-uri>@sha256:<digest>"   # live
+# ec2 / rhel-openshell: name the AMI instead.
+safe-agents agents/<name>.yaml --env development --ami-id <ami-id>
 # teardown (tagged, zero-orphan):
 safe-agents agents/<name>.yaml --env development --phase teardown
 ```
+
+The provision phase launches exactly the AMI or image named on the command line and refuses when
+none is named. `docs/consuming-the-sdk.md` §4 has the flags, the two overrides, and what each
+override records.
 
 (`safe-agents` is the console script the package installs; it's equivalent to
 `python -m safe_agents.pipeline.cli`.) Each arm's provision lives in `safe_agents/arms/<arm>/provision.py`

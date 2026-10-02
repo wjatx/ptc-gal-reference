@@ -23,9 +23,12 @@ Acceptance criteria (the original three, plus three added for S3-bundle delivery
        - The broker role's resource pattern DOES cover */connectors/* (verified
          against BROKER_CONNECTOR_KEYS_RESOURCE_PATTERN from provision.py).
 
-  4.  AMI looked up by tag, newest wins
-       - ec2_provision calls describe_images filtered by safe-agents:ami=base.
-       - When multiple images match, the one with the highest ami-version is used.
+  4.  The AMI is named by the caller
+       - ec2_provision launches from the explicit image_id, verbatim, with no lookup.
+       - With no image_id it refuses before any AWS call. There is no default AMI.
+       - Under allow_newest_ami=True it calls describe_images filtered by
+         safe-agents:ami=base, takes the highest ami-version, and logs the AMI and
+         the rule at WARNING. An AWS error in that lookup propagates.
 
   5.  RunInstances retries on the IAM profile-not-ready error
        - FakeAWS raises IamProfileNotReadyError N times then succeeds.
@@ -37,6 +40,7 @@ Acceptance criteria (the original three, plus three added for S3-bundle delivery
 """
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 
@@ -54,6 +58,7 @@ from safe_agents.arms.ec2.provision import (
     wait_for_clean_start,
 )
 from safe_agents.pipeline import FakeAWS, load_manifest, run_pipeline
+from safe_agents.pipeline.phases import provision_phase
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -63,6 +68,12 @@ REPO_ROOT = Path(__file__).parent.parent.parent.parent.parent  # safe-agents/
 AGENTS_DIR = REPO_ROOT / "agents"
 SMOKE_EC2_MANIFEST = AGENTS_DIR / "smoke-ec2.yaml"
 TEST_STUB_DIR = AGENTS_DIR / "test-stub"
+
+# The normal path: an AMI the operator names. Deliberately NOT seeded in FakeAWS, so a test
+# that launches from it proves no lookup chose it.
+AMI_ID = "ami-0123456789abcdef0"
+# The one base AMI the fixture seeds, reachable only through the newest-AMI override.
+BAKED_AMI_ID = "ami-0ba5e000000000001"
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -113,7 +124,7 @@ def fake_aws_ec2() -> FakeAWS:
     aws.seed_ssm_param(f"/safe-agents/{env}/broker-service-dns", "broker.safe-agents.local")
     # Prebuilt base AMI (replaces the public AL2023 SSM parameter lookup).
     aws.seed_image(
-        "ami-0fakebaseami001",
+        BAKED_AMI_ID,
         {"safe-agents:ami": "base", "safe-agents:ami-version": "20241201-01"},
         creation_date="2024-12-01T00:00:00Z",
     )
@@ -326,6 +337,7 @@ class TestPipelineDryRunSmokeEc2:
             dry_run=True,
             aws=fake_aws_ec2,
             agent_dir=TEST_STUB_DIR,
+            ami_id=AMI_ID,
         )
         assert result.success, (
             "Dry-run failed:\n"
@@ -347,6 +359,7 @@ class TestPipelineDryRunSmokeEc2:
             dry_run=True,
             aws=fake_aws_ec2,
             agent_dir=TEST_STUB_DIR,
+            ami_id=AMI_ID,
         )
         provision = next(pr for pr in result.phase_results if pr.phase == "provision")
         steps_text = " ".join(provision.steps).lower()
@@ -367,6 +380,7 @@ class TestPipelineDryRunSmokeEc2:
             dry_run=True,
             aws=fake_aws_ec2,
             agent_dir=TEST_STUB_DIR,
+            ami_id=AMI_ID,
         )
         deploy = next(pr for pr in result.phase_results if pr.phase == "deploy")
         steps_text = " ".join(deploy.steps)
@@ -388,6 +402,7 @@ class TestPipelineDryRunSmokeEc2:
             dry_run=True,
             aws=fake_aws_ec2,
             agent_dir=TEST_STUB_DIR,
+            ami_id=AMI_ID,
         )
         assert fake_aws_ec2.calls == [], (
             f"Dry-run made unexpected AWS calls: {fake_aws_ec2.calls}"
@@ -527,7 +542,7 @@ class TestTwoIdentitySeparation:
         from safe_agents.arms.ec2.provision import ec2_provision  # noqa: PLC0415
 
         manifest = load_manifest(SMOKE_EC2_MANIFEST)
-        instance_id = ec2_provision(manifest, fake_aws_ec2, environment="development")
+        instance_id = ec2_provision(manifest, fake_aws_ec2, environment="development", image_id=AMI_ID)
         assert instance_id.startswith("i-"), (
             f"ec2_provision returned an unexpected instance ID: {instance_id!r}"
         )
@@ -558,7 +573,7 @@ class TestTwoIdentitySeparation:
         fake_aws_ec2.run_instances = spy  # type: ignore[method-assign]
 
         manifest = load_manifest(SMOKE_EC2_MANIFEST)
-        ec2_provision(manifest, fake_aws_ec2, environment="development")
+        ec2_provision(manifest, fake_aws_ec2, environment="development", image_id=AMI_ID)
 
         def _looked_up(key: str) -> bool:
             return any(
@@ -597,69 +612,162 @@ class TestTwoIdentitySeparation:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 4: AMI lookup by tag, newest wins
+# Criterion 4: the AMI is named by the caller; newest-by-tag needs the override
 # ---------------------------------------------------------------------------
 
-class TestAmiTagLookup:
-    """ec2_provision must select the base AMI by tag, not by SSM path."""
+class _LookupFails(FakeAWS):
+    """FakeAWS whose AMI lookup fails the way a throttled or denied call does."""
 
-    def test_ami_looked_up_by_tag(self, fake_aws_ec2: FakeAWS) -> None:
-        """ec2_provision must call describe_images to find the base AMI."""
+    def describe_images(self, tag_filters: dict[str, str]) -> list[dict]:
+        self.calls.append(("describe_images", tag_filters))
+        raise ConnectionError("simulated: DescribeImages RequestLimitExceeded")
+
+
+def _seed_like(source: FakeAWS, target: FakeAWS) -> FakeAWS:
+    """Copy the SSM params and images of one fake into another."""
+    target._ssm_params = dict(source._ssm_params)
+    target._images = list(source._images)
+    return target
+
+
+def _launched_ami(aws: FakeAWS, instance_id: str) -> str:
+    return aws._instances[instance_id]["image_id"]
+
+
+class TestAmiIsPinned:
+    """ec2_provision launches the AMI the caller names. It has no default."""
+
+    @pytest.mark.parametrize(
+        "kwargs, phrase",
+        [
+            pytest.param({}, "no AMI id was given, and there is no default", id="no-id"),
+            pytest.param(
+                {"image_id": "ami-0fakebaseami001"}, "is not an AMI id", id="not-hex"
+            ),
+            pytest.param({"image_id": "ami-0123"}, "is not an AMI id", id="too-short"),
+            pytest.param(
+                {"image_id": "ami-0123456789ABCDEF0"}, "is not an AMI id", id="uppercase"
+            ),
+            pytest.param({"image_id": "latest"}, "is not an AMI id", id="word"),
+            pytest.param({"image_id": ""}, "is not an AMI id", id="empty-string"),
+            pytest.param(
+                {"image_id": AMI_ID, "allow_newest_ami": True},
+                "both an AMI id and the newest-AMI override",
+                id="id-and-override",
+            ),
+            pytest.param(
+                {"allow_newest_ami": "true"}, "must be True or False", id="override-not-a-bool"
+            ),
+        ],
+    )
+    def test_refuses_before_any_aws_call(
+        self, fake_aws_ec2: FakeAWS, kwargs: dict, phrase: str
+    ) -> None:
+        from safe_agents.arms.ec2.provision import ec2_provision  # noqa: PLC0415
+        from safe_agents.pipeline.image_pin import ImagePinError  # noqa: PLC0415
+
+        manifest = load_manifest(SMOKE_EC2_MANIFEST)
+        with pytest.raises(ImagePinError) as excinfo:
+            ec2_provision(manifest, fake_aws_ec2, environment="development", **kwargs)
+        assert phrase in str(excinfo.value)
+        assert fake_aws_ec2.calls == [], (
+            f"a refused provision must touch nothing; calls: {fake_aws_ec2.calls}"
+        )
+
+    def test_missing_id_message_tells_the_operator_what_to_do(
+        self, fake_aws_ec2: FakeAWS
+    ) -> None:
+        from safe_agents.arms.ec2.provision import resolve_base_ami  # noqa: PLC0415
+        from safe_agents.pipeline.image_pin import ImagePinError  # noqa: PLC0415
+
+        with pytest.raises(ImagePinError) as excinfo:
+            resolve_base_ami(fake_aws_ec2)
+        message = str(excinfo.value)
+        for needle in (
+            "ec2 arm",
+            "--ami-id <ami-id>",                       # what to pass
+            "image_id=",                               # the library spelling
+            "safe_agents/arms/ec2/ami/README.md",      # where the bake's output is described
+            'aws ec2 describe-images --owners self --filters "Name=tag:safe-agents:ami,Values=base"',
+            "--allow-newest-ami",                      # the override
+        ):
+            assert needle in message, f"refusal does not mention {needle!r}: {message}"
+
+    def test_explicit_id_is_used_verbatim_and_no_lookup_runs(
+        self, fake_aws_ec2: FakeAWS, caplog: pytest.LogCaptureFixture
+    ) -> None:
         from safe_agents.arms.ec2.provision import ec2_provision  # noqa: PLC0415
 
         manifest = load_manifest(SMOKE_EC2_MANIFEST)
-        ec2_provision(manifest, fake_aws_ec2, environment="development")
+        with caplog.at_level(logging.WARNING, logger="safe_agents.arms.ec2.provision"):
+            instance_id = ec2_provision(
+                manifest, fake_aws_ec2, environment="development", image_id=AMI_ID
+            )
+        assert _launched_ami(fake_aws_ec2, instance_id) == AMI_ID
+        assert not fake_aws_ec2.was_called("describe_images"), (
+            "an explicit AMI id must not trigger the tag lookup"
+        )
+        assert [r for r in caplog.records if "OVERRIDE" in r.getMessage()] == []
+
+    def test_override_looks_up_by_tag_and_newest_version_wins(
+        self, fake_aws_ec2: FakeAWS, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Under the override the lookup filters on safe-agents:ami=base and takes the
+        greatest safe-agents:ami-version tag, NOT the latest CreationDate."""
+        from safe_agents.arms.ec2.provision import ec2_provision  # noqa: PLC0415
+
+        newest_by_version = "ami-0aaaaaaaaaaaaaaa2"
+        # Greatest version tag, but the OLDEST creation date: the two orders disagree, so the
+        # assertion below distinguishes the tag sort from a CreationDate sort.
+        fake_aws_ec2.seed_image(
+            newest_by_version,
+            {"safe-agents:ami": "base", "safe-agents:ami-version": "20241215-01"},
+            creation_date="2024-01-01T00:00:00Z",
+        )
+        fake_aws_ec2.seed_image(
+            "ami-0aaaaaaaaaaaaaaa1",
+            {"safe-agents:ami": "base", "safe-agents:ami-version": "20241101-01"},
+            creation_date="2025-06-01T00:00:00Z",
+        )
+
+        manifest = load_manifest(SMOKE_EC2_MANIFEST)
+        with caplog.at_level(logging.WARNING, logger="safe_agents.arms.ec2.provision"):
+            instance_id = ec2_provision(
+                manifest, fake_aws_ec2, environment="development", allow_newest_ami=True
+            )
 
         describe_calls = [c for c in fake_aws_ec2.calls if c[0] == "describe_images"]
-        assert describe_calls, (
-            "ec2_provision must call describe_images to look up the base AMI by tag"
-        )
-        tag_filters = describe_calls[0][1]
-        assert tag_filters.get("safe-agents:ami") == "base", (
-            f"describe_images must filter by safe-agents:ami=base; got {tag_filters!r}"
-        )
+        assert len(describe_calls) == 1
+        assert describe_calls[0][1] == {"safe-agents:ami": "base"}
+        assert _launched_ami(fake_aws_ec2, instance_id) == newest_by_version
 
-    def test_newest_ami_wins(self, fake_aws_ec2: FakeAWS) -> None:
-        """When multiple base AMIs exist, the one with the highest ami-version is used."""
+        warnings = [r.getMessage() for r in caplog.records if "OVERRIDE" in r.getMessage()]
+        assert len(warnings) == 1, warnings
+        line = warnings[0]
+        assert "OVERRIDE --allow-newest-ami" in line
+        assert newest_by_version in line                      # the id it resolved
+        assert "safe-agents:ami=base" in line                 # the tag filter
+        assert "greatest safe-agents:ami-version tag value" in line  # the sort key
+        assert f"--ami-id {newest_by_version}" in line        # how to pin it next time
+        assert "MARKETPLACE" not in line
+
+    def test_override_with_no_baked_ami_fails(self) -> None:
+        from safe_agents.arms.ec2.provision import resolve_base_ami  # noqa: PLC0415
+
+        aws = FakeAWS()
+        with pytest.raises(RuntimeError, match="no base AMI found"):
+            resolve_base_ami(aws, allow_newest_ami=True)
+
+    def test_lookup_error_propagates_under_the_override(self, fake_aws_ec2: FakeAWS) -> None:
+        """A failed lookup is a failure. It must not read as 'no AMI', and nothing launches."""
         from safe_agents.arms.ec2.provision import ec2_provision  # noqa: PLC0415
 
-        # Seed two base AMIs; the newer version should win.
-        fake_aws_ec2.seed_image(
-            "ami-0older",
-            {"safe-agents:ami": "base", "safe-agents:ami-version": "20241101-01"},
-            creation_date="2024-11-01T00:00:00Z",
-        )
-        fake_aws_ec2.seed_image(
-            "ami-0newer",
-            {"safe-agents:ami": "base", "safe-agents:ami-version": "20241201-02"},
-            creation_date="2024-12-01T00:00:00Z",
-        )
-
+        aws = _seed_like(fake_aws_ec2, _LookupFails())
         manifest = load_manifest(SMOKE_EC2_MANIFEST)
-        # Pass image_id=None to force tag-based lookup (default behaviour).
-        instance_id = ec2_provision(manifest, fake_aws_ec2, environment="development")
-        assert instance_id.startswith("i-"), f"Unexpected instance id: {instance_id!r}"
-
-        # The run_instances call must have used the newest AMI.
-        run_calls = [c for c in fake_aws_ec2.calls if c[0] == "run_instances"]
-        assert run_calls, "run_instances was not called"
-        # We can't directly inspect the image_id from FakeAWS.calls (we only record
-        # name + instance_type), so we verify indirectly: describe_images returned
-        # ami-0newer as max, and no error was raised = the correct AMI was resolved.
-        # A direct assertion on the image_id requires reading FakeAWS._instances;
-        # instead verify that the newest AMI was selected by _pick_newest_ami.
-        from safe_agents.arms.ec2.provision import _pick_newest_ami  # noqa: PLC0415
-
-        candidates = [
-            {"image_id": "ami-0older", "tags": {"safe-agents:ami-version": "20241101-01"},
-             "creation_date": "2024-11-01T00:00:00Z"},
-            {"image_id": "ami-0newer", "tags": {"safe-agents:ami-version": "20241201-02"},
-             "creation_date": "2024-12-01T00:00:00Z"},
-        ]
-        assert _pick_newest_ami(candidates) == "ami-0newer", (
-            "_pick_newest_ami must select the image with the lexicographically greatest "
-            "safe-agents:ami-version tag value"
-        )
+        with pytest.raises(ConnectionError, match="RequestLimitExceeded"):
+            ec2_provision(manifest, aws, environment="development", allow_newest_ami=True)
+        assert not aws.was_called("run_instances")
+        assert not aws.was_called("create_instance_profile")
 
     def test_pick_newest_ami_raises_when_empty(self) -> None:
         """_pick_newest_ami must raise RuntimeError when no images are found."""
@@ -667,6 +775,114 @@ class TestAmiTagLookup:
 
         with pytest.raises(RuntimeError, match="no base AMI found"):
             _pick_newest_ami([])
+
+
+class TestPipelineAmiFlags:
+    """The pipeline hands the provisioner the AMI the operator named, or refuses."""
+
+    @pytest.mark.parametrize("dry_run", [True, False])
+    def test_refuses_with_no_ami_and_makes_no_aws_call(
+        self, fake_aws_ec2: FakeAWS, dry_run: bool
+    ) -> None:
+        result = run_pipeline(
+            SMOKE_EC2_MANIFEST, dry_run=dry_run, aws=fake_aws_ec2, agent_dir=TEST_STUB_DIR
+        )
+        assert not result.success
+        assert result.aborted_at == "provision"
+        assert "no AMI id was given, and there is no default" in result.phase_results[-1].error
+        assert fake_aws_ec2.calls == []
+
+    def test_dry_run_plan_states_the_explicit_ami(self, fake_aws_ec2: FakeAWS) -> None:
+        result = run_pipeline(
+            SMOKE_EC2_MANIFEST, dry_run=True, aws=fake_aws_ec2,
+            agent_dir=TEST_STUB_DIR, ami_id=AMI_ID,
+        )
+        assert result.success
+        provision = result.phase_results[0]
+        assert f"ec2 arm: launch from AMI {AMI_ID}, named by the operator" in provision.steps
+
+    def test_dry_run_plan_states_the_override_rule_without_calling_aws(
+        self, fake_aws_ec2: FakeAWS
+    ) -> None:
+        result = run_pipeline(
+            SMOKE_EC2_MANIFEST, dry_run=True, aws=fake_aws_ec2,
+            agent_dir=TEST_STUB_DIR, allow_newest_ami=True,
+        )
+        assert result.success
+        steps = [s for s in result.phase_results[0].steps if "OVERRIDE --allow-newest-ami" in s]
+        assert len(steps) == 1
+        assert "safe-agents:ami=base" in steps[0]
+        assert "greatest safe-agents:ami-version tag value" in steps[0]
+        assert "the id is not known here" in steps[0]
+        assert fake_aws_ec2.calls == []
+
+    def test_live_explicit_ami_reaches_run_instances_verbatim(
+        self, fake_aws_ec2: FakeAWS
+    ) -> None:
+        manifest = load_manifest(SMOKE_EC2_MANIFEST)
+        result = provision_phase(
+            manifest, fake_aws_ec2, dry_run=False, environment="development", ami_id=AMI_ID
+        )
+        assert result.success, result.error
+        assert f"ec2 arm: launch from AMI {AMI_ID}, named by the operator" in result.steps
+        assert [i["image_id"] for i in fake_aws_ec2._instances.values()] == [AMI_ID]
+        assert not fake_aws_ec2.was_called("describe_images")
+
+    def test_live_override_records_the_resolved_ami_in_the_plan_and_the_log(
+        self, fake_aws_ec2: FakeAWS, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        manifest = load_manifest(SMOKE_EC2_MANIFEST)
+        with caplog.at_level(logging.WARNING, logger="safe_agents.arms.ec2.provision"):
+            result = provision_phase(
+                manifest, fake_aws_ec2, dry_run=False, environment="development",
+                allow_newest_ami=True,
+            )
+        assert result.success, result.error
+        steps = [s for s in result.steps if "OVERRIDE --allow-newest-ami" in s]
+        assert len(steps) == 1
+        assert BAKED_AMI_ID in steps[0]
+        # The plan line and the WARNING are the same statement, logged exactly once.
+        warnings = [r.getMessage() for r in caplog.records if "OVERRIDE" in r.getMessage()]
+        assert warnings == steps
+        # One lookup, and the AMI the plan recorded is the AMI that launched.
+        assert len([c for c in fake_aws_ec2.calls if c[0] == "describe_images"]) == 1
+        assert [i["image_id"] for i in fake_aws_ec2._instances.values()] == [BAKED_AMI_ID]
+
+    def test_live_lookup_error_stops_the_run(self, fake_aws_ec2: FakeAWS) -> None:
+        aws = _seed_like(fake_aws_ec2, _LookupFails())
+        manifest = load_manifest(SMOKE_EC2_MANIFEST)
+        with pytest.raises(ConnectionError):
+            provision_phase(
+                manifest, aws, dry_run=False, environment="development", allow_newest_ami=True
+            )
+        assert not aws.was_called("run_instances")
+
+    @pytest.mark.parametrize(
+        "kwargs, phrase",
+        [
+            ({"image_uri": f"repo/agent@sha256:{'a' * 64}"}, "--image-uri does not apply to arm 'ec2'"),
+            (
+                {"allow_mutable_image_tag": True},
+                "--allow-mutable-image-tag does not apply to arm 'ec2'",
+            ),
+            (
+                {"image_uri": "repo/agent:v1", "allow_mutable_image_tag": True},
+                "--image-uri and --allow-mutable-image-tag do not apply to arm 'ec2'",
+            ),
+        ],
+    )
+    @pytest.mark.parametrize("dry_run", [True, False])
+    def test_image_flags_do_not_apply_to_ec2(
+        self, fake_aws_ec2: FakeAWS, kwargs: dict, phrase: str, dry_run: bool
+    ) -> None:
+        manifest = load_manifest(SMOKE_EC2_MANIFEST)
+        result = provision_phase(
+            manifest, fake_aws_ec2, dry_run=dry_run, environment="development",
+            ami_id=AMI_ID, **kwargs,
+        )
+        assert not result.success
+        assert phrase in result.error
+        assert fake_aws_ec2.calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +904,7 @@ class TestIamRaceRetry:
         fake_aws_ec2.run_instances_profile_error_count = 2
 
         manifest = load_manifest(SMOKE_EC2_MANIFEST)
-        instance_id = ec2_provision(manifest, fake_aws_ec2, environment="development")
+        instance_id = ec2_provision(manifest, fake_aws_ec2, environment="development", image_id=AMI_ID)
 
         assert instance_id.startswith("i-"), (
             f"ec2_provision must return a valid instance ID after IAM retries; got {instance_id!r}"
@@ -711,7 +927,7 @@ class TestIamRaceRetry:
 
         manifest = load_manifest(SMOKE_EC2_MANIFEST)
         with pytest.raises(RuntimeError, match="IAM profile propagation race"):
-            ec2_provision(manifest, fake_aws_ec2, environment="development")
+            ec2_provision(manifest, fake_aws_ec2, environment="development", image_id=AMI_ID)
 
 
 # ---------------------------------------------------------------------------
@@ -934,7 +1150,7 @@ class TestEnsureFoundation:
 
         manifest = load_manifest(SMOKE_EC2_MANIFEST)
         ec2_provision(
-            manifest, fake_aws_ec2, environment="development",
+            manifest, fake_aws_ec2, environment="development", image_id=AMI_ID,
             _ssm_timeout=10.0, _ssm_poll_interval=0.0,
         )
 
@@ -964,7 +1180,7 @@ class TestEnsureFoundation:
         fake_aws_ec2._instance_profiles[profile_name] = {"roles": [role_name], "tags": {}}
 
         ec2_provision(
-            manifest, fake_aws_ec2, environment=env,
+            manifest, fake_aws_ec2, environment=env, image_id=AMI_ID,
             _ssm_timeout=10.0, _ssm_poll_interval=0.0,
         )
 
@@ -1031,7 +1247,7 @@ class TestSsmOnlineWait:
 
         manifest = load_manifest(SMOKE_EC2_MANIFEST)
         instance_id = ec2_provision(
-            manifest, fake_aws_ec2, environment="development",
+            manifest, fake_aws_ec2, environment="development", image_id=AMI_ID,
             _ssm_timeout=10.0, _ssm_poll_interval=0.0,
         )
 
@@ -1060,7 +1276,7 @@ class TestSsmOnlineWait:
         manifest = load_manifest(SMOKE_EC2_MANIFEST)
         with pytest.raises(RuntimeError, match="SSM"):
             ec2_provision(
-                manifest, fake_aws_ec2, environment="development",
+                manifest, fake_aws_ec2, environment="development", image_id=AMI_ID,
                 _ssm_timeout=0.1, _ssm_poll_interval=0.0,
             )
 
@@ -1417,7 +1633,7 @@ class TestCleanStartGate:
         )
         f.seed_ssm_param(f"/safe-agents/{env}/broker-service-dns", "broker.safe-agents.local")
         f.seed_image(
-            "ami-0clean001",
+            BAKED_AMI_ID,
             {"safe-agents:ami": "base", "safe-agents:ami-version": "20241201-01"},
             creation_date="2024-12-01T00:00:00Z",
         )
@@ -1623,7 +1839,7 @@ class TestCleanStartGate:
         with pytest.raises(RuntimeError, match="still active"):
             ec2_provision(
                 manifest, aws,
-                environment=self._ENV,
+                environment=self._ENV, image_id=AMI_ID,
                 _clean_start_ec2_timeout=0.1,
                 _clean_start_iam_timeout=0.1,
                 _clean_start_poll_interval=0.0,

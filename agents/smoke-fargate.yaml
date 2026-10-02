@@ -5,8 +5,10 @@
 # (the runner-contract reference implementation) so the smoke runs without a real
 # Claude session. The coordinator runs the live capstone; CI uses --dry-run.
 #
-# The pipeline reads this file with:
-#   python -m safe_agents.pipeline.cli agents/smoke-fargate.yaml --dry-run --env development
+# The pipeline reads this file with (the image is named on the command line; this file
+# cannot name one, and there is no default):
+#   python -m safe_agents.pipeline.cli agents/smoke-fargate.yaml --dry-run --env development \
+#     --image-uri <repository-uri>@sha256:<digest>
 
 name: smoke-fargate
 

@@ -42,6 +42,10 @@ AGENTS_DIR = REPO_ROOT / "agents"
 TEST_STUB_DIR = AGENTS_DIR / "test-stub"
 TEST_STUB_MANIFEST = AGENTS_DIR / "test-stub.yaml"
 
+# The AMI the provision phase is told to launch from. The pipeline has no default AMI, so
+# every run that includes the provision phase names one.
+AMI_ID = "ami-0123456789abcdef0"
+
 # Ordered phases the pipeline must run.
 EXPECTED_PHASE_ORDER = list(PHASES_ORDERED)  # ["provision", "deploy", "smoke"]
 
@@ -248,6 +252,7 @@ class TestDryRun:
         result = run_pipeline(
             valid_manifest_file,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws,
             agent_dir=TEST_STUB_DIR,
             harness_fn=_fake_harness_all_pass,
@@ -264,6 +269,7 @@ class TestDryRun:
         result = run_pipeline(
             valid_manifest_file,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws,
             agent_dir=TEST_STUB_DIR,
             harness_fn=_fake_harness_all_pass,
@@ -281,6 +287,7 @@ class TestDryRun:
         result = run_pipeline(
             valid_manifest_file,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws,
             agent_dir=TEST_STUB_DIR,
             harness_fn=_fake_harness_all_pass,
@@ -296,6 +303,7 @@ class TestDryRun:
         result = run_pipeline(
             valid_manifest_file,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws,
             agent_dir=TEST_STUB_DIR,
             harness_fn=_fake_harness_all_pass,
@@ -324,6 +332,7 @@ class TestDryRun:
         result = run_pipeline(
             valid_manifest_file,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws,
             agent_dir=TEST_STUB_DIR,
             harness_fn=_fake_harness_all_pass,
@@ -338,6 +347,7 @@ class TestDryRun:
         run_pipeline(
             valid_manifest_file,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws,
             agent_dir=TEST_STUB_DIR,
             harness_fn=_fake_harness_all_pass,
@@ -354,6 +364,7 @@ class TestDryRun:
         result = run_pipeline(
             valid_manifest_file,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws,
             phases=("provision",),
         )
@@ -621,6 +632,7 @@ class TestFullPipeline:
         result = run_pipeline(
             TEST_STUB_MANIFEST,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws,
             agent_dir=TEST_STUB_DIR,
             harness_fn=_fake_harness_all_pass,
@@ -664,8 +676,8 @@ class TestFullPipeline:
         self, tmp_path: Path, fake_aws: FakeAWS
     ) -> None:
         """If provision fails, deploy and smoke must not run."""
-        # Use an arm value that triggers a live provision failure in non-dry-run
-        # (fargate is not implemented).
+        # A live provision failure: the image is named, but nothing is seeded in FakeAWS,
+        # so the Fargate provisioner's first infra read fails.
         data = yaml.safe_load(MINIMAL_VALID_MANIFEST)
         data["arm"] = "fargate"
         f = tmp_path / "fargate-agent.yaml"
@@ -677,9 +689,11 @@ class TestFullPipeline:
             aws=fake_aws,
             agent_dir=TEST_STUB_DIR,
             harness_fn=_fake_harness_all_pass,
+            image_uri=f"registry.example/agent@sha256:{'a' * 64}",
         )
         assert not result.success
         assert result.aborted_at == "provision"
+        assert "SSM param" in result.phase_results[0].error
         # Only one phase should have run.
         assert len(result.phase_results) == 1
 
@@ -689,6 +703,7 @@ class TestFullPipeline:
         result = run_pipeline(
             valid_manifest_file,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws,
             agent_dir=TEST_STUB_DIR,
             harness_fn=_fake_harness_all_pass,

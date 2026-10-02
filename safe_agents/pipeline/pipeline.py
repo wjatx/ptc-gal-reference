@@ -17,6 +17,12 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .aws_interface import AWSInterface, LiveAWS
+from .image_pin import (
+    ALLOW_MUTABLE_IMAGE_TAG_FLAG,
+    ALLOW_NEWEST_AMI_FLAG,
+    AMI_ID_FLAG,
+    IMAGE_URI_FLAG,
+)
 from .manifest import DeploymentManifest, load_manifest
 from .phases import (
     SMOKE_MODE_LOCAL,
@@ -96,6 +102,10 @@ def run_pipeline(
     harness_fn: Optional[Callable] = None,
     repo_root: Optional[Path] = None,
     smoke_mode: str = SMOKE_MODE_LOCAL,
+    ami_id: Optional[str] = None,
+    image_uri: Optional[str] = None,
+    allow_newest_ami: bool = False,
+    allow_mutable_image_tag: bool = False,
 ) -> PipelineResult:
     """
     Run the provision → deploy → smoke pipeline for one agent manifest.
@@ -135,6 +145,26 @@ def run_pipeline(
     smoke_mode:
         "local"  — run harness locally against agent_dir (default, CI-friendly).
         "remote" — run harness on the deployed instance via SSM SendCommand.
+    ami_id:
+        The AMI the provision phase launches from, for the arms that launch an
+        instance (ec2, rhel-openshell). The CLI's --ami-id.
+    image_uri:
+        The container image the provision phase registers, by digest
+        (<repository-uri>@sha256:<64 hex>), for the fargate arm. The CLI's --image-uri.
+    allow_newest_ami:
+        Override (--allow-newest-ami): with no ami_id, resolve the newest AMI by the
+        arm's rule. The AMI chosen and the rule are logged at WARNING and recorded as a
+        step of the provision phase.
+    allow_mutable_image_tag:
+        Override (--allow-mutable-image-tag): image_uri may name a tag instead of a
+        digest. image_uri is still required. Recorded the same way.
+
+    The provision phase refuses when its arm's reference is missing and no override is
+    set; there is no default AMI and no default image. The four parameters above are
+    per-run: they are not read from the manifest or the environment. Passing one that the
+    manifest's arm does not use, or passing any of them to a run that does not include the
+    provision phase, is an error (reported as a failed "preflight" or "provision" phase),
+    never ignored. See safe_agents/pipeline/image_pin.py.
 
     Returns
     -------
@@ -169,6 +199,35 @@ def run_pipeline(
         environment=environment,
     )
 
+    # An image flag is consumed by the provision phase alone. Given to a run that does not
+    # provision, it would be silently ignored, so refuse instead.
+    if "provision" not in phases:
+        unused = [
+            flag
+            for flag, given in (
+                (AMI_ID_FLAG, ami_id is not None),
+                (IMAGE_URI_FLAG, image_uri is not None),
+                (ALLOW_NEWEST_AMI_FLAG, bool(allow_newest_ami)),
+                (ALLOW_MUTABLE_IMAGE_TAG_FLAG, bool(allow_mutable_image_tag)),
+            )
+            if given
+        ]
+        if unused:
+            result.phase_results.append(
+                PhaseResult(
+                    phase="preflight",
+                    dry_run=dry_run,
+                    success=False,
+                    error=(
+                        f"{' and '.join(unused)} {'is' if len(unused) == 1 else 'are'} used "
+                        "only by the provision phase, which this run does not include "
+                        f"(phases: {', '.join(phases)}). Nothing was run."
+                    ),
+                )
+            )
+            result.aborted_at = "preflight"
+            return result
+
     # Resolve the agent package directory for the smoke phase:
     # prefer manifest.agent_package when set, else fall back to manifest.name.
     # Precedence: explicit agent_dir > agent_root/<pkg> > <manifest-dir>/<pkg>.
@@ -188,7 +247,14 @@ def run_pipeline(
 
         if phase_name == "provision":
             pr = provision_phase(
-                manifest, aws, dry_run=dry_run, environment=environment
+                manifest,
+                aws,
+                dry_run=dry_run,
+                environment=environment,
+                ami_id=ami_id,
+                image_uri=image_uri,
+                allow_newest_ami=allow_newest_ami,
+                allow_mutable_image_tag=allow_mutable_image_tag,
             )
 
         elif phase_name == "deploy":

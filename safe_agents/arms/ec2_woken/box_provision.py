@@ -43,6 +43,14 @@ import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from safe_agents.pipeline.image_pin import (
+    AmiPinSpec,
+    ImageSelection,
+    explicit_ami,
+    newest_ami,
+    record_override,
+)
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -60,6 +68,20 @@ DEFAULT_INSTANCE_TYPE = "t4g.small"
 _BASE_AMI_TAG_KEY = "safe-agents:ami"
 _BASE_AMI_TAG_VALUE = "base"
 _BASE_AMI_VERSION_TAG_KEY = "safe-agents:ami-version"
+
+# How the box names its AMI and what its override does (safe_agents/pipeline/image_pin.py).
+# The box is launched by this library function only; the pipeline CLI has no flag for it.
+AMI_PIN = AmiPinSpec(
+    arm="ec2-woken box",
+    entry_point="ec2_woken_box_provision",
+    tag_filter={_BASE_AMI_TAG_KEY: _BASE_AMI_TAG_VALUE},
+    newest_rule=(
+        f"the self-owned AMI tagged {_BASE_AMI_TAG_KEY}={_BASE_AMI_TAG_VALUE} with the greatest "
+        f"{_BASE_AMI_VERSION_TAG_KEY} tag value (string comparison)"
+    ),
+    bake_readme="safe_agents/arms/ec2/ami/README.md",
+    has_cli=False,
+)
 
 # IAM instance-profile propagation race: RunInstances may reject a just-created profile for tens
 # of seconds. Retry with exponential backoff (2s, 4s, 8s, ...). Pass backoff_base=0 in tests.
@@ -323,9 +345,31 @@ def _pick_newest_ami(images: list[dict]) -> str:
     if not images:
         raise RuntimeError(
             "ec2_woken_box_provision: no base AMI found with tag "
-            f"{_BASE_AMI_TAG_KEY}={_BASE_AMI_TAG_VALUE!r}; run the AMI bakery (sa#84) or pass image_id."
+            f"{_BASE_AMI_TAG_KEY}={_BASE_AMI_TAG_VALUE!r}; run the AMI bakery (sa#84) and pass "
+            "its output as image_id."
         )
     return max(images, key=lambda img: img["tags"].get(_BASE_AMI_VERSION_TAG_KEY, ""))["image_id"]
+
+
+def resolve_base_ami(
+    aws: "AWSInterface",
+    *,
+    image_id: Optional[str] = None,
+    allow_newest_ami: bool = False,
+) -> ImageSelection:
+    """Decide the AMI the woken box launches from, and say how it was chosen.
+
+    Same rule as the EC2 arm (it launches from the same bakery's AMI): an explicit ``image_id``
+    is validated and used as given; with no id the call refuses (ImagePinError) before any AWS
+    call unless ``allow_newest_ami`` is True; under that override the newest AMI by the
+    safe-agents:ami-version tag is chosen and logged at WARNING. A failed lookup raises.
+    """
+    selection = explicit_ami(AMI_PIN, image_id, allow_newest_ami)
+    if selection is None:
+        images = aws.describe_images(dict(AMI_PIN.tag_filter))
+        selection = newest_ami(AMI_PIN, _pick_newest_ami(images))
+        record_override(logger, selection)
+    return selection
 
 
 def _ensure_instance_profile(
@@ -400,6 +444,7 @@ def ec2_woken_box_provision(
     region: str = "us-east-1",
     instance_type: str = DEFAULT_INSTANCE_TYPE,
     image_id: Optional[str] = None,
+    allow_newest_ami: bool = False,
     idle_polls: str = DEFAULT_IDLE_POLLS,
     _iam_backoff_base: float = _IAM_RACE_BACKOFF_BASE_S,
 ) -> str:
@@ -416,9 +461,21 @@ def ec2_woken_box_provision(
          service) and launch the box in the agent subnet on the agent SG (topology confinement),
          IMDSv2-only.
 
+    ``image_id`` is the AMI to launch from and is required: with no id the call raises
+    ImagePinError before any AWS call. ``allow_newest_ami=True`` is the override: it launches
+    from the newest self-owned AMI tagged safe-agents:ami=base and logs the id and the rule that
+    chose it at WARNING. It is a per-run switch for the caller to pass, never something to read
+    from a manifest or the environment. See resolve_base_ami.
+
     The returned instance id is what the airlock's RunnerInstanceId must point at.
     """
     agent_name = manifest.name
+
+    # Decide the AMI before any other AWS call, so a provision with no AMI named refuses having
+    # touched nothing (in particular, before the box assets are staged in the deploy bucket).
+    image_id = resolve_base_ami(
+        aws, image_id=image_id, allow_newest_ami=allow_newest_ami
+    ).reference
 
     def _ssm(key: str) -> str:
         path = f"/safe-agents/{environment}/{key}"
@@ -453,12 +510,6 @@ def ec2_woken_box_provision(
 
     inbound_queue_arn = _inbound_queue_arn(region, account_id, environment, agent_name)
     inbound_queue_url = _inbound_queue_url(region, account_id, environment, agent_name)
-
-    # -- Resolve the AMI (prebuilt base AMI by tag, or caller override) --
-    if image_id is None:
-        image_id = _pick_newest_ami(
-            aws.describe_images({_BASE_AMI_TAG_KEY: _BASE_AMI_TAG_VALUE})
-        )
 
     tags = _arm_tags(environment, agent_name)
     profile_name = _box_resource_name(environment, agent_name)

@@ -15,11 +15,13 @@ Reuses the EC2 arm's hardened pipeline gating:
     arms.ec2.provision — the canonical implementation lives there.
 
 RHEL-specific differences from the EC2 arm:
-    AMI:      Prefers the prebuilt safe-agents RHEL base AMI (tag
-              safe-agents:ami=base-rhel) — like the EC2 arm's tag-resolved base AMI
-              but built from a RHEL 9 x86_64 parent. Falls back to the RHEL 9
-              marketplace AMI (Red Hat owner 309956199498 + name filter) when no
-              bake exists. The prebuilt AMI is what makes the box config-only.
+    AMI:      Named by the operator (image_id). Meant to be the prebuilt safe-agents
+              RHEL base AMI (tag safe-agents:ami=base-rhel), built from a RHEL 9
+              x86_64 parent; the prebuilt AMI is what makes the box config-only.
+              With no id the provision refuses. Under the allow_newest_ami override
+              it takes the newest baked AMI by tag, and only when none exists falls
+              back to the RHEL 9 marketplace AMI (Red Hat owner 309956199498 + name
+              filter), saying so in its WARNING line. See resolve_base_ami.
     Instance: m7i.xlarge (x86_64, 4 vCPU, 16 GB). Root /dev/sda1, 100 GB gp3.
               RHEL+OpenShell is x86_64 only; arm64 is not supported by OpenShell.
     Subnet:   agent-subnet-ids (isolated, no NAT) + agent SG + endpoint SG — the same
@@ -53,6 +55,14 @@ import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+
+from safe_agents.pipeline.image_pin import (
+    AmiPinSpec,
+    ImageSelection,
+    explicit_ami,
+    newest_ami,
+    record_override,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -229,6 +239,26 @@ RHEL_OWNER_ID = "309956199498"
 #     --output table
 RHEL9_NAME_PATTERN = "RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3"
 
+# How this arm names its AMI and what its override does (safe_agents/pipeline/image_pin.py).
+# The two rules are different trust statements: the first picks an image this account baked,
+# the second an image Red Hat published.
+AMI_PIN = AmiPinSpec(
+    arm="rhel-openshell arm",
+    entry_point="rhel_openshell_provision",
+    tag_filter=BASE_RHEL_AMI_TAG_FILTER,
+    newest_rule=(
+        "the self-owned AMI tagged safe-agents:ami=base-rhel with the latest CreationDate"
+    ),
+    fallback_rule=(
+        f"the AMI owned by Red Hat (account {RHEL_OWNER_ID}) whose name matches "
+        f"{RHEL9_NAME_PATTERN} with the latest CreationDate, used because no self-owned AMI "
+        "tagged safe-agents:ami=base-rhel exists. A marketplace image has no toolchain baked "
+        "in and completes bootstrap only in a subnet with egress, so in the isolated agent "
+        "subnet run the safe-agents-base-rhel Image Builder pipeline first"
+    ),
+    bake_readme="safe_agents/arms/rhel_openshell/ami/README.md",
+)
+
 
 def _pick_newest_rhel_ami(images: list[dict]) -> str:
     """Return the image_id of the newest RHEL 9 AMI.
@@ -246,35 +276,42 @@ def _pick_newest_rhel_ami(images: list[dict]) -> str:
     return max(images, key=lambda img: img.get("creation_date", ""))["image_id"]
 
 
-def _resolve_base_ami(aws: "AWSInterface") -> str:
-    """Resolve the AMI the RHEL box launches from.
+def resolve_base_ami(
+    aws: "AWSInterface",
+    *,
+    image_id: Optional[str] = None,
+    allow_newest_ami: bool = False,
+) -> ImageSelection:
+    """Decide the AMI the RHEL box launches from, and say how it was chosen.
 
-    Prefers a prebuilt safe-agents RHEL base AMI: the newest self-owned
-    image tagged ``safe-agents:ami=base-rhel``. That AMI has the toolchain baked
-    in, so the box boots config-only in the ISOLATED no-NAT agent subnet.
+    An explicit ``image_id`` is validated and used as given; no lookup runs. With no id the call
+    refuses (ImagePinError) before any AWS call, unless ``allow_newest_ami`` is True.
 
-    Falls back to the RHEL 9 marketplace AMI (owner + name filter) when no bake
-    exists yet — a fresh account, or before the first bake runs. The fallback is
-    the behavior before the prebuilt AMI; it only completes bootstrap in a subnet with egress.
+    Under that override:
+      1. The newest self-owned image tagged ``safe-agents:ami=base-rhel`` is chosen. That AMI
+         has the toolchain baked in, so the box boots config-only in the ISOLATED no-NAT agent
+         subnet.
+      2. Only when that lookup returns nothing (a fresh account, or before the first bake) the
+         newest RHEL 9 marketplace AMI (owner + name filter) is chosen. It only completes
+         bootstrap in a subnet with egress, and it is an image Red Hat published, not one this
+         account baked, so the WARNING line names it as the marketplace fallback.
+
+    A failed lookup raises and stops the run. An error in the baked-AMI lookup is never read as
+    "no baked AMI", so it cannot cause the fallback.
     """
-    baked = aws.describe_images(BASE_RHEL_AMI_TAG_FILTER)
+    selection = explicit_ami(AMI_PIN, image_id, allow_newest_ami)
+    if selection is not None:
+        return selection
+
+    baked = aws.describe_images(dict(AMI_PIN.tag_filter))
     if baked:
         newest = max(baked, key=lambda img: img.get("creation_date", ""))
-        logger.info(
-            "rhel_openshell_provision: using prebuilt base AMI %s (tag %s)",
-            newest["image_id"], BASE_RHEL_AMI_TAG_FILTER,
-        )
-        return newest["image_id"]
-
-    logger.warning(
-        "rhel_openshell_provision: no prebuilt base AMI tagged %s found; falling "
-        "back to the RHEL 9 marketplace AMI. A fresh box in the isolated no-NAT "
-        "subnet needs the bake (sa#109) to complete bootstrap — run the "
-        "safe-agents-base-rhel Image Builder pipeline first.",
-        BASE_RHEL_AMI_TAG_FILTER,
-    )
-    rhel_images = aws.describe_images_by_owner_name(RHEL_OWNER_ID, RHEL9_NAME_PATTERN)
-    return _pick_newest_rhel_ami(rhel_images)
+        selection = newest_ami(AMI_PIN, newest["image_id"])
+    else:
+        rhel_images = aws.describe_images_by_owner_name(RHEL_OWNER_ID, RHEL9_NAME_PATTERN)
+        selection = newest_ami(AMI_PIN, _pick_newest_rhel_ami(rhel_images), fallback=True)
+    record_override(logger, selection)
+    return selection
 
 
 # ---------------------------------------------------------------------------
@@ -341,6 +378,7 @@ def rhel_openshell_provision(
     region: str = "us-east-1",
     instance_type: str = DEFAULT_INSTANCE_TYPE,
     image_id: Optional[str] = None,
+    allow_newest_ami: bool = False,
     # Poll-interval overrides for tests — keep defaults at production values.
     # Pass 0.0 for poll intervals and short timeouts in unit tests to avoid real sleeps.
     _clean_start_ec2_timeout: float = _CLEAN_START_EC2_TIMEOUT_S,
@@ -375,7 +413,15 @@ def rhel_openshell_provision(
     instance_type:
         EC2 instance type. Defaults to m7i.xlarge (x86_64; OpenShell requires x86_64).
     image_id:
-        AMI ID. When None (default), resolved by RHEL owner+name filter.
+        The AMI to launch from, e.g. "ami-0123456789abcdef0". Required unless
+        allow_newest_ami is True: with neither, the call raises ImagePinError before any
+        AWS call. There is no default AMI.
+    allow_newest_ami:
+        Override. When True (and image_id is None), launch from the newest self-owned AMI
+        tagged safe-agents:ami=base-rhel, or, when none exists, the newest RHEL 9
+        marketplace AMI. The id and the rule that chose it are logged at WARNING. A
+        per-run switch: pass it from the caller, never from a manifest or the environment.
+        See resolve_base_ami.
 
     Returns
     -------
@@ -390,6 +436,12 @@ def rhel_openshell_provision(
         wait_for_clean_start,
         wait_for_ssm_online,
     )
+
+    # Decide the AMI before any other AWS call, so a provision with no AMI named refuses
+    # having touched nothing. An explicit id runs no lookup.
+    image_id = resolve_base_ami(
+        aws, image_id=image_id, allow_newest_ami=allow_newest_ami
+    ).reference
 
     def _ssm(key: str) -> str:
         path = f"/safe-agents/{environment}/{key}"
@@ -411,12 +463,12 @@ def rhel_openshell_provision(
     # the broker. The endpoint SG lets the box reach Secrets Manager (its oauth) + DynamoDB (run
     # records) + SSM (on-demand run-brokered invocation) from a no-NAT subnet.
     #
-    # This box now launches from a prebuilt RHEL base AMI (tag safe-agents:ami=base-rhel,
-    # resolved by _resolve_base_ami below) with the internet toolchain — SSM agent, AWS CLI,
+    # This box is meant to launch from a prebuilt RHEL base AMI (tag safe-agents:ami=base-rhel,
+    # named by the operator as image_id) with the internet toolchain — SSM agent, AWS CLI,
     # the claude binary, dnf core tools — baked in. Those downloads are not S3-backed, so baking is
-    # exactly what lets a FRESH provision into this isolated no-NAT subnet complete bootstrap. When
-    # no bake exists yet, _resolve_base_ami falls back to the RHEL 9 marketplace AMI (which only
-    # completes bootstrap in a subnet with egress).
+    # exactly what lets a FRESH provision into this isolated no-NAT subnet complete bootstrap. A
+    # RHEL 9 marketplace AMI (which resolve_base_ami reaches only under the override, when no bake
+    # exists) only completes bootstrap in a subnet with egress.
     agent_sg_id = _ssm("agent-sg-id")
     endpoint_sg_id = _ssm("endpoint-sg-id")
     # agent-subnet-ids is a comma-joined list; use the first subnet (isolated, no NAT).
@@ -427,13 +479,6 @@ def rhel_openshell_provision(
     broker_dns = _ssm("broker-service-dns")
 
     role_name = agent_role_arn.split("/")[-1]
-
-    # AMI: prefer the prebuilt safe-agents RHEL base AMI (tag
-    # safe-agents:ami=base-rhel); fall back to the RHEL 9 marketplace AMI when no
-    # bake exists. The prebuilt AMI is what makes this box config-only in the
-    # isolated no-NAT subnet.
-    if image_id is None:
-        image_id = _resolve_base_ami(aws)
 
     tags = _arm_tags(environment, manifest.name)
     profile_name = _resource_name(environment, manifest.name)

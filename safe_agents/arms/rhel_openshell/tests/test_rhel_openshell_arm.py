@@ -112,6 +112,9 @@ _VALID_PARAMS = {
     "region": "us-east-1",
 }
 
+# The normal path: an AMI the operator names. Deliberately NOT seeded in FakeAWS.
+AMI_ID = "ami-0123456789abcdef0"
+# The marketplace AMI the fixture seeds, reachable only through the newest-AMI override.
 _RHEL_AMI_ID = "ami-0dcaef0e21f109874"
 _RHEL_AMI_NAME = "RHEL-9.8_HVM-20250506-x86_64-1893-Hourly2-GP3"
 
@@ -191,9 +194,12 @@ class TestRhelAmiLookup:
     def test_provision_calls_describe_images_by_owner_name(
         self, fake_aws: FakeAWS,
     ) -> None:
-        """rhel_openshell_provision calls describe_images_by_owner_name (not describe_images)."""
+        """Under the newest-AMI override with no bake present, rhel_openshell_provision
+        resolves the marketplace AMI by Red Hat's owner id and the RHEL 9 name pattern."""
         manifest = load_manifest(SMOKE_MANIFEST)
-        rhel_openshell_provision(manifest, fake_aws, environment="development", **_FAST)
+        rhel_openshell_provision(
+            manifest, fake_aws, environment="development", allow_newest_ami=True, **_FAST
+        )
 
         lookup_calls = [
             c for c in fake_aws.calls if c[0] == "describe_images_by_owner_name"
@@ -217,11 +223,13 @@ class TestRhelAmiLookup:
 
         The whole point of the prebuilt AMI is that the RHEL box launches from a prebuilt AMI
         (tag safe-agents:ami=base-rhel) so it is config-only in the isolated no-NAT
-        subnet. Provision resolves that tag first; with no bake seeded it falls back
-        to the marketplace lookup (asserted separately).
+        subnet. Under the newest-AMI override, provision resolves that tag first; with
+        no bake seeded it falls back to the marketplace lookup (asserted separately).
         """
         manifest = load_manifest(SMOKE_MANIFEST)
-        rhel_openshell_provision(manifest, fake_aws, environment="development", **_FAST)
+        rhel_openshell_provision(
+            manifest, fake_aws, environment="development", allow_newest_ami=True, **_FAST
+        )
 
         tag_lookup_calls = [c for c in fake_aws.calls if c[0] == "describe_images"]
         assert tag_lookup_calls, (
@@ -910,7 +918,7 @@ class TestSubnetPlacement:
     ) -> None:
         """Provision must resolve the isolated agent-subnet-ids + agent-sg + endpoint-sg (not broker-*)."""
         manifest = load_manifest(SMOKE_MANIFEST)
-        rhel_openshell_provision(manifest, fake_aws, environment="development", **_FAST)
+        rhel_openshell_provision(manifest, fake_aws, environment="development", image_id=AMI_ID, **_FAST)
 
         def _looked_up(key: str) -> bool:
             return any(
@@ -948,7 +956,7 @@ class TestSubnetPlacement:
         fake_aws.run_instances = spy  # type: ignore[method-assign]
 
         manifest = load_manifest(SMOKE_MANIFEST)
-        rhel_openshell_provision(manifest, fake_aws, environment="development", **_FAST)
+        rhel_openshell_provision(manifest, fake_aws, environment="development", image_id=AMI_ID, **_FAST)
 
         # The first isolated agent-subnet-ids value; both SGs (agent + endpoint) on the launch.
         assert captured["subnet_id"] == "subnet-0agent-isolated", (
@@ -974,7 +982,7 @@ class TestArmDispatch:
     def test_dry_run_provision_mentions_rhel(self, fake_aws: FakeAWS) -> None:
         """Provision phase dry-run steps must mention rhel-openshell and key operations."""
         result = run_pipeline(
-            SMOKE_MANIFEST, dry_run=True, aws=fake_aws, agent_dir=TEST_STUB_DIR,
+            SMOKE_MANIFEST, dry_run=True, aws=fake_aws, agent_dir=TEST_STUB_DIR, ami_id=AMI_ID,
         )
         assert result.success, (
             "Dry-run failed:\n"
@@ -990,7 +998,10 @@ class TestArmDispatch:
 
     def test_dry_run_makes_no_aws_calls(self, fake_aws: FakeAWS) -> None:
         """Dry-run must not invoke AWS at all."""
-        run_pipeline(SMOKE_MANIFEST, dry_run=True, aws=fake_aws, agent_dir=TEST_STUB_DIR)
+        result = run_pipeline(
+            SMOKE_MANIFEST, dry_run=True, aws=fake_aws, agent_dir=TEST_STUB_DIR, ami_id=AMI_ID,
+        )
+        assert result.success
         assert fake_aws.calls == [], (
             f"Dry-run made unexpected AWS calls: {fake_aws.calls}"
         )
@@ -1115,7 +1126,7 @@ class TestProvisionGating:
         """rhel_openshell_provision must call run_instances (not instance_id_for_stack)."""
         manifest = load_manifest(SMOKE_MANIFEST)
         instance_id = rhel_openshell_provision(
-            manifest, fake_aws, environment=self._ENV, **_FAST
+            manifest, fake_aws, environment=self._ENV, image_id=AMI_ID, **_FAST
         )
         assert instance_id.startswith("i-"), (
             f"rhel_openshell_provision must return a valid instance ID; got {instance_id!r}"
@@ -1132,7 +1143,7 @@ class TestProvisionGating:
     ) -> None:
         """rhel_openshell_provision must create the per-agent instance profile."""
         manifest = load_manifest(SMOKE_MANIFEST)
-        rhel_openshell_provision(manifest, fake_aws, environment=self._ENV, **_FAST)
+        rhel_openshell_provision(manifest, fake_aws, environment=self._ENV, image_id=AMI_ID, **_FAST)
         create_calls = [c for c in fake_aws.calls if c[0] == "create_instance_profile"]
         assert create_calls, (
             "ensure_foundation must create the per-agent instance profile when absent"
@@ -1146,7 +1157,7 @@ class TestProvisionGating:
 
         manifest = load_manifest(SMOKE_MANIFEST)
         instance_id = rhel_openshell_provision(
-            manifest, fake_aws, environment=self._ENV, **_FAST
+            manifest, fake_aws, environment=self._ENV, image_id=AMI_ID, **_FAST
         )
         assert instance_id.startswith("i-")
         ssm_calls = [c for c in fake_aws.calls if c[0] == "describe_ssm_instance_information"]
@@ -1164,7 +1175,7 @@ class TestProvisionGating:
         fast_short_ssm = dict(_FAST, _ssm_timeout=0.1)
         with pytest.raises(RuntimeError, match="SSM"):
             rhel_openshell_provision(
-                manifest, fake_aws, environment=self._ENV, **fast_short_ssm
+                manifest, fake_aws, environment=self._ENV, image_id=AMI_ID, **fast_short_ssm
             )
 
     def test_provision_raises_when_no_rhel_ami_found(
@@ -1176,7 +1187,9 @@ class TestProvisionGating:
 
         manifest = load_manifest(SMOKE_MANIFEST)
         with pytest.raises(RuntimeError, match="no RHEL 9 AMI found"):
-            rhel_openshell_provision(manifest, fake_aws, environment=self._ENV, **_FAST)
+            rhel_openshell_provision(
+                manifest, fake_aws, environment=self._ENV, allow_newest_ami=True, **_FAST
+            )
 
     def test_provision_clean_start_gate_blocks_live_instance(
         self, fake_aws: FakeAWS,
@@ -1195,7 +1208,7 @@ class TestProvisionGating:
         }
 
         with pytest.raises(RuntimeError, match="still active"):
-            rhel_openshell_provision(manifest, fake_aws, environment=self._ENV, **_FAST)
+            rhel_openshell_provision(manifest, fake_aws, environment=self._ENV, image_id=AMI_ID, **_FAST)
 
         # RunInstances must NOT have been called (gate fired before it).
         run_calls = [c for c in fake_aws.calls if c[0] == "run_instances"]

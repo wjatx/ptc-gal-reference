@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +30,7 @@ from safe_agents.arms.ec2_woken.box_provision import (
 )
 from safe_agents.broker.tests.platform_marks import requires_posix_bash
 from safe_agents.pipeline import FakeAWS, load_manifest
+from safe_agents.pipeline.image_pin import ImagePinError
 
 # drain_logic is a box-side module (not on the package path); import it by file location.
 _BOX_DIR = Path(__file__).parent.parent / "box"
@@ -49,6 +51,11 @@ ACCOUNT = "123456789012"
 OAUTH_SECRET = "smoke-woken/claude-oauth-token"
 DEPLOY_BUCKET = f"safe-agents-{ENV}-deploy"
 BOX_PREFIX = f"ec2-woken/{AGENT}/box"
+
+# The normal path: an AMI the caller names. Deliberately NOT seeded in FakeAWS.
+AMI_ID = "ami-0123456789abcdef0"
+# The one base AMI the fixture seeds, reachable only through the newest-AMI override.
+BAKED_AMI_ID = "ami-0ba5e000000000001"
 
 RUN_BROKERED = _BOX_DIR / "run-brokered.sh"
 DRAIN = _BOX_DIR / "drain.sh"
@@ -87,7 +94,7 @@ def fake_aws_box() -> FakeAWS:
     aws.seed_ssm_param(f"/safe-agents/{ENV}/broker-service-dns", "broker.safe-agents.local")
     aws.seed_ssm_param(f"/safe-agents/{ENV}/deploy-bucket-name", DEPLOY_BUCKET)
     aws.seed_image(
-        "ami-0fakebaseami001",
+        BAKED_AMI_ID,
         {"safe-agents:ami": "base", "safe-agents:ami-version": "20241201-01"},
     )
     return aws
@@ -118,14 +125,14 @@ def _capture_run_instances(aws: FakeAWS) -> dict:
 class TestBoxProvisionConfinement:
     def test_returns_instance_id(self, fake_aws_box, manifest) -> None:
         instance_id = ec2_woken_box_provision(
-            manifest, fake_aws_box, environment=ENV, region=REGION, _iam_backoff_base=0,
+            manifest, fake_aws_box, environment=ENV, region=REGION, image_id=AMI_ID, _iam_backoff_base=0,
         )
         assert instance_id.startswith("i-")
 
     def test_launched_in_agent_subnet_and_sg(self, fake_aws_box, manifest) -> None:
         captured = _capture_run_instances(fake_aws_box)
         ec2_woken_box_provision(
-            manifest, fake_aws_box, environment=ENV, region=REGION, _iam_backoff_base=0,
+            manifest, fake_aws_box, environment=ENV, region=REGION, image_id=AMI_ID, _iam_backoff_base=0,
         )
         # Topology confinement: the ISOLATED agent subnet + the agent SG (→ broker) + the endpoint
         # SG (→ AWS interface endpoints: SQS for the queue, Secrets Manager for the oauth token).
@@ -135,7 +142,7 @@ class TestBoxProvisionConfinement:
     def test_tags_arm_ec2_woken(self, fake_aws_box, manifest) -> None:
         captured = _capture_run_instances(fake_aws_box)
         ec2_woken_box_provision(
-            manifest, fake_aws_box, environment=ENV, region=REGION, _iam_backoff_base=0,
+            manifest, fake_aws_box, environment=ENV, region=REGION, image_id=AMI_ID, _iam_backoff_base=0,
         )
         tags = captured["tags"]
         assert tags["Arm"] == "ec2-woken"
@@ -145,7 +152,7 @@ class TestBoxProvisionConfinement:
     def test_user_data_carries_the_env_contract(self, fake_aws_box, manifest) -> None:
         captured = _capture_run_instances(fake_aws_box)
         ec2_woken_box_provision(
-            manifest, fake_aws_box, environment=ENV, region=REGION, _iam_backoff_base=0,
+            manifest, fake_aws_box, environment=ENV, region=REGION, image_id=AMI_ID, _iam_backoff_base=0,
         )
         import gzip  # noqa: PLC0415
 
@@ -167,13 +174,13 @@ class TestBoxProvisionConfinement:
         # assets moved to S3, the encoded user-data is tiny.
         captured = _capture_run_instances(fake_aws_box)
         ec2_woken_box_provision(
-            manifest, fake_aws_box, environment=ENV, region=REGION, _iam_backoff_base=0,
+            manifest, fake_aws_box, environment=ENV, region=REGION, image_id=AMI_ID, _iam_backoff_base=0,
         )
         assert len(captured["user_data_b64"]) < 16384
 
     def test_box_assets_uploaded_to_deploy_bucket(self, fake_aws_box, manifest) -> None:
         ec2_woken_box_provision(
-            manifest, fake_aws_box, environment=ENV, region=REGION, _iam_backoff_base=0,
+            manifest, fake_aws_box, environment=ENV, region=REGION, image_id=AMI_ID, _iam_backoff_base=0,
         )
         # Every drain-loop asset is staged under the per-agent prefix; content round-trips.
         staged = fake_aws_box._s3_buckets[DEPLOY_BUCKET]
@@ -184,19 +191,98 @@ class TestBoxProvisionConfinement:
         unit_key = f"{BOX_PREFIX}/systemd/responsive-agent-ready.service"
         assert unit_key in staged
 
-    def test_image_id_override_skips_ami_lookup(self, fake_aws_box, manifest) -> None:
+    def test_explicit_image_id_is_used_verbatim_and_no_lookup_runs(
+        self, fake_aws_box, manifest
+    ) -> None:
         captured = _capture_run_instances(fake_aws_box)
         ec2_woken_box_provision(
             manifest, fake_aws_box, environment=ENV, region=REGION,
-            image_id="ami-override", _iam_backoff_base=0,
+            image_id=AMI_ID, _iam_backoff_base=0,
         )
-        assert captured["image_id"] == "ami-override"
+        assert captured["image_id"] == AMI_ID
         assert not fake_aws_box.was_called("describe_images")
+
+    @pytest.mark.parametrize(
+        "kwargs, phrase",
+        [
+            pytest.param({}, "no AMI id was given, and there is no default", id="no-id"),
+            pytest.param({"image_id": "ami-override"}, "is not an AMI id", id="malformed"),
+            pytest.param(
+                {"image_id": AMI_ID, "allow_newest_ami": True},
+                "both an AMI id and the newest-AMI override",
+                id="id-and-override",
+            ),
+            pytest.param({"allow_newest_ami": 1}, "must be True or False", id="override-not-a-bool"),
+        ],
+    )
+    def test_refuses_before_any_aws_call(self, fake_aws_box, manifest, kwargs, phrase) -> None:
+        """No silent default: the library entry point follows the same rule as the pipeline.
+        Nothing is touched, in particular no asset is staged in the deploy bucket."""
+        with pytest.raises(ImagePinError) as excinfo:
+            ec2_woken_box_provision(
+                manifest, fake_aws_box, environment=ENV, region=REGION,
+                _iam_backoff_base=0, **kwargs,
+            )
+        assert phrase in str(excinfo.value)
+        assert fake_aws_box.calls == []
+
+    def test_refusal_speaks_the_library_vocabulary(self, fake_aws_box, manifest) -> None:
+        """The box has no pipeline flag, so its refusal must not send the caller to one."""
+        with pytest.raises(ImagePinError) as excinfo:
+            ec2_woken_box_provision(manifest, fake_aws_box, environment=ENV, _iam_backoff_base=0)
+        message = str(excinfo.value)
+        assert 'image_id="<ami-id>" to ec2_woken_box_provision' in message
+        assert "allow_newest_ami=True to ec2_woken_box_provision" in message
+        assert "--ami-id" not in message
+        assert "--allow-newest-ami" not in message
+        assert '"Name=tag:safe-agents:ami,Values=base"' in message
+
+    def test_override_resolves_newest_by_version_tag_and_logs_it(
+        self, fake_aws_box, manifest, caplog
+    ) -> None:
+        newest = "ami-0aaaaaaaaaaaaaaa2"
+        fake_aws_box.seed_image(
+            newest, {"safe-agents:ami": "base", "safe-agents:ami-version": "20241215-01"},
+        )
+        captured = _capture_run_instances(fake_aws_box)
+        with caplog.at_level(logging.WARNING, logger="safe_agents.arms.ec2_woken.box_provision"):
+            ec2_woken_box_provision(
+                manifest, fake_aws_box, environment=ENV, region=REGION,
+                allow_newest_ami=True, _iam_backoff_base=0,
+            )
+        assert captured["image_id"] == newest
+        assert fake_aws_box.was_called("describe_images", {"safe-agents:ami": "base"})
+
+        warnings = [r.getMessage() for r in caplog.records if "OVERRIDE" in r.getMessage()]
+        assert len(warnings) == 1, warnings
+        line = warnings[0]
+        assert "OVERRIDE allow_newest_ami=True to ec2_woken_box_provision" in line
+        assert newest in line
+        assert "safe-agents:ami=base" in line
+        assert "greatest safe-agents:ami-version tag value" in line
+        assert f'image_id="{newest}"' in line
+
+    def test_lookup_error_propagates_under_the_override(
+        self, fake_aws_box, manifest, monkeypatch
+    ) -> None:
+        def boom(tag_filters):
+            raise ConnectionError("simulated: DescribeImages UnauthorizedOperation")
+
+        monkeypatch.setattr(fake_aws_box, "describe_images", boom)
+        with pytest.raises(ConnectionError, match="UnauthorizedOperation"):
+            ec2_woken_box_provision(
+                manifest, fake_aws_box, environment=ENV, allow_newest_ami=True,
+                _iam_backoff_base=0,
+            )
+        assert not fake_aws_box.was_called("run_instances")
+        assert not fake_aws_box.was_called("put_object")
 
     def test_missing_infra_export_raises(self, manifest) -> None:
         aws = FakeAWS()  # nothing seeded; broker-service-dns will be missing
         with pytest.raises(RuntimeError, match="SSM param"):
-            ec2_woken_box_provision(aws=aws, manifest=manifest, environment=ENV, _iam_backoff_base=0)
+            ec2_woken_box_provision(
+                aws=aws, manifest=manifest, environment=ENV, image_id=AMI_ID, _iam_backoff_base=0,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +296,7 @@ class TestBoxRoleHoldsNoConnectorCreds:
     @pytest.fixture()
     def statements(self, fake_aws_box, manifest) -> list[dict]:
         ec2_woken_box_provision(
-            manifest, fake_aws_box, environment=ENV, region=REGION, _iam_backoff_base=0,
+            manifest, fake_aws_box, environment=ENV, region=REGION, image_id=AMI_ID, _iam_backoff_base=0,
         )
         # The inline policy the provision put on the base agentRole for this box.
         policy_name = f"safe-agents-{ENV}-{AGENT}-woken-box"
@@ -307,7 +393,7 @@ class TestBoxRoleHoldsNoConnectorCreds:
 class TestBoxTeardown:
     def test_teardown_terminates_and_cleans_iam(self, fake_aws_box, manifest) -> None:
         instance_id = ec2_woken_box_provision(
-            manifest, fake_aws_box, environment=ENV, region=REGION, _iam_backoff_base=0,
+            manifest, fake_aws_box, environment=ENV, region=REGION, image_id=AMI_ID, _iam_backoff_base=0,
         )
         report = ec2_woken_box_teardown(manifest, fake_aws_box, environment=ENV)
         assert instance_id in report["instances_terminated"]
@@ -316,7 +402,7 @@ class TestBoxTeardown:
 
     def test_teardown_is_idempotent(self, fake_aws_box, manifest) -> None:
         ec2_woken_box_provision(
-            manifest, fake_aws_box, environment=ENV, region=REGION, _iam_backoff_base=0,
+            manifest, fake_aws_box, environment=ENV, region=REGION, image_id=AMI_ID, _iam_backoff_base=0,
         )
         ec2_woken_box_teardown(manifest, fake_aws_box, environment=ENV)
         report = ec2_woken_box_teardown(manifest, fake_aws_box, environment=ENV)

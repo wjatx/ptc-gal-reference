@@ -115,6 +115,15 @@ is the record. It is sent to CloudFormation with the deploy, so
 `aws cloudformation describe-stacks --query 'Stacks[0].Tags'` shows it on the deployed stack and
 CloudTrail records it with the call. Redeploying by digest removes it.
 
+**Images outside this app.** The agent task image and the AMIs are chosen by the provisioners
+(`safe_agents/arms/`), which this app does not deploy. They follow the same rule through
+`safe_agents/pipeline/image_pin.py`: the Fargate arm takes `--image-uri` by digest, the instance
+arms take `--ami-id`, and both refuse when nothing is named. Their overrides are
+`--allow-mutable-image-tag` and `--allow-newest-ami`. The record those overrides leave is a WARNING
+log line and a line in the pipeline plan. Nothing is written on the task definition or the
+instance, so it is a weaker record than the stack tag above. `docs/consuming-the-sdk.md` §4 has the
+flags.
+
 **Reading a digest.** Push under a tag that has not been used, and have the push write the digest
 down:
 

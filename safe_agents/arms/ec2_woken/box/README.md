@@ -94,11 +94,14 @@ if it is not already in the environment.
 
 ## Provision / teardown (`../box_provision.py`)
 
-- **`ec2_woken_box_provision(manifest, aws, *, environment, region, instance_type, image_id, idle_polls)`**
+- **`ec2_woken_box_provision(manifest, aws, *, environment, region, instance_type, image_id, allow_newest_ami, idle_polls)`**
   — resolves the infra exports (agent subnet + agent SG, agent-runs table, tables CMK, broker DNS),
   ensures the per-box instance profile + the box inline policy, renders user-data (which installs
   the drain loop + systemd unit + `agent.env`), launches the box in the agent subnet on the agent
   SG (IMDSv2-only), and returns the instance id (the airlock's `RunnerInstanceId`).
+  `image_id` is the AMI to launch from and is required: with no id the call raises
+  `ImagePinError` before any AWS call. `allow_newest_ami=True` is the override that takes the
+  newest AMI by tag and logs the choice at WARNING (`safe_agents/arms/ec2/ami/README.md`).
 - **`ec2_woken_box_teardown(manifest, aws, *, environment)`** — terminates the box (by tags) and
   removes the per-box instance profile + inline policy. Idempotent; never touches the airlock stack
   or any `infra/` floor resource.
@@ -109,7 +112,7 @@ first, then deploy the airlock with `RunnerInstanceId` = the returned box id.
 
 ## Deploying a live loop (deployer steps)
 
-1. **Provision the box:** `ec2_woken_box_provision(...)` → note the returned instance id.
+1. **Provision the box:** `ec2_woken_box_provision(..., image_id="<ami-id>")` → note the returned instance id.
 2. **Deploy the airlock** (`ec2_woken_provision`) with `runner_instance_id` = that id.
 3. **POST** a normalized `{owner, message_id, text}` event (with the shared-token header) to the
    airlock `InboundEndpointUrl`.

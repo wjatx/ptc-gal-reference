@@ -67,8 +67,32 @@ Every baked AMI carries these tags (set by `dist-config.json`):
 | `Project` | `safe-agents` |
 | `ManagedBy` | `safe-agents-image-builder` |
 
-`provision.py` selects the **newest base AMI** by filtering on `safe-agents:ami=base` and sorting
-by `CreationDate`. The `safe-agents:ami-version` tag doubles as a human-readable build stamp.
+`ec2_provision` launches the AMI the operator names by id: `--ami-id ami-...` on the pipeline CLI,
+`image_id=` in code. It has no default. With no id the provision refuses before any AWS call, and
+a dry run fails the same way. The id is the output of the bake. Read it from the finished build:
+
+```sh
+aws imagebuilder get-image --image-build-version-arn <BUILD_ARN> \
+  --query 'image.outputResources.amis[0].image' --output text
+```
+
+or list this bakery's AMIs and take the one you reviewed:
+
+```sh
+aws ec2 describe-images --owners self \
+  --filters "Name=tag:safe-agents:ami,Values=base" \
+  --query 'Images[].[ImageId,CreationDate,Name]' --output table
+```
+
+The tags above identify a bake; on the normal path they do not choose an AMI. They choose one only
+under the override `--allow-newest-ami` (`allow_newest_ami=True`). The provisioner then filters on
+`safe-agents:ami=base` and takes the AMI whose `safe-agents:ami-version` tag value is greatest by
+string comparison. It does not sort by `CreationDate`. The filter and the sort key are both tags,
+and anyone who may tag an AMI in the account can edit them, so the override logs the AMI it chose
+and the rule that chose it at WARNING and records the same line in the pipeline plan. A failed
+lookup stops the run. The override is a per-run flag; nothing reads it from the manifest or the
+environment. The ec2-woken box (`ec2_woken_box_provision`) launches from this bakery's AMI under
+the same rule, with `image_id=` and `allow_newest_ami=True` as its only spellings.
 
 ## S3 deploy bucket + bundle key convention
 

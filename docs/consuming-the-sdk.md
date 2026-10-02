@@ -169,14 +169,39 @@ assumption, no `PYTHONPATH` hack:
 
 ```bash
 # dry-run first (validates the manifest + prints the plan; no AWS calls):
-safe-agents agents/example-agent.yaml --env development --dry-run
+safe-agents agents/example-agent.yaml --env development --dry-run --ami-id "$AMI_ID"
 
 # live:
-safe-agents agents/example-agent.yaml --env development
+safe-agents agents/example-agent.yaml --env development --ami-id "$AMI_ID"
 
 # teardown (tagged, zero-orphan):
 safe-agents agents/example-agent.yaml --env development --phase teardown
 ```
+
+**The provision phase launches what you name, and has no default.** Pass the flag that matches
+your manifest's arm:
+
+| Arm | Flag | Value |
+|---|---|---|
+| `ec2`, `rhel-openshell` | `--ami-id` | The AMI id your bake produced: `ami-` plus 8 or 17 lowercase hex characters. `safe_agents/arms/ec2/ami/README.md` and `safe_agents/arms/rhel_openshell/ami/README.md` show how to read it. |
+| `fargate` | `--image-uri` | Your image by digest: `<ecr-agent-repo-uri>@sha256:<64 lowercase hex characters>`. `docs/consumer-image-contract.md` shows how to read the digest back after the push. |
+| `ec2-woken` | none | The phase deploys the airlock and launches nothing. The box is launched by `ec2_woken_box_provision(image_id=...)`. |
+
+With no flag the provision phase fails before any AWS call, in a dry run as well as a real one, and
+the message says how to get the value. A flag that does not apply to the arm is an error, and so is
+either flag on a run that leaves out the provision phase. A dry run checks the form of the value
+and makes no AWS call, so it does not confirm that the AMI or the image exists.
+
+Two overrides exist for the case where you cannot name the exact thing:
+
+- `--allow-newest-ami` resolves the newest AMI by the arm's tag rule. On `rhel-openshell`, when no
+  baked AMI exists, it falls back to the newest Red Hat marketplace AMI.
+- `--allow-mutable-image-tag` lets `--image-uri` name a tag instead of a digest. `--image-uri` is
+  still required. No flag brings back an implicit `latest`.
+
+Each override prints a line in the plan that starts `OVERRIDE` and logs the same line at WARNING.
+The line names what was chosen and the rule that chose it. Both are flags of the command only:
+nothing reads them, or the AMI id or image URI, from the manifest or the environment.
 
 Agent-package resolution precedence (highest first):
 
@@ -200,10 +225,20 @@ result = run_pipeline(
     Path("agents/example-agent.yaml"),
     dry_run=False,
     environment="development",
+    ami_id="ami-0123456789abcdef0",   # ec2 / rhel-openshell: the AMI your bake produced
+    # image_uri="<ecr-agent-repo-uri>@sha256:<digest>",   # fargate: your image, by digest
     # agent_root=Path("packages"),   # only if your package tree lives elsewhere
 )
 assert result.success, result.aborted_at
 ```
+
+`ami_id` and `image_uri` are the CLI's `--ami-id` and `--image-uri`, and the overrides are
+`allow_newest_ami=True` and `allow_mutable_image_tag=True`. They must be real booleans passed by
+your code: a string is refused, so a value lifted from a config file cannot switch one on. The
+provisioners take the same arguments when called directly (`ec2_provision(image_id=...)`,
+`rhel_openshell_provision(image_id=...)`, `ec2_woken_box_provision(image_id=...)`,
+`fargate_provision(image_uri=...)`), and each refuses with `ImagePinError` when nothing is named.
+An override used through `run_pipeline` is recorded as a step of the provision `PhaseResult`.
 
 ## 6. Verifying the install
 
@@ -212,7 +247,8 @@ The dependency is proven for your repo when, from a clean checkout of *your* rep
 
 - the pin resolves and installs;
 - `python -c "import safe_agents.pipeline"` works;
-- `safe-agents agents/<name>.yaml --env development --dry-run` validates your manifest; and
+- `safe-agents agents/<name>.yaml --env development --dry-run` with your arm's `--ami-id` or
+  `--image-uri` validates your manifest; and
 - the confined brokered smoke runs end to end (agent, broker, run record, audit), which is the
   acceptance bar the substrate arms clear, now inherited as a dependency.
 

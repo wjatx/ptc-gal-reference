@@ -52,6 +52,14 @@ import time as _time
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from safe_agents.pipeline.image_pin import (
+    AmiPinSpec,
+    ImageSelection,
+    explicit_ami,
+    newest_ami,
+    record_override,
+)
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -240,9 +248,22 @@ def agent_role_extensions(
 _BASE_AMI_TAG_KEY = "safe-agents:ami"
 _BASE_AMI_TAG_VALUE = "base"
 
-# Tag used to pick the newest image when multiple base AMIs exist.
-# The bakery stamps a monotonically increasing version string (e.g. "20241201-01").
+# Tag the newest-AMI override sorts by when multiple base AMIs exist.
+# The bakery stamps a UTC build timestamp (e.g. "20241201T020000Z"), so string order is build
+# order. It is a tag: anyone who may tag an AMI in the account can change which one sorts first.
 _BASE_AMI_VERSION_TAG_KEY = "safe-agents:ami-version"
+
+# How this arm names its AMI and what its override does (safe_agents/pipeline/image_pin.py).
+AMI_PIN = AmiPinSpec(
+    arm="ec2 arm",
+    entry_point="ec2_provision",
+    tag_filter={_BASE_AMI_TAG_KEY: _BASE_AMI_TAG_VALUE},
+    newest_rule=(
+        f"the self-owned AMI tagged {_BASE_AMI_TAG_KEY}={_BASE_AMI_TAG_VALUE} with the greatest "
+        f"{_BASE_AMI_VERSION_TAG_KEY} tag value (string comparison)"
+    ),
+    bake_readme="safe_agents/arms/ec2/ami/README.md",
+)
 
 # Default instance type for the always-on EC2 arm (arm64, 2 vCPU, 2 GB RAM).
 DEFAULT_INSTANCE_TYPE = "t4g.small"
@@ -276,7 +297,8 @@ def _pick_newest_ami(images: list[dict]) -> str:
 
     Selects by the safe-agents:ami-version tag value (lexicographic max, which
     works for ISO-date-prefixed versions like "20241201-01"). Raises RuntimeError
-    when the list is empty (no base AMI available).
+    when the list is empty (no base AMI available). Runs only under the
+    newest-AMI override; see resolve_base_ami.
     """
     if not images:
         raise RuntimeError(
@@ -285,6 +307,29 @@ def _pick_newest_ami(images: list[dict]) -> str:
             "has the AMI bakery (sa#84) been run for this account/region?"
         )
     return max(images, key=lambda img: img["tags"].get(_BASE_AMI_VERSION_TAG_KEY, ""))["image_id"]
+
+
+def resolve_base_ami(
+    aws: "AWSInterface",
+    *,
+    image_id: Optional[str] = None,
+    allow_newest_ami: bool = False,
+) -> ImageSelection:
+    """Decide the AMI the EC2 box launches from, and say how it was chosen.
+
+    An explicit ``image_id`` is validated and used as given; no lookup runs. With no id the call
+    refuses (ImagePinError) before any AWS call, unless ``allow_newest_ami`` is True. Under that
+    override it lists the self-owned AMIs tagged safe-agents:ami=base, takes the one with the
+    greatest safe-agents:ami-version tag, and logs the id and the rule at WARNING.
+
+    A failed lookup raises. It is never read as "no AMI".
+    """
+    selection = explicit_ami(AMI_PIN, image_id, allow_newest_ami)
+    if selection is None:
+        images = aws.describe_images(dict(AMI_PIN.tag_filter))
+        selection = newest_ami(AMI_PIN, _pick_newest_ami(images))
+        record_override(logger, selection)
+    return selection
 
 
 def _run_instances_with_iam_retry(
@@ -695,6 +740,7 @@ def ec2_provision(
     region: str = "us-east-1",
     instance_type: str = DEFAULT_INSTANCE_TYPE,
     image_id: Optional[str] = None,
+    allow_newest_ami: bool = False,
     # Poll-interval overrides for tests — keep defaults at production values.
     # Pass 0.0 for poll intervals and short timeouts in unit tests to avoid real sleeps.
     _clean_start_ec2_timeout: float = _CLEAN_START_EC2_TIMEOUT_S,
@@ -739,7 +785,14 @@ def ec2_provision(
     instance_type:
         EC2 instance type. Defaults to t4g.small (arm64, free-tier eligible).
     image_id:
-        AMI ID. When None (default), resolved by tag from the prebuilt base AMI.
+        The AMI to launch from, e.g. "ami-0123456789abcdef0". Required unless
+        allow_newest_ami is True: with neither, the call raises ImagePinError before any
+        AWS call. There is no default AMI.
+    allow_newest_ami:
+        Override. When True (and image_id is None), launch from the newest self-owned AMI
+        tagged safe-agents:ami=base; the id and the rule that chose it are logged at
+        WARNING. A per-run switch: pass it from the caller, never from a manifest or the
+        environment. See resolve_base_ami.
     _clean_start_ec2_timeout, _clean_start_iam_timeout, _clean_start_poll_interval:
         Test hooks for the clean-start precondition gate (default production values).
         Pass short timeouts + 0.0 poll interval in tests.
@@ -752,6 +805,14 @@ def ec2_provision(
     -------
     EC2 instance ID (e.g. "i-0abc123def456789a").
     """
+    # -- Decide the AMI first -------------------------------------------------
+    # Before any other AWS call, so a provision with no AMI named refuses having touched
+    # nothing. An explicit id runs no lookup; the newest-by-tag lookup runs only under the
+    # allow_newest_ami override and logs what it chose.
+    image_id = resolve_base_ami(
+        aws, image_id=image_id, allow_newest_ami=allow_newest_ami
+    ).reference
+
     # -- Resolve infra exports via SSM (published by infra/ foundation stacks) --
     # SSM path convention: /safe-agents/{environment}/{key}  (naming.ts: ssmParameterName)
     def _ssm(key: str) -> str:
@@ -785,14 +846,6 @@ def ec2_provision(
     # Role name is the last path segment of the ARN (works for both role and
     # instance-profile ARN shapes, since the name is always the final /-segment).
     role_name = agent_role_arn.split("/")[-1]
-
-    # -- Resolve AMI (prebuilt base AMI via tag lookup, or caller override) ----
-    # Look up the newest AMI tagged safe-agents:ami=base (built by the AMI
-    # bakery) rather than the public AL2023 SSM parameter. A caller may pass an
-    # explicit image_id to skip the lookup (e.g. for targeted testing).
-    if image_id is None:
-        images = aws.describe_images({_BASE_AMI_TAG_KEY: _BASE_AMI_TAG_VALUE})
-        image_id = _pick_newest_ami(images)
 
     # -- Tag set (applied to every resource for teardown discovery) -----------
     tags = _arm_tags(environment, manifest.name)

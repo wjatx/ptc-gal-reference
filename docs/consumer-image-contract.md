@@ -109,9 +109,11 @@ labels them (a)–(f).
   been used, read the digest back (`podman push --digestfile <file> ...`, or
   `aws ecr describe-images --repository-name safe-agents-<env>-agent --image-ids imageTag=<tag>
   --query 'imageDetails[0].imageDigest' --output text`), and pass the full reference
-  `<ecr-agent-repo-uri>@<digest>` as `fargate_provision`'s `image_uri`, so the task definition
-  names the image you reviewed. A second push of a tag that exists, `latest` included, is
-  refused.
+  `<ecr-agent-repo-uri>@<digest>` as `fargate_provision`'s `image_uri` (`--image-uri` on the
+  pipeline CLI), so the task definition names the image you reviewed. The provision has no default
+  image and refuses when none is named; a tag reference needs the `allow_mutable_image_tag`
+  override (`safe_agents/arms/fargate/README.md`). A second push of a tag that exists, `latest`
+  included, is refused.
 - **Known limitation.** The agent ECR repo is currently shared per environment. With immutable
   tags one consumer can no longer overwrite another's tag, but the two still share one repository
   and its keep-last-10 lifecycle rule. Per-agent tags/repos are an open

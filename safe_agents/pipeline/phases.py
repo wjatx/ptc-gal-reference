@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from .aws_interface import AWSInterface
+from .image_pin import AmiPinSpec, ImagePinError, check_flags_apply, plan_ami
 from .manifest import DeploymentManifest
 
 # Smoke mode values
@@ -68,12 +69,41 @@ def _ok(phase: str, dry_run: bool, steps: list[str]) -> PhaseResult:
 # Phase 1: provision
 # ---------------------------------------------------------------------------
 
+def _select_ami(
+    spec: AmiPinSpec,
+    resolve: Callable,
+    aws: AWSInterface,
+    *,
+    dry_run: bool,
+    ami_id: Optional[str],
+    allow_newest_ami: bool,
+) -> tuple[str, Optional[str]]:
+    """Decide the AMI for an instance arm. Returns (plan step, AMI id to launch from).
+
+    A dry run makes no AWS call: it states the explicit id, or the rule the override will
+    apply, and returns no id. A real run resolves the AMI once, here, and the provisioner is
+    then handed exactly that id, so the AMI the plan records is the AMI that launches.
+
+    Raises ImagePinError (no id and no override, a malformed id, or both at once) in a dry run
+    exactly as in a real one. An AWS error in the override's lookup is not caught: it stops the
+    run.
+    """
+    if dry_run:
+        return plan_ami(spec, ami_id, allow_newest_ami), None
+    selection = resolve(aws, image_id=ami_id, allow_newest_ami=allow_newest_ami)
+    return selection.describe(), selection.reference
+
+
 def provision_phase(
     manifest: DeploymentManifest,
     aws: AWSInterface,
     *,
     dry_run: bool,
     environment: str = "development",
+    ami_id: Optional[str] = None,
+    image_uri: Optional[str] = None,
+    allow_newest_ami: bool = False,
+    allow_mutable_image_tag: bool = False,
 ) -> PhaseResult:
     """
     Provision the compute substrate for the agent's declared arm.
@@ -81,49 +111,104 @@ def provision_phase(
     Re-derives provision-agent-host: reads arm: and branches to the right
     substrate (EC2 box, EC2-woken, Fargate task). Fails fast on an unknown arm.
 
-    Dry-run: validates the arm and returns the ordered plan steps; no AWS calls.
+    What is launched is named by the caller (safe_agents/pipeline/image_pin.py):
+        ami_id                   the AMI, for the arms that launch an instance (ec2,
+                                 rhel-openshell).
+        image_uri                the container image by digest, for the fargate arm.
+        allow_newest_ami         override: resolve the newest AMI by the arm's rule.
+        allow_mutable_image_tag  override: image_uri may name a tag instead of a digest.
+    With neither a reference nor an override the phase fails before any AWS call. A flag the
+    manifest's arm does not use is an error. An override is recorded as a step of this phase's
+    result and logged at WARNING. None of the four is read from the manifest or the environment.
+
+    Dry-run: validates the arm and the image reference and returns the ordered plan steps; no
+    AWS calls. It fails where a real run would refuse.
     """
     arm = manifest.arm
     stack = _stack_name(manifest, environment)
     steps: list[str] = [f"arm={arm!r}: select substrate adapter"]
 
+    try:
+        check_flags_apply(
+            arm,
+            ami_id=ami_id,
+            image_uri=image_uri,
+            allow_newest_ami=allow_newest_ami,
+            allow_mutable_image_tag=allow_mutable_image_tag,
+        )
+    except ImagePinError as exc:
+        return _fail("provision", dry_run, steps, str(exc))
+
     if arm == "ec2":
+        # Lazy import — arms is a sibling package of pipeline under safe_agents; importable
+        # when the package is installed / on sys.path.
+        try:
+            from safe_agents.arms.ec2.provision import (  # noqa: PLC0415
+                AMI_PIN,
+                ec2_provision,
+                resolve_base_ami,
+            )
+        except ImportError as exc:
+            return _fail(
+                "provision", dry_run, steps,
+                f"EC2 arm adapter not importable: {exc}; "
+                "ensure safe_agents is importable",
+            )
+        try:
+            ami_step, launch_ami = _select_ami(
+                AMI_PIN, resolve_base_ami, aws,
+                dry_run=dry_run, ami_id=ami_id, allow_newest_ami=allow_newest_ami,
+            )
+        except RuntimeError as exc:
+            return _fail("provision", dry_run, steps, str(exc))
+        steps.append(ami_step)
         steps += [
             "clean-start gate: verify no prior instance with agent tags is still alive; IAM profile in stable state",
             "ensure_foundation (idempotent): create/reuse instance profile + attach inline role policy",
             "wait_for_iam_propagation: poll until role visible in profile, then buffer",
             "render user-data.sh.tmpl with manifest params (name/arm/environment/oauth_token)",
-            "RunInstances: arm64 AL2023 t4g.small in agent-subnet, agentRole profile, agentSG",
+            "RunInstances from that AMI: arm64 t4g.small in agent-subnet, agentRole profile, agentSG",
             "wait_for_ssm_online: poll SSM until instance PingStatus=Online (raise on timeout)",
             "agent instance profile: agentRole (zero connector authority; run-record + oauth_token only)",
             "broker sidecar service unit installed; brokerRole creds injected via credential file",
             "egress: agentSG → brokerSG only (NetworkStack; connector-allowlist until #35 lands)",
         ]
         if not dry_run:
-            # Delegate to the EC2 arm adapter (lazy import — arms is a sibling package of pipeline
-            # under safe_agents; importable when the package is installed / on sys.path).
             try:
-                from safe_agents.arms.ec2.provision import ec2_provision  # noqa: PLC0415
-            except ImportError as exc:
-                return _fail(
-                    "provision", dry_run, steps,
-                    f"EC2 arm adapter not importable: {exc}; "
-                    "ensure safe_agents is importable",
+                instance_id = ec2_provision(
+                    manifest, aws, environment=environment, image_id=launch_ami
                 )
-            try:
-                instance_id = ec2_provision(manifest, aws, environment=environment)
             except RuntimeError as exc:
                 return _fail("provision", dry_run, steps, str(exc))
             steps.append(f"instance launched: {instance_id}")
 
     elif arm == "rhel-openshell":
+        try:
+            from safe_agents.arms.rhel_openshell.provision import (  # noqa: PLC0415, I001
+                AMI_PIN as RHEL_AMI_PIN,
+                resolve_base_ami as resolve_rhel_base_ami,
+                rhel_openshell_provision,
+            )
+        except ImportError as exc:
+            return _fail(
+                "provision", dry_run, steps,
+                f"RHEL+OpenShell arm adapter not importable: {exc}; "
+                "ensure safe_agents is importable",
+            )
+        try:
+            ami_step, launch_ami = _select_ami(
+                RHEL_AMI_PIN, resolve_rhel_base_ami, aws,
+                dry_run=dry_run, ami_id=ami_id, allow_newest_ami=allow_newest_ami,
+            )
+        except RuntimeError as exc:
+            return _fail("provision", dry_run, steps, str(exc))
+        steps.append(ami_step)
         steps += [
             "clean-start gate: verify no prior RHEL instance with agent tags is alive; IAM profile stable",
             "ensure_foundation (idempotent): create/reuse instance profile + attach inline role policy",
             "wait_for_iam_propagation: poll until role visible in profile, then buffer",
-            "resolve RHEL 9 AMI by owner (309956199498) + name pattern (RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3)",
             "render user-data.sh.tmpl with manifest params (name/arm/environment/oauth_token/broker_dns/agent_runs_table/region)",
-            "RunInstances: x86_64 RHEL 9 m7i.xlarge in the ISOLATED agent-subnet on agentSG + endpointSG; /dev/sda1 100 GB gp3",
+            "RunInstances from that AMI: x86_64 RHEL 9 m7i.xlarge in the ISOLATED agent-subnet on agentSG + endpointSG; /dev/sda1 100 GB gp3",
             "wait_for_ssm_online: poll SSM until instance PingStatus=Online (raise on timeout)",
             "agentRole: SSM core + GetSecretValue on <agent>/* + S3 deploy-bundle read + run-record PutItem + tables-CMK KMS grant",
             "user-data bootstraps (autonomous profile): SSM agent + dev user + core toolchain + python + Claude CLI + netns-forward + run-brokered.sh systemd service (OpenShell is interactive-profile-only)",
@@ -132,15 +217,9 @@ def provision_phase(
         ]
         if not dry_run:
             try:
-                from safe_agents.arms.rhel_openshell.provision import rhel_openshell_provision  # noqa: PLC0415
-            except ImportError as exc:
-                return _fail(
-                    "provision", dry_run, steps,
-                    f"RHEL+OpenShell arm adapter not importable: {exc}; "
-                    "ensure safe_agents is importable",
+                instance_id = rhel_openshell_provision(
+                    manifest, aws, environment=environment, image_id=launch_ami
                 )
-            try:
-                instance_id = rhel_openshell_provision(manifest, aws, environment=environment)
             except RuntimeError as exc:
                 return _fail("provision", dry_run, steps, str(exc))
             steps.append(f"instance launched: {instance_id}")
@@ -173,11 +252,32 @@ def provision_phase(
             steps.append(f"airlock stack deployed: {summary['stack_name']}")
 
     elif arm == "fargate":
+        try:
+            from safe_agents.arms.fargate.provision import (  # noqa: PLC0415
+                fargate_provision,
+                resolve_task_image,
+            )
+        except ImportError as exc:
+            return _fail(
+                "provision", dry_run, steps,
+                f"Fargate arm adapter not importable: {exc}; "
+                "ensure safe_agents is importable",
+            )
+        # Pure, so the dry run and the real run state the same image or refuse the same way.
+        try:
+            image = resolve_task_image(
+                image_uri,
+                allow_mutable_image_tag=allow_mutable_image_tag,
+                environment=environment,
+            )
+        except ImagePinError as exc:
+            return _fail("provision", dry_run, steps, str(exc))
+        steps.append(image.describe())
         steps += [
             "create per-agent taskRole (ecs-tasks trust): run-record PutItem + oauth-token GetSecretValue ONLY (no connector creds)",
             "create executionRole: AmazonECSTaskExecutionRolePolicy + narrow oauth-secret inject inline",
             "create schedulerRole (scheduler trust): ecs:RunTask + iam:PassRole on task+exec roles",
-            f"register arm64 Fargate task definition (cpu 256/mem 512) for agent {manifest.name!r} from ecr-agent-repo-uri:latest",
+            f"register arm64 Fargate task definition (cpu 256/mem 512) for agent {manifest.name!r} naming that image",
             "container env: SA_BROKER_DNS / SA_MODEL_PROXY_PORT / SA_TOOL_API_PORT / AGENT_RUNS_TABLE / AGENT_NAME / RUN_ID / AWS_DEFAULT_REGION; secret CLAUDE_CODE_OAUTH_TOKEN injected",
             "broker runs as its OWN ECS service (broker.safe-agents.local); the agent task is separate",
             "task networking: awsvpc in isolated agent-subnets on agentSG, public IP DISABLED (broker-only egress)",
@@ -185,14 +285,6 @@ def provision_phase(
             "schedule provisions DISABLED by default and must be explicitly enabled after proof (sa#115)",
         ]
         if not dry_run:
-            try:
-                from safe_agents.arms.fargate.provision import fargate_provision  # noqa: PLC0415
-            except ImportError as exc:
-                return _fail(
-                    "provision", dry_run, steps,
-                    f"Fargate arm adapter not importable: {exc}; "
-                    "ensure safe_agents is importable",
-                )
             schedule_kwargs: dict = {}
             if manifest.schedule is not None:
                 if manifest.schedule.expression:
@@ -202,7 +294,12 @@ def provision_phase(
                 schedule_kwargs["state"] = manifest.schedule.state
             try:
                 summary = fargate_provision(
-                    manifest, aws, environment=environment, **schedule_kwargs
+                    manifest,
+                    aws,
+                    environment=environment,
+                    image_uri=image.reference,
+                    allow_mutable_image_tag=allow_mutable_image_tag,
+                    **schedule_kwargs,
                 )
             except RuntimeError as exc:
                 return _fail("provision", dry_run, steps, str(exc))
@@ -321,7 +418,13 @@ def deploy_phase(
                     )
 
     elif arm == "fargate":
-        steps.append("update Fargate task definition with new image digest")
+        # Nothing to deploy onto a host. The image is part of the task definition, which the
+        # provision phase registers; this phase registers nothing and changes no image.
+        steps.append(
+            "no host deploy for Fargate: the task definition registered by the provision phase "
+            "names the image. To run a different image, run the provision phase again with the "
+            "new --image-uri, which registers a new task definition revision"
+        )
 
     return _ok("deploy", dry_run, steps)
 

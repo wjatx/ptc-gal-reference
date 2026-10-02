@@ -6,8 +6,10 @@
 # without a real Claude session. The coordinator runs the live deploy;
 # CI uses --dry-run.
 #
-# The pipeline reads this file with:
-#   python -m safe_agents.pipeline.cli agents/smoke-rhel-openshell.yaml --dry-run --env development
+# The pipeline reads this file with (the AMI is named on the command line; this file
+# cannot name one, and there is no default):
+#   python -m safe_agents.pipeline.cli agents/smoke-rhel-openshell.yaml --dry-run --env development \
+#     --ami-id <ami-id>
 
 name: smoke-rhel-openshell
 

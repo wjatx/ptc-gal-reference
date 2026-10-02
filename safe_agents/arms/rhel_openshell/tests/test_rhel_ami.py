@@ -14,12 +14,15 @@ Acceptance criteria:
   4. dist-config tags the output AMI safe-agents:ami=base-rhel.
   5. teardown constants target the base-rhel bake; rhel_bake_teardown removes a seeded bake
      and is idempotent, reusing the shared (EC2) teardown engine.
-  6. provision resolves the prebuilt base-rhel AMI when present, and falls back to the RHEL
-     marketplace AMI when no bake exists.
+  6. provision launches the AMI the caller names and has no default. Under the
+     allow_newest_ami override it resolves the prebuilt base-rhel AMI when present, and falls
+     back to the RHEL marketplace AMI only when no bake exists, saying so. An AWS error in the
+     baked-AMI lookup stops the run; it never causes the fallback.
 """
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -31,10 +34,14 @@ from safe_agents.arms.tests.fetch_rules import pins
 from safe_agents.arms.rhel_openshell.ami import teardown as rhel_bake
 from safe_agents.arms.rhel_openshell.ami.teardown import rhel_bake_teardown
 from safe_agents.arms.rhel_openshell.provision import (
+    RHEL9_NAME_PATTERN,
     RHEL_OWNER_ID,
+    resolve_base_ami,
     rhel_openshell_provision,
 )
-from safe_agents.pipeline import load_manifest
+from safe_agents.pipeline import load_manifest, run_pipeline
+from safe_agents.pipeline.image_pin import ImagePinError
+from safe_agents.pipeline.phases import provision_phase
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -64,7 +71,10 @@ SMOKE_MANIFEST = REPO_ROOT / "agents" / "smoke-rhel-openshell.yaml"
 
 _RHEL_AMI_ID = "ami-0dcaef0e21f109874"
 _RHEL_AMI_NAME = "RHEL-9.8_HVM-20250506-x86_64-1893-Hourly2-GP3"
-_BAKED_AMI_ID = "ami-0bakedrhel00001"
+_BAKED_AMI_ID = "ami-0ba5ed00000000001"
+# The normal path: an AMI the operator names. Never seeded in FakeAWS.
+_EXPLICIT_AMI_ID = "ami-0123456789abcdef0"
+_PROVISION_LOGGER = "safe_agents.arms.rhel_openshell.provision"
 
 # Pass to rhel_openshell_provision in all unit tests to avoid real sleeps.
 _FAST = dict(
@@ -481,10 +491,13 @@ class TestRhelBakeTeardown:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 6: provision resolves the prebuilt AMI, falls back to marketplace
+# Criterion 6: under the override, provision resolves the prebuilt AMI and falls
+# back to marketplace
 # ---------------------------------------------------------------------------
 
 class TestProvisionResolvesBakedAmi:
+    """What the newest-AMI override does. Every call here passes allow_newest_ami=True."""
+
     ENV = "development"
 
     def test_uses_prebuilt_ami_when_present(self) -> None:
@@ -510,7 +523,9 @@ class TestProvisionResolvesBakedAmi:
         aws.run_instances = spy  # type: ignore[method-assign]
 
         manifest = load_manifest(SMOKE_MANIFEST)
-        rhel_openshell_provision(manifest, aws, environment=self.ENV, **_FAST)
+        rhel_openshell_provision(
+            manifest, aws, environment=self.ENV, allow_newest_ami=True, **_FAST
+        )
 
         assert captured["image_id"] == _BAKED_AMI_ID, (
             f"provision must launch from the prebuilt base-rhel AMI; got {captured.get('image_id')!r}"
@@ -524,12 +539,12 @@ class TestProvisionResolvesBakedAmi:
         """With multiple base-rhel bakes, the newest by creation_date wins."""
         aws = _seed_infra(FakeAWS())
         aws.seed_image(
-            "ami-0oldrhelbake",
+            "ami-0ba5ed00000000002",
             {"safe-agents:ami": "base-rhel"},
             creation_date="2026-01-01T00:00:00Z",
         )
         aws.seed_image(
-            "ami-0newrhelbake",
+            "ami-0ba5ed00000000003",
             {"safe-agents:ami": "base-rhel"},
             creation_date="2026-06-01T00:00:00Z",
         )
@@ -538,8 +553,10 @@ class TestProvisionResolvesBakedAmi:
         aws.run_instances = lambda **kw: (captured.update(kw), original(**kw))[1]  # type: ignore[method-assign]
 
         manifest = load_manifest(SMOKE_MANIFEST)
-        rhel_openshell_provision(manifest, aws, environment=self.ENV, **_FAST)
-        assert captured["image_id"] == "ami-0newrhelbake"
+        rhel_openshell_provision(
+            manifest, aws, environment=self.ENV, allow_newest_ami=True, **_FAST
+        )
+        assert captured["image_id"] == "ami-0ba5ed00000000003"
 
     def test_falls_back_to_marketplace_when_no_bake(self) -> None:
         """With no base-rhel AMI, provision falls back to the RHEL marketplace AMI."""
@@ -552,9 +569,257 @@ class TestProvisionResolvesBakedAmi:
         aws.run_instances = lambda **kw: (captured.update(kw), original(**kw))[1]  # type: ignore[method-assign]
 
         manifest = load_manifest(SMOKE_MANIFEST)
-        rhel_openshell_provision(manifest, aws, environment=self.ENV, **_FAST)
+        rhel_openshell_provision(
+            manifest, aws, environment=self.ENV, allow_newest_ami=True, **_FAST
+        )
 
         assert aws.was_called("describe_images_by_owner_name"), (
             "provision must fall back to the marketplace lookup when no bake exists"
         )
         assert captured["image_id"] == _RHEL_AMI_ID
+
+
+# ---------------------------------------------------------------------------
+# Criterion 6 (continued): no default, the override is recorded, a failed lookup fails
+# ---------------------------------------------------------------------------
+
+def _spy_run_instances(aws: FakeAWS) -> dict:
+    captured: dict = {}
+    original = aws.run_instances
+
+    def spy(**kwargs):
+        captured.update(kwargs)
+        return original(**kwargs)
+
+    aws.run_instances = spy  # type: ignore[method-assign]
+    return captured
+
+
+def _override_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if "OVERRIDE" in r.getMessage()]
+
+
+class _BakedLookupFails(FakeAWS):
+    """FakeAWS whose self-owned AMI lookup fails the way a throttled or denied call does."""
+
+    def describe_images(self, tag_filters: dict[str, str]) -> list[dict]:
+        self.calls.append(("describe_images", tag_filters))
+        raise PermissionError("simulated: DescribeImages UnauthorizedOperation")
+
+
+class TestAmiIsPinned:
+    ENV = "development"
+
+    @pytest.fixture()
+    def aws(self) -> FakeAWS:
+        """Infra seeded, with BOTH a baked AMI and a marketplace AMI available."""
+        aws = _seed_infra(FakeAWS())
+        aws.seed_image(
+            _BAKED_AMI_ID, {"safe-agents:ami": "base-rhel"}, creation_date="2026-06-01T00:00:00Z"
+        )
+        aws.seed_marketplace_image(
+            _RHEL_AMI_ID, RHEL_OWNER_ID, _RHEL_AMI_NAME, creation_date="2025-05-06T00:00:00Z"
+        )
+        return aws
+
+    @pytest.mark.parametrize(
+        "kwargs, phrase",
+        [
+            pytest.param({}, "no AMI id was given, and there is no default", id="no-id"),
+            pytest.param({"image_id": "ami-0bakedrhel00001"}, "is not an AMI id", id="not-hex"),
+            pytest.param({"image_id": "RHEL-9.8_HVM"}, "is not an AMI id", id="a-name"),
+            pytest.param(
+                {"image_id": _EXPLICIT_AMI_ID, "allow_newest_ami": True},
+                "both an AMI id and the newest-AMI override",
+                id="id-and-override",
+            ),
+            pytest.param(
+                {"allow_newest_ami": "yes"}, "must be True or False", id="override-not-a-bool"
+            ),
+        ],
+    )
+    def test_refuses_before_any_aws_call(self, aws: FakeAWS, kwargs: dict, phrase: str) -> None:
+        manifest = load_manifest(SMOKE_MANIFEST)
+        with pytest.raises(ImagePinError) as excinfo:
+            rhel_openshell_provision(manifest, aws, environment=self.ENV, **kwargs, **_FAST)
+        assert phrase in str(excinfo.value)
+        assert aws.calls == [], f"a refused provision must touch nothing; calls: {aws.calls}"
+
+    def test_missing_id_message_tells_the_operator_what_to_do(self, aws: FakeAWS) -> None:
+        with pytest.raises(ImagePinError) as excinfo:
+            resolve_base_ami(aws)
+        message = str(excinfo.value)
+        for needle in (
+            "rhel-openshell arm",
+            "--ami-id <ami-id>",
+            "image_id=",
+            "safe_agents/arms/rhel_openshell/ami/README.md",
+            'aws ec2 describe-images --owners self --filters '
+            '"Name=tag:safe-agents:ami,Values=base-rhel"',
+            "--allow-newest-ami",
+        ):
+            assert needle in message, f"refusal does not mention {needle!r}: {message}"
+
+    def test_explicit_id_is_used_verbatim_and_no_lookup_runs(
+        self, aws: FakeAWS, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        captured = _spy_run_instances(aws)
+        manifest = load_manifest(SMOKE_MANIFEST)
+        with caplog.at_level(logging.WARNING, logger=_PROVISION_LOGGER):
+            rhel_openshell_provision(
+                manifest, aws, environment=self.ENV, image_id=_EXPLICIT_AMI_ID, **_FAST
+            )
+        assert captured["image_id"] == _EXPLICIT_AMI_ID
+        assert not aws.was_called("describe_images")
+        assert not aws.was_called("describe_images_by_owner_name")
+        assert _override_warnings(caplog) == []
+
+    def test_override_warning_names_the_baked_ami_and_the_rule(
+        self, aws: FakeAWS, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger=_PROVISION_LOGGER):
+            selection = resolve_base_ami(aws, allow_newest_ami=True)
+        assert selection.reference == _BAKED_AMI_ID
+        assert selection.source == "newest-by-tag"
+
+        warnings = _override_warnings(caplog)
+        assert warnings == [selection.describe()]
+        line = warnings[0]
+        assert "OVERRIDE --allow-newest-ami" in line
+        assert _BAKED_AMI_ID in line
+        assert "safe-agents:ami=base-rhel" in line        # the tag filter
+        assert "latest CreationDate" in line              # the sort key
+        assert f"--ami-id {_BAKED_AMI_ID}" in line        # how to pin it next time
+        assert "MARKETPLACE FALLBACK" not in line
+
+    def test_marketplace_fallback_is_named_as_such(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Launching Red Hat's image is a different trust statement from launching our own
+        bake, so the WARNING must say which one happened."""
+        aws = _seed_infra(FakeAWS())
+        aws.seed_marketplace_image(
+            _RHEL_AMI_ID, RHEL_OWNER_ID, _RHEL_AMI_NAME, creation_date="2025-05-06T00:00:00Z"
+        )
+        with caplog.at_level(logging.WARNING, logger=_PROVISION_LOGGER):
+            selection = resolve_base_ami(aws, allow_newest_ami=True)
+        assert selection.reference == _RHEL_AMI_ID
+        assert selection.source == "marketplace-fallback"
+
+        warnings = _override_warnings(caplog)
+        assert len(warnings) == 1, warnings
+        line = warnings[0]
+        assert "MARKETPLACE FALLBACK" in line
+        assert "not one this account baked" in line
+        assert _RHEL_AMI_ID in line
+        assert RHEL_OWNER_ID in line                       # the marketplace owner
+        assert RHEL9_NAME_PATTERN in line                  # the name pattern
+        assert "no self-owned AMI tagged safe-agents:ami=base-rhel exists" in line
+
+    def test_error_in_baked_lookup_propagates_and_does_not_fall_back(self) -> None:
+        """An AWS error is not 'no baked AMI'. The marketplace lookup must not run, and
+        nothing launches."""
+        aws = _seed_infra(_BakedLookupFails())
+        aws.seed_marketplace_image(
+            _RHEL_AMI_ID, RHEL_OWNER_ID, _RHEL_AMI_NAME, creation_date="2025-05-06T00:00:00Z"
+        )
+        manifest = load_manifest(SMOKE_MANIFEST)
+        with pytest.raises(PermissionError, match="UnauthorizedOperation"):
+            rhel_openshell_provision(
+                manifest, aws, environment=self.ENV, allow_newest_ami=True, **_FAST
+            )
+        assert not aws.was_called("describe_images_by_owner_name"), (
+            "an ERROR in the baked-AMI lookup must not cause the marketplace fallback"
+        )
+        assert not aws.was_called("run_instances")
+
+    def test_error_in_marketplace_lookup_propagates(self, monkeypatch) -> None:
+        aws = _seed_infra(FakeAWS())
+
+        def boom(owner_id, name_pattern):
+            raise ConnectionError("simulated: DescribeImages RequestLimitExceeded")
+
+        monkeypatch.setattr(aws, "describe_images_by_owner_name", boom)
+        with pytest.raises(ConnectionError, match="RequestLimitExceeded"):
+            resolve_base_ami(aws, allow_newest_ami=True)
+
+
+class TestPipelineAmiFlags:
+    ENV = "development"
+
+    @pytest.mark.parametrize("dry_run", [True, False])
+    def test_refuses_with_no_ami_and_makes_no_aws_call(self, dry_run: bool) -> None:
+        aws = _seed_infra(FakeAWS())
+        result = run_pipeline(SMOKE_MANIFEST, dry_run=dry_run, aws=aws)
+        assert not result.success
+        assert result.aborted_at == "provision"
+        assert "no AMI id was given, and there is no default" in result.phase_results[-1].error
+        assert aws.calls == []
+
+    def test_dry_run_override_plan_states_both_rules_without_calling_aws(self) -> None:
+        aws = _seed_infra(FakeAWS())
+        manifest = load_manifest(SMOKE_MANIFEST)
+        result = provision_phase(
+            manifest, aws, dry_run=True, environment=self.ENV, allow_newest_ami=True
+        )
+        assert result.success, result.error
+        steps = [s for s in result.steps if "OVERRIDE --allow-newest-ami" in s]
+        assert len(steps) == 1
+        assert "safe-agents:ami=base-rhel" in steps[0]
+        assert "MARKETPLACE FALLBACK" in steps[0]
+        assert RHEL_OWNER_ID in steps[0]
+        assert RHEL9_NAME_PATTERN in steps[0]
+        assert aws.calls == []
+
+    def test_plan_no_longer_claims_an_owner_and_name_lookup_by_default(self) -> None:
+        """The stale plan line said the AMI is resolved by owner + name pattern. With an
+        explicit AMI no lookup runs, and the plan must not say one does."""
+        aws = _seed_infra(FakeAWS())
+        manifest = load_manifest(SMOKE_MANIFEST)
+        result = provision_phase(
+            manifest, aws, dry_run=True, environment=self.ENV, ami_id=_EXPLICIT_AMI_ID
+        )
+        assert result.success, result.error
+        blob = " ".join(result.steps)
+        assert f"launch from AMI {_EXPLICIT_AMI_ID}, named by the operator" in blob
+        assert "resolve RHEL 9 AMI" not in blob
+        assert RHEL_OWNER_ID not in blob
+
+    def test_live_marketplace_fallback_is_recorded_in_the_plan(
+        self, caplog: pytest.LogCaptureFixture, monkeypatch
+    ) -> None:
+        # provision_phase passes no test hooks, so remove the real IAM-propagation sleep.
+        monkeypatch.setattr("safe_agents.arms.ec2.provision._time.sleep", lambda _s: None)
+        aws = _seed_infra(FakeAWS())
+        aws.seed_marketplace_image(
+            _RHEL_AMI_ID, RHEL_OWNER_ID, _RHEL_AMI_NAME, creation_date="2025-05-06T00:00:00Z"
+        )
+        captured = _spy_run_instances(aws)
+        manifest = load_manifest(SMOKE_MANIFEST)
+        with caplog.at_level(logging.WARNING, logger=_PROVISION_LOGGER):
+            result = provision_phase(
+                manifest, aws, dry_run=False, environment=self.ENV, allow_newest_ami=True
+            )
+        assert result.success, result.error
+        steps = [s for s in result.steps if "OVERRIDE --allow-newest-ami" in s]
+        assert len(steps) == 1
+        assert "MARKETPLACE FALLBACK" in steps[0]
+        assert _RHEL_AMI_ID in steps[0]
+        assert _override_warnings(caplog) == steps
+        # One resolution; the AMI the plan recorded is the AMI that launched.
+        assert captured["image_id"] == _RHEL_AMI_ID
+        assert len([c for c in aws.calls if c[0] == "describe_images"]) == 1
+        assert len([c for c in aws.calls if c[0] == "describe_images_by_owner_name"]) == 1
+
+    def test_live_baked_lookup_error_stops_the_run(self) -> None:
+        aws = _seed_infra(_BakedLookupFails())
+        aws.seed_marketplace_image(
+            _RHEL_AMI_ID, RHEL_OWNER_ID, _RHEL_AMI_NAME, creation_date="2025-05-06T00:00:00Z"
+        )
+        manifest = load_manifest(SMOKE_MANIFEST)
+        with pytest.raises(PermissionError):
+            provision_phase(
+                manifest, aws, dry_run=False, environment=self.ENV, allow_newest_ami=True
+            )
+        assert not aws.was_called("describe_images_by_owner_name")
+        assert not aws.was_called("run_instances")

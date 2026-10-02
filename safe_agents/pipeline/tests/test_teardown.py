@@ -42,6 +42,10 @@ TEST_STUB_DIR = AGENTS_DIR / "test-stub"
 
 ENV = "development"
 
+# The AMI the provision phase is told to launch from. The pipeline has no default AMI, so
+# every run that includes the provision phase names one.
+AMI_ID = "ami-0123456789abcdef0"
+
 
 @pytest.fixture()
 def fake_aws_provisioned() -> FakeAWS:
@@ -75,18 +79,12 @@ def fake_aws_provisioned() -> FakeAWS:
         "arn:aws:kms:us-east-1:123456789012:key/abcd-1234-cmk",
     )
     aws.seed_ssm_param(f"/safe-agents/{ENV}/broker-service-dns", "broker.safe-agents.local")
-    # Prebuilt base AMI replaces the public AL2023 SSM parameter lookup.
-    aws.seed_image(
-        "ami-0fakebaseami001",
-        {"safe-agents:ami": "base", "safe-agents:ami-version": "20241201-01"},
-        creation_date="2024-12-01T00:00:00Z",
-    )
 
     # Run a fake provision to populate FakeAWS state
     from safe_agents.arms.ec2.provision import ec2_provision  # noqa: PLC0415
 
     manifest = load_manifest(SMOKE_EC2_MANIFEST)
-    ec2_provision(manifest, aws, environment=ENV)
+    ec2_provision(manifest, aws, environment=ENV, image_id=AMI_ID)
 
     # Reset the call log so test assertions start from a clean slate
     aws.calls.clear()
@@ -341,6 +339,7 @@ class TestTeardownViaRunPipeline:
         result = run_pipeline(
             SMOKE_EC2_MANIFEST,
             dry_run=True,
+            ami_id=AMI_ID,
             aws=fake_aws_provisioned,
             environment=ENV,
             agent_dir=TEST_STUB_DIR,
