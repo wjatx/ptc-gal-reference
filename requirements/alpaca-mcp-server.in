@@ -1,0 +1,4 @@
+# The third-party MCP server the Alpaca paper drill image runs. Its version is set
+# here. examples/alpaca_paper_drill/Containerfile.broker installs the compiled lock,
+# and safe_agents/broker/tests/test_example_alpaca_drill_manifest.py holds the same pin.
+alpaca-mcp-server==2.1.1

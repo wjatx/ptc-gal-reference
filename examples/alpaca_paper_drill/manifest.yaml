@@ -44,10 +44,16 @@ connectors:
 # version is part of the reviewed surface — an upgrade is a re-vet trigger (its
 # changed tool descriptions will drift-quarantine admitted tools; that is the
 # design working, plan the re-vet ceremony into any bump).
+#
+# The pin is written in requirements/alpaca-mcp-server.in (alpaca-mcp-server==2.1.1)
+# and compiled to the hash-checked lock requirements/alpaca-mcp-server.txt, which
+# fixes the server's dependencies as well. Containerfile.broker installs that lock
+# into a virtualenv at /opt/alpaca-mcp-server, and `command` is that virtualenv's
+# console script. The path is absolute, so a spawn does not depend on PATH and
+# fetches nothing. The README says how to create the same virtualenv on a laptop.
 mcp_servers:
   alpaca:
-    command: uvx
-    args: ["alpaca-mcp-server==2.1.1"]
+    command: /opt/alpaca-mcp-server/bin/alpaca-mcp-server
     env:
       ALPACA_PAPER_TRADE: "true"
     tools:

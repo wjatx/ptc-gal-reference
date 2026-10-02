@@ -19,16 +19,36 @@
 # memory arm keeps in-memory fakes for a smoke, and the durable arms take a real store,
 # audit tape and credential provider. The entrypoint starts BOTH surfaces; a deployment
 # that wants only the tool API overrides the command.
-FROM python:3.12-slim
+#
+# The third-party base is pinned by digest, and the tag is kept only so a reader can
+# see which image the digest names. The digest is the multi-arch index, so a
+# linux/arm64 build and a linux/amd64 build both resolve through it.
+# Re-resolve: skopeo inspect --raw docker://docker.io/library/python:3.12-slim | shasum -a 256
+FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
 
 # Install the safe-agents SDK so `safe_agents.broker.*` resolves as an installed
-# package — a single source of truth for the runtime deps (pydantic, PyYAML) via pyproject,
-# rather than hand-maintained pins. The `aws` extra adds boto3, needed only when the stores are
-# DynamoDB-backed (BROKER_STORE=dynamo); boto3 stays lazy-imported in the broker library.
+# package. pyproject.toml declares what the SDK needs; the lock files under
+# requirements/ fix which version of each package this image gets (CONTRIBUTING.md,
+# "The lock files"), and nothing is resolved at build time.
+#
+# Third-party packages go in first, from two hash-checked locks. requirements/aws.txt
+# is the runtime dependencies (pydantic, PyYAML, cryptography, whenever) plus the `aws`
+# extra. requirements/build-backend.txt is setuptools, which builds the SDK from the
+# COPY'd source. Every entry is an exact version with the hashes of its published
+# files, and --require-hashes makes pip refuse a file whose hash is not listed.
+#
+# The SDK itself then installs with --no-index, so that step downloads nothing and
+# fails, naming the requirement, when pyproject.toml asks for something the locks lack.
+#
+# The `aws` extra adds boto3, needed only when the stores are DynamoDB-backed
+# (BROKER_STORE=dynamo); boto3 stays lazy-imported in the broker library.
 WORKDIR /app
+COPY requirements/aws.txt requirements/build-backend.txt ./requirements/
+RUN pip install --no-cache-dir --require-hashes \
+      -r requirements/aws.txt -r requirements/build-backend.txt
 COPY pyproject.toml README.md ./
 COPY safe_agents ./safe_agents
-RUN pip install --no-cache-dir ".[aws]"
+RUN pip install --no-cache-dir --no-index --no-build-isolation --check-build-dependencies ".[aws]"
 
 # The model-proxy stub runs as a standalone script (not a module), so copy it to a fixed path.
 COPY safe_agents/arms/ec2/bootstrap/scripts/model-proxy-stub.py /app/model-proxy-stub.py

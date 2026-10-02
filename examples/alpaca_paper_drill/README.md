@@ -4,8 +4,9 @@ The first run of the broker's **native MCP construction + spawn-time env-auth**
 against a REAL third-party server: Alpaca's official `alpaca-mcp-server`
 (pinned `==2.1.1`), paper keys only — first entirely on a laptop (Phase 1,
 2026-07-18), then through a DEPLOYED broker task on the `development` floor
-(Phase 2, 2026-07-19: `Containerfile.broker` here is that consumer image —
-uvx-in-image with a pre-warmed pinned cache).
+(Phase 2, 2026-07-19: `Containerfile.broker` here is that consumer image).
+Both runs spawned the server through `uvx`. The image and the manifest now
+install and spawn it from a hash-checked lock; see "Installing the server".
 
 This is **drill scope**, not production adoption. Production adoption of an
 Alpaca MCP surface is a consumer agent's later decision, in its own repo, behind
@@ -16,7 +17,8 @@ payload, a 3-tool declared ceiling, credentials the agent never sees.
 ## The shape
 
 - **`manifest.yaml`** — the whole consumer. `mcp_servers.alpaca` declares the
-  pinned spawn (`uvx alpaca-mcp-server==2.1.1`), pins `ALPACA_PAPER_TRADE=true`
+  pinned spawn (`/opt/alpaca-mcp-server/bin/alpaca-mcp-server`, the console
+  script of a virtualenv built from the lock), pins `ALPACA_PAPER_TRADE=true`
   in the static env (manifest-declared, never left to the secret or the server
   default), and declares a READ-ONLY three-tool ceiling: `get_account_info`,
   `get_clock`, `get_stock_latest_quote`. `connector_auth.alpaca.env_map`
@@ -35,7 +37,30 @@ payload, a 3-tool declared ceiling, credentials the agent never sees.
   end-to-end laptop proof (lives with the broker tests: a live proof reaches
   into broker internals, and `examples/` is guarded consumer-clean).
 
+## Installing the server
+
+The server's version is written in `requirements/alpaca-mcp-server.in`, and
+`requirements/alpaca-mcp-server.txt` is its hash-checked lock: the server and
+every package it depends on, each an exact version with the hashes of its
+published files (CONTRIBUTING.md, "The lock files").
+
+`Containerfile.broker` installs that lock into a virtualenv at
+`/opt/alpaca-mcp-server`, and the manifest spawns that virtualenv's console
+script by absolute path. A spawn resolves nothing and downloads nothing.
+
+The laptop proof below spawns the same manifest, so it needs the same
+virtualenv at the same path. From the repository root:
+
+```bash
+sudo python3.12 -m venv /opt/alpaca-mcp-server
+sudo /opt/alpaca-mcp-server/bin/python -m pip install --require-hashes -r requirements/alpaca-mcp-server.txt
+```
+
 ## The proof (first run 2026-07-18, all green)
+
+That run spawned the server through `uvx`. The same test now spawns the server
+installed above, and it has not been re-run against real paper keys since that
+change.
 
 ```
 set -a && source ~/.secrets/alpaca.txt && set +a && \

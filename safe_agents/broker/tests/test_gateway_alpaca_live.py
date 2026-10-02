@@ -39,8 +39,9 @@ That was the host-refusal audit gap, and it is now fixed (MCP-HOST.md **M26**): 
 tape as `deny`/`denied`. The assertion is kept pointed at the coordinate rather than
 at a count, so it keeps meaning the same thing as the chain grows.
 
-Gated on paper keys (source ``~/.secrets/alpaca.txt``); needs network + uvx + the
-``mcp`` extra. Run:
+Gated on paper keys (source ``~/.secrets/alpaca.txt``); needs network, the ``mcp``
+extra, and the pinned server installed where the manifest's ``command`` names it
+(examples/alpaca_paper_drill/README.md, "Installing the server"). Run:
 
     set -a && source ~/.secrets/alpaca.txt && set +a && \
       python -m pytest safe_agents/broker/tests/test_gateway_alpaca_live.py -q -s
@@ -80,8 +81,9 @@ _EXPECTED_WIRE_NAMES = [
 _DECLARED = ("get_account_info", "get_clock", "get_stock_latest_quote")
 _REFUSED_TOOL = "alpaca__place_stock_order"
 
-#: A real vendor spawn (uvx resolve + import + an HTTP round trip to Alpaca) is
-#: slow enough that the SDK's default request timeout is the wrong bar here.
+#: A real vendor spawn (import + an HTTP round trip to Alpaca) is slow enough that
+#: the SDK's default request timeout is the wrong bar here. The bound was set when
+#: the spawn also resolved the server through uvx, and has not been re-measured.
 _CALL_TIMEOUT = datetime.timedelta(seconds=180)
 
 requires_paper_keys = pytest.mark.skipif(

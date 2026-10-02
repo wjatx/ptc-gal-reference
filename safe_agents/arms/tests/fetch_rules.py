@@ -21,7 +21,7 @@ from safe_agents.arms.tests.shell_stages import Pipeline, Stage, argv, basename,
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HELPER_RELPATH = "safe_agents/arms/toolchain/fetch-verified.sh"
-SCAN_ROOTS = ("safe_agents/arms/", "examples/")
+SCAN_ROOTS = ("safe_agents/", "examples/")
 
 
 def _load_pins():

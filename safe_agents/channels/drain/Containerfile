@@ -10,14 +10,29 @@
 #   podman build --platform linux/arm64 \
 #     -t safe-agents-channels-drain:dev \
 #     -f safe_agents/channels/drain/Containerfile .
-FROM public.ecr.aws/lambda/python:3.13
+#
+# The third-party base is pinned by digest, and the tag is kept only so a reader can
+# see which image the digest names. The digest is the multi-arch index, so a
+# linux/arm64 build and a linux/amd64 build both resolve through it.
+# Re-resolve: skopeo inspect --raw docker://public.ecr.aws/lambda/python:3.13 | shasum -a 256
+FROM public.ecr.aws/lambda/python:3.13@sha256:bbbeda2232ecd79f0ef44fa92799cbd7faf0b285376b2ba53bea292c8255ccd8
 
-# Install the safe-agents SDK (+ the `aws` extra for boto3) into the image;
-# pydantic and PyYAML arrive as base package deps. The pyproject is the single
-# source of truth for pins. WORKDIR is the Lambda task root (/var/task).
+# Install the safe-agents SDK (+ the `aws` extra for boto3) into the image, in the
+# same two steps as the airlock's base image and safe_agents/arms/local/Containerfile.broker.
+# Third-party packages go in first, from two hash-checked locks under requirements/
+# (CONTRIBUTING.md, "The lock files"): aws.txt is the runtime dependencies plus the
+# `aws` extra, and build-backend.txt is setuptools, which builds the SDK from the
+# COPY'd source. The SDK itself then installs with --no-index, so that step downloads
+# nothing and fails, naming the requirement, when pyproject.toml asks for something
+# the locks lack. The locks are compiled for Python 3.12 and later, so their hashes
+# include the wheels this image's Python 3.13 selects. WORKDIR is the Lambda task
+# root (/var/task).
+COPY requirements/aws.txt requirements/build-backend.txt ./requirements/
+RUN pip install --no-cache-dir --require-hashes \
+      -r requirements/aws.txt -r requirements/build-backend.txt
 COPY pyproject.toml README.md LICENSE ./
 COPY safe_agents ./safe_agents
-RUN pip install --no-cache-dir ".[aws]"
+RUN pip install --no-cache-dir --no-index --no-build-isolation --check-build-dependencies ".[aws]"
 
 # The Lambda runtime imports this dotted path and calls handler(event, context).
 CMD ["safe_agents.channels.drain.handler.handler"]

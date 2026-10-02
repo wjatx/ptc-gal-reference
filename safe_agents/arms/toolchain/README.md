@@ -79,7 +79,7 @@ those bundles, so they are first-party.
 ## What the test enforces
 
 `safe_agents/arms/tests/test_pinned_fetches.py` scans tracked shell scripts,
-templates, Containerfiles and Image Builder components under `safe_agents/arms/`
+templates, Containerfiles and Image Builder components under `safe_agents/`
 and `examples/`. It fails on a download that keeps or runs its response without
 verifying it, on a `curl` piped to a shell, on `npm install`, on `pip install`
 without `--require-hashes` or `--no-index`, on `uv tool install`, `uvx` and

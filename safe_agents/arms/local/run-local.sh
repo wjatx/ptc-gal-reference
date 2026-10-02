@@ -16,7 +16,10 @@ cd "$(dirname "$0")/../../.."   # repo root
 NET="${LOCAL_NET:-safe-agents-local}"
 BROKER_IMG="${LOCAL_BROKER_IMAGE:-safe-agents-local-broker:dev}"
 AGENT_IMG="${LOCAL_AGENT_IMAGE:-safe-agents-local-agent:dev}"
-DDB_IMG="${DDB_IMAGE:-docker.io/amazon/dynamodb-local:latest}"
+# DynamoDB Local is pinned by digest, and the tag is kept only so a reader can see
+# which release the digest names. The digest is the multi-arch index (amd64 and arm64).
+# Re-resolve: skopeo inspect --raw docker://docker.io/amazon/dynamodb-local:3.3.1 | shasum -a 256
+DDB_IMG="${DDB_IMAGE:-docker.io/amazon/dynamodb-local:3.3.1@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab}"
 STORE="${STORE:-dynamo}"
 TABLE="${BROKER_TABLE:-safe-agents-broker-local}"
 

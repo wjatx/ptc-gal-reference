@@ -20,9 +20,17 @@ from safe_agents.broker.schemas import AgentManifest
 # Lives here, not beside the manifest: `examples/` is on no pytest path, so a test
 # there never runs. The house convention is example code in `examples/`, its
 # test under `safe_agents/*/tests/` reaching across.
-_MANIFEST_PATH = (
-    Path(__file__).resolve().parents[3] / "examples" / "alpaca_paper_drill" / "manifest.yaml"
-)
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_MANIFEST_PATH = _REPO_ROOT / "examples" / "alpaca_paper_drill" / "manifest.yaml"
+_CONTAINERFILE_PATH = _REPO_ROOT / "examples" / "alpaca_paper_drill" / "Containerfile.broker"
+_LOCK_INPUT_PATH = _REPO_ROOT / "requirements" / "alpaca-mcp-server.in"
+_LOCK_PATH = _REPO_ROOT / "requirements" / "alpaca-mcp-server.txt"
+
+# The vendor server's virtualenv in the consumer image, its console script, and the
+# one version the lock admits.
+_SERVER_VENV = "/opt/alpaca-mcp-server"
+_SERVER_COMMAND = f"{_SERVER_VENV}/bin/alpaca-mcp-server"
+_SERVER_PIN = "alpaca-mcp-server==2.1.1"
 
 # The drill's ceiling: tool-name prefixes that must NEVER appear in this drill's
 # declarations (order placement, position closing, account/watchlist mutation,
@@ -49,8 +57,19 @@ def _load() -> dict:
 def test_manifest_validates_as_written():
     manifest = AgentManifest.model_validate(_load())
     server = manifest.mcp_servers["alpaca"]
-    assert server.command == "uvx"
-    assert server.args == ["alpaca-mcp-server==2.1.1"], "the version pin is load-bearing"
+    # The spawn is the console script of the virtualenv the image builds from the
+    # hash-checked lock. The path and the pin are each written in two files, so
+    # both pairs are held together here.
+    assert server.command == _SERVER_COMMAND
+    assert server.args == []
+    assert _SERVER_VENV in _CONTAINERFILE_PATH.read_text(encoding="utf-8"), (
+        "the image must build the virtualenv the manifest spawns from"
+    )
+    for pinned_in in (_LOCK_INPUT_PATH, _LOCK_PATH):
+        assert any(
+            line.split()[:1] == [_SERVER_PIN]
+            for line in pinned_in.read_text(encoding="utf-8").splitlines()
+        ), f"the version pin is load-bearing, and {pinned_in.name} does not carry it"
     assert server.env == {"ALPACA_PAPER_TRADE": "true"}, "paper trading is manifest-pinned"
     assert manifest.connector_auth["alpaca"].env_map == {
         "ALPACA_API_KEY": "ALPACA_KEY",
@@ -109,7 +128,6 @@ def test_mutating_the_pin_is_visible_in_a_diff_sized_surface():
             {"tool_name": "get_clock", "structured_output": True},
             {"tool_name": "get_stock_latest_quote", "structured_output": True},
         ],
-        "command": "uvx",
-        "args": ["alpaca-mcp-server==2.1.1"],
+        "command": _SERVER_COMMAND,
         "env": {"ALPACA_PAPER_TRADE": "true"},
     }

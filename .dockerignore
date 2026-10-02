@@ -6,8 +6,9 @@
 # has the same name in both places.
 #
 # Nothing listed here is COPYed by any Containerfile. The base image copies
-# pyproject.toml, README.md, LICENSE, safe_agents/, and one ec2 bootstrap
-# script; consumer layers copy their own examples/ subdirectory.
+# pyproject.toml, README.md, LICENSE, safe_agents/, the lock files it installs
+# from requirements/, and one ec2 bootstrap script; consumer layers copy their
+# own examples/ subdirectory and the lock files they install.
 #
 # This exists because the context was 634 MB, of which ~570 MB was virtualenvs
 # and node_modules — irrelevant to a podman build on a warm cache, fatal to a

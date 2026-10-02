@@ -5,7 +5,7 @@ The thing prevented is a convenience that lets a maintainer bake in something
 dangerous without knowing it: an installer piped to a shell, a `latest` URL, an
 `npm install` that resolves afresh on every bake.
 
-Scanned: tracked files under `safe_agents/arms/` and `examples/` that are `*.sh`,
+Scanned: tracked files under `safe_agents/` and `examples/` that are `*.sh`,
 `*.tmpl`, `Containerfile*` or Image Builder `component-*.yaml`, plus files of those
 kinds not yet added that git does not ignore. Comment lines are ignored. The sanctioned ways to download are a literal
 `fetch_verified URL SHA256 DEST` call (toolchain/fetch-verified.sh) and the
@@ -87,14 +87,9 @@ TOOLCHAIN = REPO_ROOT / "safe_agents" / "arms" / "toolchain"
 # entry down or out in the same change. One file per line, so conversions that land
 # separately merge without conflict. Never add to it to make a new fetch pass.
 ALLOWED: dict[str, dict[str, int]] = {
-    "examples/alpaca_paper_drill/Containerfile.broker": {"pip-install": 1, "tool-install": 1},
-    "examples/restricted_mcp_server/Containerfile.broker": {"pip-install": 1},
     "safe_agents/arms/ec2/ami/image-builder/component-base.yaml": {"npm-install": 1, "pip-install": 1, "unverified-fetch": 1},
     "safe_agents/arms/fargate/Containerfile.agent": {"image-unpinned": 1, "npm-install": 1, "unverified-fetch": 1},
     "safe_agents/arms/local/Containerfile": {"image-unpinned": 1, "npm-install": 1},
-    "safe_agents/arms/local/Containerfile.broker": {"image-unpinned": 1, "pip-install": 1},
-    "safe_agents/arms/local/run-local.sh": {"image-unpinned": 1},
-    "safe_agents/arms/openshift/cluster-agent.sh": {"image-unpinned": 1},
     "safe_agents/arms/rhel_openshell/ami/image-builder/component-base.yaml": {"latest-lookup": 2, "npm-install": 1, "pip-install": 2, "pipe-to-shell": 2, "repo-or-rpm-by-url": 3, "tool-install": 1, "unverified-fetch": 1},
     "safe_agents/arms/rhel_openshell/bootstrap/scripts/install-k8s-tools.sh": {"latest-lookup": 3, "unverified-fetch": 7},
     "safe_agents/arms/rhel_openshell/bootstrap/scripts/install-languages.sh": {"pipe-to-shell": 1, "unverified-fetch": 1},

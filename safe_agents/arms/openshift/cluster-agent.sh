@@ -235,10 +235,19 @@ for name in secrets:
 # (b) the other half, and the one that is easy to forget. RBAC governs API access,
 #     not kubelet volume mounts: "the agent cannot READ the Secret" would not stop a
 #     pod the agent AUTHORED from having it mounted. Both doors, or neither claim.
+#
+#     The pod's image is pinned by digest, and the tag is kept only so a reader can
+#     see which release the digest names. The digest is the multi-arch index. The
+#     image is pulled only when this control FAILS: a refused pod is never created,
+#     so a passing run fetches nothing. If the control does fail, what runs beside
+#     the issuer key is at least a known image.
+#     Re-resolve: skopeo inspect --raw \
+#       docker://registry.access.redhat.com/ubi9/ubi-minimal:9.8-1790754119 | shasum -a 256
+THIEF_IMAGE = "registry.access.redhat.com/ubi9/ubi-minimal:9.8-1790754119@sha256:1d7c5517a4a1a8e2688620b39ee980e82505ca1ab7ae5541b5463120ae9b3897"  # noqa: E501
 pod = {"apiVersion": "v1", "kind": "Pod",
        "metadata": {"name": "agent-secret-thief", "namespace": namespace},
        "spec": {"restartPolicy": "Never", "containers": [{
-           "name": "thief", "image": "registry.access.redhat.com/ubi9/ubi-minimal",
+           "name": "thief", "image": THIEF_IMAGE,
            "command": ["cat", "/stolen/issuer.pem"],
            "volumeMounts": [{"name": "stolen", "mountPath": "/stolen"}]}],
            "volumes": [{"name": "stolen", "secret": {"secretName": "safe-agents-issuer"}}]}}

@@ -37,8 +37,9 @@ table; every other store is the memory arm):
      path), and `close()` still reaps the whole child tree (M20).
 
 Gated on paper keys in the environment (source ``~/.secrets/alpaca.txt``,
-which provides ALPACA_KEY / ALPACA_SECRET); needs network + uvx + the ``mcp``
-extra + moto. Run:
+which provides ALPACA_KEY / ALPACA_SECRET); needs network, the ``mcp`` extra,
+moto, and the pinned server installed where the manifest's ``command`` names it
+(examples/alpaca_paper_drill/README.md, "Installing the server"). Run:
 
     set -a && source ~/.secrets/alpaca.txt && set +a && \
       python -m pytest safe_agents/broker/tests/test_alpaca_drill_live.py -q -s
@@ -174,9 +175,13 @@ def test_alpaca_paper_drill_local_proof(monkeypatch, caplog, tmp_path, capsys):
     )
 
     # --- 1. DISCOVERY against the real pinned server -------------------------
+    # The manifest's own spawn, so discovery here and the runtime below reach the
+    # same installed server: the one built from the hash-checked lock.
+    server = manifest.mcp_servers["alpaca"]
+
     async def fetch_defs():
         async with connect_stdio(
-            "alpaca", "uvx", ["alpaca-mcp-server==2.1.1"], env=_child_probe_env()
+            "alpaca", server.command, server.args, env=_child_probe_env()
         ) as client:
             return await client.list_tool_defs()
 
