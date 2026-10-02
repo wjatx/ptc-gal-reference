@@ -108,10 +108,11 @@ from safe_agents.broker.grants.issuer_keys import resolve_record_key_resolvers
 from safe_agents.broker.grants.record_signing import RoleKeyResolvers
 from safe_agents.broker.mcp import audit as mcp_audit
 
-#: The ISO-8601 UTC instant from which EVERY ledger record type must carry a
-#: verifying signature of its role (GAL-SPEC §6.10). Unset = the pre-epoch
-#: scope, reported as a named annotation — never a silent narrowing. Read here
-#: rather than in ``audit.py`` so the rules stay pure over their inputs.
+#: The ISO-8601 UTC instant record signing was adopted at. Set, EVERY ledger
+#: record must carry a verifying signature of its role, whatever its type or
+#: ``ts`` (GAL-SPEC §6.10). Unset = the narrower scope, reported as a named
+#: annotation — never a silent narrowing. Read here rather than in ``audit.py``
+#: so the rules stay pure over their inputs.
 RECORD_SIGNING_EPOCH_ENV = "RECORD_SIGNING_EPOCH"
 
 #: The closed backend catalog. A string, resolved in ONE place (``load_target``)

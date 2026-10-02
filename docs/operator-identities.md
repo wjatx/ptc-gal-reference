@@ -173,28 +173,31 @@ export EVALUATOR_VERIFY_KEYS_PARAM=/safe-agents/{env}/evaluator/verify-keys
 export RECORD_SIGNING_EPOCH=2026-09-19T00:00:00+00:00   # ISO-8601, WITH offset
 ```
 
-`RECORD_SIGNING_EPOCH` is the instant from which EVERY record type must carry a verifying
-signature of its role (GAL-SPEC §6.10). Records with `ts` before it are exempt and reported as a
-named annotation — an epoch cut over ledger history that cannot be re-minted, which is this
-repo's standing answer to un-re-mintable evidence. Four behaviours to know, all of them chosen so
-that a misconfiguration cannot read as coverage:
+`RECORD_SIGNING_EPOCH` is the instant record signing was adopted at. With it set, EVERY record
+must carry a verifying signature of its role (GAL-SPEC §6.10), whatever its type and whatever its
+`ts`. No record is exempt because of its own timestamp. On an unsigned record that field was
+written by whoever wrote the row, so the audit does not take it as evidence of age. An unsigned
+record from before signing was adopted is a `RECORD_SIGNATURE_VERIFIES` violation like any other,
+and it stays one until an operator dispositions it (see "Unsigned history" below). Four behaviours
+to know, all of them chosen so that a misconfiguration cannot read as coverage:
 
 - **Unset** — safe and self-announcing. The scope stays what it was (promotion required, lapse
-  only if it carries a signature) plus a loud `SIGNING_EPOCH_UNSET` annotation saying the
+  only if it carries a signature) plus a loud `record-signing-epoch-unset` annotation saying the
   all-types requirement is NOT enforced. Never a silent narrowing.
 - **Naive or unparseable** — the audit exits **2** (`could not run`), never 1. A missing UTC
-  offset is refused by name: *"an epoch cut must name an unambiguous instant."* Callers key on
+  offset is refused by name: *"the epoch must name an unambiguous instant."* Callers key on
   2-vs-1, so do not collapse them.
 - **In the future** — a `RECORD_SIGNING_EPOCH_VALID` **violation**, un-waivable. An epoch after
-  the evaluation instant exempts every record ever written, and *"a control that is configured and
-  does nothing is worse than one that is off, because the config reads as coverage."*
+  the evaluation instant is not yet in force. It narrows nothing: the audit still checks every
+  record of every type, so the report carries this violation and a finding for each unsigned
+  record. Correct the value. It cannot be acknowledged.
 - **Only one verify param set** — the other role's records fail `RECORD_SIGNATURE_VERIFIES` with
   reason `RECORD_ROLE_UNRESOLVED`: *"a role we cannot check is never a role that passes."* So the
   two parameters are **required together**, not independently useful.
 
 That last point is sharper than "once an epoch is set": a **signed lapse record produces a finding
 even with no epoch configured**, because a lapse that carries a signature is verified in the
-pre-epoch scope too. An auditing identity given only `ISSUER_VERIFY_KEYS_PARAM` starts reporting
+no-epoch scope too. An auditing identity given only `ISSUER_VERIFY_KEYS_PARAM` starts reporting
 against evaluator-signed records as soon as one exists — not when the epoch is turned on.
 
 A key_id known to the wrong role fails as `RECORD_SIGNER_WRONG_ROLE`, and one known to both as
@@ -210,8 +213,58 @@ audits the MCP admitted-tool registry in the same run, verifying admission recor
 issuer's keys (`broker/MCP-HOST.md`, "Where the stored registry is audited").
 
 With NEITHER role's verify source set, `RECORD_SIGNATURE_VERIFIES` is skipped entirely and
-annotated `SIGNING_EPOCH_UNENFORCEABLE`. Read `skipped_rules`, not just `clean`: a report with no
-violations and a skipped signature rule is a different claim from one with nothing skipped.
+annotated `record-signing-epoch-unenforceable`. Read `skipped_rules`, not just `clean`: a report
+with no violations and a skipped signature rule is a different claim from one with nothing skipped.
+
+### Unsigned history: acknowledge each record, or re-mint the ledger
+
+A ledger that predates record signing can hold unsigned records of any type. Setting the epoch
+makes each one a `RECORD_SIGNATURE_VERIFIES` violation, and the audit exits 1 until every one is
+dispositioned. There are two ways to do that.
+
+**Acknowledge the record.** Run the keyed audit under AuditorRole and read the violations:
+
+```bash
+python -m safe_agents.broker.grants.audit_command --table safe-agents-{env}-grants --json
+```
+
+Each unsigned record is reported at its coordinate, with a detail of this form:
+
+```
+bootstrap record ts=2026-06-01T00:00:00+00:00 no grant -> in-loop (stored bytes sha256:<64 hex>) carries no DSSE signature; it must be signed by the issuer identity
+```
+
+Read the record before excusing it (`pk = RECORD#<coordinate>`, `sk = <ts>#<type>`). The finding
+names the record's type, its `ts`, the level change it makes and the digest of its stored bytes,
+and nothing about who wrote it. A row somebody planted reads the same in the report as honest
+history, and the acknowledgment is the step that decides which one it is. Then, under CheckerRole with the issuer signing environment set
+(`ISSUER_SIGNING_KEY_SECRET_ARN`, `ISSUER_SIGNING_KEY_ID`, `ISSUER_SIGNING_ZONE`), acknowledge that
+one finding:
+
+```bash
+python -m safe_agents.broker.grants.commands acknowledge \
+  --table-name safe-agents-{env}-grants \
+  --rule RECORD_SIGNATURE_VERIFIES \
+  --coordinate '<coordinate, exactly as reported>' \
+  --detail '<detail, exactly as reported>' \
+  --rationale '<why this record is honest history>'
+```
+
+It is one command per record. The acknowledgment is a signed record of its own, appended beside the
+ledger. It binds the rule, the coordinate and the sha256 of the detail, and the detail carries the
+sha256 of the record's stored bytes, so it excuses those bytes and no others. If the row is later
+replaced at the same coordinate, type and `ts`, the detail changes and the violation returns. Run
+the audit again: the record now appears under `acknowledged` with the waiver reference, and the
+exit code is 0 once no other violation is outstanding.
+
+An acknowledgment of a `RECORD_SIGNATURE_VERIFIES` finding made before the detail carried the
+digest binds the old wording. It no longer matches, the violation returns, and the record must be
+acknowledged again.
+
+**Re-mint the ledger.** Where a coordinate's history can be restarted, the archive, delete and
+`seed` procedure in `docs/grant-canonicalization-runbook.md` (Option B) replaces it with a new
+`bootstrap` record, which `seed` signs when the issuer key is configured. `re-seed` re-stamps a
+grant's envelope hash and writes no ledger record, so it signs nothing.
 
 ## Deploying the Identity stack
 

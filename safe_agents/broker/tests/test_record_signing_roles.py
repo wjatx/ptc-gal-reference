@@ -15,8 +15,9 @@ What this file pins, in four groups:
                claimed by both roles refuses at cold start
   writers      every record-writing path signs with ITS role's key when one is
                configured, and refuses (never degrades) when half-configured
-  epoch        the audit's history-awareness is an explicit, stated instant —
-               never a silent exemption of old rows
+  epoch        setting it requires a verifying signature on every record. A
+               record's own ts excuses nothing, and unsigned history is
+               excused only by a signed acknowledgment of its stored bytes
 
 The epoch's evaluation instant is an explicit input (``now``), the same
 discipline as the grant term: a ledger must not get to decide whether its own
@@ -33,13 +34,23 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from safe_agents.broker.grants import issuer_keys
+from safe_agents.broker.grants.acknowledgments import (
+    AcknowledgmentRecord,
+    canonical_ack_payload,
+    sign_acknowledgment,
+    violation_detail_digest,
+)
 from safe_agents.broker.grants.audit import (
+    ACKNOWLEDGMENT_SIGNATURE_VERIFIES,
+    LEDGER_COUNTERPART,
+    LEVEL_LEDGER_CONSISTENT,
     RECORD_SIGNATURE_VERIFIES,
     RECORD_SIGNING_EPOCH_VALID,
-    ANNOTATION_SIGNING_EPOCH_APPLIED,
     ANNOTATION_SIGNING_EPOCH_UNENFORCEABLE,
     ANNOTATION_SIGNING_EPOCH_UNSET,
     AuditDataset,
+    AuditedAcknowledgment,
+    AuditedGrant,
     AuditedRecord,
     run_audit,
 )
@@ -54,6 +65,7 @@ from safe_agents.broker.grants.record_signing import (
     canonical_record_payload,
     signer_from_pem,
     signing_role_for_record_type,
+    stored_record_digest_hex,
     verify_record_by_type,
 )
 from safe_agents.broker.grants.store import InMemoryGrantStore
@@ -645,11 +657,29 @@ def test_the_runner_refuses_half_configured_evaluator_signing(monkeypatch, capsy
 
 
 # ---------------------------------------------------------------------------
-# The epoch — history is an explicit cut, never a silent exemption
+# The epoch: once set, every record is signed or individually acknowledged
 # ---------------------------------------------------------------------------
 
 EPOCH = "2026-07-01T00:00:00+00:00"
 NOW = datetime.datetime(2026, 8, 1, tzinfo=datetime.UTC)
+BEFORE_EPOCH = "2026-06-01T00:00:00+00:00"
+AFTER_EPOCH = "2026-07-05T00:00:00+00:00"
+
+# A record's ts on either side of the epoch, and on it. The audit used to read
+# this field to decide whether an unsigned record was exempt.
+TS_AROUND_EPOCH = [
+    pytest.param("2026-06-30T23:59:59+00:00", id="second-before-epoch"),
+    pytest.param(EPOCH, id="exactly-at-epoch"),
+    pytest.param("2026-07-01T00:00:01+00:00", id="second-after-epoch"),
+]
+
+
+def _entry(record: PromotionRecord, signer=None) -> AuditedRecord:
+    return AuditedRecord(
+        record=record,
+        signature=signer.sign_record(record) if signer is not None else None,
+        raw_data=canonical_record_payload(record),
+    )
 
 
 def _dataset(records: list[PromotionRecord], *, signed_by=None) -> AuditDataset:
@@ -664,128 +694,359 @@ def _dataset(records: list[PromotionRecord], *, signed_by=None) -> AuditDataset:
     lapse has nothing before it, which EVALUATOR_RECORD_CONTINUOUS reports. The
     tests that use one therefore assert on the signature findings alone.
     """
-    entries = []
-    for record in records:
-        signer = signed_by(record) if signed_by is not None else None
-        entries.append(
-            AuditedRecord(
-                record=record,
-                signature=signer.sign_record(record) if signer is not None else None,
-                raw_data=canonical_record_payload(record),
-            )
+    return AuditDataset(
+        records=tuple(
+            _entry(record, signed_by(record) if signed_by is not None else None)
+            for record in records
         )
-    return AuditDataset(records=tuple(entries))
+    )
 
 
 def _signature_findings(report):
     return [v for v in report.violations if v.rule == RECORD_SIGNATURE_VERIFIES]
 
 
-@pytest.mark.parametrize(
-    "ts,expect_violation",
-    [
-        ("2026-06-30T23:59:59+00:00", False),
-        (EPOCH, True),
-        ("2026-07-01T00:00:01+00:00", True),
-    ],
-    ids=["before-epoch-exempt", "exactly-at-epoch-enforced", "after-epoch-enforced"],
-)
-def test_the_epoch_boundary_decides_whether_an_unsigned_record_is_a_violation(
-    ts, expect_violation, roles
-):
-    """At-or-after, so the boundary instant itself is IN scope — an epoch whose
-    own instant were exempt would leave a one-tick hole nobody would test."""
-    _issuer, _evaluator, resolvers = roles
-    report = run_audit(
-        _dataset([_record("tightening", ts=ts)]),
+def _unsigned_detail(record: PromotionRecord) -> str:
+    """The finding for an unsigned record, spelled out in full.
+
+    Pinned as a literal because it is a contract: an acknowledgment binds the
+    sha256 of this exact string, so rewording it un-waives every stored
+    acknowledgment of an unsigned record.
+    """
+    digest = stored_record_digest_hex(canonical_record_payload(record))
+    from_level = record.fromLevel.value if record.fromLevel else "no grant"
+    return (
+        f"{record.recordType} record ts={record.ts} {from_level} -> {record.toLevel.value} "
+        f"(stored bytes sha256:{digest}) carries no DSSE signature; it must be signed by the "
+        f"{RECORD_TYPE_SIGNING_ROLE[record.recordType]} identity"
+    )
+
+
+def _acknowledgment(violation, signer) -> AuditedAcknowledgment:
+    """A stored acknowledgment of ``violation``, signed by ``signer``."""
+    ack = AcknowledgmentRecord(
+        rule=violation.rule,
+        coordinate=violation.coordinate,
+        detailDigest=violation_detail_digest(violation.detail),
+        rationale="unsigned history from before record signing was adopted",
+        acknowledgedBy="arn:aws:sts::000000000000:assumed-role/CheckerRole/roles-test",
+        ts="2026-07-20T00:00:00+00:00",
+    )
+    return AuditedAcknowledgment(
+        ack=ack,
+        signature=sign_acknowledgment(ack, signer),
+        raw_data=canonical_ack_payload(ack),
+    )
+
+
+def _audit(dataset: AuditDataset, resolvers, *, epoch: str | None = EPOCH):
+    return run_audit(
+        dataset,
         record_key_resolver=resolvers,
-        signing_epoch=EPOCH,
-        now=NOW,
+        signing_epoch=epoch,
+        now=NOW if epoch is not None else None,
     )
-
-    assert bool(_signature_findings(report)) is expect_violation
-
-
-def test_a_pre_epoch_record_is_reported_as_an_annotation_naming_the_epoch(roles):
-    """Green-with-annotation: the exemption is stated, with the instant that
-    licenses it, so a reader never mistakes the cut for coverage."""
-    _issuer, _evaluator, resolvers = roles
-    report = run_audit(
-        _dataset([_record("demotion", ts="2026-06-01T00:00:00+00:00")]),
-        record_key_resolver=resolvers,
-        signing_epoch=EPOCH,
-        now=NOW,
-    )
-
-    assert not _signature_findings(report)
-    annotation = next(
-        a for a in report.annotations if a.startswith(ANNOTATION_SIGNING_EPOCH_APPLIED)
-    )
-    assert EPOCH in annotation
-    assert "1 record(s)" in annotation
 
 
 @pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
-def test_in_epoch_records_of_every_type_verify_when_correctly_signed(record_type, roles):
+@pytest.mark.parametrize("ts", TS_AROUND_EPOCH)
+def test_with_the_epoch_set_an_unsigned_record_is_a_finding_whatever_its_type_or_ts(
+    ts, record_type, roles
+):
+    """No record excuses itself. A ts before the epoch used to exempt an
+    unsigned record, and that field is written by whoever wrote the row."""
+    _issuer, _evaluator, resolvers = roles
+    record = _record(record_type, ts=ts)
+
+    report = _audit(_dataset([record]), resolvers)
+
+    assert [v.detail for v in _signature_findings(report)] == [_unsigned_detail(record)]
+    assert report.acknowledged == ()
+    # Nothing is reported as exempt, because nothing is.
+    assert report.annotations == ()
+
+
+@pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
+@pytest.mark.parametrize("ts", [BEFORE_EPOCH, AFTER_EPOCH], ids=["before-epoch", "after-epoch"])
+def test_correctly_signed_records_of_every_type_verify_on_either_side_of_the_epoch(
+    ts, record_type, roles
+):
     issuer_signer, evaluator_signer, resolvers = roles
-    report = run_audit(
+    report = _audit(
         _dataset(
-            [_record(record_type, ts="2026-07-05T00:00:00+00:00")],
+            [_record(record_type, ts=ts)],
             signed_by=lambda r: _signer_for(r.recordType, issuer_signer, evaluator_signer),
         ),
-        record_key_resolver=resolvers,
-        signing_epoch=EPOCH,
-        now=NOW,
+        resolvers,
     )
 
     assert not _signature_findings(report)
+    assert report.annotations == ()
 
 
-def test_with_no_epoch_todays_scope_holds_and_says_so(roles):
-    """Unset keeps the pre-epoch scope — an unsigned tightening is NOT a
-    finding — but the report must SAY the requirement is unenforced. Silence
-    here is the failure mode: a green audit that never checked."""
-    _issuer, _evaluator, resolvers = roles
-    report = run_audit(
-        _dataset([_record("tightening", ts="2026-09-01T00:00:00+00:00")]),
-        record_key_resolver=resolvers,
+@pytest.mark.parametrize(
+    "honest_ledger,hidden_rule",
+    [(True, LEVEL_LEDGER_CONSISTENT), (False, LEDGER_COUNTERPART)],
+    ids=["over-level-grant", "orphan-grant"],
+)
+def test_a_planted_unsigned_pre_epoch_bootstrap_cannot_launder_a_grant(
+    honest_ledger, hidden_rule, roles
+):
+    """The attack this rule was changed for. A party with write access to
+    RECORD# rows and NO key plants an unsigned bootstrap to out-of-loop and
+    dates it before the epoch. It used to count as exempt history, its toLevel
+    became the ledger-derived level, and a grant at out-of-loop audited clean.
+    """
+    issuer_signer, _evaluator, resolvers = roles
+    grant = AuditedGrant(grant=_grant(level="out-of-loop", lastSafeLevel="in-loop"))
+    honest = (
+        [_entry(_record("bootstrap", ts="2026-05-01T00:00:00+00:00"), issuer_signer)]
+        if honest_ledger
+        else []
+    )
+    planted = _record("bootstrap", ts=BEFORE_EPOCH, toLevel="out-of-loop")
+
+    without_plant = _audit(AuditDataset(grants=(grant,), records=tuple(honest)), resolvers)
+    assert {v.rule for v in without_plant.violations} == {hidden_rule}
+
+    report = _audit(
+        AuditDataset(grants=(grant,), records=(*honest, _entry(planted))), resolvers
     )
 
-    assert _signature_findings(report) == []
-    assert any(a.startswith(ANNOTATION_SIGNING_EPOCH_UNSET) for a in report.annotations)
+    # The plant still hides the grant-level finding, since the derived level is
+    # read off the ledger as it stands. What it can no longer do is pass.
+    assert [(v.rule, v.detail) for v in report.violations] == [
+        (RECORD_SIGNATURE_VERIFIES, _unsigned_detail(planted))
+    ]
+    assert report.acknowledged == ()
 
 
-def test_with_no_epoch_an_unsigned_promotion_is_still_a_violation(roles):
-    """The pre-epoch scope is unchanged, not relaxed."""
-    _issuer, _evaluator, resolvers = roles
-    report = run_audit(
-        _dataset([_record("promotion")]), record_key_resolver=resolvers
+# Same coordinate, same type, same ts, different stored bytes: what a writer
+# with no key can put in place of a record somebody acknowledged.
+REPLACEMENTS = [
+    pytest.param(record_type, EPOCH, {"evidence": "rewritten-after-acknowledgment"}, id=record_type)
+    for record_type in ALL_RECORD_TYPES
+] + [
+    pytest.param("bootstrap", EPOCH, {"toLevel": "out-of-loop"}, id="bootstrap-raised"),
+    # With no epoch only a promotion is in scope, and the binding holds there too.
+    pytest.param("promotion", None, {"toLevel": "out-of-loop"}, id="promotion-raised-epoch-unset"),
+]
+
+
+@pytest.mark.parametrize("record_type,epoch,rewrite", REPLACEMENTS)
+def test_an_acknowledgment_excuses_the_stored_bytes_it_was_made_for_and_no_others(
+    record_type, epoch, rewrite, roles
+):
+    """Honest unsigned history is excused one record at a time, by a signed
+    acknowledgment. The finding names the sha256 of the stored bytes, so the
+    acknowledgment follows those bytes and not the slot they sit in."""
+    issuer_signer, _evaluator, resolvers = roles
+    record = _record(record_type, ts=BEFORE_EPOCH)
+    (finding,) = _signature_findings(_audit(_dataset([record]), resolvers, epoch=epoch))
+    ack = _acknowledgment(finding, issuer_signer)
+
+    excused = _audit(
+        AuditDataset(records=(_entry(record),), acknowledgments=(ack,)), resolvers, epoch=epoch
+    )
+    assert not _signature_findings(excused)
+    assert [a.violation for a in excused.acknowledged] == [finding]
+
+    replaced = _record(record_type, ts=BEFORE_EPOCH, **rewrite)
+    assert (replaced.recordType, replaced.ts) == (record.recordType, record.ts)
+    after = _audit(
+        AuditDataset(records=(_entry(replaced),), acknowledgments=(ack,)), resolvers, epoch=epoch
+    )
+    assert [v.detail for v in _signature_findings(after)] == [_unsigned_detail(replaced)]
+    assert after.acknowledged == ()
+
+
+def test_an_acknowledgment_signed_by_the_evaluator_excuses_nothing(roles):
+    """A waiver mints green, so it is the issuer's to sign. The automatic side
+    cannot excuse an unsigned record any more than it can sign a promotion."""
+    _issuer, evaluator_signer, resolvers = roles
+    record = _record("tightening", ts=BEFORE_EPOCH)
+    (finding,) = _signature_findings(_audit(_dataset([record]), resolvers))
+
+    report = _audit(
+        AuditDataset(
+            records=(_entry(record),),
+            acknowledgments=(_acknowledgment(finding, evaluator_signer),),
+        ),
+        resolvers,
     )
 
-    assert len(_signature_findings(report)) == 1
+    assert {v.rule for v in report.violations} == {
+        RECORD_SIGNATURE_VERIFIES,
+        ACKNOWLEDGMENT_SIGNATURE_VERIFIES,
+    }
+    assert report.acknowledged == ()
 
 
-def test_an_epoch_in_the_future_is_a_violation_not_a_quiet_pass(roles):
-    """A future epoch exempts every record ever written: a control that is
-    configured and does nothing, which reads as coverage. The comparison is
-    against the SUPPLIED instant, never against the ledger's own timestamps."""
-    _issuer, _evaluator, resolvers = roles
-    future = "2027-01-01T00:00:00+00:00"
+@pytest.mark.parametrize(
+    "bad_signature",
+    ["stranger-key", "not-a-dsse-envelope"],
+    ids=["unknown-signer", "mangled-signature-attribute"],
+)
+def test_an_acknowledged_signature_failure_is_bound_to_its_stored_bytes_too(
+    bad_signature, roles
+):
+    """The same replacement, against a record that carries a signature which
+    fails. The failure reason is reproducible without a key (a stranger's key,
+    or a junk attribute), so the reason alone cannot identify the record."""
+    issuer_signer, _evaluator, resolvers = roles
+    stranger, _pem = _keypair("issuer:retired")
 
-    report = run_audit(
-        # Records dated AFTER the future epoch: if the check derived "now" from
-        # the data instead of the supplied instant, the epoch would look past
-        # and this violation would vanish.
-        _dataset([_record("tightening", ts="2027-06-01T00:00:00+00:00")]),
-        record_key_resolver=resolvers,
-        signing_epoch=future,
-        now=NOW,
+    def entry(record: PromotionRecord) -> AuditedRecord:
+        if bad_signature == "stranger-key":
+            return _entry(record, stranger)
+        return AuditedRecord(
+            record=record, signature=bad_signature, raw_data=canonical_record_payload(record)
+        )
+
+    record = _record("promotion", ts=AFTER_EPOCH)
+    (finding,) = _signature_findings(_audit(AuditDataset(records=(entry(record),)), resolvers))
+    assert "failed signature verification" in finding.detail
+    ack = _acknowledgment(finding, issuer_signer)
+
+    excused = _audit(
+        AuditDataset(records=(entry(record),), acknowledgments=(ack,)), resolvers
+    )
+    assert [a.violation for a in excused.acknowledged] == [finding]
+
+    replaced = _record("promotion", ts=AFTER_EPOCH, toLevel="out-of-loop")
+    after = _audit(
+        AuditDataset(records=(entry(replaced),), acknowledgments=(ack,)), resolvers
+    )
+    (new_finding,) = _signature_findings(after)
+    assert stored_record_digest_hex(canonical_record_payload(replaced)) in new_finding.detail
+    assert after.acknowledged == ()
+
+
+@pytest.mark.parametrize("signed", [False, True], ids=["unsigned", "signed"])
+def test_an_entry_with_no_stored_bytes_is_a_finding_no_acknowledgment_excuses(signed, roles):
+    """With no stored bytes there is nothing for a signature to verify against
+    and nothing for an acknowledgment to bind, so the finding stands."""
+    issuer_signer, _evaluator, resolvers = roles
+    record = _record("bootstrap", ts=BEFORE_EPOCH)
+    entry = AuditedRecord(
+        record=record,
+        signature=issuer_signer.sign_record(record) if signed else None,
+        raw_data=None,
+    )
+    (finding,) = _signature_findings(_audit(AuditDataset(records=(entry,)), resolvers))
+    assert "has no stored bytes" in finding.detail
+    assert "sha256:" not in finding.detail
+
+    report = _audit(
+        AuditDataset(
+            records=(entry,), acknowledgments=(_acknowledgment(finding, issuer_signer),)
+        ),
+        resolvers,
     )
 
-    epoch_findings = [v for v in report.violations if v.rule == RECORD_SIGNING_EPOCH_VALID]
-    assert len(epoch_findings) == 1
-    assert future in epoch_findings[0].detail
-    assert NOW.isoformat() in epoch_findings[0].detail
+    assert _signature_findings(report) == [finding]
+    assert report.acknowledged == ()
+
+
+@pytest.mark.parametrize(
+    "record_type,expect_finding",
+    [
+        ("promotion", True),
+        ("bootstrap", False),
+        ("tightening", False),
+        ("demotion", False),
+        ("lapse", False),
+    ],
+)
+def test_with_no_epoch_the_narrower_scope_holds_and_says_so(record_type, expect_finding, roles):
+    """Unset keeps the narrower scope: an unsigned promotion is a finding and
+    the other unsigned types are not. The report must SAY the all-types
+    requirement is unenforced. Silence here is the failure mode: a green audit
+    that never checked."""
+    _issuer, _evaluator, resolvers = roles
+    report = _audit(
+        _dataset([_record(record_type, ts="2026-09-01T00:00:00+00:00")]), resolvers, epoch=None
+    )
+
+    assert bool(_signature_findings(report)) is expect_finding
+    (annotation,) = report.annotations
+    assert annotation.startswith(ANNOTATION_SIGNING_EPOCH_UNSET)
+
+
+def test_with_no_epoch_a_lapse_that_carries_a_signature_must_still_verify(roles):
+    """Checked-if-present: the narrower scope never meant a wrong-role
+    signature on a lapse passes."""
+    issuer_signer, _evaluator, resolvers = roles
+    report = _audit(
+        _dataset([_record("lapse")], signed_by=lambda _r: issuer_signer), resolvers, epoch=None
+    )
+
+    (finding,) = _signature_findings(report)
+    assert RECORD_SIGNER_WRONG_ROLE in finding.detail
+
+
+FUTURE_EPOCH = "2027-01-01T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "ts",
+    [BEFORE_EPOCH, "2026-07-15T00:00:00+00:00", "2027-06-01T00:00:00+00:00"],
+    ids=["before-now", "between-now-and-epoch", "after-the-future-epoch"],
+)
+def test_an_epoch_in_the_future_is_a_violation_and_narrows_nothing(ts, roles):
+    """A future epoch names an adoption that has not happened. It is reported,
+    and every record is checked as if the epoch were in force: a misconfigured
+    epoch must never buy a quieter audit. The comparison is against the
+    SUPPLIED instant, never against the ledger's own timestamps, which is why
+    one case dates its record after the future epoch."""
+    _issuer, _evaluator, resolvers = roles
+    record = _record("tightening", ts=ts)
+
+    report = _audit(_dataset([record]), resolvers, epoch=FUTURE_EPOCH)
+
+    (epoch_finding,) = [v for v in report.violations if v.rule == RECORD_SIGNING_EPOCH_VALID]
+    assert FUTURE_EPOCH in epoch_finding.detail
+    assert NOW.isoformat() in epoch_finding.detail
+    assert [v.detail for v in _signature_findings(report)] == [_unsigned_detail(record)]
+
+
+def test_a_future_epoch_stays_a_violation_when_every_record_is_signed(roles):
+    """The epoch finding stands on its own. It is un-waivable, so the report
+    stays red until the configuration is corrected."""
+    issuer_signer, _evaluator, resolvers = roles
+    report = _audit(
+        _dataset([_record("tightening")], signed_by=lambda _r: issuer_signer),
+        resolvers,
+        epoch=FUTURE_EPOCH,
+    )
+
+    assert [v.rule for v in report.violations] == [RECORD_SIGNING_EPOCH_VALID]
+
+
+@pytest.mark.parametrize(
+    "epoch_form,expect_future",
+    [
+        # NOW is 2026-08-01T00:00:00+00:00. Each spelling is judged by the
+        # instant it names: the first reads later than NOW as text and is an
+        # hour EARLIER, the second reads earlier and is half an hour LATER.
+        ("2026-08-01T01:00:00+02:00", False),
+        ("2026-07-31T23:30:00-01:00", True),
+        ("2026-08-01T00:00:00Z", False),
+        ("2026-08-01T00:00:01Z", True),
+    ],
+    ids=["offset-earlier-instant", "offset-later-instant", "equal-to-now", "second-after-now"],
+)
+def test_the_epoch_is_judged_by_the_instant_it_names_not_its_spelling(
+    epoch_form, expect_future, roles
+):
+    issuer_signer, _evaluator, resolvers = roles
+    report = _audit(
+        _dataset([_record("tightening")], signed_by=lambda _r: issuer_signer),
+        resolvers,
+        epoch=epoch_form,
+    )
+
+    assert (RECORD_SIGNING_EPOCH_VALID in {v.rule for v in report.violations}) is expect_future
 
 
 # The SAME instant, spelled three legal ISO-8601 ways. Only the first is the
@@ -799,60 +1060,33 @@ EQUIVALENT_EPOCHS = [
 
 
 @pytest.mark.parametrize("epoch_form", EQUIVALENT_EPOCHS)
-@pytest.mark.parametrize(
-    "ts,expect_violation",
-    [
-        ("2026-06-30T23:59:59+00:00", False),
-        ("2026-07-01T00:00:00+00:00", True),
-        ("2026-07-01T00:00:01+00:00", True),
-    ],
-    ids=["second-before", "same-second-as-epoch", "second-after"],
-)
-def test_equivalent_epoch_spellings_give_identical_verdicts(
-    epoch_form, ts, expect_violation, roles
-):
-    """The comparison is lexical, so both sides must be in the ledger's
-    canonical form — the epoch is normalized before any compare.
-
-    Unnormalized, this is wrong in the DANGEROUS direction and only for some
-    spellings, which is why it needs a test per spelling rather than one per
-    boundary. '+' (0x2B) sorts before 'Z' (0x5A), so against a 'Z'-spelled
-    epoch the same-second record (canonical, '+00:00') compares as EARLIER and
-    is silently exempted; a non-UTC offset is wrong by its whole offset. Both
-    shed enforcement quietly — the failure the epoch exists to prevent.
-    """
+@pytest.mark.parametrize("ts", TS_AROUND_EPOCH)
+def test_no_spelling_of_the_epoch_excuses_an_unsigned_record(epoch_form, ts, roles):
+    """The audit once compared each record's ts to the epoch as text, and a
+    'Z' or offset spelling moved the boundary. No such comparison is left, so
+    every spelling gives the one verdict on both sides of the instant."""
     _issuer, _evaluator, resolvers = roles
-    report = run_audit(
-        _dataset([_record("tightening", ts=ts)]),
-        record_key_resolver=resolvers,
-        signing_epoch=epoch_form,
-        now=NOW,
-    )
+    report = _audit(_dataset([_record("tightening", ts=ts)]), resolvers, epoch=epoch_form)
 
-    assert bool(_signature_findings(report)) is expect_violation
+    assert len(_signature_findings(report)) == 1
 
 
-@pytest.mark.parametrize("epoch_form", EQUIVALENT_EPOCHS)
+@pytest.mark.parametrize(
+    "epoch_form",
+    ["2027-01-01T00:00:00+00:00", "2027-01-01T00:00:00Z", "2027-01-01T02:00:00+02:00"],
+    ids=["canonical", "zulu", "non-utc-offset"],
+)
 def test_a_non_canonical_epoch_is_reported_in_both_forms(epoch_form, roles):
-    """An epoch silently reinterpreted covers a different set of rows than the
-    operator intended, so the annotation shows what their value normalized to
+    """An epoch silently reinterpreted is a different instant from the one the
+    operator meant, so the finding shows what their value normalized to
     whenever it differs from what they typed."""
     _issuer, _evaluator, resolvers = roles
-    canonical = "2026-07-01T00:00:00+00:00"
 
-    report = run_audit(
-        _dataset([_record("demotion", ts="2026-06-01T00:00:00+00:00")]),
-        record_key_resolver=resolvers,
-        signing_epoch=epoch_form,
-        now=NOW,
-    )
+    report = _audit(_dataset([_record("promotion")]), resolvers, epoch=epoch_form)
 
-    annotation = next(
-        a for a in report.annotations if a.startswith(ANNOTATION_SIGNING_EPOCH_APPLIED)
-    )
-    assert canonical in annotation
-    if epoch_form != canonical:
-        assert epoch_form in annotation
+    (finding,) = [v for v in report.violations if v.rule == RECORD_SIGNING_EPOCH_VALID]
+    assert FUTURE_EPOCH in finding.detail
+    assert epoch_form in finding.detail
 
 
 def test_an_epoch_without_an_evaluation_instant_is_refused(roles):

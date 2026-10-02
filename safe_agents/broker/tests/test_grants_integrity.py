@@ -840,8 +840,9 @@ def _row_level_ledger_consistent() -> IntegrityRow:
 
 def _row_record_signature_verifies() -> IntegrityRow:
     """Every promotion-typed record carries a DSSE envelope verify_record
-    confirms; other record types are exempt (only ratify installs the signing
-    store). The rule verifies AUTHENTICITY, not the truth of the proposer's
+    confirms. This row runs with no RECORD_SIGNING_EPOCH, so the other record
+    types are outside the rule's scope (test_record_signing_roles.py covers the
+    epoch). The rule verifies AUTHENTICITY, not the truth of the proposer's
     asserted predicate fields (evidence labeling and the MCP host land their measurement)."""
 
     _PROMOTION = _ledger_record(
@@ -855,7 +856,8 @@ def _row_record_signature_verifies() -> IntegrityRow:
         signer, resolver = _issuer_signer_and_resolver()
         dataset = _audit_dataset(
             grants=[_hashed_grant(level=AutonomyLevel.on_loop)],
-            # unsigned bootstrap is exempt; the promotion is issuer-signed
+            # no epoch: the unsigned bootstrap is out of scope; the promotion
+            # is issuer-signed
             records=[_ledger_record(), (_PROMOTION, signer.sign_record(_PROMOTION))],
         )
         report = run_audit(dataset, hmac_key=HMAC_KEY, record_key_resolver=resolver)

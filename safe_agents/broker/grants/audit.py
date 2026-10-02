@@ -44,8 +44,9 @@ Rules (each documented at its check site in run_audit):
                             anywhere else can leave the ledger higher than
                             the issuer ever put it
   RECORD_SIGNING_EPOCH_VALID the configured epoch is in force at the supplied
-                            evaluation instant (a future epoch would exempt
-                            every record ever written)
+                            evaluation instant. An epoch after it is a
+                            finding, and the records are checked in full
+                            all the same
   PROPOSAL_LIFECYCLE        proposal status stays in the closed vocabulary
   PROPOSAL_TAMPER           (keyed) proposalHash HMAC verifies
   GRANT_TAMPER              (keyed) grant hash HMAC verifies
@@ -70,22 +71,32 @@ waivers. Two rules police the waivers themselves:
 
 The record-signing EPOCH. GAL-SPEC §6.10 requires EVERY ledger record to be
 signed, but ledgers written before the second signing role existed hold
-unsigned demotion/tightening/bootstrap rows that cannot be re-minted. The
-history is handled by an explicit **epoch cut** (this repo's convention for a
-ledger that cannot be re-minted), never a silent exemption:
+unsigned demotion/tightening/bootstrap rows that cannot be re-minted.
 
-  * ``signing_epoch`` set — every record with ``ts`` at or after it MUST carry
-    a verifying signature of its role, whatever the type. Records before it are
-    exempt and reported as an ANNOTATION naming the epoch and the count.
+  * ``signing_epoch`` set: every record MUST carry a verifying signature of
+    its role, whatever its type and whatever its ``ts``. No record is excused
+    by its own timestamp. On an unsigned record that field was written by
+    whoever wrote the row, so an exemption keyed on it could be claimed by a
+    planted row. Honest unsigned history is excused one record at a time by
+    the acknowledgment ceremony above, which is signed.
   * ``signing_epoch`` unset — scope stays what it was (promotion required,
     lapse-if-present), and the report carries a NAMED annotation saying the
     all-types requirement is not being enforced. Never a silent skip.
 
-``now`` is the explicit evaluation instant for judging the EPOCH itself (is it
-in force yet?), required whenever an epoch is supplied and never derived from
-a record's ts — the same discipline as the grant term (``grants.term``). A
-record's own exemption is decided by its ts against the epoch; the auditor
-still takes no clock of its own.
+A RECORD_SIGNATURE_VERIFIES finding names the sha256 of the record's STORED
+bytes. An acknowledgment binds the digest of the exact detail string, so it
+excuses those bytes and no others: a different record written at the same
+coordinate, type and ``ts`` produces a different detail, and the earlier
+acknowledgment does not apply to it. An entry with no stored bytes has nothing
+to bind, so its finding is never waived.
+
+``now`` is the explicit evaluation instant the EPOCH itself is judged at,
+required whenever an epoch is supplied and never derived from a record's ts —
+the same discipline as the grant term (``grants.term``). That judgement is the
+only use of the epoch instant: an epoch after ``now`` is
+RECORD_SIGNING_EPOCH_VALID, and every record is still checked. No record's
+``ts`` is compared against the epoch, and the auditor takes no clock of its
+own.
 """
 
 from __future__ import annotations
@@ -111,6 +122,7 @@ from safe_agents.broker.grants.record_signing import (
     EVALUATOR_ROLE,
     RoleKeyResolvers,
     signing_role_for_record_type,
+    stored_record_digest_hex,
     verify_record_by_type,
 )
 from safe_agents.broker.grants.store import _hmac_payload, _principal_key
@@ -152,7 +164,6 @@ _EARNING_RECORD_TYPES = ("bootstrap", "promotion")
 # the report. An annotation is never a pass and never a violation: it names a
 # thing the reader must know to read the result correctly.
 ANNOTATION_SIGNING_EPOCH_UNSET = "record-signing-epoch-unset"
-ANNOTATION_SIGNING_EPOCH_APPLIED = "record-signing-epoch-applied"
 ANNOTATION_SIGNING_EPOCH_UNENFORCEABLE = "record-signing-epoch-unenforceable"
 
 
@@ -198,9 +209,9 @@ class AuditReport:
     an empty table is distinguishable from a real pass.
 
     annotations names every NARROWING the reader needs to interpret the result:
-    today, which records the signing epoch exempted and whether the all-types
-    signing requirement ran at all. Green-with-annotations, never silently
-    green — the same polarity as ``acknowledged``.
+    today, whether the all-types signing requirement ran at all.
+    Green-with-annotations, never silently green — the same polarity as
+    ``acknowledged``.
     """
 
     violations: tuple[AuditViolation, ...]
@@ -500,26 +511,24 @@ def dataset_from_items(items: Iterable[dict]) -> AuditDataset:
 # ---------------------------------------------------------------------------
 
 
-def _canonical_epoch(value: str) -> tuple[datetime.datetime, str]:
-    """The epoch as (instant, CANONICAL string) — both forms, agreeing.
+def _epoch_instant_and_label(value: str) -> tuple[datetime.datetime, str]:
+    """The epoch as (instant, display label).
 
-    The per-record comparison is a lexical string compare, which is sound ONLY
-    because both sides are in the ledger's canonical form: tz-aware UTC ending
-    exactly ``+00:00``, never ``Z`` and never a non-UTC offset. Record ts is
-    held to that by ``store.validate_record_ts`` (store.py), whose own refusal
-    message gives the reason — other forms "break the ledger's lexical sk
-    ordering". The epoch arrives from an operator's env and is under no such
-    guard, so it is normalized to the same form HERE, before any comparison.
+    The instant is what RECORD_SIGNING_EPOCH_VALID compares against the
+    evaluation instant. Both are aware datetimes, so every legal spelling of
+    one instant (``+00:00``, ``Z``, a non-UTC offset) gets one verdict.
 
-    Without this, the two forms disagree and the comparison is silently wrong
-    in the dangerous direction. ``+`` (0x2B) sorts before ``Z`` (0x5A), so
-    against an epoch written ``...T00:00:00Z`` a same-prefix canonical record
-    compares as EARLIER and is exempted — and a non-UTC offset is wrong by its
-    whole offset. Both failures shed enforcement quietly, which is the exact
-    failure mode the epoch exists to prevent.
+    The label is the operator's value, followed by the canonical UTC form it
+    normalized to when the two differ. An epoch silently reinterpreted is a
+    different instant from the one the operator meant to configure.
+
+    No record ``ts`` is compared against the epoch. An earlier version
+    exempted records dated before it, and an unsigned record could claim that
+    exemption with a timestamp its own writer chose.
     """
     parsed = _parse_instant(value)
-    return parsed, parsed.astimezone(datetime.UTC).isoformat()
+    canonical = parsed.astimezone(datetime.UTC).isoformat()
+    return parsed, canonical if canonical == value else f"{value} ({canonical})"
 
 
 def _parse_instant(value: str) -> datetime.datetime:
@@ -537,7 +546,7 @@ def _parse_instant(value: str) -> datetime.datetime:
         ) from exc
     if parsed.tzinfo is None:
         raise ValueError(
-            f"record-signing epoch {value!r} has no UTC offset; an epoch cut must "
+            f"record-signing epoch {value!r} has no UTC offset; the epoch must "
             "name an unambiguous instant"
         )
     return parsed
@@ -601,8 +610,9 @@ def run_audit(
     single-shot proposal consumption) own that, and the CI policy table
     proves THOSE stay live.
 
-    ``signing_epoch`` is the ISO-8601 UTC instant from which EVERY record type
-    must be signed (see the module docstring); ``now`` is the explicit
+    ``signing_epoch`` is the ISO-8601 UTC instant record signing was adopted
+    at. Setting it requires a verifying signature on EVERY record, of every
+    type and every ``ts`` (see the module docstring); ``now`` is the explicit
     evaluation instant the epoch's own validity is judged at, and is REQUIRED
     when an epoch is supplied. Neither is ever derived from the data.
     """
@@ -831,16 +841,23 @@ def run_audit(
     # promotion is an attempt to mint authority from the no-model side, and an
     # auditor that accepted any known key would wave it through.
     #
-    # SCOPE is the epoch's job, never a per-type exemption list:
-    #   epoch set   — every type must be signed from that instant on; older
-    #                 rows are an explicit, annotated cut.
-    #   epoch unset — the pre-epoch scope (promotion required, lapse-if-signed)
-    #                 plus a LOUD annotation that the rest is unenforced.
+    # SCOPE is the epoch's job, never a per-type exemption list and never a
+    # per-record one:
+    #   epoch set:   every record of every type must be signed, whatever its
+    #                ts. A record's own timestamp excuses nothing, because on
+    #                an unsigned record that field is the writer's own claim.
+    #                Honest unsigned history is excused by acknowledgment.
+    #   epoch unset: the narrower scope (promotion required, lapse-if-signed)
+    #                plus a LOUD annotation that the rest is unenforced.
     # Read-side limit: predicate fields inside the record (covered, provenance
     # maturity) are proposer ASSERTIONS at N=1 owner — #21 tracks deriving
     # provenance maturity rather than asserting it (two earlier issues were named here
     # and both closed without landing that measurement) — so this rule verifies
     # AUTHENTICITY (who signed what), never the truth of the asserted evidence.
+
+    # Findings with nothing to bind an acknowledgment to. They are never
+    # waived, whatever the rule's place in WAIVABLE_RULES.
+    unbound_findings: set[AuditViolation] = set()
     if resolvers is None:
         skipped.append(RECORD_SIGNATURE_VERIFIES)
         annotations.append(
@@ -855,25 +872,18 @@ def run_audit(
                 "configured, so the all-types signing requirement (bootstrap, "
                 "demotion, tightening) is NOT enforced; only promotion records "
                 "are required to be signed, and lapse records only if they "
-                "carry a signature. Set RECORD_SIGNING_EPOCH to an ISO-8601 UTC "
-                "instant to enforce GAL-SPEC §6.10 from that instant on"
+                "carry a signature. Set RECORD_SIGNING_EPOCH to the ISO-8601 UTC "
+                "instant record signing was adopted at to enforce GAL-SPEC §6.10 "
+                "on every record"
             )
         else:
-            # Normalize ONCE, here, to the ledger's canonical ts form: every
-            # comparison below is lexical, and that is sound only while both
-            # sides share the form validate_record_ts pins (see
-            # _canonical_epoch for what goes wrong otherwise, and in which
-            # direction).
-            epoch_instant, epoch = _canonical_epoch(signing_epoch)
-            # Show the operator what their value normalized to when it differs
-            # from what they typed — an epoch silently reinterpreted is how a
-            # cut ends up covering a different set of rows than intended.
-            epoch_label = epoch if epoch == signing_epoch else f"{signing_epoch} ({epoch})"
+            epoch_instant, epoch_label = _epoch_instant_and_label(signing_epoch)
             # RECORD_SIGNING_EPOCH_VALID — the epoch is judged at the SUPPLIED
-            # evaluation instant. An epoch in the future exempts every record
-            # ever written: a control that is configured and does nothing,
-            # which is worse than one that is off, because the config reads as
-            # coverage. Un-waivable, and loud.
+            # evaluation instant, and that is the only thing the instant is
+            # used for. An epoch after it names an adoption that has not
+            # happened: a misconfiguration, un-waivable and loud. It narrows
+            # nothing. The loop below runs with the all-types requirement on,
+            # so a future epoch can only add this finding to the report.
             if epoch_instant > now:
                 violations.append(
                     AuditViolation(
@@ -882,60 +892,65 @@ def run_audit(
                         detail=(
                             f"the configured record-signing epoch {epoch_label} is "
                             f"after the evaluation instant {now.isoformat()}; it is "
-                            "not yet in force, so every record is exempt and the "
-                            "all-types signing requirement is silently disabled"
+                            "not yet in force. The all-types signing requirement "
+                            "was applied to every record regardless"
                         ),
                     )
                 )
-            exempt = sum(1 for entry in dataset.records if entry.record.ts < epoch)
-            if exempt:
-                annotations.append(
-                    f"{ANNOTATION_SIGNING_EPOCH_APPLIED}: {exempt} record(s) with ts "
-                    f"before RECORD_SIGNING_EPOCH={epoch_label} are exempt from the "
-                    "all-types signing requirement (an epoch cut over ledger history "
-                    "that cannot be re-minted); records at or after it are enforced"
-                )
+        # An epoch that is set turns the all-types requirement on for every
+        # record. Nothing about a record, its ts included, turns it back off.
+        all_types_required = signing_epoch is not None
         for entry in dataset.records:
             record_type = entry.record.recordType
-            in_epoch = signing_epoch is not None and entry.record.ts >= epoch
-            if not in_epoch:
-                # Pre-epoch (or no-epoch) scope, unchanged: a promotion must be
-                # signed; a lapse that carries a signature must verify; the
-                # other types only ever lower authority and are exempt.
+            if not all_types_required:
+                # No-epoch scope, unchanged: a promotion must be signed; a
+                # lapse that carries a signature must verify; the other types
+                # only ever lower authority and are out of scope.
                 if record_type == "lapse" and entry.signature is None:
                     continue
                 if record_type not in ("promotion", "lapse"):
                     continue
             coordinate = _record_coordinate(entry.record)
-            if entry.signature is None:
-                role = signing_role_for_record_type(record_type)
-                violations.append(
-                    AuditViolation(
-                        rule=RECORD_SIGNATURE_VERIFIES,
-                        coordinate=coordinate,
-                        detail=(
-                            f"{record_type} record ts={entry.record.ts} carries no DSSE "
-                            f"signature; it must be signed by the {role} identity"
-                        ),
-                    )
-                )
-                continue
-            # Verify from the STORED bytes: the subject digest is the
-            # sha256 over the item's data string verbatim — NEVER a
-            # re-serialization of the parsed record (that would re-derive the
-            # basis from today's model and read every pre-schema-growth record
-            # as a signature failure). A dataset entry without the stored
-            # bytes cannot be verified at all: fail closed with a violation,
-            # not a synthesized basis.
+            role = signing_role_for_record_type(record_type)
+            # The STORED bytes are the basis for everything below. A signature
+            # is verified against the sha256 over the item's data string
+            # verbatim, NEVER a re-serialization of the parsed record (that
+            # would re-derive the basis from today's model and read every
+            # pre-schema-growth record as a signature failure). A finding names
+            # the same digest, so an acknowledgment of it covers these bytes
+            # only. An entry without the stored bytes can be neither verified
+            # nor bound: fail closed with a violation that no acknowledgment
+            # applies to, signed or not.
             if entry.raw_data is None:
+                unbound = AuditViolation(
+                    rule=RECORD_SIGNATURE_VERIFIES,
+                    coordinate=coordinate,
+                    detail=(
+                        f"{record_type} record ts={entry.record.ts} has no stored "
+                        "bytes on the dataset entry; without the exact stored "
+                        "serialization a signature cannot be verified and a "
+                        "finding cannot be bound to the record"
+                    ),
+                )
+                violations.append(unbound)
+                unbound_findings.add(unbound)
+                continue
+            stored = f"stored bytes sha256:{stored_record_digest_hex(entry.raw_data)}"
+            # The level change rides in the finding too. Whoever acknowledges
+            # an unsigned or unverifiable record must see what authority it
+            # sets without opening the row: a digest alone reads the same for
+            # a tightening and for a bootstrap straight to out-of-loop.
+            from_level = entry.record.fromLevel.value if entry.record.fromLevel else "no grant"
+            change = f"{from_level} -> {entry.record.toLevel.value}"
+            if entry.signature is None:
                 violations.append(
                     AuditViolation(
                         rule=RECORD_SIGNATURE_VERIFIES,
                         coordinate=coordinate,
                         detail=(
-                            f"{record_type} record ts={entry.record.ts} has no stored "
-                            "bytes on the dataset entry; a signature cannot be "
-                            "verified without the exact stored serialization"
+                            f"{record_type} record ts={entry.record.ts} {change} "
+                            f"({stored}) carries no DSSE signature; it must be signed by the "
+                            f"{role} identity"
                         ),
                     )
                 )
@@ -952,9 +967,9 @@ def run_audit(
                         rule=RECORD_SIGNATURE_VERIFIES,
                         coordinate=coordinate,
                         detail=(
-                            f"{record_type} record ts={entry.record.ts} failed signature "
-                            f"verification ({result.reason}); this type is signed by the "
-                            f"{signing_role_for_record_type(record_type)} identity"
+                            f"{record_type} record ts={entry.record.ts} {change} "
+                            f"({stored}) failed signature verification ({result.reason}); this "
+                            f"type is signed by the {role} identity"
                         ),
                     )
                 )
@@ -1007,7 +1022,9 @@ def run_audit(
     # be issuer-signed and VERIFY (no resolver ⇒ verification skipped LOUDLY
     # and NO waiver applies — fail toward RED, never toward green); the match
     # is exact on (rule, coordinate, detail-digest), so a NEW finding at the
-    # same coordinate is never auto-waived by an old acknowledgment.
+    # same coordinate is never auto-waived by an old acknowledgment. A
+    # RECORD_SIGNATURE_VERIFIES detail carries the sha256 of the record's
+    # stored bytes, so that holds for a record REPLACED in place too.
     # Acknowledgments stay ISSUER-signed: a waiver mints "green", which is
     # authority, so it belongs to the ceremony side and never to the automatic
     # evaluator (which only ever lowers). Hence resolvers.issuer, not a
@@ -1072,7 +1089,7 @@ def run_audit(
             waivers.get(
                 (violation.rule, violation.coordinate, violation_detail_digest(violation.detail))
             )
-            if violation.rule in WAIVABLE_RULES
+            if violation.rule in WAIVABLE_RULES and violation not in unbound_findings
             else None
         )
         if waiver_ref is None:

@@ -169,16 +169,21 @@ The read-only grants audit (`grants/audit.py`) is the instrument that tells an o
 authority state is wrong. Two hardenings came out of the wrong-authority-mint incident (a ceremony minted a grant
 under a silently-substituted envelope — quarantine-dead from ratification, green on the audit):
 
-Since the second signing role landed, the audit's signature scope is set by an explicit **epoch
-cut** rather than a per-type exemption list. `RECORD_SIGNING_EPOCH` names an ISO-8601 UTC instant:
-every record with `ts` at or after it must carry a verifying signature of its role, whatever the
-type. Older rows — real ledgers hold unsigned `demotion`/`tightening`/`bootstrap` records that
-cannot be re-minted — are exempt and reported as a **named annotation** carrying the epoch and the
-count, green-with-annotations rather than silently green. With the epoch unset the scope stays what
-it was (promotion required, lapse-if-present) and the report says so in an annotation: the
-all-types requirement is not being enforced. The instant the epoch's own validity is judged at is
-an explicit input, never derived from the records — an epoch dated in the future would exempt every
-row ever written, so it is a violation (`RECORD_SIGNING_EPOCH_VALID`), not a quiet pass.
+Since the second signing role landed, the audit's signature scope is set by `RECORD_SIGNING_EPOCH`
+rather than a per-type exemption list. It names the ISO-8601 UTC instant record signing was adopted
+at. With it set, every record must carry a verifying signature of its role, whatever its type and
+whatever its `ts`. A record's own timestamp excuses nothing: on an unsigned record that field is
+written by whoever wrote the row, so a planted row could date itself into an exemption. Real
+ledgers do hold unsigned `demotion`/`tightening`/`bootstrap` records that cannot be re-minted. Each
+one is a `RECORD_SIGNATURE_VERIFIES` finding until the acknowledgment ceremony below dispositions
+it, one record at a time. The finding's detail carries the sha256 of the record's stored bytes, so
+an acknowledgment excuses those bytes and no others: a different record written at the same
+coordinate, type and `ts` is a new finding. With the epoch unset the scope stays what it was
+(promotion required, lapse-if-present) and the report says so in an annotation: the all-types
+requirement is not being enforced. The instant the epoch's own validity is judged at is an explicit
+input, never derived from the records. An epoch dated after that instant is a violation
+(`RECORD_SIGNING_EPOCH_VALID`), and the audit still checks every record as if the epoch were in
+force.
 
 - **`EVALUATOR_RECORD_CONTINUOUS`.** A `demotion` or `lapse` record is signed by the evaluator's
   key, and the evaluator may only lower. Two checks hold it to that. The record schema refuses one
@@ -352,8 +357,8 @@ that authority to be re-justified.
   `propose` and `ratify` refuse to anchor on its stored level. Run the runner, then re-propose from
   the lapsed level.
 - **Audit.** Lapse records are legitimate ledger transitions. A lapse record must verify under the
-  EVALUATOR role (`RECORD_SIGNATURE_VERIFIES`) — required from the record-signing epoch on, and
-  checked-if-present before it; one naming a trigger cannot parse and is an
+  EVALUATOR role (`RECORD_SIGNATURE_VERIFIES`). That is required whenever `RECORD_SIGNING_EPOCH`
+  is set, and checked-if-present while it is unset; one naming a trigger cannot parse and is an
   `UNPARSEABLE_ITEM` finding; a grant that sits below its ledger-derived level with no record for
   the drop is `LEVEL_DROP_RECORDED` (waivable, for pre-atomic-write history where demotion wrote the grant
   first). `GRANT_TERM_RATIFIED` (un-waivable) holds the grant's term to the one on its latest
