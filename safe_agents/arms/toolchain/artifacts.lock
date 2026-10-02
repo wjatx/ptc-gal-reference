@@ -19,6 +19,8 @@ argocd linux-x86_64 3.5.3 b860f73f57cbddd993cd446f5236d797c1b1ac8554857b2683d266
 awscli linux-aarch64 2.37.8 00c4bac1cac8624b728d991f821428d5de1e0cb56e3803045b85bff63bedee8b https://awscli.amazonaws.com/awscli-exe-linux-aarch64-2.37.8.zip
 awscli linux-x86_64 2.37.8 6a2f98fee0901ff623ff9abb5c80f4d67c40e5c0ac5e2ad7afa2ba756a7d5088 https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.37.8.zip
 bat linux-x86_64 0.26.1 726f04c8f576a7fd18b7634f1bbf2f915c43494c1c0f013baa3287edb0d5a2a3 https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_64-unknown-linux-gnu.tar.gz
+claude-code linux-aarch64 2.1.285 24fac77749bed3d91365d6b6915aa4b824e14318ecb6bc17adbc192f01c9173d https://downloads.claude.ai/claude-code-releases/2.1.285/linux-arm64/claude
+claude-code linux-x86_64 2.1.285 33dad1ec615a2e08cc78b494f05c110e49916de2c79d78ec8799ebf46b233d29 https://downloads.claude.ai/claude-code-releases/2.1.285/linux-x64/claude
 epel-release any 9-11.el9 b434245bffd8b40ea486157e72363d08b36e38145c8f917c5c00adfca3f2101b https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/e/epel-release-9-11.el9.noarch.rpm
 gh linux-x86_64 2.102.0 bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386 https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_linux_amd64.tar.gz
 gitleaks linux-x86_64 8.30.1 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
@@ -46,6 +48,8 @@ yq linux-x86_64 4.54.1 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf
 #:unused awscli linux-aarch64
 #:unused awscli linux-x86_64
 #:unused bat linux-x86_64
+#:unused claude-code linux-aarch64
+#:unused claude-code linux-x86_64
 #:unused epel-release any
 #:unused gh linux-x86_64
 #:unused gitleaks linux-x86_64

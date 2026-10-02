@@ -64,6 +64,34 @@ lock does not have yet is added and marked `#:unused` until a script fetches it.
 that every pair in a tracked file is a lock line and that every lock line is used
 or marked `#:unused`. Do not edit a URL or hash by hand.
 
+## Claude Code
+
+`claude-code` is the native executable Anthropic publishes for each platform. It
+is a single self-contained binary: it needs glibc and nothing else, so the arms
+install no Node.js and no npm for it. The npm package of the same name is a
+launcher that links this same file into place.
+
+Its hashes come from the release manifest, which is GPG-signed. Check the
+signature before moving the pin:
+
+```sh
+v=2.1.285
+curl -fsSLO "https://downloads.claude.ai/claude-code-releases/$v/manifest.json"
+curl -fsSLO "https://downloads.claude.ai/claude-code-releases/$v/manifest.json.sig"
+curl -fsSL -o claude-code.asc https://downloads.claude.ai/keys/claude-code.asc
+gpg --import claude-code.asc
+gpg --verify manifest.json.sig manifest.json
+```
+
+The signing key's fingerprint is `31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE`.
+Then run `update-artifact-pin.py` with `--expect-sha256` set to the manifest's
+`platforms.<platform>.checksum` for each platform. The pin follows the `stable`
+release channel and not `latest`.
+
+A pinned install must not update itself. Every arm sets `DISABLE_UPDATES=1` for
+the CLI, in `/etc/claude-code/managed-settings.json` and in the environment it
+runs under.
+
 ## Out of scope
 
 Two kinds of download are left as they are.
