@@ -38,6 +38,11 @@ Rules (each documented at its check site in run_audit):
                             (issuer: promotion/bootstrap/tightening;
                             evaluator: demotion/lapse). Scope is set by
                             RECORD_SIGNING_EPOCH — see below
+  EVALUATOR_RECORD_CONTINUOUS a demotion or lapse record starts from the level
+                            the ledger held immediately before it: the
+                            evaluator's key signs these, so one that starts
+                            anywhere else can leave the ledger higher than
+                            the issuer ever put it
   RECORD_SIGNING_EPOCH_VALID the configured epoch is in force at the supplied
                             evaluation instant (a future epoch would exempt
                             every record ever written)
@@ -103,6 +108,7 @@ from safe_agents.broker.grants.demotion import (
 )
 from safe_agents.broker.grants.proposals import ProposalStatus, compute_proposal_hash
 from safe_agents.broker.grants.record_signing import (
+    EVALUATOR_ROLE,
     RoleKeyResolvers,
     signing_role_for_record_type,
     verify_record_by_type,
@@ -122,6 +128,7 @@ LEVEL_LEDGER_CONSISTENT = "LEVEL_LEDGER_CONSISTENT"
 LEVEL_DROP_RECORDED = "LEVEL_DROP_RECORDED"
 GRANT_TERM_RATIFIED = "GRANT_TERM_RATIFIED"
 RECORD_SIGNATURE_VERIFIES = "RECORD_SIGNATURE_VERIFIES"
+EVALUATOR_RECORD_CONTINUOUS = "EVALUATOR_RECORD_CONTINUOUS"
 RECORD_SIGNING_EPOCH_VALID = "RECORD_SIGNING_EPOCH_VALID"
 PROPOSAL_LIFECYCLE = "PROPOSAL_LIFECYCLE"
 PROPOSAL_TAMPER = "PROPOSAL_TAMPER"
@@ -782,6 +789,39 @@ def run_audit(
                         ),
                     )
                 )
+
+    # EVALUATOR_RECORD_CONTINUOUS — a record the evaluator's key signs
+    # (demotion, lapse) must start from the level the ledger held immediately
+    # before it. The schema already refuses one that raises on its own terms
+    # (fromLevel -> toLevel). That is not enough: a "demotion" from out-of-loop
+    # to on-loop lowers on paper, and planted on a ledger that stood at in-loop
+    # it leaves the derived level at on-loop, raised, under the evaluator's
+    # key. The issuer's key is the only one that may raise (GAL §6.10), so an
+    # evaluator record is honest only as a step down from where the ledger
+    # actually was. Judged over every coordinate with records, grant or no
+    # grant. Un-waivable: a finding is a raise the issuer never signed.
+    for coordinate, coordinate_records in ledger.items():
+        level_before = None
+        for entry in coordinate_records:
+            record = entry.record
+            if (
+                signing_role_for_record_type(record.recordType) == EVALUATOR_ROLE
+                and record.fromLevel != level_before
+            ):
+                held = level_before.value if level_before is not None else "no level"
+                violations.append(
+                    AuditViolation(
+                        rule=EVALUATOR_RECORD_CONTINUOUS,
+                        coordinate=coordinate,
+                        detail=(
+                            f"{record.recordType} record at {record.ts} starts from "
+                            f"{record.fromLevel.value!r}, but the ledger held {held!r} "
+                            "immediately before it; a record the evaluator signs may "
+                            "only lower the level the ledger accounts for"
+                        ),
+                    )
+                )
+            level_before = record.toLevel
 
     # RECORD_SIGNATURE_VERIFIES — a record in scope must carry a DSSE envelope
     # that verifies under ITS RECORD TYPE'S signing role (fails closed):

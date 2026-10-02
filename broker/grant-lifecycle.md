@@ -180,6 +180,13 @@ all-types requirement is not being enforced. The instant the epoch's own validit
 an explicit input, never derived from the records — an epoch dated in the future would exempt every
 row ever written, so it is a violation (`RECORD_SIGNING_EPOCH_VALID`), not a quiet pass.
 
+- **`EVALUATOR_RECORD_CONTINUOUS`.** A `demotion` or `lapse` record is signed by the evaluator's
+  key, and the evaluator may only lower. Two checks hold it to that. The record schema refuses one
+  whose `toLevel` is above its `fromLevel`, or a demotion that lands on `out-of-loop`. The audit
+  then requires each such record to start from the level the ledger held immediately before it. The
+  second check is the one that matters for a planted row: a "demotion" from `out-of-loop` to
+  `on-loop` lowers on its own terms, and on a ledger that stood at `in-loop` it would leave the
+  derived level raised with no issuer signature. Un-waivable.
 - **`GRANT_ENVELOPE_IN_FORCE`.** Every grant's `envelopeHash` is compared to the stored
   in-force envelope for its principal (recomputed via the same load path the broker uses at boot —
   a plain content hash, so the keyless posture holds). A mismatch is a grant the broker quarantines

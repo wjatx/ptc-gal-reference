@@ -660,7 +660,9 @@ def _dataset(records: list[PromotionRecord], *, signed_by=None) -> AuditDataset:
     and would fire on any single-record fixture, so including a grant would
     make these tests assert on a mixture and drift every time an unrelated rule
     changed. Every assertion below is about RECORD_SIGNATURE_VERIFIES and the
-    epoch, and nothing else can fire.
+    epoch. One ledger-level rule does fire on these fixtures: a lone demotion or
+    lapse has nothing before it, which EVALUATOR_RECORD_CONTINUOUS reports. The
+    tests that use one therefore assert on the signature findings alone.
     """
     entries = []
     for record in records:
@@ -715,7 +717,7 @@ def test_a_pre_epoch_record_is_reported_as_an_annotation_naming_the_epoch(roles)
         now=NOW,
     )
 
-    assert report.violations == ()
+    assert not _signature_findings(report)
     annotation = next(
         a for a in report.annotations if a.startswith(ANNOTATION_SIGNING_EPOCH_APPLIED)
     )
@@ -736,7 +738,7 @@ def test_in_epoch_records_of_every_type_verify_when_correctly_signed(record_type
         now=NOW,
     )
 
-    assert report.violations == ()
+    assert not _signature_findings(report)
 
 
 def test_with_no_epoch_todays_scope_holds_and_says_so(roles):

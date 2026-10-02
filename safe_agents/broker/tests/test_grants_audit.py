@@ -40,6 +40,7 @@ from safe_agents.broker.grants.audit import (
     HMAC_RULES,
     PROPOSAL_LIFECYCLE,
     RECORD_SIGNATURE_VERIFIES,
+    EVALUATOR_RECORD_CONTINUOUS,
     UNPARSEABLE_ITEM,
     dataset_from_items,
     load_dataset,
@@ -239,6 +240,81 @@ def test_a_stored_demotion_that_raises_the_level_is_a_finding():
     assert dataset.records == ()
     assert [v.rule for v in dataset.parse_violations] == [UNPARSEABLE_ITEM]
     assert "must not raise the level" in dataset.parse_violations[0].detail
+
+
+def _evaluator_record(record_type: str, ts: str, from_level: str, to_level: str) -> PromotionRecord:
+    lapse = record_type == "lapse"
+    return _make_record(
+        record_type,
+        ts=ts,
+        fromLevel=from_level,
+        toLevel=to_level,
+        proposedBy="system:demotion-evaluator",
+        ratifiedBy="system:demotion-evaluator",
+        triggeredBy=[] if lapse else ["budget_breach"],
+        demotionReason="pending-evidence" if lapse else "failing",
+    )
+
+
+def _ledger_items(*records: PromotionRecord) -> list[dict]:
+    return [
+        {"pk": _RECORD_PK, "sk": f"{r.ts}#{r.recordType}", "data": canonical_record_payload(r)}
+        for r in records
+    ]
+
+
+_BOOT = _make_record("bootstrap", ts="2026-07-01T00:00:00+00:00")  # -> in-loop
+_PROMOTE = _make_record("promotion", ts="2026-07-02T00:00:00+00:00")  # in-loop -> on-loop
+_T3, _T4 = "2026-07-03T00:00:00+00:00", "2026-07-04T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "records, findings",
+    [
+        pytest.param(
+            [_BOOT, _PROMOTE, _evaluator_record("demotion", _T3, "on-loop", "in-loop")], 0,
+            id="honest demotion from the level the ledger holds",
+        ),
+        pytest.param(
+            [_BOOT, _PROMOTE, _evaluator_record("lapse", _T3, "on-loop", "in-loop")], 0,
+            id="honest lapse",
+        ),
+        pytest.param(
+            [_BOOT, _evaluator_record("demotion", _T3, "in-loop", "in-loop")], 0,
+            id="repeat breach recorded at the floor",
+        ),
+        pytest.param(
+            [_BOOT, _evaluator_record("demotion", _T3, "out-of-loop", "on-loop")], 1,
+            id="lowers on paper, raises the ledger from in-loop to on-loop",
+        ),
+        pytest.param(
+            [_BOOT, _evaluator_record("lapse", _T3, "out-of-loop", "on-loop")], 1,
+            id="lapse from a level the ledger never held",
+        ),
+        pytest.param(
+            [_evaluator_record("demotion", _T3, "on-loop", "in-loop")], 1,
+            id="demotion with nothing before it",
+        ),
+        pytest.param(
+            [
+                _BOOT,
+                _evaluator_record("demotion", _T3, "on-loop", "on-loop"),
+                _evaluator_record("demotion", _T4, "on-loop", "in-loop"),
+            ],
+            1,
+            id="only the record that breaks the chain is the finding",
+        ),
+    ],
+)
+def test_an_evaluator_record_must_start_from_the_ledger_level(records, findings):
+    """The evaluator's key may only lower. A record that lowers on its own terms
+    but starts above where the ledger stood raises the derived level without
+    the issuer's key, so the audit checks each one against the level before it."""
+    report = run_audit(dataset_from_items(_ledger_items(*records)))
+    found = [v for v in report.violations if v.rule == EVALUATOR_RECORD_CONTINUOUS]
+    assert len(found) == findings
+    if findings:
+        assert "immediately before it" in found[0].detail
 
 
 def test_non_lifecycle_item_kinds_are_ignored():
