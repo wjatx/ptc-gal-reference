@@ -39,9 +39,11 @@ from safe_agents.channels.schemas import EventTrigger, ProvenanceEntry, SenderId
 from safe_agents.channels.schemas.event_trigger import (
     MAX_CHAIN_SIGNATURES,
     MAX_ENVELOPE_BYTES,
+    MAX_FORWARD_BYTES,
     ChainSignature,
 )
 from safe_agents.channels.signing import (
+    DSSE_PAYLOAD_TYPE,
     HOP_FIELDS,
     PREDICATE_TYPE,
     SIGNATURE_INVALID,
@@ -55,7 +57,9 @@ from safe_agents.channels.signing import (
     bound_envelope,
     build_statement,
     canonical_identity,
+    load_private_key,
     make_gate,
+    pae,
     signer_from_pem,
     verify_chain,
 )
@@ -1597,3 +1601,311 @@ def test_a_bad_public_key_names_the_key_and_nothing_else(monkeypatch, public_key
     with pytest.raises(SigningConfigError) as raised:
         resolve_verification_keys()
     assert "broker:A" in str(raised.value) and "not a pem" not in str(raised.value)
+
+
+# ---------------------------------------------------------------------------
+# Second review: every signature, exact sizes, one spelling, fixed vectors
+# ---------------------------------------------------------------------------
+
+
+def test_the_limits_are_the_documented_numbers():
+    """The ceilings are compared against each other and against a queue limit
+    elsewhere. Pinned here so that widening one is a visible decision."""
+    assert (MAX_ENVELOPE_BYTES, MAX_FORWARD_BYTES, MAX_CHAIN_SIGNATURES) == (196608, 262144, 8)
+
+
+def _unsigned_of_wire_size(size: int) -> EventTrigger:
+    base = _unsigned().model_copy(update=_sender(evidence=[""]))
+    pad = size - len(base.to_wire())
+    return base.model_copy(update=_sender(evidence=["x" * pad]))
+
+
+def test_the_size_ceiling_is_inclusive_and_exact():
+    at = _unsigned_of_wire_size(MAX_ENVELOPE_BYTES)
+    assert len(at.to_wire()) == MAX_ENVELOPE_BYTES
+    with pytest.raises(ValueError, match="over"):
+        _unsigned_of_wire_size(MAX_ENVELOPE_BYTES + 1).to_wire()
+
+
+def _outbound(signer, evidence):
+    return stamp_outbound(
+        zone="zone-a",
+        agent_identity="example",
+        channel_type="webhook",
+        channel_identity="peer:example",
+        turn_tainted=False,
+        event_id="evt-1",
+        principal="example-agent",
+        payload=dict(_ORIGINAL_PAYLOAD),
+        ts=_TS,
+        expiry=_EXPIRY,
+        evidence=evidence,
+        signer=signer,
+    )
+
+
+def test_a_sender_never_returns_an_envelope_its_signature_pushed_over_the_ceiling(
+    signer_and_resolver,
+):
+    """The signature adds to the size. An envelope that fits unsigned and not
+    signed must be refused when it is stamped, not dropped by every receiver."""
+    signer, _ = signer_and_resolver
+    # The evidence string lands on the sender claim and on the hop, so each
+    # character of padding adds two bytes.
+    room = MAX_ENVELOPE_BYTES - len(_outbound(None, [""]).to_wire())
+    fits_unsigned = ["x" * ((room - 50) // 2)]
+    unsigned_size = len(_outbound(None, fits_unsigned).to_wire())
+    assert MAX_ENVELOPE_BYTES - 60 < unsigned_size <= MAX_ENVELOPE_BYTES
+    with pytest.raises(ValueError, match="over"):
+        _outbound(signer, fits_unsigned)
+    assert _outbound(signer, ["x" * ((room - 400) // 2)]).chain_signatures
+
+
+def _second_signature_cases():
+    def unknown_signer(env, good, priv):
+        return good.model_copy(update={"key_id": "broker:nobody"}), SIGNER_UNKNOWN
+
+    def bad_signature(env, good, priv):
+        return good.model_copy(update={"sig": base64_of(bytes(64))}), SIGNATURE_INVALID
+
+    def prefix_cover(env, good, priv):
+        return good.model_copy(update={"covers": 0}), SIGNATURE_INVALID
+
+    def wrong_zone(env, good, priv):
+        return good.model_copy(update={"zone": "zone-z"}), SIGNATURE_INVALID
+
+    def other_payload_type(env, good, priv):
+        statement = build_statement(env, key_id="broker:A", zone="zone-a")
+        raw = load_private_key(priv).sign(pae("text/plain", statement))
+        return good.model_copy(update={"payload_type": "text/plain", "sig": base64_of(raw)}), SIGNATURE_INVALID
+
+    return [unknown_signer, bad_signature, prefix_cover, wrong_zone, other_payload_type]
+
+
+def base64_of(raw: bytes) -> str:
+    import base64
+
+    return base64.b64encode(raw).decode("ascii")
+
+
+@pytest.mark.parametrize("make", _second_signature_cases(), ids=lambda f: f.__name__)
+@pytest.mark.parametrize("position", ["alone", "after a good signature"])
+def test_every_signature_must_pass_every_check(make, position):
+    priv, pub = _keypair()
+    signer = signer_from_pem("broker:A", "zone-a", priv)
+    resolver = _peer_resolver({"broker:A": (pub, "zone-a", ["peer:example"])})
+    env = _signed_outbound(signer)
+    good = env.chain_signatures[0]
+    bad, reason = make(env.model_copy(update={"chain_signatures": []}), good, priv)
+    signatures = [bad] if position == "alone" else [good, bad]
+    result = verify_chain(env.model_copy(update={"chain_signatures": signatures}), resolver)
+    assert not result.ok and result.reason == reason and result.signer_key_id is None
+
+
+def test_the_signer_refuses_an_envelope_past_the_ceiling_on_its_own(signer_and_resolver):
+    """Called directly, without `stamp_outbound` and its final check."""
+    signer, _ = signer_and_resolver
+    with pytest.raises(ValueError, match="over"):
+        signer.sign_envelope(_unsigned_of_wire_size(MAX_ENVELOPE_BYTES + 1))
+
+
+def test_a_co_signature_from_another_zone_is_refused_as_not_the_top_hop():
+    """B adds its own genuine signature, in its own zone, to A's envelope. Every
+    signature has to name the zone of the top hop, so this is refused before B's
+    key or scope is looked at: the result carries no scope detail."""
+    priv_a, priv_b, resolver = _two_enrolled_peers()
+    env = _signed_outbound(signer_from_pem("broker:A", "zone-a", priv_a))
+    from_b = signer_from_pem("broker:B", "zone-b", priv_b).sign_envelope(
+        env.model_copy(update={"chain_signatures": []})
+    )
+    result = verify_chain(
+        env.model_copy(update={"chain_signatures": [*env.chain_signatures, from_b]}), resolver
+    )
+    assert not result.ok and (result.reason, result.detail) == (SIGNATURE_INVALID, None)
+
+
+def test_the_result_names_the_first_signer_when_two_keys_sign():
+    priv_1, pub_1 = _keypair()
+    priv_2, pub_2 = _keypair()
+    scope = ("zone-a", ["peer:example"])
+    resolver = _peer_resolver({"broker:A1": (pub_1, *scope), "broker:A2": (pub_2, *scope)})
+    env = _signed_outbound(signer_from_pem("broker:A1", "zone-a", priv_1))
+    second = signer_from_pem("broker:A2", "zone-a", priv_2).sign_envelope(
+        env.model_copy(update={"chain_signatures": []})
+    )
+    result = verify_chain(
+        env.model_copy(update={"chain_signatures": [*env.chain_signatures, second]}), resolver
+    )
+    assert result.ok and result.signer_key_id == "broker:A1"
+
+
+def test_a_key_out_of_scope_is_named_only_after_its_signature_verified():
+    """The `detail` says an enrolled key was used outside its scope. A forged
+    signature that merely claims that key id must not earn the same detail."""
+    _, priv_b, resolver = _two_enrolled_peers()
+    as_a = _outbound(None, []).model_copy(update=_sender(channel_identity="peer:example"))
+    as_a = as_a.model_copy(
+        update={
+            "provenance": [
+                ProvenanceEntry(zone="zone-b", source="peer:relay", label="trusted", ts=_TS)
+            ]
+        }
+    )
+    real = signer_from_pem("broker:B", "zone-b", priv_b).sign_envelope(as_a)
+    forged = real.model_copy(update={"sig": base64_of(bytes(64))})
+    out_of_scope = verify_chain(as_a.model_copy(update={"chain_signatures": [real]}), resolver)
+    garbage = verify_chain(as_a.model_copy(update={"chain_signatures": [forged]}), resolver)
+    assert out_of_scope.detail == SIGNER_IDENTITY_OUT_OF_SCOPE
+    assert garbage.reason == SIGNATURE_INVALID and garbage.detail is None
+
+
+def test_a_signature_has_exactly_one_base64_spelling(signer_and_resolver):
+    """The last base64 character of a 64-byte value has four bits that encode
+    nothing, so sixteen strings decode to the same signature."""
+    import base64
+
+    signer, _ = signer_and_resolver
+    good = _signed_outbound(signer).chain_signatures[0]
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    raw = base64.b64decode(good.sig)
+    aliases = [
+        candidate
+        for letter in alphabet
+        if (candidate := good.sig[:-3] + letter + "==") != good.sig
+        and base64.b64decode(candidate) == raw
+    ]
+    assert len(aliases) == 15
+    for alias in aliases:
+        with pytest.raises(ValueError):
+            ChainSignature(**{**good.model_dump(), "sig": alias})
+
+
+def test_known_answer_for_the_pae_the_statement_and_the_signature():
+    """Fixed inputs, fixed outputs. Ed25519 is deterministic, so a change to the
+    PAE, the statement type, the statement's shape or the canonical form shows
+    up here as a different value. Changing the statement on purpose means a new
+    predicate type and new values in this test."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    assert pae(DSSE_PAYLOAD_TYPE, b"abc") == b"DSSEv1 28 application/vnd.in-toto+json 3 abc"
+
+    signer = ChainSigner(
+        key_id="broker:A",
+        zone="zone-a",
+        _private_key=Ed25519PrivateKey.from_private_bytes(bytes(range(32))),
+    )
+    env = _signed_outbound(signer)
+    statement = build_statement(
+        env.model_copy(update={"chain_signatures": []}), key_id="broker:A", zone="zone-a"
+    )
+    assert (
+        hashlib.sha256(statement).hexdigest()
+        == "38114cd93dc0499e5b17b51c77a7ba2f856c818ae39ea090db17c06e73bdf10f"
+    )
+    assert env.chain_signatures[0].sig == (
+        "jIte2VfYfuOuj7kF6R1MuDcxI5QmhSjmANgLtwEOU7CFpP0aye6cSTGJo9h3syI6"
+        "WBdUSi961HAv83wW1WR4Dw=="
+    )
+    assert env.chain_signatures[0].payload_type == DSSE_PAYLOAD_TYPE
+
+
+def test_the_origin_flag_must_be_exactly_true(signer_and_resolver):
+    """An adapter is exempt from chain verification only when it says so with
+    the boolean. Anything else, a truthy string or a mock included, is verified."""
+    _, resolver = signer_and_resolver
+
+    class _Claims(_RecordingAdapter):
+        originates_envelope = "false"
+
+    unsigned = _unsigned()
+    drops: list[Any] = []
+    out = dispatch(
+        None,
+        adapter=_Claims(unsigned),
+        trust_map=_trust_map(),
+        screen=None,
+        verify_chain=make_gate(resolver),
+        dedupe_store=set(),
+        drops=drops,
+        now=_NOW,
+        zone="recv",
+    )
+    assert out is None and [d.reason for d in drops] == [SIGNATURE_MISSING]
+
+
+@pytest.mark.parametrize(
+    "change, reason",
+    [
+        ({"expiry": _EXPIRED}, "expired"),
+        ({"principal": "someone-else"}, "principal_mismatch"),
+    ],
+)
+def test_later_drops_cite_the_verification_that_passed(change, reason):
+    """Once gate 3.5 has verified a chain, the drop records of the gates after
+    it say so and name the signer; before this they would read as unverified."""
+    priv, pub = _keypair()
+    signer = signer_from_pem("broker:A", "zone-a", priv)
+    resolver = _peer_resolver({"broker:A": (pub, "zone-a", ["peer:example"])})
+    unsigned = _signed_outbound(signer).model_copy(update={"chain_signatures": [], **change})
+    env = unsigned.model_copy(update={"chain_signatures": [signer.sign_envelope(unsigned)]})
+    out, drops, _ = _run(env, gate=make_gate(resolver))
+    assert out is None
+    assert [(d.reason, d.chain_verified, d.signer_key_id) for d in drops] == [
+        (reason, True, "broker:A")
+    ]
+
+
+def test_the_identity_rule_is_the_same_in_every_module():
+    from safe_agents.channels import owner as owner_mod
+    from safe_agents.channels import webhook as webhook_mod
+
+    for raw in ["peer:Example", " peer:Maße ", "PEER:İstanbul", "peer:ﬁx", "peer:ſ"]:
+        assert (
+            canonical_identity(raw)
+            == webhook_mod._canonical_identity(raw)
+            == owner_mod._canonical_identity(raw)
+        )
+    assert canonical_identity("peer:Maße") == "peer:masse"  # casefold, not lower
+
+
+@pytest.mark.parametrize(
+    "entry_change",
+    [
+        pytest.param({"zone": " zone-a"}, id="zone with leading whitespace"),
+        pytest.param({"zone": "zone-a\n"}, id="zone with a trailing newline"),
+        pytest.param({"sender_identities": ["peer:example", "  "]}, id="whitespace-only identity"),
+    ],
+)
+def test_key_scope_values_that_could_never_match_are_refused(monkeypatch, entry_change):
+    _, pub = _keypair()
+    entry = {"public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]}
+    _keys_secret(monkeypatch, json.dumps({"broker:A": {**entry, **entry_change}}))
+    with pytest.raises(SigningConfigError, match="broker:A"):
+        resolve_verification_keys()
+
+
+def test_a_field_listed_twice_inside_one_key_entry_is_refused(monkeypatch):
+    _, pub = _keypair()
+    body = json.dumps({"public_key": pub, "sender_identities": ["peer:example"]})[:-1]
+    _keys_secret(monkeypatch, f'{{"broker:A": {body}, "zone": "zone-a", "zone": "zone-z"}}}}')
+    with pytest.raises(SigningConfigError, match="zone"):
+        resolve_verification_keys()
+
+
+def test_key_ids_are_matched_exactly(monkeypatch):
+    _, pub = _keypair()
+    entry = {"public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]}
+    _keys_secret(monkeypatch, json.dumps({"broker:A": entry}))
+    resolver = resolve_verification_keys()
+    assert resolver("broker:A") is not None
+    assert resolver("BROKER:A") is None and resolver("broker:A ") is None
+
+
+def test_a_malformed_secret_does_not_ride_out_on_the_error(monkeypatch):
+    """A JSON decode error carries the document it was parsing, and here the
+    document is the secret. Nothing chained to the raised error may hold it."""
+    _keys_secret(monkeypatch, '{"broker:A": {"public_key": "PEM-TEXT-IN-THE-SECRET"')
+    with pytest.raises(SigningConfigError) as raised:
+        resolve_verification_keys()
+    assert raised.value.__cause__ is None
+    assert "PEM-TEXT-IN-THE-SECRET" not in str(raised.value)

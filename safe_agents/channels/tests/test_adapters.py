@@ -684,6 +684,8 @@ def _nested(depth: int) -> dict:
         pytest.param({"key": float("inf")}, id="Infinity"),
         # The airlock's parser accepts this depth; the worker's stops short of it.
         pytest.param(_nested(220), id="nested past the worker parser's limit"),
+        # Raises RecursionError, which is not a ValueError: the gate catches both.
+        pytest.param(_nested(5000), id="nested past the interpreter's limit"),
     ],
 )
 def test_unforwardable_envelope_drops_before_it_claims_a_dedupe_key(payload):
@@ -691,8 +693,8 @@ def test_unforwardable_envelope_drops_before_it_claims_a_dedupe_key(payload):
     Refused after dedupe, it would lose the message and shadow the honest copy."""
     identity = "chat:poisoned"
     sender = {"channel_type": "stub-channel", "channel_identity": identity, "evidence": []}
-    poisoned = _envelope(sender=sender, payload=payload)
-    with pytest.raises(ValueError):
+    poisoned = _envelope(sender=sender).model_copy(update={"payload": payload})
+    with pytest.raises((ValueError, RecursionError)):
         poisoned.to_wire()
     dedupe_store: set = set()
     drops: list = []

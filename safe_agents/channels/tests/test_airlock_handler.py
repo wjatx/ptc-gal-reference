@@ -13,7 +13,11 @@ from types import SimpleNamespace
 import pytest
 
 import safe_agents.channels.airlock.handler as h
+from safe_agents.channels import keys as keys_mod
+from safe_agents.channels.publish import stamp_outbound
 from safe_agents.channels.schemas import EventTrigger
+from safe_agents.channels.schemas.event_trigger import MAX_ENVELOPE_BYTES, MAX_FORWARD_BYTES
+from safe_agents.channels.signing import ChainSigner
 
 _TOKEN = "test-airlock-token"
 _TS = "2026-07-08T00:00:00+00:00"
@@ -226,3 +230,110 @@ def test_undecodable_body_drops_malformed_without_enqueue(wired):
     assert resp["statusCode"] == 200
     assert wired.sqs.messages == []
     assert json.loads(wired.s3.puts[0]["Body"])["reason"] == "malformed"
+
+
+# ---------------------------------------------------------------------------
+# Chain verification and the wire form, through the real handler
+# ---------------------------------------------------------------------------
+
+
+def _drop_reasons(wired) -> list[tuple[str, str | None]]:
+    records = [json.loads(put["Body"]) for put in wired.s3.puts]
+    return [(r["reason"], r.get("detail")) for r in records if "reason" in r]
+
+
+def _outbound(signer=None, *, payload=None, evidence=None, event_id="evt-1") -> EventTrigger:
+    return stamp_outbound(
+        zone="zone-a",
+        agent_identity="example",
+        channel_type="webhook",
+        channel_identity="peer:example",
+        turn_tainted=False,
+        event_id=event_id,
+        principal="example-agent",
+        payload=payload or {"msg": "hello"},
+        ts=_TS,
+        expiry=_FUTURE,
+        evidence=evidence,
+        signer=signer,
+    )
+
+
+@pytest.fixture
+def verifying(wired, monkeypatch):
+    """The handler with BROKER_VERIFY_KEYS_SECRET_ARN set and one peer enrolled."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    pub = key.public_key().public_bytes(
+        serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+    ).decode()
+    entry = {"public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]}
+    monkeypatch.setenv(keys_mod.VERIFY_KEYS_SECRET_ARN_ENV, "arn:verify")
+    monkeypatch.setattr(keys_mod, "_fetch_secret", lambda arn: json.dumps({"broker:A": entry}))
+    monkeypatch.setattr(h, "_STATE", None)
+    return wired, ChainSigner(key_id="broker:A", zone="zone-a", _private_key=key)
+
+
+def test_handler_with_verification_on_accepts_signed_and_drops_unsigned(verifying):
+    wired, signer = verifying
+
+    h.handler(_event(_outbound().to_wire()), None)  # unsigned
+    assert wired.sqs.messages == []
+    assert _drop_reasons(wired) == [("chain_signature_missing", None)]
+
+    h.handler(_event(_outbound(signer).to_wire()), None)
+    assert len(wired.sqs.messages) == 1
+    stamped = EventTrigger.model_validate_json(wired.sqs.messages[0]["MessageBody"])
+    assert stamped.provenance[-1].evidence == ["token:pass", "sig:pass"]
+
+
+def test_a_forged_copy_does_not_shadow_the_genuine_message(verifying):
+    """A failed verification must not claim the dedupe key: the forged copy
+    arrives first, and the genuine one with the same event id still lands."""
+    wired, signer = verifying
+    genuine = _outbound(signer)
+    forged = json.loads(genuine.to_wire())
+    forged["payload"] = {"msg": "something else"}
+
+    h.handler(_event(json.dumps(forged)), None)
+    assert wired.sqs.messages == [] and wired.dynamo.items == {}
+    assert _drop_reasons(wired) == [("chain_signature_invalid", None)]
+
+    h.handler(_event(genuine.to_wire()), None)
+    assert len(wired.sqs.messages) == 1
+
+
+def test_the_forwarded_body_is_the_wire_form(wired):
+    h.handler(_event(_outbound(payload={"note": "café \uffff"}).to_wire()), None)
+    body = wired.sqs.messages[0]["MessageBody"]
+    assert body.isascii()
+    assert EventTrigger.model_validate_json(body).to_wire(max_bytes=MAX_FORWARD_BYTES) == body
+
+
+def _padded_to(size: int) -> EventTrigger:
+    # The evidence string lands on the sender claim and on the hop: two bytes a character.
+    base = len(_outbound(evidence=[""]).to_wire())
+    odd = (size - base) % 2
+    envelope = _outbound(evidence=["x" * ((size - base) // 2)], event_id="evt-1" + "y" * odd)
+    assert len(envelope.to_wire(max_bytes=None)) == size
+    return envelope
+
+
+def test_an_envelope_at_the_inbound_ceiling_is_forwarded_and_one_past_it_is_dropped(wired):
+    """The receiver's stamp makes an accepted envelope larger. The forward has
+    its own, higher ceiling so that what gate 3 accepts always goes through."""
+    h.handler(_event(_padded_to(MAX_ENVELOPE_BYTES).to_wire()), None)
+    assert len(wired.sqs.messages) == 1
+    forwarded = len(wired.sqs.messages[0]["MessageBody"])
+    assert MAX_ENVELOPE_BYTES < forwarded <= MAX_FORWARD_BYTES
+
+    wired.sqs.messages.clear()
+    wired.dynamo.items.clear()
+    # A sender cannot stamp one this large, so it is built past stamp_outbound.
+    over = _padded_to(MAX_ENVELOPE_BYTES).model_copy(update={"event_id": "evt-2z"})
+    assert len(over.to_wire(max_bytes=None)) == MAX_ENVELOPE_BYTES + 1
+    h.handler(_event(over.to_wire(max_bytes=None)), None)
+    assert wired.sqs.messages == [] and wired.dynamo.items == {}
+    assert _drop_reasons(wired)[-1] == ("malformed", "not_forwardable")

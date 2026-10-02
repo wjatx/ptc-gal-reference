@@ -101,3 +101,21 @@ def test_rejects_malformed_envelope(fake_urlopen):
     with pytest.raises(Exception):
         PeerConnector().execute("peer", "publish", {"envelope": {"bogus": 1}}, _CREDENTIAL)
     assert fake_urlopen.requests == []
+
+
+def test_the_posted_body_is_the_envelope_wire_form(fake_urlopen):
+    """The connector sends the same form the receiver's gate checks: ASCII, and
+    equal to `to_wire()`. A second serializer here could send what the airlock
+    then refuses, or rewrite a value the first one would have refused."""
+    env = _stamped_envelope().model_copy(update={"payload": {"note": "café \uffff"}})
+    PeerConnector().execute("peer", "publish", {"envelope": env.model_dump()}, _CREDENTIAL)
+    (request,) = fake_urlopen.requests
+    assert request.data.isascii()
+    assert request.data.decode("ascii") == env.to_wire()
+
+
+def test_an_envelope_the_wire_cannot_carry_is_not_posted(fake_urlopen):
+    env = _stamped_envelope().model_copy(update={"payload": {"v": float("nan")}})
+    with pytest.raises(ValueError):
+        PeerConnector().execute("peer", "publish", {"envelope": env.model_dump()}, _CREDENTIAL)
+    assert fake_urlopen.requests == []

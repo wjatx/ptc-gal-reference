@@ -133,6 +133,7 @@ reasons.
 | 1 | `verify_token` | drop: `authenticity_failed` | unauthenticated bytes never reach a parser |
 | 2 | `extract_identity` | drop: `malformed` | the identity keys every later gate |
 | 3 | **schema check** (`normalize`), then discard any wire `sender_class` and refuse an envelope that is not forwardable (`EventTrigger.to_wire`: within the size ceiling and reading back unchanged from the wire form the worker parses) | drop: `malformed` (`detail` `not_forwardable` for the last) | nothing downstream handles untyped bytes, reads a class the sender asserted, or claims a dedupe key for a message it cannot forward |
+| 3.5 | chain verification (`channels/SIGNING.md`), when the airlock is configured with verification keys; not run for an adapter that builds the envelope itself (`originates_envelope`, the owner adapter), which has no sending broker and no signature | drop: `chain_signature_missing` / `chain_signature_invalid` / `chain_signer_unknown` | a forged chain is refused before any budget is spent, and before dedupe, so it cannot shadow the genuine message |
 | 4 | expiry check (`is_expired`, caller-supplied time) | drop: `expired` | expired replays must not spend any budget |
 | 5 | **trust-map** (`resolve`; principal match) | drop: `unmapped` / `principal_mismatch` | unmapped senders get no further processing at all |
 | 6 | dedupe on `(sender.channel_identity, event_id)` | silent no-op | after trust-map so only mapped senders can write the dedupe store; before the screen so replays cannot drain the screening budget |

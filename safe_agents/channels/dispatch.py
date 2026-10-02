@@ -145,7 +145,7 @@ def dispatch(
     # nothing on the wire can select this path.
     chain_verified = False
     signer_key_id: str | None = None
-    if verify_chain is not None and not getattr(adapter, "originates_envelope", False):
+    if verify_chain is not None and getattr(adapter, "originates_envelope", False) is not True:
         result = verify_chain(envelope)
         if not result.ok:
             drops.append(

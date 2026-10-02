@@ -43,6 +43,7 @@ from safe_agents.channels.manifest import (
     load_channels_manifest,
 )
 from safe_agents.channels.keys import resolve_verification_keys
+from safe_agents.channels.schemas.event_trigger import MAX_FORWARD_BYTES
 from safe_agents.channels.signing import make_gate
 from safe_agents.channels.stores import DynamoDbDedupeStore, S3DropSink, S3VerdictSink
 from safe_agents.channels.trust_map import digest_identity, make_drop_record
@@ -247,7 +248,7 @@ def _handle(event: dict) -> dict:
 
     if accepted is not None:
         state.sqs.send_message(
-            QueueUrl=state.queue_url, MessageBody=accepted.to_wire(max_bytes=None)
+            QueueUrl=state.queue_url, MessageBody=accepted.to_wire(max_bytes=MAX_FORWARD_BYTES)
         )
         logger.info(
             json.dumps(

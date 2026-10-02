@@ -145,8 +145,16 @@ def stamp_outbound(
         ts=ts,
         expiry=expiry,
     )
-    if signer is None:
-        return envelope
+    if signer is not None:
+        envelope = _signed(envelope, signer)
+    # Whatever leaves here goes straight to a transport. Refuse now, loudly, an
+    # envelope the receiver would drop as not forwardable: checked on the FINAL
+    # envelope, since the signature adds to its size.
+    envelope.to_wire()
+    return envelope
+
+
+def _signed(envelope: EventTrigger, signer: ChainSigner) -> EventTrigger:
     # Per-envelope signing: this zone signs the FULL chain as it leaves — the
     # preserved upstream hops included — together with the finished envelope it
     # sits on. The signer is handed the envelope itself, so what is signed is what

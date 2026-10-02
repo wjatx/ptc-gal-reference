@@ -65,7 +65,7 @@ class PeerConnector:
         # transports it. Re-validate parse/shape so a malformed body never crosses
         # the wire — but never touch provenance (PUBLISH.md P3: broker-stamped).
         envelope = EventTrigger.model_validate((args or {}).get("envelope"))
-        body = envelope.model_dump_json().encode("utf-8")
+        body = envelope.to_wire().encode("ascii")
 
         request = urllib.request.Request(
             url,

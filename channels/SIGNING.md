@@ -99,7 +99,9 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   of values beside it, so what is signed and what is sent cannot differ. Signing refuses an envelope
   that cannot make the trip in wire form (`EventTrigger.to_wire`): a NaN or Infinity, a non-string
   key, a lone surrogate, nesting past what the receiving parser accepts, or a size past the envelope
-  ceiling. Serializing one of those changes it or fails, after the signature exists.
+  ceiling. Serializing one of those changes it or fails, after the signature exists. `stamp_outbound`
+  makes the same check again on the finished envelope, signature included, and the peer connector
+  posts that same wire form, so a sender never emits an envelope its receiver's gate 3 would refuse.
   **Why the predicate type is v3 (2026-10-02).** The v1 statement had two faults with one cause, an
   enumerated list of what to sign. It bound the declared digest *in place of* the inline payload
   whenever a `payload_ref` was present and did not bind the reference, so a signed inline envelope
@@ -129,10 +131,11 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   signatures (`SIGNATURE_MISSING`), an unknown signer (`SIGNER_UNKNOWN`), and, as
   `SIGNATURE_INVALID`, a `covers` that is not the full chain, a signature whose `zone` is not the top
   hop's, a key outside its scope (S8), or a bad signature. Every present signature must pass every
-  check: one good signature does not excuse another that fails. `sig` is strict base64 of exactly
-  64 bytes, so a signature has one spelling and cannot carry padding, and an envelope carries at most
-  `MAX_CHAIN_SIGNATURES`, so one captured signature cannot be repeated to make a receiver verify it
-  thousands of times ahead of the budget gates. A failure drops and quarantines, mirroring the grant-HMAC loud
+  check: one good signature does not excuse another that fails. `payload_type` must be the one DSSE
+  type. `sig` is the canonical base64 encoding of exactly 64 bytes, so a signature has one spelling
+  and cannot carry padding, and an envelope carries at most `MAX_CHAIN_SIGNATURES` (8), so one
+  captured signature cannot be repeated to make a receiver verify it thousands of times ahead of the
+  budget gates. A failure drops and quarantines, mirroring the grant-HMAC loud
   quarantine; it authenticates lineage but does **not** clean taint — the receiver still
   applies its own trust map and re-derives taint from the chain (`broker/TAINT.md`,
   `channels/TRUST-MAPPING.md`).
@@ -158,7 +161,9 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   `make_gate(None)` returns `None`), the airlock skips the verify gate (Gate 3.5) and unsigned peers
   pass — today's trust-by-transport behavior. Enabling verification is a deploy-config knob, exactly
   as every non-floor bound is (`docs/friction-doctrine.md`). A set-but-unfetchable or malformed ARN
-  fails **closed** loudly (`SigningConfigError`) rather than silently degrading to no verification.
+  fails **closed** (`SigningConfigError`) rather than silently degrading to no verification. In the
+  reference airlock that means every request is answered 200 and nothing is accepted, with one
+  `handler_error` log line per request and no drop record, until the secret is fixed.
   **Verification applies to envelopes a sending broker produced.** An adapter that builds the
   envelope itself from a raw message (`InboundAdapter.originates_envelope`, the owner adapter) has
   no sending broker and no chain signature, so gate 3.5 does not run for it and its hop records no
@@ -204,12 +209,12 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 | S1 (shape) | `test_valid_signed_chain_verifies` · `test_tampered_payload_fails_closed` · `test_payload_swap_with_pinned_digest_fails_closed` · `test_replay_with_fresh_event_id_or_extended_expiry_fails_closed` |
 | S1b (`sender.channel_identity` bound — campaign-watchdog residual closure) | `test_mutated_sender_after_signing_fails_verify_chain` · `test_mutated_sender_replay_fails_verification_no_second_attributed_record` · `test_sign_verify_round_trip_with_non_canonical_sender_spelling` · `test_relay_resign_binds_the_relays_own_sender_not_the_inbounds` |
 | S1c (inline payload always bound; raw-original reference and its presence bound) | `test_payload_swap_behind_an_added_payload_ref_fails_closed` · `test_inline_payload_and_raw_original_reference_are_bound` · `test_forged_payload_ref_envelope_drops_at_the_webhook_gate` · `test_nested_payload_content_is_bound` · `test_statement_subjects` · `test_statement_and_payload_hash_are_canonical_json` · `test_statement_refuses_a_raw_original_it_cannot_bind` |
-| S1d (whole envelope signed by default) | `test_every_envelope_field_is_signed_or_named_as_unsigned` · `test_the_mutation_table_covers_every_signed_field` · `test_no_signed_field_can_change_after_signing` · `test_the_receiver_owned_class_is_outside_the_signature` · `test_bound_values_are_bound_exactly` · `test_signing_refuses_a_payload_the_wire_cannot_carry` · `test_wire_form_is_ascii_and_reads_back_equal` |
+| S1d (whole envelope signed by default) | `test_every_envelope_field_is_signed_or_named_as_unsigned` · `test_the_mutation_table_covers_every_signed_field` · `test_no_signed_field_can_change_after_signing` · `test_the_receiver_owned_class_is_outside_the_signature` · `test_bound_values_are_bound_exactly` · `test_signing_refuses_a_payload_the_wire_cannot_carry` · `test_wire_form_is_ascii_and_reads_back_equal` · `test_the_size_ceiling_is_inclusive_and_exact` · `test_a_sender_never_returns_an_envelope_its_signature_pushed_over_the_ceiling` · `test_the_signer_refuses_an_envelope_past_the_ceiling_on_its_own` |
 | S2 (per-envelope signing, non-malleable attribution, full-chain cover only) | `test_relay_signs_full_chain_over_preserved_hops` · `test_tampered_hop_fails_closed` · `test_signature_attribution_is_not_malleable` · `test_the_signer_named_in_a_signature_is_bound` · `test_a_signature_that_does_not_cover_the_whole_chain_is_invalid` · `test_a_chain_cannot_be_cut_back_to_an_earlier_hop` · `test_no_field_of_an_upstream_hop_can_change_after_signing` · `test_the_order_of_the_hops_is_signed` |
 | S3 (broker-keyed, agent never signs) | `test_broker_signs_agent_has_no_key` · `test_signing_key_resolved_at_cold_start_from_secret` |
-| S4 (verify & quarantine, fail-closed) | `test_tampered_hop_fails_closed` · `test_tampered_payload_fails_closed` · `test_unknown_signer_quarantines` · `test_unsigned_chain_missing` · `test_covers_out_of_range_invalid` · `test_a_signature_has_one_spelling_and_a_bounded_count` · `test_verification_does_not_accept_a_padded_signature` · `test_forged_chain_drops_before_trust_map` |
-| S8 (a key verifies only within its enrolled zone and sender identities) | `test_an_enrolled_key_cannot_sign_for_another_zone` · `test_an_enrolled_key_cannot_sign_for_another_sender` · `test_a_signature_must_name_the_zone_of_the_hop_it_adds` · `test_scope_is_checked_on_every_signature_however_many_ride` · `test_identity_scope_is_checked_however_many_signatures_ride` · `test_each_peer_still_verifies_within_its_own_scope` · `test_casefold_is_the_identity_rule_on_both_sides` · `test_a_verification_key_without_a_full_scope_is_refused` · `test_a_key_id_listed_twice_is_refused` · `test_a_bad_public_key_names_the_key_and_nothing_else` · `test_an_empty_key_map_is_verification_on_with_nobody_enrolled` · `test_a_secret_that_is_not_a_map_fails_closed` · `test_verification_keys_resolve_and_fail_closed` |
-| S5 (ships OFF; locally built envelopes are not chain-verified) | `test_verification_ships_off_unsigned_passes` · `test_owner_adapter.py::test_owner_command_is_delivered_with_chain_verification_on` |
+| S4 (verify & quarantine, fail-closed) | `test_tampered_hop_fails_closed` · `test_tampered_payload_fails_closed` · `test_unknown_signer_quarantines` · `test_unsigned_chain_missing` · `test_covers_out_of_range_invalid` · `test_a_signature_has_one_spelling_and_a_bounded_count` · `test_a_signature_has_exactly_one_base64_spelling` · `test_verification_does_not_accept_a_padded_signature` · `test_every_signature_must_pass_every_check` · `test_a_co_signature_from_another_zone_is_refused_as_not_the_top_hop` · `test_the_result_names_the_first_signer_when_two_keys_sign` · `test_known_answer_for_the_pae_the_statement_and_the_signature` · `test_later_drops_cite_the_verification_that_passed` · `test_forged_chain_drops_before_trust_map` · `test_airlock_handler.py::test_handler_with_verification_on_accepts_signed_and_drops_unsigned` · `test_airlock_handler.py::test_a_forged_copy_does_not_shadow_the_genuine_message` |
+| S8 (a key verifies only within its enrolled zone and sender identities) | `test_an_enrolled_key_cannot_sign_for_another_zone` · `test_an_enrolled_key_cannot_sign_for_another_sender` · `test_a_signature_must_name_the_zone_of_the_hop_it_adds` · `test_scope_is_checked_on_every_signature_however_many_ride` · `test_identity_scope_is_checked_however_many_signatures_ride` · `test_each_peer_still_verifies_within_its_own_scope` · `test_casefold_is_the_identity_rule_on_both_sides` · `test_a_verification_key_without_a_full_scope_is_refused` · `test_a_key_id_listed_twice_is_refused` · `test_a_bad_public_key_names_the_key_and_nothing_else` · `test_an_empty_key_map_is_verification_on_with_nobody_enrolled` · `test_a_secret_that_is_not_a_map_fails_closed` · `test_key_scope_values_that_could_never_match_are_refused` · `test_a_field_listed_twice_inside_one_key_entry_is_refused` · `test_key_ids_are_matched_exactly` · `test_a_malformed_secret_does_not_ride_out_on_the_error` · `test_a_key_out_of_scope_is_named_only_after_its_signature_verified` · `test_the_identity_rule_is_the_same_in_every_module` · `test_verification_keys_resolve_and_fail_closed` |
+| S5 (ships OFF; locally built envelopes are not chain-verified) | `test_verification_ships_off_unsigned_passes` · `test_owner_adapter.py::test_owner_command_is_delivered_with_chain_verification_on` · `test_the_origin_flag_must_be_exactly_true` |
 | S4/S5 (gate placement + evidence) | `test_verify_gate_runs_after_normalize_before_expiry` · `test_sig_pass_evidence_recorded` |
 | S6 (non-repudiation ≠ correctness) | the absence of any propagation-correctness claim is the contract text itself (the banked §8 problem) |
 | S7 (tiering) | tiering is doctrine (`docs/contract-vs-reference.md`), asserted by the suite existing as the contract's teeth, not a single test |

@@ -130,8 +130,11 @@ def _peer_key(key_id: str, entry: object) -> PeerKey:
             f"verification key {key_id!r} must be an object of the form {_PEER_KEY_SHAPE}"
         )
     zone, identities = entry["zone"], entry["sender_identities"]
-    if not isinstance(zone, str) or not zone.strip():
-        raise SigningConfigError(f"verification key {key_id!r}: zone must be a non-empty string")
+    if not isinstance(zone, str) or not zone or zone != zone.strip():
+        raise SigningConfigError(
+            f"verification key {key_id!r}: zone must be a non-empty string with no "
+            "surrounding whitespace (zones are compared exactly)"
+        )
     if (
         not isinstance(identities, list)
         or not identities
@@ -188,7 +191,9 @@ def resolve_verification_keys() -> PeerKeyResolver | None:
     except SigningConfigError:
         raise
     except Exception as exc:
+        # `from None`: a JSON decode error carries the whole document it was
+        # parsing, and that document is the secret.
         raise SigningConfigError(
             f"{VERIFY_KEYS_SECRET_ARN_ENV} is set but the verification keys could not "
             f"be resolved ({type(exc).__name__})"
-        ) from exc
+        ) from None

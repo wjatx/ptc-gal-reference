@@ -139,8 +139,8 @@ class ChainVerifyResult:
 
     ``signer_key_id``/``signer_zone`` are evidence-of-check (per the campaign watchdog and
     the ``sig:pass`` provenance-hop precedent in ``channels/SIGNING.md``): on
-    success they name the signer of the FULL-COVER signature — the sending
-    broker's commitment to the chain as it left its zone — so a downstream
+    success they name the signer of the first signature — the sending
+    broker's commitment to the envelope as it left its zone — so a downstream
     watchdog can attribute the event at the authentication strength the
     airlock actually verified. They stay None on any failure; a gate that
     didn't verify must never name a signer it didn't check.
@@ -419,8 +419,9 @@ def verify_chain(envelope: EventTrigger, key_resolver: PeerKeyResolver) -> Chain
 
       * no signatures at all → ``SIGNATURE_MISSING``;
       * a signer whose ``key_id`` the resolver doesn't know → ``SIGNER_UNKNOWN``;
-      * a ``covers`` that is not the full chain, a signature whose declared
-        ``zone`` isn't the top hop, or a bad signature → ``SIGNATURE_INVALID``;
+      * a ``covers`` that is not the full chain, a ``payload_type`` other than
+        the one DSSE type, a signature whose declared ``zone`` isn't the top
+        hop, or a bad signature → ``SIGNATURE_INVALID``;
       * a key signing for a zone other than its own, or from a key not scoped
         to the envelope's ``sender.channel_identity`` → ``SIGNATURE_INVALID``,
         with a ``detail`` naming which.
@@ -441,7 +442,7 @@ def verify_chain(envelope: EventTrigger, key_resolver: PeerKeyResolver) -> Chain
     n = len(envelope.provenance)
     sender_identity = canonical_identity(envelope.sender.channel_identity)
     for signature in signatures:
-        if signature.covers != n:
+        if signature.covers != n or signature.payload_type != DSSE_PAYLOAD_TYPE:
             return ChainVerifyResult(ok=False, reason=SIGNATURE_INVALID)
         if envelope.provenance[n - 1].zone != signature.zone:
             return ChainVerifyResult(ok=False, reason=SIGNATURE_INVALID)

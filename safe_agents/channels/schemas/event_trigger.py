@@ -18,10 +18,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # §"payload / payload_ref / payload_digest"). Consumers may bound lower.
 MAX_PAYLOAD_BYTES = 65536
 
-# Ceiling on the whole envelope in wire form (`EventTrigger.to_wire`). Well under
-# the smallest queue message limit a reference transport has, so an envelope the
-# airlock accepts can always be forwarded with the receiver's hop added.
-MAX_ENVELOPE_BYTES = 262144
+# Ceilings on the whole envelope in wire form (`EventTrigger.to_wire`). A sender
+# may send, and an airlock accepts, up to MAX_ENVELOPE_BYTES. The airlock then adds
+# its own hop and the sender class and forwards up to MAX_FORWARD_BYTES, which is
+# the smallest message limit of any queue a reference transport uses (256 KiB).
+# The gap between the two is the room the receiver's stamp may take, so an
+# envelope accepted at the first ceiling always fits under the second.
+MAX_ENVELOPE_BYTES = 196608
+MAX_FORWARD_BYTES = 262144
 
 # An envelope is signed once, by the broker that sends it. The cap leaves room
 # for co-signers and stops one captured signature being repeated to make a
@@ -111,9 +115,9 @@ class ChainSignature(BaseModel):
     Turns provenance from *asserted* into *authenticated*: a receiver can verify
     which broker committed to the chain-as-it-left-that-zone instead of trusting
     an unauthenticated chain (channels/SIGNING.md). Signing is per envelope: the
-    sending broker signs the full chain as it leaves its zone, so
-    `provenance[:covers]` is the prefix this signature commits to and a verifier
-    requires one signature whose `covers` is the whole chain.
+    sending broker signs the full chain as it leaves its zone, so `covers` is
+    the chain length and a verifier refuses any signature whose `covers` is not
+    the whole chain.
 
     The signature is over a DSSE pre-authentication encoding of an in-toto-style
     statement (`safe_agents.channels.signing`); it is never authored by the
@@ -140,13 +144,18 @@ class ChainSignature(BaseModel):
     def sig_is_strict_base64_of_a_signature(cls, v: str) -> str:
         """Exactly one spelling per signature. A lenient decoder discards
         characters outside the alphabet, which leaves `sig` free to carry
-        arbitrary padding on an envelope that still verifies."""
+        arbitrary padding on an envelope that still verifies, and even a strict
+        one accepts sixteen strings for the same 64 bytes, because the last
+        character has four bits that encode nothing. Only the canonical
+        encoding of the decoded bytes is accepted."""
         try:
             raw = base64.b64decode(v, validate=True)
         except (binascii.Error, ValueError) as exc:
             raise ValueError("sig must be strict base64") from exc
         if len(raw) != _SIGNATURE_BYTES:
             raise ValueError(f"sig must decode to {_SIGNATURE_BYTES} bytes, got {len(raw)}")
+        if base64.b64encode(raw).decode("ascii") != v:
+            raise ValueError("sig must be the canonical base64 encoding of the signature")
         return v
 
 

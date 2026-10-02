@@ -98,6 +98,11 @@ Per-field notes:
   envelope except `sender_class` and the signatures themselves; empty on an
   unsigned chain. Receiver verification is a knob shipping OFF, and it authenticates *who asserted a
   hop* — it never replaces the derived taint, which is still recomputed from the chain regardless.
+- **wire form and size** — `EventTrigger.to_wire` is the one form an envelope takes between zones:
+  ASCII JSON that reads back to an equal envelope. A sender may send, and an airlock accepts, at most
+  `MAX_ENVELOPE_BYTES` (196608); the airlock forwards its stamped envelope at up to
+  `MAX_FORWARD_BYTES` (262144). An envelope that is over the first ceiling, or that does not survive
+  its own wire form, is dropped as `malformed` before it claims a dedupe key.
 - **sender_class** — the *output* of the receiver's trust-map gate, never a sender claim.
   It is absent on the wire; the trust-map gate sets it from the receiver's own map, unconditionally
   overwriting any inbound value (enforced at the gate — `channels/TRUST-MAPPING.md`).
