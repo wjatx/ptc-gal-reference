@@ -371,6 +371,46 @@ capabilities that remain.
 | **M25 — a remote server's credential is broker-resolved per connect and delivered only as declared.** | A remote (`streamable-http`) decl's credential reaches the server ONLY through `connector_auth.header_map`, resolved broker-side through the closed CredentialProvider catalog at CONNECT time — never at boot, never by the agent, never logged. Re-resolution per connect is required, not optional: an expired token surfaces as a transport death, so the M18 reconnect is the re-auth path, and a static header set would replay a dead credential forever. `header_map` on a stdio decl refuses at load exactly as `env_map` on a remote one does — the two delivery declarations are duals and neither is silently dropped on the wrong transport. |
 | **M26 — a refused call is audited as a refusal, never as an execution failure.** | A call the host declines because two-key admission is not satisfied (declared but no ratified row, drifted, withdrawn, quarantined) is recorded with `outcome="refused"`. It is NOT `failed`: that member means the effect was attempted and broke, and collapsing the two makes a policy refusal shape-identical to a crashed child, so anything counting refusals counts none. `decision` stays as the PDP returned it — usually `allow`, which is true and worth seeing, since it says the grant and envelope permitted the call and ADMISSION is what stopped it. The mechanism is a `ConnectorRefusedError` marker the base owns, so the distinction is a connector's to signal and never the PEP's to infer from a message. A coordinate absent from `tool_ops` is denied before the PDP and is recorded as `deny`/`denied` — it must not be silent, and it especially must not be silent because the missileer archetype (§Restrict-by-construction) makes ABSENCE the recommended way to refuse a dangerous op, which made the hardened manifest the one whose refusals left no trace. |
 
+## Where the stored registry is audited
+
+M8 says an admission record is verifiable against the issuer public key, and M13 says a row's
+stored bytes are HMAC-protected. Each clause states a property of what the ceremony writes. This
+section states where something checks that property afterwards.
+
+**At connect, the broker checks M13 and the discovery hash.** It reads each row through the store,
+which verifies the row HMAC and serves a failed row quarantined, and it compares the live
+definition's hash with the admitted one. It does not read the admission ledger, so it does not
+verify an admission record's signature. A row with a valid HMAC is authoritative to the broker
+whether or not a signed record stands behind it.
+
+**On a local (sqlite) store, the audit command checks both.**
+`python -m safe_agents.broker.grants.audit_command --sqlite PATH` audits the grants and the
+admitted-tool registry from one read of the file. For the registry it verifies every admission
+record's stored bytes through `verify_admission_record`, recomputes each row and proposal HMAC,
+and checks that each row is explained by its newest record, that no row or record is orphaned, and
+that every item is stored under the coordinate its own bytes name. An item that does not parse is
+a finding. The rule list is in `safe_agents/broker/mcp/audit.py`.
+
+Two values decide which rules run, and both come from the environment. `BROKER_HMAC_KEY` enables
+the HMAC rules. The issuer's public keys enable the signature rules, given as
+`ISSUER_VERIFY_KEYS_FILE` (a file holding a JSON `{key_id: public_key_pem}` map) or as
+`ISSUER_VERIFY_KEYS_PARAM`. A rule whose key is absent is printed as skipped and is never counted
+as passed. The report gives the number of rows, admission records and proposals it examined, so a
+result over an empty file or the wrong file shows as one.
+
+**On the cloud floor, nothing audits the stored registry.** No deployed audit identity can read
+the registry table, so these rules cannot run there (#96). `--table` audits the grants table and
+reports the registry as not audited. On that floor M8 is a property the ceremony establishes and
+the conformance suite tests. No deployed check verifies it against the stored records.
+
+The local audit reads the store as it stands. It shows that the rows, the ledger and the
+proposals agree with each other and with their integrity material. It cannot see a coordinate
+removed whole, or a store rolled back to an earlier state that was itself consistent. It does not
+report a row whose tool no image declares any more, and none of its findings can be waived. On a
+single machine the same user can write the file and read the keys, so the audit is evidence about
+accidents and about edits made without the keys, and it is not a boundary
+(`docs/posture-ladder.md`).
+
 ## Tier split — what is contract, reference, and example
 
 Mirrors `channels/SIGNING.md` §S7 and `docs/contract-vs-reference.md`:

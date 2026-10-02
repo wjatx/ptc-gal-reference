@@ -353,12 +353,22 @@ def load_dataset_sqlite(db_path: str | Path) -> AuditDataset:
     parameter — an operator naming the wrong path gets an empty audit against a
     new file, and the report's examined-counts are what shows it.
     """
+    return dataset_from_items(read_items_sqlite(db_path))
+
+
+def read_items_sqlite(db_path: str | Path) -> list[dict]:
+    """Every item in a local ``broker.db``, Dynamo-shaped, in one read.
+
+    The read half of :func:`load_dataset_sqlite`, separate so that a second
+    auditor over the same file (the MCP registry's, ``mcp/audit.py``) parses the
+    SAME snapshot through the SAME reader instead of growing its own SELECT.
+    """
     conn = substrate.open_connection(db_path)
     try:
         rows = conn.execute("SELECT pk, sk, item FROM items ORDER BY pk, sk").fetchall()
     finally:
         conn.close()
-    return dataset_from_items({"pk": pk, "sk": sk, **json.loads(item)} for pk, sk, item in rows)
+    return [{"pk": pk, "sk": sk, **json.loads(item)} for pk, sk, item in rows]
 
 
 def dataset_from_items(items: Iterable[dict]) -> AuditDataset:

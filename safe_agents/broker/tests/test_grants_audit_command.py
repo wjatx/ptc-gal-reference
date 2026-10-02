@@ -49,7 +49,9 @@ def _no_ambient_key_material(monkeypatch):
     """Every test names its own mode. Ambient env would let a developer's shell
     silently change which rules ran."""
     monkeypatch.delenv("BROKER_HMAC_KEY", raising=False)
-    monkeypatch.delenv("ISSUER_VERIFY_KEYS_PARAM", raising=False)
+    for role in ("ISSUER", "EVALUATOR"):
+        monkeypatch.delenv(f"{role}_VERIFY_KEYS_PARAM", raising=False)
+        monkeypatch.delenv(f"{role}_VERIFY_KEYS_FILE", raising=False)
 
 
 def _plant(db_path, items) -> None:
@@ -190,7 +192,15 @@ def test_empty_store_reports_zero_examined_rather_than_clean_silence(db_path, ca
     reason report_to_dict carries `examined` at all."""
     assert main(["--sqlite", str(db_path), "--json"]) == EXIT_CLEAN
     payload = json.loads(capsys.readouterr().out)
-    assert payload["examined"] == {"grants": 0, "records": 0, "proposals": 0, "envelopes": 0}
+    assert payload["examined"] == {
+        "grants": 0,
+        "records": 0,
+        "proposals": 0,
+        "envelopes": 0,
+        "mcp_rows": 0,
+        "mcp_records": 0,
+        "mcp_proposals": 0,
+    }
 
 
 # ---------------------------------------------------------------------------

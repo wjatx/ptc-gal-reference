@@ -100,7 +100,7 @@ The verify-key parameters must be plain `String`, not `SecureString`: neither re
 holds `kms:Decrypt` on an SSM key, so a `SecureString` is unreadable by the audit that needs it.
 Public key material in a `SecureString` buys nothing and breaks the audit.
 
-**The signing env contract is FIVE names per role, not four.** For each of `ISSUER_` /
+**The signing env contract is SIX names per role.** For each of `ISSUER_` /
 `EVALUATOR_`:
 
 | Suffix | Required? |
@@ -110,6 +110,7 @@ Public key material in a `SecureString` buys nothing and breaks the audit.
 | `_SIGNING_KEY_ID` | **required whenever a key source is set** — a signer no verifier can resolve |
 | `_SIGNING_ZONE` | **required whenever a key source is set** (or `--zone` per invocation) |
 | `_VERIFY_KEYS_PARAM` | on the auditing identity, not the signing one |
+| `_VERIFY_KEYS_FILE` | the local no-AWS arm of the same: a file holding the JSON map the parameter holds. **Exactly one** of PARAM or FILE; both set REFUSES |
 
 The zone is not decoration: it is baked into the DSSE statement as attribution
 (`record_signing.py`, `predicate.signer.zone`), so `resolve_signer_for_role` **refuses** a key
@@ -200,9 +201,17 @@ A key_id known to the wrong role fails as `RECORD_SIGNER_WRONG_ROLE`, and one kn
 `RECORD_SIGNER_ROLE_AMBIGUOUS`. Both are the split doing its job; neither is a reason to merge the
 maps.
 
-With NEITHER verify param set, `RECORD_SIGNATURE_VERIFIES` is skipped entirely and annotated
-`SIGNING_EPOCH_UNENFORCEABLE`. Read `skipped_rules`, not just `clean`: a report with no violations
-and a skipped signature rule is a different claim from one with nothing skipped.
+**On a local (sqlite) floor** there is no parameter store, so the same two maps are given as
+files: `ISSUER_VERIFY_KEYS_FILE` and `EVALUATOR_VERIFY_KEYS_FILE`, each naming a file that holds
+the JSON `{key_id: public_pem}` map. The content is public, so the file needs no owner-only mode.
+Everything above applies unchanged, including the refusal of a key_id that appears in both maps.
+`python -m safe_agents.broker.grants.audit_command --sqlite PATH` reads them, and on that arm it
+audits the MCP admitted-tool registry in the same run, verifying admission records under the
+issuer's keys (`broker/MCP-HOST.md`, "Where the stored registry is audited").
+
+With NEITHER role's verify source set, `RECORD_SIGNATURE_VERIFIES` is skipped entirely and
+annotated `SIGNING_EPOCH_UNENFORCEABLE`. Read `skipped_rules`, not just `clean`: a report with no
+violations and a skipped signature rule is a different claim from one with nothing skipped.
 
 ## Deploying the Identity stack
 

@@ -226,8 +226,8 @@ could set, and the authority split would then be a value rather than a boundary
 
 | role | signs | env |
 |---|---|---|
-| `issuer` | `promotion`, `bootstrap`, `tightening` (plus acknowledgment waivers and the MCP admission ledger) | `ISSUER_SIGNING_KEY_SECRET_ARN` / `ISSUER_SIGNING_KEY_FILE`, `ISSUER_SIGNING_KEY_ID`, `ISSUER_SIGNING_ZONE`, `ISSUER_VERIFY_KEYS_PARAM` |
-| `evaluator` | `demotion`, `lapse` — the automatic, no-model side, which only ever lowers authority | `EVALUATOR_SIGNING_KEY_SECRET_ARN` / `EVALUATOR_SIGNING_KEY_FILE`, `EVALUATOR_SIGNING_KEY_ID`, `EVALUATOR_SIGNING_ZONE`, `EVALUATOR_VERIFY_KEYS_PARAM` |
+| `issuer` | `promotion`, `bootstrap`, `tightening` (plus acknowledgment waivers and the MCP admission ledger) | `ISSUER_SIGNING_KEY_SECRET_ARN` / `ISSUER_SIGNING_KEY_FILE`, `ISSUER_SIGNING_KEY_ID`, `ISSUER_SIGNING_ZONE`, `ISSUER_VERIFY_KEYS_PARAM` / `ISSUER_VERIFY_KEYS_FILE` |
+| `evaluator` | `demotion`, `lapse` — the automatic, no-model side, which only ever lowers authority | `EVALUATOR_SIGNING_KEY_SECRET_ARN` / `EVALUATOR_SIGNING_KEY_FILE`, `EVALUATOR_SIGNING_KEY_ID`, `EVALUATOR_SIGNING_ZONE`, `EVALUATOR_VERIFY_KEYS_PARAM` / `EVALUATOR_VERIFY_KEYS_FILE` |
 
 **Verification binds record type to role**, or the second identity is decorative: an
 evaluator-signed `promotion` fails (`record_signer_wrong_role`), and so does an issuer-signed

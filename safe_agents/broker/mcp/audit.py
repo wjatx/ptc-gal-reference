@@ -1,408 +1,217 @@
-"""MCP registry integrity audit — SEED for #96, not the finished auditor.
+"""mcp.audit — read-only integrity audit of the admitted-tool registry.
 
-## What this is
+Pure rules (``mcp/audit_rules.py``) over an already-loaded dataset
+(``mcp/audit_dataset.py``), findings as the grants auditor's ``AuditViolation``,
+and a loud ``skipped_rules`` so a rule that could not run is never reported
+green. It mirrors ``grants/audit.py`` in shape and never writes.
 
-The MCP registry has **zero auditor coverage**: the 19-row grant-integrity suite
-(`grants/audit.py`) knows nothing about `TOOLDEF#` / `TOOLREC#` / `TOOLPROP#`, so
-every row and record in the registry is currently unaudited. #96 closes that.
+## Where it runs
 
-This module is the *seed*: the six rules below were written and **run live against
-the development registry on 2026-07-20** (9 records, 5 rows — all green) while
-verifying that a proposal deletion had not damaged the ledger. Preserving them here
-means #96 starts from working, floor-proven checks rather than from scratch.
+On a local (sqlite) store it runs through the one audit door an operator
+already has, ``python -m safe_agents.broker.grants.audit_command --sqlite PATH``,
+which audits the grants and this registry from one read of the file and prints
+how many items of each kind it examined (#143).
 
-It deliberately mirrors `grants/audit.py`: pure rules over a parsed dataset, findings
-as `AuditViolation`, and a loud `skipped_rules` so a rule that could not run is never
-reported green.
+On the cloud floor it does not run. No deployed audit identity can read the
+registry table, so a rule here would pass every in-memory test and be
+``AccessDenied`` on the floor; the first change there is IAM (#96). The audit
+command says so in its report when it is given a DynamoDB table.
 
-## What it is NOT
+## Modes
 
-- **Not wired into the audit CI job.** `grants/audit.py` fans out per env; this does not.
-- **Not complete.** The dead-tool / `WITHDRAWN` report (#96) is NOT implemented.
-- **Not acknowledgment-aware.** The acknowledgment (waiver) ceremony (`grants/acknowledgments.py`)
-  is not integrated, so there is no GREEN-with-annotations path yet.
-- **Not runnable on the floor by any deployed identity.** See the IAM gap below.
+Decided by what the caller can supply, never by a flag:
 
-## The IAM gap — read this before writing any more rules
+  hmac_key      present: ``MCP_ROW_HMAC_INTACT`` and ``MCP_PROPOSAL_TAMPER`` run.
+                Absent: both are named in ``skipped_rules``.
+  key_resolver  the ISSUER's verify keys. Present: the two signature rules run.
+                Absent: both are named in ``skipped_rules`` and the report
+                carries an annotation saying no signature was checked.
 
-`AuditorRole` and `WatcherRole` are scoped to `grantsTableArn` **only**
-[verified 2026-07-20: `infra/lib/identity-stack.ts:517` (auditor) and `:615` (watcher);
-`mcpRegistryTableArn` appears at `:123` broker, `:422` checker, `:491` maker — and
-nowhere else]. **Neither auditor identity holds any grant on the MCP registry table** —
-not `Scan`, not `Query`, not even `GetItem`.
+## Rules
 
-So an MCP audit rule written today passes every in-memory test and is `AccessDenied` on
-both floors. #96 must land an IAM change first. This is exactly the failure recorded as
-lessons-ledger entry 49: *a test double implements the interface, not the authority.*
+  MCP_UNPARSEABLE_ITEM              a registry item that does not parse is a
+                                    finding, and it is still judged by every
+                                    rule that needs only its bytes or its key
+  MCP_KEY_MATCHES_CONTENT           an item's key names the coordinate that its
+                                    integrity-bound bytes name
+  MCP_RECORD_SIGNATURE_VERIFIES     (verify keys) every admission record's
+                                    stored bytes verify under the issuer key,
+                                    through ``verify_admission_record``
+  MCP_RECORD_PAYLOAD_MATCHES_STORED (verify keys) the audit-index fields a
+                                    verified statement carries in the clear
+                                    agree with the stored record
+  MCP_ROW_HMAC_INTACT               (HMAC key) a row's stored bytes verify
+                                    against its item-level ``rowHash``
+  MCP_ROW_MATCHES_LAST_RECORD       a row's ``def_hash`` is the one its newest
+                                    admission record ratified
+  MCP_ORPHAN_ROW                    every row has an admission record
+  MCP_ORPHAN_RECORD                 every admission record has a row
+  MCP_PROPOSAL_TAMPER               (HMAC key) a proposal's stored bytes verify
+                                    against its ``proposalHash``
+  MCP_PROPOSAL_LIFECYCLE            a proposal's status is in the closed
+                                    vocabulary
 
-The live run that produced these rules used ambient admin credentials, which is why it
-worked and why it is not evidence that the audit can run.
+## Why the signature rule is the shared verifier over stored bytes
 
-## Scan vs. manifest enumeration — a real design fork
+This module began as a seed that rebuilt its own idea of the signed statement
+and compared it with the parsed record. That comparison stopped matching the
+day ``McpAdmissionRecord`` grew a field, so it reported every honest record as
+a mismatch, and it never checked the payload type, the predicate type, the
+subject digest, the signer binding or any signature past the first. The rule
+now calls ``verify_admission_record``, the same verification the promotion
+ledger uses, over the item's ``data`` string exactly as stored. Record growth
+cannot move it, and a byte changed in the stored record does.
 
-`ORPHAN_ROW` (a row whose tool no later image declares) is **only** detectable by
-enumerating the table itself. `diff` enumerates from the image-baked manifest and is
-therefore *structurally incapable* of seeing such a row — that is the orphan-row blind spot #96 records,
-and it was hit live while writing this.
+## What is not here
 
-That means the audit needs `dynamodb:Scan` on the registry table, which no ceremony role
-has by design and which the auditor role does not have yet. The alternative — enumerate
-from the manifest — cannot ever detect the orphan class. **This fork should be decided
-in #96 before the rules are finalized.** Granting `Scan` to `AuditorRole` (read-only,
-already its posture on the grants table) looks right, but it is an authority change and
-belongs to the issue, not to this seed.
-
-## Record+row atomicity — DECIDED and shipped (product-wrapper Phase 1, 2026-07-24)
-
-Per-coordinate record+row atomicity landed as `ToolRegistryStore.admit_tool_with_record`
-(an Update-only 2-item `TransactWriteItems` — only `dynamodb:UpdateItem` needed, so no
-IAM change; both ceremony call sites use it). NEW `ORPHAN_RECORD` findings can therefore
-no longer be produced by the ceremony. The rule STAYS: it still catches historical
-orphans (pre-atomicity artifacts) and out-of-band tamper — same reasoning as
-`LEDGER_COUNTERPART` on the grants side. #96 should treat an `ORPHAN_RECORD` finding
-dated after 2026-07-24 as tamper evidence, not ceremony fallout.
+- The cloud arm (#96), above.
+- A dead-tool report. A row whose tool no image declares any more is not
+  flagged, because this audit reads the store and has no manifest (#96).
+- Rollback. A coordinate removed whole, or a store put back to an earlier
+  state that was itself consistent, reads clean. Nothing here records a head
+  that a later read could be compared with.
+- Waivers. No rule here is in the acknowledgment ceremony's waivable
+  vocabulary (``grants/acknowledgments.py``), so every finding stays red until
+  the store is fixed.
+- Anything the broker does at connect. The broker checks the row HMAC and the
+  discovery hash; it does not verify an admission record's signature. This
+  audit is where that signature is verified.
 """
 
 from __future__ import annotations
 
-import base64
-import json
 from dataclasses import dataclass
-from typing import Iterable, Mapping
 
 from safe_agents.broker.grants.audit import AuditViolation
-from safe_agents.broker.mcp.registry import _hmac_payload
-from safe_agents.broker.schemas.mcp_registry import RegisteredTool
-
-# Rule names, in the grants-auditor idiom (see grants/audit.py rule vocabulary).
-RECORD_SIGNATURE_VERIFIES = "MCP_RECORD_SIGNATURE_VERIFIES"
-RECORD_PAYLOAD_MATCHES_STORED = "MCP_RECORD_PAYLOAD_MATCHES_STORED"
-ROW_HMAC_INTACT = "MCP_ROW_HMAC_INTACT"
-ROW_MATCHES_LAST_RECORD = "MCP_ROW_MATCHES_LAST_RECORD"
-ORPHAN_ROW = "MCP_ORPHAN_ROW"
-ORPHAN_RECORD = "MCP_ORPHAN_RECORD"
-
-ALL_RULES = (
-    RECORD_SIGNATURE_VERIFIES,
+from safe_agents.broker.mcp.audit_dataset import (
+    UNPARSEABLE_ITEM,
+    McpAuditDataset,
+    dataset_from_items,
+    load_dataset_sqlite,
+)
+from safe_agents.broker.mcp.audit_rules import (
+    ALL_RULES,
+    ANNOTATION_SIGNATURES_UNCHECKED,
+    HMAC_RULES,
+    KEY_MATCHES_CONTENT,
+    ORPHAN_RECORD,
+    ORPHAN_ROW,
+    PROPOSAL_LIFECYCLE,
+    PROPOSAL_TAMPER,
     RECORD_PAYLOAD_MATCHES_STORED,
+    RECORD_SIGNATURE_VERIFIES,
     ROW_HMAC_INTACT,
     ROW_MATCHES_LAST_RECORD,
-    ORPHAN_ROW,
-    ORPHAN_RECORD,
+    SIGNATURE_RULES,
+    check_key_matches_content,
+    check_orphans,
+    check_proposals,
+    check_record_signatures,
+    check_row_hmac,
+    check_row_matches_last_record,
 )
+from safe_agents.channels.signing import KeyResolver
 
-
-@dataclass(frozen=True)
-class AuditedRow:
-    """One parsed `TOOLDEF#<server>#<tool>` row.
-
-    raw_data / stored_hash are the integrity basis itself (the stored-bytes rule):
-    ROW_HMAC_INTACT verifies the bytes verbatim, never a re-serialization —
-    mirrors grants/audit.py's AuditedGrant.
-    """
-
-    server_id: str
-    tool_name: str
-    def_hash: str
-    status: str
-    row: RegisteredTool
-    stored_hash: str
-    raw_data: str = ""
-
-    @property
-    def coordinate(self) -> str:
-        return f"{self.server_id}/{self.tool_name}"
-
-
-@dataclass(frozen=True)
-class AuditedRecord:
-    """One parsed `TOOLREC#<server>#<tool>` admission record + its DSSE envelope."""
-
-    server_id: str
-    tool_name: str
-    ts: str
-    record: dict
-    signature: dict | None
-
-    @property
-    def coordinate(self) -> str:
-        return f"{self.server_id}/{self.tool_name}"
-
-
-@dataclass(frozen=True)
-class McpAuditDataset:
-    rows: tuple[AuditedRow, ...]
-    records: tuple[AuditedRecord, ...]
+__all__ = [
+    "ALL_RULES",
+    "ANNOTATION_SIGNATURES_UNCHECKED",
+    "HMAC_RULES",
+    "KEY_MATCHES_CONTENT",
+    "ORPHAN_RECORD",
+    "ORPHAN_ROW",
+    "PROPOSAL_LIFECYCLE",
+    "PROPOSAL_TAMPER",
+    "RECORD_PAYLOAD_MATCHES_STORED",
+    "RECORD_SIGNATURE_VERIFIES",
+    "ROW_HMAC_INTACT",
+    "ROW_MATCHES_LAST_RECORD",
+    "SIGNATURE_RULES",
+    "UNPARSEABLE_ITEM",
+    "McpAuditDataset",
+    "McpAuditReport",
+    "dataset_from_items",
+    "load_dataset_sqlite",
+    "run_audit",
+]
 
 
 @dataclass(frozen=True)
 class McpAuditReport:
+    """Outcome of one ``run_audit`` pass.
+
+    ``skipped_rules`` names every rule that could not run in this mode. The
+    counts say what was examined, so an empty ``violations`` over an empty
+    registry is distinguishable from a real pass. ``annotations`` names what a
+    reader must know to read the result correctly.
+    """
+
     violations: tuple[AuditViolation, ...]
     skipped_rules: tuple[str, ...]
     rows_examined: int
     records_examined: int
+    proposals_examined: int = 0
+    annotations: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
-# Parsing — pure, no store handles
+# The audit
 # ---------------------------------------------------------------------------
-
-
-def dataset_from_items(items: Iterable[Mapping]) -> McpAuditDataset:
-    """Parse raw registry items into the audited dataset.
-
-    Accepts whatever enumerated the table (Scan today; see the module docstring's
-    Scan-vs-manifest fork). Unparseable items are skipped here rather than raising —
-    #96 should add an UNPARSEABLE_ITEM rule mirroring the grants auditor, so a
-    corrupt item is a finding instead of a silent omission.
-    """
-    rows: list[AuditedRow] = []
-    records: list[AuditedRecord] = []
-    for item in items:
-        pk = item.get("pk", "")
-        parts = pk.split("#")
-        if len(parts) < 3:
-            continue
-        kind, server_id, tool_name = parts[0], parts[1], parts[2]
-        if kind == "TOOLDEF":
-            data = json.loads(item["data"])
-            rows.append(
-                AuditedRow(
-                    server_id=server_id,
-                    tool_name=tool_name,
-                    def_hash=data["def_hash"],
-                    status=data["status"],
-                    row=RegisteredTool.model_validate(data),
-                    stored_hash=item.get("rowHash", ""),
-                    raw_data=item["data"],
-                )
-            )
-        elif kind == "TOOLREC":
-            sig = item.get("signature")
-            records.append(
-                AuditedRecord(
-                    server_id=server_id,
-                    tool_name=tool_name,
-                    ts=item["sk"],
-                    record=json.loads(item["data"]),
-                    signature=json.loads(sig) if sig else None,
-                )
-            )
-    return McpAuditDataset(rows=tuple(rows), records=tuple(records))
-
-
-# ---------------------------------------------------------------------------
-# The rules — each pure, each independently testable
-# ---------------------------------------------------------------------------
-
-
-def _dsse_pae(payload_type: str, payload: bytes) -> bytes:
-    """DSSE Pre-Authentication Encoding (mirrors channels/signing.py)."""
-    return (
-        b"DSSEv1 "
-        + str(len(payload_type)).encode()
-        + b" "
-        + payload_type.encode()
-        + b" "
-        + str(len(payload)).encode()
-        + b" "
-        + payload
-    )
-
-
-def check_record_signatures(
-    dataset: McpAuditDataset, verify_keys: Mapping[str, str] | None
-) -> tuple[list[AuditViolation], list[str]]:
-    """RECORD_SIGNATURE_VERIFIES + RECORD_PAYLOAD_MATCHES_STORED.
-
-    The second rule is the sharp one and must never be dropped as redundant: a
-    signature that verifies over a payload DIFFERENT from the stored record bytes
-    is precisely the forgery a naive "is it signed?" check waves through. Verify
-    the signature, then verify the signed statement equals what is actually stored.
-
-    Keyless posture (no verify keys) SKIPS both rules loudly rather than passing
-    them — same discipline as the grants auditor.
-    """
-    if verify_keys is None:
-        return [], [RECORD_SIGNATURE_VERIFIES, RECORD_PAYLOAD_MATCHES_STORED]
-
-    from cryptography.exceptions import InvalidSignature
-    from cryptography.hazmat.primitives import serialization
-
-    violations: list[AuditViolation] = []
-    for rec in dataset.records:
-        if rec.signature is None:
-            violations.append(
-                AuditViolation(
-                    rule=RECORD_SIGNATURE_VERIFIES,
-                    coordinate=rec.coordinate,
-                    detail=f"record {rec.ts} is UNSIGNED; an admission mints callability",
-                )
-            )
-            continue
-        sig_block = rec.signature["signatures"][0]
-        key_id = sig_block["keyid"]
-        pem = verify_keys.get(key_id)
-        if pem is None:
-            violations.append(
-                AuditViolation(
-                    rule=RECORD_SIGNATURE_VERIFIES,
-                    coordinate=rec.coordinate,
-                    detail=f"record {rec.ts} signed by unknown key_id {key_id!r}",
-                )
-            )
-            continue
-        payload = base64.b64decode(rec.signature["payload"])
-        try:
-            serialization.load_pem_public_key(pem.encode()).verify(
-                base64.b64decode(sig_block["sig"]),
-                _dsse_pae(rec.signature["payloadType"], payload),
-            )
-        except InvalidSignature:
-            violations.append(
-                AuditViolation(
-                    rule=RECORD_SIGNATURE_VERIFIES,
-                    coordinate=rec.coordinate,
-                    detail=f"record {rec.ts} signature does NOT verify against {key_id}",
-                )
-            )
-            continue
-        signed_record = json.loads(payload)["predicate"]["record"]
-        if signed_record != rec.record:
-            violations.append(
-                AuditViolation(
-                    rule=RECORD_PAYLOAD_MATCHES_STORED,
-                    coordinate=rec.coordinate,
-                    detail=(
-                        f"record {rec.ts} has a VALID signature over DIFFERENT bytes "
-                        "than are stored — the signed statement and the stored record "
-                        "disagree"
-                    ),
-                )
-            )
-    return violations, []
-
-
-def check_row_hmac(
-    dataset: McpAuditDataset, hmac_key: bytes | None
-) -> tuple[list[AuditViolation], list[str]]:
-    """ROW_HMAC_INTACT — a row edited out-of-band is HMAC-quarantined.
-
-    The read-side twin of the store's verify-on-read quarantine: HMAC the
-    STORED BYTES verbatim against the item-level rowHash (never a
-    re-serialization, so schema evolution can never fire this rule; mirrors
-    grants/audit.py's GRANT_TAMPER). Keyless posture SKIPS loudly. Note the
-    recovery tension this surfaces and does not solve: a quarantined row is
-    never auto-re-admitted (by design), and there is currently no sanctioned
-    recovery ceremony — that wedge is an open item.
-    """
-    if hmac_key is None:
-        return [], [ROW_HMAC_INTACT]
-    violations = []
-    for row in dataset.rows:
-        if not row.raw_data or _hmac_payload(row.raw_data, hmac_key) != row.stored_hash:
-            violations.append(
-                AuditViolation(
-                    rule=ROW_HMAC_INTACT,
-                    coordinate=row.coordinate,
-                    detail="row HMAC mismatch — the row was written outside the ceremony",
-                )
-            )
-    return violations, []
-
-
-def check_row_matches_last_record(dataset: McpAuditDataset) -> list[AuditViolation]:
-    """ROW_MATCHES_LAST_RECORD — the ledger must EXPLAIN the row, not merely coexist.
-
-    A row whose `def_hash` is not the newest record's `defHash` means callability was
-    granted by something other than the ceremony. This is the rule that turns the
-    append-only ledger from a log into evidence.
-    """
-    by_coord: dict[str, list[AuditedRecord]] = {}
-    for rec in dataset.records:
-        by_coord.setdefault(rec.coordinate, []).append(rec)
-    violations = []
-    for row in dataset.rows:
-        recs = sorted(by_coord.get(row.coordinate, []), key=lambda r: r.ts)
-        if not recs:
-            continue  # ORPHAN_ROW's job, not this rule's
-        last = recs[-1]
-        if last.record.get("defHash") != row.def_hash:
-            violations.append(
-                AuditViolation(
-                    rule=ROW_MATCHES_LAST_RECORD,
-                    coordinate=row.coordinate,
-                    detail=(
-                        f"row def_hash {row.def_hash[:12]} != newest record "
-                        f"{str(last.record.get('defHash'))[:12]} at {last.ts}"
-                    ),
-                )
-            )
-    return violations
-
-
-def check_orphans(dataset: McpAuditDataset) -> list[AuditViolation]:
-    """ORPHAN_ROW + ORPHAN_RECORD — the two halves of ledger/row correspondence.
-
-    ORPHAN_RECORD: a `TOOLREC#` with no row. Since the atomic
-    `admit_tool_with_record` landed (2026-07-24) the ceremony can no longer
-    produce one — a conditional-write conflict cancels BOTH legs. The rule is
-    NOT dead code: it still catches historical (pre-atomicity) orphans and
-    out-of-band tamper (see the module docstring).
-
-    ORPHAN_ROW: a row with no record at all. Detectable ONLY by enumerating the
-    table; manifest enumeration structurally cannot see it.
-    """
-    row_coords = {r.coordinate for r in dataset.rows}
-    rec_coords = {r.coordinate for r in dataset.records}
-    violations = []
-    for coord in sorted(row_coords - rec_coords):
-        violations.append(
-            AuditViolation(
-                rule=ORPHAN_ROW,
-                coordinate=coord,
-                detail="row has NO admission record — callability with no ceremony behind it",
-            )
-        )
-    for coord in sorted(rec_coords - row_coords):
-        violations.append(
-            AuditViolation(
-                rule=ORPHAN_RECORD,
-                coordinate=coord,
-                detail="admission record with NO row — ceremony completed, row write did not",
-            )
-        )
-    return violations
 
 
 def run_audit(
     dataset: McpAuditDataset,
     *,
     hmac_key: bytes | None = None,
-    verify_keys: Mapping[str, str] | None = None,
+    key_resolver: KeyResolver | None = None,
 ) -> McpAuditReport:
-    """Run every rule. Rules that cannot run in this mode are SKIPPED loudly.
+    """Run every rule the supplied material allows; skip the rest LOUDLY.
 
-    A skipped rule is never reported green — an empty violations tuple over a
+    ``key_resolver`` is the ISSUER's verify-key resolver. The admission ledger
+    is issuer-signed, so a record signed by any other key, the evaluator's
+    included, is an unknown signer and a finding.
+
+    A skipped rule is never reported green. An empty violations tuple over a
     keyless run means "we could not check", not "it passed".
+
+    Read-side limit, the same one the grants auditor states: this judges the
+    store as it stands. It proves the rows, the ledger and the proposals are
+    consistent with each other and with their integrity material. It cannot
+    replay how the state was reached, and it does not know which tools any
+    image declares.
     """
-    violations: list[AuditViolation] = []
+    violations: list[AuditViolation] = list(dataset.parse_violations)
     skipped: list[str] = []
+    annotations: list[str] = []
 
-    sig_v, sig_s = check_record_signatures(dataset, verify_keys)
-    violations += sig_v
-    skipped += sig_s
+    violations += check_key_matches_content(dataset)
 
-    hmac_v, hmac_s = check_row_hmac(dataset, hmac_key)
-    violations += hmac_v
-    skipped += hmac_s
+    signature_violations, signature_skipped = check_record_signatures(dataset, key_resolver)
+    violations += signature_violations
+    skipped += signature_skipped
+    if signature_skipped:
+        annotations.append(
+            f"{ANNOTATION_SIGNATURES_UNCHECKED}: no issuer verify keys are configured, "
+            f"so none of the {len(dataset.records)} admission record signature(s) was "
+            "checked, and MCP_KEY_MATCHES_CONTENT compared record bytes that nothing "
+            "authenticated"
+        )
+
+    hmac_violations, hmac_skipped = check_row_hmac(dataset, hmac_key)
+    violations += hmac_violations
+    skipped += hmac_skipped
 
     violations += check_row_matches_last_record(dataset)
     violations += check_orphans(dataset)
+
+    proposal_violations, proposal_skipped = check_proposals(dataset, hmac_key)
+    violations += proposal_violations
+    skipped += proposal_skipped
 
     return McpAuditReport(
         violations=tuple(violations),
         skipped_rules=tuple(skipped),
         rows_examined=len(dataset.rows),
         records_examined=len(dataset.records),
+        proposals_examined=len(dataset.proposals),
+        annotations=tuple(annotations),
     )
