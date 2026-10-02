@@ -23,6 +23,8 @@ from safe_agents.channels.schemas import EventTrigger
 
 _TS = "2026-07-09T00:00:00+00:00"
 _EXPIRY = "2026-07-09T01:00:00+00:00"
+# The zone of the peer airlock the sending broker is configured to publish to.
+_PEER_ZONE = "example-airlock"
 
 
 def _outbound(
@@ -39,6 +41,7 @@ def _outbound(
         turn_tainted=turn_tainted,
         event_id="conf-1234",
         principal="example-agent",
+        audience=_PEER_ZONE,
         payload={"signal": "buy", "ticker": "ACME"},
         ts=_TS,
         expiry=_EXPIRY,
@@ -52,6 +55,7 @@ def _inbound_untrusted() -> EventTrigger:
     return EventTrigger(
         event_id="upstream-1",
         principal="email-agent",
+        audience="email-agent",
         sender={"channel_type": "email", "channel_identity": "example-vendor.com", "evidence": ["dkim:pass"]},
         payload={"raw": "trade confirmation"},
         provenance=[
@@ -216,3 +220,32 @@ class TestAgentAuthorsIntentNotIdentity:
         # Receiver-owned (SCHEMAS C4): the sender never asserts its own class.
         env = _outbound(turn_tainted=False)
         assert env.sender_class is None
+
+    def test_audience_is_the_brokers_to_set_and_has_no_default(self) -> None:
+        import inspect
+
+        import pytest
+
+        assert _outbound(turn_tainted=False).audience == _PEER_ZONE
+        param = inspect.signature(stamp_outbound).parameters["audience"]
+        assert param.kind is inspect.Parameter.KEYWORD_ONLY
+        assert param.default is inspect.Parameter.empty
+        with pytest.raises(TypeError, match="audience"):
+            stamp_outbound(
+                zone="email-agent",
+                agent_identity="email-agent",
+                channel_type="webhook",
+                turn_tainted=False,
+                event_id="conf-1234",
+                principal="example-agent",
+                payload={},
+                ts=_TS,
+                expiry=_EXPIRY,
+            )
+
+    def test_a_relay_addresses_its_own_peer_not_the_inbound_audience(self) -> None:
+        # The inbound envelope was addressed to this zone. What leaves is
+        # addressed to the next receiver, from the broker's own configuration.
+        inbound = _inbound_untrusted()
+        assert inbound.audience == "email-agent"
+        assert _outbound(turn_tainted=True, inbound=inbound).audience == _PEER_ZONE

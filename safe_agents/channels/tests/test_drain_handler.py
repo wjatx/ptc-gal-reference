@@ -140,6 +140,7 @@ def _envelope_body(
         {
             "event_id": event_id,
             "principal": principal,
+            "audience": "channels",
             "sender": {
                 "channel_type": "webhook",
                 "channel_identity": "peer:example",

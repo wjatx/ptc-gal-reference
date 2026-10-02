@@ -103,6 +103,7 @@ class ChannelTrustMap(BaseModel):
 DropReason = Literal[
     "authenticity_failed",
     "malformed",
+    "audience_mismatch",
     "chain_signature_missing",
     "chain_signature_invalid",
     "chain_signer_unknown",

@@ -9,6 +9,9 @@
 # This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
 
 # The receiver's provenance zone, stamped onto every accepted envelope at gate 8.
+# It is also the `audience` an envelope must name to be accepted here (gate 3). Two
+# airlocks that share a zone id accept each other's envelopes, so a real deployment
+# gives each airlock, and each environment, its own.
 zone: channels
 
 # The signed-webhook adapter: the peer proves authenticity with a shared secret token

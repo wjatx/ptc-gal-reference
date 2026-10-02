@@ -153,6 +153,7 @@ def _event_trigger(expiry: str, ts: str = "2026-07-16T00:00:00+00:00") -> EventT
     return EventTrigger(
         event_id="evt-1",
         principal="agent-1",
+        audience="channels",
         sender=SenderIdentity(channel_type="webhook", channel_identity="peer-1"),
         payload={},
         provenance=[

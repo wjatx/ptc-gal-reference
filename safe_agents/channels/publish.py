@@ -32,6 +32,7 @@ def stamp_outbound(
     turn_tainted: bool,
     event_id: str,
     principal: str,
+    audience: str,
     payload: dict,
     ts: str,
     expiry: str,
@@ -79,6 +80,13 @@ def stamp_outbound(
         ``agent_identity``) is the exact string the receiver's trust map row
         matches (e.g. ``"peer:example"``). The receiver derives
         ``sender_class="peer-agent"`` from its map — the sender never asserts it.
+    audience:
+        The zone id of the receiving airlock this envelope is addressed to. Set
+        by the broker from its own configuration of the peer it is sending to,
+        never by the agent. The receiver refuses an envelope whose ``audience``
+        is not its own zone, compared exactly, and the signature covers the
+        field, so an envelope signed for one receiver cannot be delivered to
+        another or re-addressed (channels/SIGNING.md S9).
     turn_tainted:
         The broker-held turn's taint state (``TurnContext.tainted``). The ONLY
         input to the sending-zone hop label — never a caller/agent assertion.
@@ -133,6 +141,7 @@ def stamp_outbound(
     envelope = EventTrigger(
         event_id=event_id,
         principal=principal,
+        audience=audience,
         sender=SenderIdentity(
             channel_type=channel_type,
             channel_identity=channel_identity or agent_identity,

@@ -35,7 +35,7 @@ from safe_agents.channels.publish import stamp_outbound
 
 # Reuse the live resolver from the inbound smoke (importing the module is harmless
 # — its pytestmark only skips ITS OWN tests).
-from safe_agents.channels.tests.test_airlock_live import resolve_live
+from safe_agents.channels.tests.test_airlock_live import _AIRLOCK_ZONE, resolve_live
 
 from safe_agents.connectors import PeerConnector
 
@@ -101,6 +101,7 @@ def _publish(live, *, event_id: str, turn_tainted: bool) -> dict:
         turn_tainted=turn_tainted,
         event_id=event_id,
         principal=_TARGET_PRINCIPAL,
+        audience=_AIRLOCK_ZONE,           # the live airlock's own zone, from its manifest
         payload={"signal": "live-smoke", "tainted": turn_tainted},
         ts=now.isoformat(),
         expiry=(now + timedelta(minutes=60)).isoformat(),

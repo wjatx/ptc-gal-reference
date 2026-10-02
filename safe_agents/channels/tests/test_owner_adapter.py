@@ -20,7 +20,7 @@ import yaml
 
 from safe_agents.channels.adapters import InboundAdapter
 from safe_agents.channels.dispatch import dispatch
-from safe_agents.channels.manifest import ChannelsManifest, OwnerAdapterConfig
+from safe_agents.channels.manifest import ChannelsManifest, OwnerAdapterConfig, build_airlock
 from safe_agents.channels.owner import (
     APPROVE_COMMAND,
     FLAG_COMMAND,
@@ -29,6 +29,7 @@ from safe_agents.channels.owner import (
     build as build_owner_adapter,
 )
 from safe_agents.channels.schemas import EventTrigger
+from safe_agents.channels.signing import make_gate
 from safe_agents.channels.trust_map import CLASS_HOP_LABEL, ChannelTrustMap, TrustMapEntry
 from safe_agents.channels.webhook import WebhookRequest
 
@@ -36,12 +37,19 @@ _TOKEN = "s3cr3t-owner-token"
 _TS = "2026-07-11T00:00:00+00:00"
 _EXPIRY = "2026-07-11T01:00:00+00:00"
 _NOW = datetime.fromisoformat(_TS)
+# The airlock's own zone: what the adapter is built with and what the `dispatch`
+# calls below run as.
+_ZONE = "channels"
 
 
 def _adapter(
-    *, routing: dict | None = None, config: OwnerAdapterConfig | None = None, token: str = _TOKEN
+    *,
+    routing: dict | None = None,
+    config: OwnerAdapterConfig | None = None,
+    token: str = _TOKEN,
+    zone: str = _ZONE,
 ) -> OwnerInboundAdapter:
-    return OwnerInboundAdapter(config or OwnerAdapterConfig(), token, routing or {})
+    return OwnerInboundAdapter(config or OwnerAdapterConfig(), token, routing or {}, zone)
 
 
 def _req(body: str = "", *, token: str | None = _TOKEN, header_key: str = "x-airlock-token") -> WebhookRequest:
@@ -89,7 +97,9 @@ def test_owner_adapter_satisfies_inbound_interface():
 
 
 def test_build_factory_yields_owner_adapter():
-    adapter = build_owner_adapter(OwnerAdapterConfig(), _TOKEN, {"/trader": "example-agent"})
+    adapter = build_owner_adapter(
+        OwnerAdapterConfig(), _TOKEN, {"/trader": "example-agent"}, _ZONE
+    )
     assert isinstance(adapter, OwnerInboundAdapter)
     assert adapter.channel_type == "owner"
 
@@ -262,7 +272,7 @@ _RESERVED_VERB_COMMANDS = {
 def test_reference_manifest_routes_every_reserved_verb(manifest_path, verb, command):
     manifest = ChannelsManifest.model_validate(yaml.safe_load(manifest_path.read_text(encoding="utf-8")))
     assert isinstance(manifest.adapter, OwnerAdapterConfig)
-    adapter = OwnerInboundAdapter(manifest.adapter, _TOKEN, manifest.routing)
+    adapter = OwnerInboundAdapter(manifest.adapter, _TOKEN, manifest.routing, manifest.zone)
 
     env = adapter.normalize(
         _req(body=_owner_body(command, channel_type=manifest.adapter.channel_type))
@@ -301,7 +311,7 @@ def test_owner_mapped_trusted_runs_all_gates_and_stamps():
         dedupe_store=set(),
         drops=[],
         now=_NOW,
-        zone="channels",
+        zone=_ZONE,
     )
 
     assert result is not None
@@ -343,7 +353,7 @@ def test_owner_unmapped_address_drops_principal_mismatch():
         dedupe_store=set(),
         drops=drops,
         now=_NOW,
-        zone="channels",
+        zone=_ZONE,
     )
 
     assert result is None
@@ -367,7 +377,7 @@ def test_owner_unknown_identity_drops_unmapped():
         dedupe_store=set(),
         drops=drops,
         now=_NOW,
-        zone="channels",
+        zone=_ZONE,
     )
 
     assert result is None
@@ -379,8 +389,6 @@ def test_owner_command_is_delivered_with_chain_verification_on():
     no sending broker and no chain signature. Turning verification on for the
     airlock must not drop every owner command, and must not record a signature
     check that never ran."""
-    from safe_agents.channels.signing import make_gate
-
     identity = "maintainer"
     adapter = _adapter(routing={"/trader": "example-agent"})
     assert adapter.originates_envelope is True
@@ -404,9 +412,81 @@ def test_owner_command_is_delivered_with_chain_verification_on():
         dedupe_store=set(),
         drops=drops,
         now=_NOW,
-        zone="channels",
+        zone=_ZONE,
     )
 
     assert drops == []
     assert result is not None and result.sender_class == "owner"
     assert "sig:pass" not in result.provenance[-1].evidence
+
+
+# --- audience: the adapter addresses its envelope to its own airlock ---------
+
+# Deliberately not the manifest default, so a hardcoded zone cannot pass.
+_OWN_ZONE = "owner-airlock-7"
+
+
+@pytest.mark.parametrize(
+    "verify_chain",
+    [None, make_gate(lambda key_id: None)],
+    ids=["verification off", "verification on"],
+)
+def test_owner_envelope_is_addressed_to_the_airlock_that_built_it(verify_chain):
+    """The adapter builds the envelope, so it is the one that names the
+    receiver: the zone of the airlock it runs in, from the manifest."""
+    manifest = ChannelsManifest(
+        zone=_OWN_ZONE,
+        adapter=OwnerAdapterConfig(),
+        routing={"/trader": "example-agent"},
+        trust_map=[
+            TrustMapEntry(
+                channel_type="owner",
+                channel_identity="maintainer",
+                principal="example-agent",
+                sender_class="owner",
+            )
+        ],
+    )
+    airlock = build_airlock(manifest, token=_TOKEN)
+    request = _req(body=_owner_body("/trader buy AAPL"))
+    assert airlock.adapter.normalize(request).audience == _OWN_ZONE
+    drops: list = []
+
+    result = dispatch(
+        request,
+        adapter=airlock.adapter,
+        trust_map=airlock.trust_map,
+        screen=None,
+        verify_chain=verify_chain,
+        dedupe_store=set(),
+        drops=drops,
+        now=_NOW,
+        zone=airlock.zone,
+    )
+
+    assert drops == []
+    assert result is not None and result.audience == _OWN_ZONE
+
+
+def test_nothing_in_the_request_sets_the_owner_envelopes_audience():
+    body = json.loads(_owner_body())
+    body["audience"] = "another-zone"
+    assert _adapter().normalize(_req(body=json.dumps(body))).audience == _ZONE
+
+
+def test_an_owner_adapter_built_for_another_zone_is_refused_like_any_sender():
+    """The gate has no exemption for an adapter that builds its own envelope:
+    an adapter and a dispatcher that disagree about the zone deliver nothing."""
+    drops: list = []
+    result = dispatch(
+        _req(body=_owner_body("/trader buy AAPL")),
+        adapter=_adapter(routing={"/trader": "example-agent"}, zone="another-zone"),
+        trust_map=ChannelTrustMap(entries=[]),
+        screen=None,
+        dedupe_store=set(),
+        drops=drops,
+        now=_NOW,
+        zone=_ZONE,
+    )
+    assert result is None
+    assert [d.reason for d in drops] == ["audience_mismatch"]

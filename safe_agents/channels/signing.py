@@ -209,8 +209,9 @@ def bound_envelope(envelope: EventTrigger) -> dict:
     statement and the two in ``UNSIGNED_FIELDS``. This is what makes a signature
     more than a bare chain assertion: the anti-replay identity
     (``event_id``/``principal``/``expiry``), so a valid signed envelope cannot be
-    replayed under a fresh dedupe key or an extended TTL; the whole sender claim;
-    and ``ts``, which receivers record.
+    replayed under a fresh dedupe key or an extended TTL; ``audience``, so an
+    envelope signed for one receiver cannot be re-addressed to another; the
+    whole sender claim; and ``ts``, which receivers record.
 
     ``sender.channel_identity`` is the one value bound in canonical form.
     ``EventTrigger.dedupe_key()`` is ``(sender.channel_identity, event_id)``, so

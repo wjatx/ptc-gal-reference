@@ -50,6 +50,8 @@ def _envelope(**overrides) -> EventTrigger:
     base = {
         "event_id": "evt-1",
         "principal": "test-principal",
+        # The zone almost every test here passes to `dispatch`.
+        "audience": "test-zone",
         "sender": {
             "channel_type": "stub-channel",
             "channel_identity": "stub:identity",
@@ -410,6 +412,7 @@ def test_emitted_envelope_is_stamped():
     # class (closes channels/SCHEMAS.md C4).
     envelope = _envelope(
         principal="test-principal",
+        audience="receiver-zone",
         sender={"channel_type": "stub-channel", "channel_identity": identity, "evidence": []},
         sender_class="owner",
     )
@@ -452,6 +455,7 @@ def test_dispatch_result_feeds_turn_ingestion():
     )
     untrusted_envelope = _envelope(
         principal="test-principal",
+        audience="receiver-zone",
         sender={
             "channel_type": "stub-channel",
             "channel_identity": untrusted_identity,
@@ -496,6 +500,7 @@ def test_dispatch_result_feeds_turn_ingestion():
     )
     trusted_envelope = _envelope(
         principal="test-principal",
+        audience="receiver-zone",
         sender={
             "channel_type": "stub-channel",
             "channel_identity": trusted_identity,
@@ -717,3 +722,83 @@ def test_unforwardable_envelope_drops_before_it_claims_a_dedupe_key(payload):
     assert dedupe_store == set() and screen.calls == []
     # The honest copy with the same dedupe key is still delivered.
     assert receive(_envelope(sender=sender)) is not None
+
+
+# ---------------------------------------------------------------------------
+# Audience: an envelope names the one receiver it is addressed to, and a
+# receiver refuses any other (channels/SIGNING.md S9). The last gate-3 check,
+# ahead of chain verification, so the drop is never counted against a signer.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "audience",
+    [
+        pytest.param("another-zone", id="another zone"),
+        pytest.param("TEST-ZONE", id="this zone in another case"),
+        pytest.param("test-zone ", id="this zone with a trailing space"),
+        pytest.param(" test-zone", id="this zone with a leading space"),
+        pytest.param("test-zon", id="a prefix of this zone"),
+    ],
+)
+def test_an_envelope_addressed_to_another_zone_drops_before_verification(audience):
+    identity = "chat:addressed-elsewhere"
+    sender = {"channel_type": "stub-channel", "channel_identity": identity, "evidence": []}
+    screen = _StubScreen()
+    dedupe_store: set = set()
+    drops: list = []
+    verify_calls: list[EventTrigger] = []
+
+    def spy_verify_chain(env: EventTrigger):
+        verify_calls.append(env)
+        raise AssertionError("verify_chain must not run for an envelope addressed elsewhere")
+
+    def receive(envelope: EventTrigger, verify_chain):
+        return dispatch(
+            "request",
+            adapter=StubInboundAdapter(identity=identity, envelope=envelope),
+            trust_map=_mapped(identity),
+            screen=screen,
+            verify_chain=verify_chain,
+            dedupe_store=dedupe_store,
+            drops=drops,
+            now=_NOW,
+            zone="test-zone",
+        )
+
+    assert receive(_envelope(audience=audience, sender=sender), spy_verify_chain) is None
+    assert verify_calls == [] and screen.calls == [] and dedupe_store == set()
+    assert len(drops) == 1
+    drop = drops[0]
+    assert (drop.reason, drop.detail) == ("audience_mismatch", None)
+    assert drop.identity_digest == _digest(identity)
+    # Nothing was verified, so the record names no signer and claims no check.
+    assert drop.chain_verified is False and drop.signer_key_id is None
+    # It claimed no dedupe key: the same message addressed here is delivered.
+    assert receive(_envelope(sender=sender), None) is not None
+
+
+def test_audience_is_checked_ahead_of_expiry_and_the_trust_map():
+    """Expired, unmapped and addressed elsewhere at once: the audience is what
+    the record says, so the receiver spends nothing on a message not meant for it."""
+    identity = "chat:addressed-elsewhere"
+    envelope = _envelope(
+        audience="another-zone",
+        expiry=_EXPIRED_EXPIRY,
+        sender={"channel_type": "stub-channel", "channel_identity": identity, "evidence": []},
+    )
+    drops: list = []
+
+    result = dispatch(
+        "request",
+        adapter=StubInboundAdapter(identity=identity, envelope=envelope),
+        trust_map=ChannelTrustMap(entries=[]),
+        screen=None,
+        dedupe_store=set(),
+        drops=drops,
+        now=_NOW,
+        zone="test-zone",
+    )
+
+    assert result is None
+    assert [d.reason for d in drops] == ["audience_mismatch"]

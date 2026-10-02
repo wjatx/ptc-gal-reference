@@ -124,6 +124,23 @@ def dispatch(
         )
         return None
 
+    # Gate 3 (audience) — an envelope names the one receiver it is addressed to
+    # (channels/SIGNING.md S9). Zone ids are compared exactly, the way a
+    # signature's zone is. Without this, an envelope a broker signed for another
+    # receiver verifies here whenever this airlock enrols that broker's key and
+    # serves a principal of the same name. Placed BEFORE gate 3.5 on purpose:
+    # the signer addressed this envelope elsewhere and whoever delivered it here
+    # is the party at fault, so the drop carries no verification evidence and
+    # can never be counted against the signer. It is also before dedupe, so it
+    # claims no key.
+    if envelope.audience != zone:
+        drops.append(
+            make_drop_record(
+                adapter.channel_type, identity, "audience_mismatch", now.isoformat()
+            )
+        )
+        return None
+
     # Gate 3.5 — chain-signature verification (channels/SIGNING.md). Injected
     # like the screen and ships OFF (None): with no required-signers configured
     # the airlock skips it and unsigned peers pass, today's trust-by-transport

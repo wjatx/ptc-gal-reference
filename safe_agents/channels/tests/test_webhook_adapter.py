@@ -31,6 +31,7 @@ def _body(**overrides) -> str:
     env = {
         "event_id": "evt-1",
         "principal": "example-agent",
+        "audience": "channels",
         "sender": {"channel_type": "webhook", "channel_identity": "peer:example", "evidence": []},
         "payload": {"k": "v"},
         "provenance": [

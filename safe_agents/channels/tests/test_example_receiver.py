@@ -28,6 +28,7 @@ def _envelope(
         {
             "event_id": event_id,
             "principal": "missileer-watch",
+            "audience": "channels",
             "sender": {
                 "channel_type": "webhook",
                 "channel_identity": channel_identity,

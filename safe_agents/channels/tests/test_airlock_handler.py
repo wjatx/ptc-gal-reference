@@ -22,9 +22,11 @@ from safe_agents.channels.signing import ChainSigner
 _TOKEN = "test-airlock-token"
 _TS = "2026-07-08T00:00:00+00:00"
 _FUTURE = "2099-01-01T00:00:00+00:00"
+# The airlock's own zone, as its manifest below declares it.
+_ZONE = "channels"
 
-_MANIFEST_YAML = """\
-zone: channels
+_MANIFEST_YAML = f"""\
+zone: {_ZONE}
 adapter:
   channel_type: webhook
   token_header: x-airlock-token
@@ -98,11 +100,12 @@ def wired(monkeypatch, tmp_path):
     h._STATE = None
 
 
-def _envelope_json(event_id: str = "evt-1") -> str:
+def _envelope_json(event_id: str = "evt-1", *, audience: str = _ZONE) -> str:
     return json.dumps(
         {
             "event_id": event_id,
             "principal": "example-agent",
+            "audience": audience,
             "sender": {
                 "channel_type": "webhook",
                 "channel_identity": "peer:example",
@@ -140,7 +143,7 @@ def test_valid_request_enqueues_stamped_envelope(wired):
     assert stamped.principal == "example-agent"
     assert stamped.sender_class == "peer-agent"  # set from the trust-map resolution
     assert len(stamped.provenance) == 2  # peer origin hop + the receiver's own stamp
-    assert stamped.provenance[-1].zone == "channels"
+    assert stamped.provenance[-1].zone == _ZONE
 
 
 def test_base64_body_is_decoded_and_accepted(wired):
@@ -242,7 +245,9 @@ def _drop_reasons(wired) -> list[tuple[str, str | None]]:
     return [(r["reason"], r.get("detail")) for r in records if "reason" in r]
 
 
-def _outbound(signer=None, *, payload=None, evidence=None, event_id="evt-1") -> EventTrigger:
+def _outbound(
+    signer=None, *, payload=None, evidence=None, event_id="evt-1", audience=_ZONE
+) -> EventTrigger:
     return stamp_outbound(
         zone="zone-a",
         agent_identity="example",
@@ -251,6 +256,7 @@ def _outbound(signer=None, *, payload=None, evidence=None, event_id="evt-1") -> 
         turn_tainted=False,
         event_id=event_id,
         principal="example-agent",
+        audience=audience,
         payload=payload or {"msg": "hello"},
         ts=_TS,
         expiry=_FUTURE,
@@ -302,6 +308,34 @@ def test_a_forged_copy_does_not_shadow_the_genuine_message(verifying):
     assert _drop_reasons(wired) == [("chain_signature_invalid", None)]
 
     h.handler(_event(genuine.to_wire()), None)
+    assert len(wired.sqs.messages) == 1
+
+
+def test_a_request_addressed_to_another_airlock_enqueues_nothing(wired):
+    resp = h.handler(_event(_envelope_json(audience="another-airlock")), None)
+
+    assert resp["statusCode"] == 200  # silent to the sender, like every drop
+    assert wired.sqs.messages == [] and wired.dynamo.items == {}
+    assert _drop_reasons(wired) == [("audience_mismatch", None)]
+    # It claimed no dedupe key: the same event id addressed here is delivered.
+    h.handler(_event(_envelope_json()), None)
+    assert len(wired.sqs.messages) == 1
+
+
+def test_an_envelope_signed_for_another_airlock_is_dropped_unverified(verifying):
+    """Verification ON, the signer enrolled, the signature genuine. The record
+    names no signer: the envelope was never this airlock's to verify."""
+    wired, signer = verifying
+
+    h.handler(_event(_outbound(signer, audience="another-airlock").to_wire()), None)
+
+    assert wired.sqs.messages == [] and wired.dynamo.items == {}
+    records = [json.loads(put["Body"]) for put in wired.s3.puts]
+    assert [(r["reason"], r["chain_verified"], r["signer_key_id"]) for r in records] == [
+        ("audience_mismatch", False, None)
+    ]
+    # The signer's envelope for THIS airlock, same event id, is accepted.
+    h.handler(_event(_outbound(signer).to_wire()), None)
     assert len(wired.sqs.messages) == 1
 
 

@@ -71,6 +71,9 @@ _TS = "2026-07-10T00:00:00+00:00"
 _EXPIRY = "2026-07-10T01:00:00+00:00"
 _EXPIRED = "2026-07-09T23:00:00+00:00"
 _NOW = datetime.fromisoformat(_TS)
+# The receiving airlock's zone: what every `dispatch` here runs as, and so the
+# audience an envelope addressed to it carries.
+_RECV = "recv"
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +133,7 @@ def _signed_outbound(
     turn_tainted: bool = False,
     inbound=None,
     payload: dict | None = None,
+    audience: str = _RECV,
     **raw_original,
 ):
     """A signed envelope; ``raw_original`` passes ``payload_ref``/``payload_digest`` through."""
@@ -141,6 +145,7 @@ def _signed_outbound(
         turn_tainted=turn_tainted,
         event_id="evt-1",
         principal="example-agent",
+        audience=audience,
         payload=copy.deepcopy(payload or _ORIGINAL_PAYLOAD),
         ts=_TS,
         expiry=_EXPIRY,
@@ -191,6 +196,7 @@ def test_unsigned_chain_missing(signer_and_resolver):
     unsigned = EventTrigger(
         event_id="evt-1",
         principal="example-agent",
+        audience=_RECV,
         sender=SenderIdentity(channel_type="webhook", channel_identity="peer:example"),
         payload={"x": 1},
         provenance=[ProvenanceEntry(zone="zone-a", source="peer:example", label="trusted", ts=_TS)],
@@ -249,6 +255,7 @@ def test_a_chain_cannot_be_cut_back_to_an_earlier_hop():
         turn_tainted=True,
         event_id="evt-2",
         principal="downstream",
+        audience=_RECV,
         payload={"signal": "hold"},
         ts=_TS,
         expiry=_EXPIRY,
@@ -340,6 +347,7 @@ def test_relay_signs_full_chain_over_preserved_hops():
         turn_tainted=False,
         event_id="evt-2",
         principal="downstream",
+        audience=_RECV,
         payload={"signal": "hold", "ticker": "ACME"},
         ts=_TS,
         expiry=_EXPIRY,
@@ -530,7 +538,7 @@ def _run(envelope, *, gate, trust_map=None, now=_NOW):
         dedupe_store=set(),
         drops=drops,
         now=now,
-        zone="recv",
+        zone=_RECV,
     )
     return out, drops, adapter
 
@@ -567,6 +575,7 @@ def test_verification_ships_off_unsigned_passes():
     unsigned = EventTrigger(
         event_id="evt-1",
         principal="example-agent",
+        audience=_RECV,
         sender=SenderIdentity(channel_type="webhook", channel_identity="peer:example"),
         payload={"x": 1},
         provenance=[ProvenanceEntry(zone="zone-a", source="peer:example", label="trusted", ts=_TS)],
@@ -615,6 +624,7 @@ def test_verify_chain_success_names_the_full_cover_signer_under_relay():
         turn_tainted=False,
         event_id="evt-2",
         principal="downstream",
+        audience=_RECV,
         payload={"signal": "hold", "ticker": "ACME"},
         ts=_TS,
         expiry=_EXPIRY,
@@ -662,7 +672,7 @@ def test_dispatch_names_signer_on_screen_refused_drop_and_verdict(signer_and_res
         dedupe_store=set(),
         drops=drops,
         now=_NOW,
-        zone="recv",
+        zone=_RECV,
     )
     assert out is None
     assert len(drops) == 1 and drops[0].reason == "screen_refused"
@@ -677,6 +687,7 @@ def test_dispatch_unsigned_drop_has_unverified_evidence():
     unsigned = EventTrigger(
         event_id="evt-1",
         principal="example-agent",
+        audience=_RECV,
         sender=SenderIdentity(channel_type="webhook", channel_identity="peer:example"),
         payload={"x": 1},
         provenance=[ProvenanceEntry(zone="zone-a", source="peer:example", label="trusted", ts=_TS)],
@@ -709,7 +720,7 @@ def test_dispatch_verification_off_leaves_defaults(signer_and_resolver):
         dedupe_store=set(),
         drops=drops2,
         now=_NOW,
-        zone="recv",
+        zone=_RECV,
     )
     assert len(drops2) == 1
     assert drops2[0].chain_verified is False
@@ -765,7 +776,7 @@ def test_mutated_sender_replay_fails_verification_no_second_attributed_record(si
         dedupe_store=dedupe_store,
         drops=drops,
         now=_NOW,
-        zone="recv",
+        zone=_RECV,
     )
     assert first is None
     assert len(drops) == 1 and drops[0].reason == "screen_refused"
@@ -788,7 +799,7 @@ def test_mutated_sender_replay_fails_verification_no_second_attributed_record(si
         dedupe_store=dedupe_store,
         drops=drops,
         now=_NOW,
-        zone="recv",
+        zone=_RECV,
     )
     assert second is None
     assert len(drops) == 2
@@ -826,6 +837,7 @@ def test_sign_verify_round_trip_with_non_canonical_sender_spelling(signer_and_re
         turn_tainted=False,
         event_id="evt-1",
         principal="example-agent",
+        audience=_RECV,
         payload={"signal": "buy", "ticker": "ACME"},
         ts=_TS,
         expiry=_EXPIRY,
@@ -865,6 +877,7 @@ def test_relay_resign_binds_the_relays_own_sender_not_the_inbounds():
         turn_tainted=False,
         event_id="evt-2",
         principal="downstream",
+        audience=_RECV,
         payload={"signal": "hold", "ticker": "ACME"},
         ts=_TS,
         expiry=_EXPIRY,
@@ -1016,7 +1029,7 @@ def test_forged_payload_ref_envelope_drops_at_the_webhook_gate(signer_and_resolv
             dedupe_store=set(),
             drops=drops,
             now=_NOW,
-            zone="recv",
+            zone=_RECV,
         )
         return out, [d.reason for d in drops]
 
@@ -1044,6 +1057,7 @@ def _unsigned(**overrides) -> EventTrigger:
     return EventTrigger(
         event_id="evt-1",
         principal="example-agent",
+        audience=_RECV,
         sender=SenderIdentity(channel_type="webhook", channel_identity="peer:example"),
         payload=copy.deepcopy(_ORIGINAL_PAYLOAD),
         provenance=[_HOP],
@@ -1181,6 +1195,7 @@ _SIGNED_FIELD_MUTATIONS = {
     "schema_version": {"schema_version": 2},
     "event_id": {"event_id": "evt-2"},
     "principal": {"principal": "someone-else"},
+    "audience": {"audience": "another-receiver"},
     "payload": {"payload": _SWAPPED_PAYLOAD},
     "payload_digest": {"payload_digest": _RAW_DIGEST},
     "payload_ref": {"payload_ref": _RAW_REF, "payload_digest": _RAW_DIGEST},
@@ -1268,6 +1283,7 @@ def test_an_enrolled_key_cannot_sign_for_another_sender():
         turn_tainted=False,
         event_id="evt-1",
         principal="example-agent",
+        audience=_RECV,
         payload=dict(_ORIGINAL_PAYLOAD),
         ts=_TS,
         expiry=_EXPIRY,
@@ -1294,6 +1310,7 @@ def test_each_peer_still_verifies_within_its_own_scope():
         turn_tainted=False,
         event_id="evt-2",
         principal="downstream",
+        audience=_RECV,
         payload={"signal": "hold"},
         ts=_TS,
         expiry=_EXPIRY,
@@ -1317,6 +1334,7 @@ def _relayed_two_hops():
         turn_tainted=False,
         event_id="evt-2",
         principal="downstream",
+        audience=_RECV,
         payload={"signal": "hold"},
         ts=_TS,
         expiry=_EXPIRY,
@@ -1360,6 +1378,8 @@ _FINE_GRAINED_MUTATIONS = {
     "event_id: trailing space": lambda e: {"event_id": e.event_id + " "},
     "event_id: case": lambda e: {"event_id": e.event_id.upper()},
     "principal: case": lambda e: {"principal": e.principal.upper()},
+    "audience: case": lambda e: {"audience": e.audience.upper()},
+    "audience: trailing space": lambda e: {"audience": e.audience + " "},
     "sender.evidence: reordered": lambda e: {
         "sender": e.sender.model_copy(update={"evidence": list(reversed(e.sender.evidence))})
     },
@@ -1411,6 +1431,7 @@ def test_a_signature_must_name_the_zone_of_the_hop_it_adds():
         turn_tainted=False,
         event_id="evt-1",
         principal="example-agent",
+        audience=_RECV,
         payload=dict(_ORIGINAL_PAYLOAD),
         ts=_TS,
         expiry=_EXPIRY,
@@ -1451,6 +1472,7 @@ def test_identity_scope_is_checked_however_many_signatures_ride():
         turn_tainted=False,
         event_id="evt-1",
         principal="example-agent",
+        audience=_RECV,
         payload=dict(_ORIGINAL_PAYLOAD),
         ts=_TS,
         expiry=_EXPIRY,
@@ -1476,6 +1498,7 @@ def test_the_order_of_the_hops_is_signed():
         turn_tainted=True,
         event_id="evt-2",
         principal="downstream",
+        audience=_RECV,
         payload={"signal": "hold"},
         ts=_TS,
         expiry=_EXPIRY,
@@ -1513,6 +1536,68 @@ def test_casefold_is_the_identity_rule_on_both_sides(signer_and_resolver):
     received = env.model_copy(update=_sender(channel_identity=canonical_identity("peer:Maße")))
     assert received.sender.channel_identity == "peer:masse"
     assert verify_chain(received, resolver).ok
+
+
+# ---------------------------------------------------------------------------
+# S9 — an envelope is addressed to one receiver
+# ---------------------------------------------------------------------------
+
+
+def _receive_at(zone: str, wire: str, resolver, dedupe_store: set):
+    """One airlock, `zone` its own id: the real webhook adapter, verification ON."""
+    token = "s3cr3t-token"
+    drops: list[Any] = []
+    out = dispatch(
+        WebhookRequest(headers={"x-airlock-token": token}, body=wire),
+        adapter=SignedWebhookAdapter(WebhookAdapterConfig(), token),
+        trust_map=_trust_map(),
+        screen=None,
+        verify_chain=make_gate(resolver),
+        dedupe_store=dedupe_store,
+        drops=drops,
+        now=_NOW,
+        zone=zone,
+    )
+    return out, drops
+
+
+def test_an_envelope_signed_for_one_receiver_is_refused_at_another(signer_and_resolver):
+    """Broker A signs an envelope for receiver r1. Receiver r2 enrols A's key
+    with the same scope and serves a principal of the same name, so before the
+    envelope named its receiver the same bytes verified at r2 as well, for
+    anyone holding r2's transport token. One operator's two environments are
+    the plain case."""
+    signer, resolver = signer_and_resolver  # A's key, enrolled alike at r1 and r2
+    wire = _signed_outbound(signer, audience="r1").to_wire()
+    assert verify_chain(EventTrigger.model_validate_json(wire), resolver).ok
+
+    seen_at_r2: set = set()
+    out, drops = _receive_at("r2", wire, resolver, seen_at_r2)
+    assert out is None and seen_at_r2 == set()
+    # A's signature is genuine and was never looked at: A is not named.
+    assert [(d.reason, d.chain_verified, d.signer_key_id) for d in drops] == [
+        ("audience_mismatch", False, None)
+    ]
+
+    # Re-addressing the captured envelope to r2 does not help: the field is signed.
+    readdressed = json.dumps({**json.loads(wire), "audience": "r2"})
+    out, drops = _receive_at("r2", readdressed, resolver, seen_at_r2)
+    assert out is None and seen_at_r2 == set()
+    assert [(d.reason, d.chain_verified) for d in drops] == [(SIGNATURE_INVALID, False)]
+
+    out, drops = _receive_at("r1", wire, resolver, set())
+    assert out is not None and drops == []
+    assert out.audience == "r1"
+    assert out.provenance[-1].evidence == ["token:pass", "sig:pass"]
+
+
+def test_audience_is_checked_with_verification_off():
+    """The audience check is not part of signature verification. An unsigned
+    envelope for another receiver is refused by an airlock that verifies nothing."""
+    unsigned = _unsigned(audience="r1")
+    out, drops, _ = _run(unsigned, gate=None)  # this airlock is `_RECV`
+    assert out is None
+    assert [(d.reason, d.chain_verified) for d in drops] == [("audience_mismatch", False)]
 
 
 # ---------------------------------------------------------------------------
@@ -1636,6 +1721,7 @@ def _outbound(signer, evidence):
         turn_tainted=False,
         event_id="evt-1",
         principal="example-agent",
+        audience=_RECV,
         payload=dict(_ORIGINAL_PAYLOAD),
         ts=_TS,
         expiry=_EXPIRY,
@@ -1800,11 +1886,11 @@ def test_known_answer_for_the_pae_the_statement_and_the_signature():
     )
     assert (
         hashlib.sha256(statement).hexdigest()
-        == "38114cd93dc0499e5b17b51c77a7ba2f856c818ae39ea090db17c06e73bdf10f"
+        == "747cfa2c04c70b59ac07f4afca53d906ba9b8bfe54928e0fcb4582245e298929"
     )
     assert env.chain_signatures[0].sig == (
-        "jIte2VfYfuOuj7kF6R1MuDcxI5QmhSjmANgLtwEOU7CFpP0aye6cSTGJo9h3syI6"
-        "WBdUSi961HAv83wW1WR4Dw=="
+        "uT1AKKfy6q/YRF3RAU4i7979O09v0nUF0ax9pHwxCV6MHl4e8vIJnpfYrEgSwL9U"
+        "7wvkiU+s47CsRsZGMOmeDw=="
     )
     assert env.chain_signatures[0].payload_type == DSSE_PAYLOAD_TYPE
 
@@ -1828,7 +1914,7 @@ def test_the_origin_flag_must_be_exactly_true(signer_and_resolver):
         dedupe_store=set(),
         drops=drops,
         now=_NOW,
-        zone="recv",
+        zone=_RECV,
     )
     assert out is None and [d.reason for d in drops] == [SIGNATURE_MISSING]
 

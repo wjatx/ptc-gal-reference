@@ -8,8 +8,8 @@ WHAT IT IS, precisely, because the audience this epic is aimed at will ask. It i
 **bare receiving endpoint**: it checks the shared transport token and validates that
 the body parses as a well-formed `EventTrigger`, then prints the provenance chain and
 returns 200. It is NOT the inbound airlock — no trust map, no sender-class mapping, no
-dedupe, no screening. Those are `examples/webhook_peer` and the channels epic owns
-them; none of them is what demonstration 2 is about.
+audience check, no dedupe, no screening. Those are `examples/webhook_peer` and the
+channels epic owns them; none of them is what demonstration 2 is about.
 
 Demonstration 2's claim is about the BROKER'S VERDICT on `peer.publish` — allow on a
 clean turn, `require_approval` on a tainted one. The receiver exists so the allowed

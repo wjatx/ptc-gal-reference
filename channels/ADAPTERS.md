@@ -23,7 +23,8 @@ instance values never enter contract surface).
 Which inbound adapter the airlock runs is consumer config, not a base constant. A `ChannelsManifest`
 names `adapter.kind`; `build_airlock` looks that kind up in **`ADAPTER_REGISTRY`** (the adapter
 mirror of `SCREEN_REGISTRY`) and builds the concrete adapter from its typed config, the injected
-token, and the manifest `routing` table. Two invariants hold this seam:
+token, the manifest `routing` table, and the manifest `zone`. Every factory takes all four; the
+webhook factory ignores the last two. Two invariants hold this seam:
 
 - **The default keeps the empty manifest byte-for-byte.** `adapter.kind` defaults to
   `signed-webhook`; a pre-existing kind-less adapter block resolves to it, so an unenriched manifest
@@ -58,7 +59,8 @@ interface InboundAdapter {
   normalization of its own.
 - **`normalize`** produces the typed `EventTrigger` (`channels/SCHEMAS.md`) and *is* the schema
   check. For a human channel the chain starts here: the adapter constructs the envelope with one
-  origin provenance entry stamped by this airlock. For the peer channel the wire *already is* an
+  origin provenance entry stamped by this airlock, and sets `audience` to this airlock's own zone.
+  For the peer channel the wire *already is* an
   EventTrigger: normalize parses and validates it, provenance arriving non-empty from the sending
   zone. Where a raw original exists (a full webhook body, a raw email), the implementation stores
   it out-of-band and sets `payload_ref` + `payload_digest` — the raw original is never embedded
@@ -133,6 +135,7 @@ reasons.
 | 1 | `verify_token` | drop: `authenticity_failed` | unauthenticated bytes never reach a parser |
 | 2 | `extract_identity` | drop: `malformed` | the identity keys every later gate |
 | 3 | **schema check** (`normalize`), then discard any wire `sender_class` and refuse an envelope that is not forwardable (`EventTrigger.to_wire`: within the size ceiling and reading back unchanged from the wire form the worker parses) | drop: `malformed` (`detail` `not_forwardable` for the last) | nothing downstream handles untyped bytes, reads a class the sender asserted, or claims a dedupe key for a message it cannot forward |
+| 3 (audience) | audience check: `envelope.audience` must equal this airlock's zone id exactly, with no trimming and no case folding (`channels/SIGNING.md` S9) | drop: `audience_mismatch` | an envelope addressed to another receiver is refused before its signature is verified, so the drop record names no signer, and before dedupe, so it claims no key |
 | 3.5 | chain verification (`channels/SIGNING.md`), when the airlock is configured with verification keys; not run for an adapter that builds the envelope itself (`originates_envelope`, the owner adapter), which has no sending broker and no signature | drop: `chain_signature_missing` / `chain_signature_invalid` / `chain_signer_unknown` | a forged chain is refused before any budget is spent, and before dedupe, so it cannot shadow the genuine message |
 | 4 | expiry check (`is_expired`, caller-supplied time) | drop: `expired` | expired replays must not spend any budget |
 | 5 | **trust-map** (`resolve`; principal match) | drop: `unmapped` / `principal_mismatch` | unmapped senders get no further processing at all |
@@ -191,7 +194,9 @@ principal ever synthesized**.
 - **Owner (the human-as-owner case).** The owner sends a **raw command**
   (e.g. `/trader buy AAPL`, or an approval reply `/approve <intent_id> yes|no`) over an authenticated
   transport — not a full envelope like a peer — so `normalize` **constructs** a fresh-chain
-  `EventTrigger`, stamping one seed provenance hop. The command's leading whitespace token is the
+  `EventTrigger`, stamping one seed provenance hop. The envelope's `audience` is the airlock's own
+  zone, which `build_airlock` hands the adapter from the manifest. The request body carries no
+  `audience` and cannot set one. The command's leading whitespace token is the
   **address**: `normalize` resolves it through the manifest `routing` block (friendly-name → principal
   indirection *only*) and sets `EventTrigger.principal`. The trust map stays the **sole authorization
   authority** — gate 5 keys on `(channel_type, identity)` and never sees the address token. A routing
@@ -245,6 +250,7 @@ clauses:
 | stub adapters satisfy both interfaces | `test_stub_adapters_satisfy_interfaces` |
 | outbound stub returns a delivery reference | `test_outbound_stub_delivers` |
 | sender-transport binding: mismatch drops `malformed`/`sender_identity_mismatch` before gate 3.5, no evidence; match unaffected | `test_sender_identity_mismatch_drops_malformed_before_verify_chain` · `test_sender_identity_match_is_unaffected` |
+| an envelope addressed to another zone drops `audience_mismatch` before gate 3.5: verification, the screen and dedupe never run, the record carries no evidence, and zone ids are compared exactly | `test_an_envelope_addressed_to_another_zone_drops_before_verification` · `test_audience_is_checked_ahead_of_expiry_and_the_trust_map` · `test_signing.py::test_audience_is_checked_with_verification_off` · `test_airlock_handler.py::test_a_request_addressed_to_another_airlock_enqueues_nothing` |
 | both reference adapters satisfy sender-transport binding by construction, across identity spellings | `test_webhook_adapter.py::test_normalize_sender_identity_matches_extract_identity` · `test_owner_adapter.py::test_normalize_sender_identity_matches_extract_identity` |
 | a mutated-sender replay never accrues an attributed record, whichever gate sees it first: a divergent sender claim (an adapter whose gate-2/gate-3 identities diverge) drops at gate 3 before gate 3.5 runs, carrying no verification evidence; an internally-consistent mutation of a still-validly-signed envelope — which gate 3 cannot see — is caught at gate 3.5 as a forgery, with no second attributed record and no second screen spend | `test_adapters.py::test_sender_identity_mismatch_drops_malformed_before_verify_chain` · `test_signing.py::test_mutated_sender_replay_fails_verification_no_second_attributed_record` |
 
@@ -265,6 +271,8 @@ the out-of-band release seam (`safe_agents/broker/tests/test_out_of_band_approva
 | owner `/approve` forks to `approve_intent`/`reject_intent`; non-owner approval payload does NOT fork | `test_drain_owner.py::test_owner_approval_yes_forks_to_approve_intent` · `::test_non_owner_approval_shaped_payload_does_not_fork` |
 | an owner may not release another principal's held intent (confused-deputy guard) | `test_out_of_band_approval.py::TestForeignIntentGuard` |
 | an owner approval does not overcome authority withdrawn since the hold (grant revoked, cap exhausted) | `test_release_revalidation.py::test_grant_revoked_between_hold_and_release_refuses` · `::test_action_cap_exhausted_between_hold_and_release_refuses` |
+| the owner adapter addresses its envelope to the airlock that built it, with verification on or off, and nothing in the request sets the audience | `test_owner_adapter.py::test_owner_envelope_is_addressed_to_the_airlock_that_built_it` · `::test_nothing_in_the_request_sets_the_owner_envelopes_audience` · `::test_an_owner_adapter_built_for_another_zone_is_refused_like_any_sender` |
+| every registered adapter factory takes the airlock's zone | `test_manifest.py::test_every_registered_adapter_factory_takes_the_airlock_zone` |
 | unknown adapter kind rejected loudly at manifest validation (discriminated union) | `test_manifest.py::test_unknown_adapter_kind_fails_validation_loudly` |
 | `routing` set on a non-owner adapter fails loudly | `test_manifest.py::test_routing_on_non_owner_adapter_fails_loudly` |
 

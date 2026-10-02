@@ -38,6 +38,7 @@ interface EventTrigger {
   schema_version: 1                // wire versioning; two zones deploy independently
   event_id: string                 // stable, sender-chosen idempotency key (= confirmation # in the driving case)
   principal: string                // the target principal the event addresses
+  audience: string                 // the zone id of the ONE receiver the envelope is addressed to; required, non-blank
   sender: SenderIdentity           // WHO, at the transport layer, plus verification evidence
   payload: object                  // the PARSED, normalized payload — bounded, never the raw original
   payload_digest?: string          // "sha256:<hex>" over the raw original artifact
@@ -82,6 +83,14 @@ Per-field notes:
 - **principal** — the receiver MUST verify the target names a principal it serves; a mismatch is a
   drop, not a re-route. The broker session the worker opens runs under this principal
   (`docs/turn-identity.md`).
+- **audience** — the zone id of the receiving airlock the envelope is addressed to. It is
+  required and non-blank, and no default exists: a sender that names no receiver is refused at the
+  schema gate. The receiver compares it with its own zone exactly, with no trimming and no case
+  folding, and drops any other value as `audience_mismatch` (`channels/ADAPTERS.md`, gate 3). The
+  sending broker sets it from its own configuration of the peer (`channels/PUBLISH.md`), and an
+  adapter that builds the envelope itself sets it to its own airlock's zone. The signature covers
+  it (`channels/SIGNING.md` S9). `principal` names who the envelope is for inside a zone;
+  `audience` names which zone.
 - **sender.evidence** — stamped by the adapter that *performed* the verification. A receiver MUST
   NOT treat sender-asserted evidence as its own: it re-verifies what it can at its transport
   (signature, token) and records its own checks in its own provenance entry.
@@ -152,6 +161,9 @@ Verified authenticity never cleans a payload's taint.
 - **C7 — `event_id` joins the audit chains** of both zones for end-to-end replay.
 - **C8 — transport-neutral.** No field closes over a wire technology; `channel_type` and `source`
   are open, namespaced vocabularies; bindings live only in reference-tier text.
+- **C9 — an envelope names its one receiver.** `audience` is required and non-blank on every
+  envelope, and a receiver refuses an envelope whose `audience` is not exactly its own zone id.
+  The field is never optional: an envelope allowed to omit it would be accepted by every receiver.
 
 ## Conformance
 
@@ -167,6 +179,7 @@ A third-party implementation of the envelope (any language) must pass the equiva
 | C6 | `test_expired_envelope_is_detected_deterministically` |
 | C7 | documented here; executable with the off-substrate verifier (#50) |
 | C8 | `test_provenance_source_must_be_namespaced`; the absence of any transport enum is the contract text itself |
+| C9 | `test_audience_must_name_a_receiver` · `test_audience_is_required_and_kept_as_written`; the receiver's refusal is in the dispatch suite, `test_adapters.py::test_an_envelope_addressed_to_another_zone_drops_before_verification` |
 | fixtures | `test_driving_use_case_fixture_roundtrips` — the A2A trade-signal envelope, JSON round-trip |
 
 ## Relationships

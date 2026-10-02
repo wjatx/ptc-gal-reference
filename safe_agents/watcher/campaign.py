@@ -37,11 +37,21 @@ AttributionBasis = Literal["signed-chain", "transport-token", "unattributable", 
 
 # These reasons mean the event passed gate 1 (constant-time token match), so
 # the transport identity IS authenticated. See `_classify_observed_event`.
+#
+# `audience_mismatch` belongs here: the airlock checks the audience after gate 1
+# and after the sender-transport binding, so the party that delivered the
+# envelope is as authenticated as it is for `expired`. It is the envelope's
+# SIGNER who is not at fault. A signer addressed the envelope to another
+# receiver and someone holding this airlock's transport token delivered it
+# here, so the airlock writes the record before it verifies anything
+# (`chain_verified=False`, no `signer_key_id`). The reason also stays out of
+# `DEDUPE_CAPPED_REASONS` below, which is the only door to signer attribution.
 VECTOR_AUTH_REASONS = frozenset({
     "screen_refused",
     "expired",
     "unmapped",
     "principal_mismatch",
+    "audience_mismatch",
 })
 
 # Signer (signed-chain) attribution is only sound for reasons that are BOTH
@@ -71,6 +81,9 @@ VECTOR_AUTH_REASONS = frozenset({
 # replaying requires possessing the captured transport token, and
 # `rotate_channel_token` is the correct remedy for a captured token, whether
 # or not the replayed payload also carries a real signature.
+#
+# `audience_mismatch` fires ahead of both verification and dedupe, so the same
+# replay accrues one record per delivery. It must never be added here.
 DEDUPE_CAPPED_REASONS = frozenset({"screen_refused"})
 
 # Evidence AGAINST a claimed signer. Always attributed to the raw transport
@@ -244,7 +257,8 @@ def _classify_observed_event(event: ObservedEvent) -> tuple[AttributionBasis, st
         ):
             return "signed-chain", event.signer_key_id
         # Either unverified, or a verified chain on a reason that is NOT
-        # dedupe-capped (`expired`/`unmapped`/`principal_mismatch`) — replay
+        # dedupe-capped (`expired`/`unmapped`/`principal_mismatch`/
+        # `audience_mismatch`) — replay
         # amplification makes signer attribution unsound for those even with
         # a genuine signature (see DEDUPE_CAPPED_REASONS above). Transport
         # attribution stays sound either way.

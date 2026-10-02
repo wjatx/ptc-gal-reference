@@ -172,6 +172,10 @@ class EventTrigger(BaseModel):
     schema_version: Literal[1] = 1
     event_id: str
     principal: str
+    # the zone id of the receiver this envelope is addressed to. Required: an
+    # envelope with no named receiver verifies at every receiver that enrols
+    # the sender's key (channels/SIGNING.md S9). Compared exactly at the airlock.
+    audience: str
     sender: SenderIdentity
     payload: dict
     payload_digest: str | None = None
@@ -198,6 +202,11 @@ class EventTrigger(BaseModel):
     @classmethod
     def principal_non_blank(cls, v: str) -> str:
         return _non_blank(v, "principal")
+
+    @field_validator("audience")
+    @classmethod
+    def audience_non_blank(cls, v: str) -> str:
+        return _non_blank(v, "audience")
 
     @field_validator("payload_digest")
     @classmethod

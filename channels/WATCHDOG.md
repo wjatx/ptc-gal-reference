@@ -111,6 +111,7 @@ groups on.
 | `screen_refused` with `chain_verified=true` and `signer_key_id` set | the DSSE signer | `signed-chain` | `signer_key_id` | yes |
 | `screen_refused` with `chain_verified=false` (or `chain_verified=true` with no `signer_key_id`, a conservative fallback) | gate-1 transport identity | `transport-token` | `f"{channel_type}#{identity_digest}"` | yes |
 | `expired` / `unmapped` / `principal_mismatch`, **regardless of `chain_verified`/`signer_key_id`** | gate-1 transport identity | `transport-token` | `f"{channel_type}#{identity_digest}"` | yes |
+| `audience_mismatch` (an envelope addressed to another receiver), **regardless of `chain_verified`/`signer_key_id`**; the airlock records it before it verifies anything, so both are unset | gate-1 transport identity, **never the envelope's signer** | `transport-token` | `f"{channel_type}#{identity_digest}"` | yes |
 | `chain_signature_missing` / `chain_signature_invalid` / `chain_signer_unknown` (forgery attempts) | transport identity **only — never the claimed signer**, even if `chain_verified`/`signer_key_id` were somehow set alongside a forgery reason | `transport-token` | `f"{channel_type}#{identity_digest}"` | yes |
 | `authenticity_failed` / `malformed` / any reason the engine does not recognize | nobody | `unattributable` | `f"{channel_type}#{identity_digest}"` | **no** |
 | `approval_queue_flood` | the broker principal + op (no sender identity on this signal) | `principal` | `f"{agent_id}#{op}"` | no |
@@ -123,6 +124,14 @@ claimed `signer_key_id`; only the transport identity that actually sent the byte
 there is no code path — malformed input or otherwise — through which a forgery reason resolves to a
 signer. Throttling the forger costs the forger; throttling the impersonated identity would be the
 attack succeeding through the watchdog.
+
+The `audience_mismatch` row protects a signer who did nothing at this receiver. A broker signs an
+envelope for one receiver; someone holding another receiver's transport token delivers the same
+bytes there. The signature is genuine, and it says nothing about who made the delivery. The airlock
+checks the audience before it verifies the chain (`channels/ADAPTERS.md`, gate 3), so the record
+carries `chain_verified=false` and no `signer_key_id`. The engine also keeps the reason out of
+`DEDUPE_CAPPED_REASONS`, so a record that did name a signer would still be attributed to the
+transport identity (`test_audience_mismatch_is_attributed_to_the_transport_never_the_signer`).
 
 `unattributable` is deliberately terminal, not a fallback to weaker attribution: an event the engine
 cannot place anywhere still gets **reported** (it may be the leading edge of a real campaign) but
@@ -138,7 +147,8 @@ airlock's dedupe gate lets an attacker replay one genuinely victim-signed envelo
 accrue an unbounded attributed count against that victim, without forging anything — the reflected
 DoS the forgery row exists to prevent, reached by a different door.
 
-Gate ordering is fixed (`safe_agents/channels/dispatch.py`): gate 3.5 verifies the chain signature,
+Gate ordering is fixed (`safe_agents/channels/dispatch.py`): gate 3 checks the audience
+(`audience_mismatch`), gate 3.5 verifies the chain signature,
 gate 4 checks expiry, gate 5 resolves the trust map (`unmapped`/`principal_mismatch`), gate 6
 dedupes, and gate 7 is the screen (`screen_refused`). Only `screen_refused` fires *after* dedupe;
 `expired`, `unmapped`, and `principal_mismatch` all fire *before* it. An attacker who captures one
@@ -270,7 +280,7 @@ spine, `docs/GAL.md`, but is explicitly out of scope here.)
 | Clause | Test (`test_campaign.py`) |
 |---|---|
 | W1 — never-gates: the engine is pure over its typed inputs, no AWS/broker/airlock seam, no clock read | `test_purity_no_aws_no_clock_reads` |
-| W2 — attribution-at-recorded-strength: signed-chain basis derives from `chain_verified`/`signer_key_id` **and only for dedupe-capped reasons** (`DEDUPE_CAPPED_REASONS`); pre-dedupe reasons and forgery reasons never attribute to a signer, incl. the verified-conservative-fallback cases | `test_signed_chain_groups_by_signer_key_id_across_channel_types` · `test_vector_auth_reason_unverified_groups_under_transport_token` · `test_vector_auth_chain_verified_without_signer_key_id_falls_back_to_transport` · `test_pre_dedupe_reasons_never_attribute_to_signer_even_when_verified` · `test_mixed_dedupe_capped_and_pre_dedupe_reasons_split_into_separate_campaigns` · `test_forgery_reason_never_attributes_to_signer` |
+| W2 — attribution-at-recorded-strength: signed-chain basis derives from `chain_verified`/`signer_key_id` **and only for dedupe-capped reasons** (`DEDUPE_CAPPED_REASONS`); pre-dedupe reasons and forgery reasons never attribute to a signer, incl. the verified-conservative-fallback cases | `test_signed_chain_groups_by_signer_key_id_across_channel_types` · `test_vector_auth_reason_unverified_groups_under_transport_token` · `test_vector_auth_chain_verified_without_signer_key_id_falls_back_to_transport` · `test_pre_dedupe_reasons_never_attribute_to_signer_even_when_verified` · `test_mixed_dedupe_capped_and_pre_dedupe_reasons_split_into_separate_campaigns` · `test_forgery_reason_never_attributes_to_signer` · `test_audience_mismatch_is_attributed_to_the_transport_never_the_signer` · `test_campaign_runner.py::test_a_replayed_envelope_for_another_receiver_is_never_counted_against_its_signer` · `test_campaign_runner.py::test_every_drop_reason_sits_in_exactly_one_attribution_set` |
 | W3 — unattributable is throttle-exempt, never a fallback attribution | `test_unattributable_reason_not_throttle_eligible` · `test_unknown_reason_defaults_to_unattributable` |
 | W4 — PII-safety: reports carry digests, key ids, machine codes, counts, timestamps, and opaque source refs — never raw identity or content | structural (no raw-identity/content field exists on `ObservedEvent`/`CampaignReport` to leak); `test_corpus_refs_collects_only_non_none` proves `corpus_refs` carries only caller-supplied opaque refs |
 | W5 — closed remediation vocabulary; construction-time rejection of unknown codes; deterministic basis→remediation mapping | `test_remediation_validator_rejects_out_of_vocabulary`; the exact-list assertions embedded in the W2/W3 tests above |

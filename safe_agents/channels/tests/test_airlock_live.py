@@ -41,6 +41,10 @@ _AIRLOCK_LOG_GROUP = f"/safe-agents/{_ENV}/channels-airlock"
 # The example consumer wired on the dev floor (examples/webhook-peer).
 _PEER = "peer:example"
 _PRINCIPAL = "example-agent"
+# The deployed airlock's zone, from the manifest baked into its image
+# (examples/webhook_peer/channels-manifest.yaml). An envelope addressed to any
+# other zone is dropped `audience_mismatch`.
+_AIRLOCK_ZONE = "channels"
 _TOKEN_HEADER = "x-airlock-token"
 
 
@@ -106,6 +110,7 @@ def _envelope(
         {
             "event_id": event_id,
             "principal": _PRINCIPAL,
+            "audience": _AIRLOCK_ZONE,
             "sender": {"channel_type": "webhook", "channel_identity": identity, "evidence": []},
             "payload": payload if payload is not None else {"msg": "live smoke"},
             "provenance": [

@@ -92,18 +92,21 @@ class OwnerAdapterConfig(BaseModel):
 
 
 # An adapter factory builds a concrete `InboundAdapter` from its typed config,
-# the injected token, and the manifest routing table. The signature is uniform
-# across kinds (webhook ignores routing) so `build_airlock` dispatches without a
-# per-kind conditional.
-AdapterFactory = Callable[[BaseModel, str, "dict[str, str]"], InboundAdapter]
+# the injected token, the manifest routing table, and the airlock's own zone.
+# The signature is uniform across kinds (webhook ignores routing and zone) so
+# `build_airlock` dispatches without a per-kind conditional. The zone is what an
+# adapter that builds the envelope itself writes as its `audience`.
+AdapterFactory = Callable[[BaseModel, str, "dict[str, str]", str], InboundAdapter]
 
 # Registry of adapter kinds a manifest may name. Unlike SCREEN_REGISTRY (whose
 # implementations pull in vendor SDKs and so must import lazily), adapters are
 # pure stdlib — so this registry is populated EAGERLY at import. An enabled-but-
 # unregistered kind is caught loudly at build time (docs/friction-doctrine.md).
 ADAPTER_REGISTRY: dict[str, AdapterFactory] = {
-    "signed-webhook": lambda config, token, routing: SignedWebhookAdapter(config, token),
-    "owner": lambda config, token, routing: _build_owner_adapter(config, token, routing),
+    "signed-webhook": lambda config, token, routing, zone: SignedWebhookAdapter(config, token),
+    "owner": lambda config, token, routing, zone: _build_owner_adapter(
+        config, token, routing, zone
+    ),
 }
 
 
@@ -203,7 +206,7 @@ def build_airlock(manifest: ChannelsManifest, *, token: str) -> AirlockRuntime:
             f"{sorted(ADAPTER_REGISTRY)!r}). A configured adapter that cannot be built "
             f"must fail loudly, not silently drop all traffic (docs/friction-doctrine.md)."
         )
-    adapter = factory(manifest.adapter, token, manifest.routing)
+    adapter = factory(manifest.adapter, token, manifest.routing, manifest.zone)
     trust_map = ChannelTrustMap(entries=list(manifest.trust_map))
 
     screen: Screen | None = None

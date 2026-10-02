@@ -21,7 +21,8 @@ properties, none of which the agent can subvert:
 - **Its provenance is broker-stamped.** The outbound `EventTrigger` is built by
   `stamp_outbound` (`safe_agents/channels/publish.py`) from the sending turn's taint state
   — the agent authors the *intent* (target principal, event_id, payload), never the
-  provenance or the taint label (P3/P4). The `peer` connector
+  provenance or the taint label (P3/P4). The broker also sets the `audience`, the zone
+  of the peer airlock the envelope is for, from its own configuration of that peer. The `peer` connector
   (`safe_agents.connectors.PeerConnector`, shipped in the base SDK) is pure transport: it
   validates and POSTs the stamped envelope, and never touches provenance.
 - **A tainted publish cannot go out autonomously.** Because the agent read untrusted email

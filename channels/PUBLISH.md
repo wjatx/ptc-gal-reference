@@ -74,6 +74,7 @@ could launder taint or forge provenance:
 | `event_id` | agent | the sender-chosen idempotency key (SCHEMAS: the confirmation # in the driving case). The receiver dedupes on `(sender.channel_identity, event_id)`. |
 | `principal` | agent | the **target** principal at the peer the signal addresses. The receiver drops on a principal it does not serve — addressing is not routing. |
 | `payload` | agent | the parsed, bounded normalization (`MAX_PAYLOAD_BYTES`). The raw original is never embedded (SCHEMAS C2). |
+| `audience` | **broker** | the zone id of the peer airlock the envelope is addressed to, from the broker's own configuration of that peer. Required on every envelope (`stamp_outbound` has no default for it). The agent names a target `principal`; it does not get to name the receiver. The receiver refuses an `audience` that is not its own zone, and the signature covers the field (`channels/SIGNING.md` S9). |
 | `sender` | broker | `channel_type` = the **transport** the sender uses (e.g. `"webhook"`, matching the receiver adapter's own type, which its `normalize` gate enforces), `channel_identity` = the identity the receiver's trust map keys on (e.g. `"peer:example"`) — also the identity `dedupe_key()` keys on. This is transport identity, **not** a sender class — the receiver *derives* `sender_class="peer-agent"` from its own map. The agent does not get to name who it is. When a `ChainSigner` is supplied, `channel_identity` (canonicalized) is additionally bound into the signature (`channels/SIGNING.md` S1b), so the dedupe key's sender half cannot be mutated in a captured envelope without invalidating the signature. `evidence` = the transport proofs the connector will stamp. |
 | `provenance` | **broker** | the sending-zone entry (and any preserved inbound chain) — **broker-stamped from the turn's taint state**. See below. |
 | `sender_class` | — | absent on the wire; the *receiver* derives it (SCHEMAS C4). A sender never asserts its own class. |
@@ -135,8 +136,8 @@ an external write on a tainted turn, so the broker gates it to `require_approval
   `stamp_outbound` from the sending turn; the agent supplies no provenance and no label; a tainted
   turn yields a non-strippable `untrusted` entry; relaying appends and never edits.
 - **P4 — the agent authors intent, not identity.** The agent supplies `event_id`, target
-  `principal`, and `payload`; the broker sets `sender`, `provenance`, `ts`, `expiry`; `sender_class`
-  is absent on the wire.
+  `principal`, and `payload`; the broker sets `audience`, `sender`, `provenance`, `ts`, `expiry`;
+  `sender_class` is absent on the wire.
 - **P5 — no shared store.** The only cross-zone state is the `EventTrigger` on the wire and the
   `event_id` audit-join key; nothing else is shared.
 - **P6 — the receiver re-gates everything.** A publish earns delivery to a pre-declared peer only;
@@ -157,7 +158,7 @@ an external write on a tainted turn, so the broker gates it to `require_approval
 |---|---|
 | P2 | `test_peer_publish_is_external_write` · `test_tainted_turn_publish_escalates` |
 | P3 | `test_outbound_provenance_is_broker_stamped` · `test_tainted_turn_yields_untrusted_chain` · `test_relay_appends_and_preserves_upstream` · `test_agent_supplied_label_is_ignored` |
-| P4 | `TestAgentAuthorsIntentNotIdentity` — `test_sender_is_broker_set_transport_identity` · `test_sender_class_absent_on_the_wire` |
+| P4 | `TestAgentAuthorsIntentNotIdentity` — `test_sender_is_broker_set_transport_identity` · `test_sender_class_absent_on_the_wire` · `test_audience_is_the_brokers_to_set_and_has_no_default` · `test_a_relay_addresses_its_own_peer_not_the_inbound_audience` |
 | P6 | `test_undeclared_peer_publish_is_dropped_at_receiver` (bridges to the trust-map suite) |
 | P8 | `TestOutboundCarriesIngestedSources` — `test_fresh_origination_carries_real_source_as_origin_hop` · `test_relay_does_not_duplicate_sources_already_in_chain` · `test_receiver_rederives_taint_from_real_source` |
 | P7 | the absence of any transport field is the contract text itself |

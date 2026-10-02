@@ -79,12 +79,18 @@ def envelope(note):
     Agent-authored, and labelled `untrusted` on purpose. The broker does not stamp
     this today (#15), so the conservative label is the only honest one an agent can
     write about its own chain -- and nothing in the verdict below reads it.
+
+    `audience` is required on every envelope and names the receiver it is for.
+    The peer here is the bare receiving endpoint (peer-receiver.py), which has no
+    zone of its own and checks no audience, so the value is the peer's Service
+    name. A real airlock refuses any audience that is not its own zone.
     """
     now = datetime.now(timezone.utc)
     return {
         "schema_version": 1,
         "event_id": f"demo-{uuid.uuid4()}",
         "principal": "ledger-reader",
+        "audience": "safe-agents-peer",
         "sender": {"channel_type": "webhook", "channel_identity": "peer:safe-agents-demo"},
         "payload": {"note": note},
         "provenance": [{

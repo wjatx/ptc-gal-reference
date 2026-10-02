@@ -89,6 +89,7 @@ def _envelope(event_id: str, *, principal: str = _PRINCIPAL, source: str = _INTE
         {
             "event_id": event_id,
             "principal": principal,
+            "audience": "channels",
             "sender": {"channel_type": "webhook", "channel_identity": source, "evidence": []},
             "payload": {"msg": "drain live smoke"},
             "sender_class": "owner",

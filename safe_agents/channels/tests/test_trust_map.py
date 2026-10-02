@@ -43,6 +43,7 @@ def _envelope(**overrides) -> EventTrigger:
     base = {
         "event_id": "evt-1",
         "principal": "test-principal",
+        "audience": "receiver-zone",
         "sender": {
             "channel_type": "telegram",
             "channel_identity": "chat:12345",

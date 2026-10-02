@@ -36,6 +36,9 @@ The shared secret token rides in the `x-airlock-token` header (verified constant
 gate 1, before the body is parsed); the token lives in Secrets Manager, never in the
 manifest.
 
+The body carries no `audience`. The adapter addresses the envelope it builds to this
+airlock's own `zone`, from the manifest, and nothing in the request can set it.
+
 ## What it shows
 
 The owner-channel driving case — a human owner reaching this agent as the OWNER sender class. The

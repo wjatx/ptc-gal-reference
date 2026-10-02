@@ -354,8 +354,8 @@ broker-fetched credential it never holds.
 
 **The peer receiver is a bare endpoint**, deliberately: it checks the shared transport
 token and validates the body parses as an `EventTrigger`, and that is all. No trust map,
-no sender-class mapping, no dedupe, no screening — those are `examples/webhook_peer` and
-the channels epic. It exists so the allowed branch lands somewhere real, because an
+no sender-class mapping, no audience check, no dedupe, no screening — those are
+`examples/webhook_peer` and the channels epic. It exists so the allowed branch lands somewhere real, because an
 allow that quietly fails to execute is indistinguishable in effect from a deny.
 
 **The published envelope is agent-authored (#15).** `stamp_outbound` — the seam that

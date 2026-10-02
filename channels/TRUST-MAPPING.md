@@ -147,8 +147,9 @@ never the raw value (the same discipline as `AuditRecord.argsDigest`).
 interface DropRecord {
   channel_type: string
   identity_digest: string          // "sha256:<hex>" of channel_identity — never the raw identity
-  reason: "authenticity_failed" | "malformed" | "expired" | "unmapped" | "principal_mismatch"
-        | "screen_refused"
+  reason: "authenticity_failed" | "malformed" | "audience_mismatch"
+        | "chain_signature_missing" | "chain_signature_invalid" | "chain_signer_unknown"
+        | "expired" | "unmapped" | "principal_mismatch" | "screen_refused"
   detail: string | null            // gate-specific machine code, ^[a-z][a-z0-9_]{0,63}$ — never free
                                    // text (channels/SCREENING.md; today only the screen gate sets it)
   ts: string

@@ -145,6 +145,7 @@ def _owner_body(
         {
             "event_id": event_id,
             "principal": principal,
+            "audience": "channels",
             "sender": {"channel_type": "owner", "channel_identity": identity, "evidence": []},
             "payload": payload,
             "provenance": [

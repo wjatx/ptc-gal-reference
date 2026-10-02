@@ -16,6 +16,8 @@ Covers:
       separate campaigns — one capped at transport, one at signed-chain
   4. FORGERY_REASONS always attribute to transport, never a signer — incl.
      the chain_verified+forgery-reason conservative fallback (data-driven)
+  4b. audience_mismatch attributes to transport, never a signer, whether or
+      not the record names a verified signer
   5. UNATTRIBUTABLE_REASONS group under unattributable, throttle_eligible=False
      (data-driven)
   6. Unknown reason strings default to unattributable
@@ -222,6 +224,38 @@ def test_forgery_reason_never_attributes_to_signer(reason, chain_verified, signe
     assert report.basis == "transport-token"
     assert report.attribution_key == f"webhook#{DEFAULT_DIGEST}"
     assert "key-victim" not in report.attribution_key
+
+
+@pytest.mark.parametrize(
+    "chain_verified,signer_key_id",
+    [(False, None), (True, "key-victim")],
+    ids=["as the airlock records it", "had the signature been verified first"],
+)
+def test_audience_mismatch_is_attributed_to_the_transport_never_the_signer(
+    chain_verified, signer_key_id
+):
+    """An envelope a signer addressed to another receiver, delivered here by
+    whoever holds this airlock's transport token. The signer did nothing here.
+    The airlock records the drop before it verifies anything; the second case
+    is a record that names a verified signer anyway, and the signer is still
+    not the one attributed. Written against the literal reason, so moving it
+    between the sets below fails here."""
+    reason = "audience_mismatch"
+    assert reason in campaign_module.VECTOR_AUTH_REASONS
+    assert reason not in campaign_module.DEDUPE_CAPPED_REASONS
+    events = [
+        _event(reason=reason, chain_verified=chain_verified, signer_key_id=signer_key_id)
+        for _ in range(3)
+    ]
+    reports = analyze(events, [], THRESHOLDS, NOW)
+    assert len(reports) == 1
+    report = reports[0]
+    assert report.basis == "transport-token"
+    assert report.attribution_key == f"webhook#{DEFAULT_DIGEST}"
+    assert "key-victim" not in report.model_dump_json()
+    assert report.throttle_eligible is True
+    assert report.counts_by_reason == {reason: 3}
+    assert report.suggested_remediation == ["remove_trust_map_entry", "rotate_channel_token"]
 
 
 @pytest.mark.parametrize("reason", sorted(campaign_module.UNATTRIBUTABLE_REASONS))

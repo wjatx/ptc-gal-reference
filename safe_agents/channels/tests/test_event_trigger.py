@@ -36,6 +36,7 @@ def _envelope(**overrides) -> EventTrigger:
     base = {
         "event_id": "evt-1",
         "principal": "test-principal",
+        "audience": "test-zone",
         "sender": {
             "channel_type": "telegram",
             "channel_identity": "chat:12345",
@@ -146,6 +147,33 @@ def test_empty_provenance_is_rejected():
         _envelope(provenance=[])
 
 
+@pytest.mark.parametrize(
+    "audience",
+    [
+        pytest.param("", id="empty"),
+        pytest.param(" ", id="a space"),
+        pytest.param("\t\n", id="whitespace only"),
+        pytest.param(None, id="null"),
+    ],
+)
+def test_audience_must_name_a_receiver(audience):
+    with pytest.raises(ValidationError):
+        _envelope(audience=audience)
+
+
+def test_audience_is_required_and_kept_as_written():
+    """No default: an envelope that names no receiver is refused, where a
+    defaulted one would be accepted by whichever receiver shared the default."""
+    wire = json.loads(_envelope().model_dump_json())
+    del wire["audience"]
+    with pytest.raises(ValidationError):
+        EventTrigger.model_validate(wire)
+    assert EventTrigger.model_fields["audience"].is_required()
+    # Kept exactly as the sender wrote it: zone ids are compared without
+    # trimming or case folding, so the schema must not normalize one.
+    assert _envelope(audience=" Test-Zone ").audience == " Test-Zone "
+
+
 def test_sender_class_defaults_none_on_the_wire():
     envelope = _envelope()
     assert envelope.sender_class is None
@@ -214,6 +242,7 @@ def test_driving_use_case_fixture_roundtrips():
     envelope = EventTrigger(
         event_id="CONF-88317",
         principal="example-agent",
+        audience="example-airlock",
         sender=SenderIdentity(
             channel_type="peer-agent",
             channel_identity="peer:email-agent",

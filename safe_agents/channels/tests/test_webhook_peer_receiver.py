@@ -29,6 +29,7 @@ def _envelope(
         {
             "event_id": event_id,
             "principal": "example-agent",
+            "audience": "channels",
             "sender": {
                 "channel_type": "webhook",
                 "channel_identity": channel_identity,

@@ -9,8 +9,10 @@ import pytest
 from pydantic import ValidationError
 
 from safe_agents.channels.manifest import (
+    ADAPTER_REGISTRY,
     AirlockRuntime,
     ChannelsManifest,
+    OwnerAdapterConfig,
     ScreenConfig,
     WebhookAdapterConfig,
     build_airlock,
@@ -137,3 +139,18 @@ def test_unknown_adapter_kind_fails_validation_loudly():
     # misnamed adapter fails loudly, it does not silently degrade.
     with pytest.raises(ValidationError):
         ChannelsManifest.model_validate({"adapter": {"kind": "mystery-adapter"}})
+
+
+@pytest.mark.parametrize(
+    "config",
+    [WebhookAdapterConfig(), OwnerAdapterConfig()],
+    ids=lambda config: config.kind,
+)
+def test_every_registered_adapter_factory_takes_the_airlock_zone(config):
+    """`build_airlock` calls each factory the same way: config, token, routing
+    and the airlock's own zone. The webhook factory ignores the last two."""
+    assert set(ADAPTER_REGISTRY) == {"signed-webhook", "owner"}
+    adapter = ADAPTER_REGISTRY[config.kind](config, _TOKEN, {}, "some-zone")
+    assert adapter.channel_type == config.channel_type
+    with pytest.raises(TypeError):
+        ADAPTER_REGISTRY[config.kind](config, _TOKEN, {})

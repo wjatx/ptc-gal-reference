@@ -68,6 +68,10 @@ class OwnerInboundAdapter(InboundAdapter):
     command, classifies it as `command` vs `approval`, resolves the address
     token to a claimed principal through the `routing` block, and constructs a
     fresh-chain `EventTrigger` with a single seed provenance hop.
+
+    `zone` is the airlock's own zone id, from the image-baked manifest. The
+    envelope is built here, for this airlock and no other, so its `audience` is
+    this zone. Nothing in the request can set it.
     """
 
     # The envelope is built here, from a human's message. No broker sent it, so
@@ -75,7 +79,7 @@ class OwnerInboundAdapter(InboundAdapter):
     originates_envelope = True
 
     def __init__(
-        self, config: "OwnerAdapterConfig", token: str, routing: dict[str, str]
+        self, config: "OwnerAdapterConfig", token: str, routing: dict[str, str], zone: str
     ) -> None:
         # channel_type is instance state (from config), satisfying the ABC's
         # `channel_type: str` — the airlock resolves the trust map against it.
@@ -83,6 +87,7 @@ class OwnerInboundAdapter(InboundAdapter):
         self._token_header = config.token_header
         self._token = token
         self._routing = dict(routing)
+        self._zone = zone
 
     def verify_token(self, request: Any) -> bool:
         provided = request.headers.get(self._token_header)
@@ -163,6 +168,7 @@ class OwnerInboundAdapter(InboundAdapter):
             schema_version=1,
             event_id=data["event_id"],
             principal=principal,
+            audience=self._zone,
             sender=SenderIdentity(
                 channel_type=self.channel_type,
                 channel_identity=canonical,
@@ -181,7 +187,7 @@ def _canonical_identity(raw: str) -> str:
 
 
 def build(
-    config: "OwnerAdapterConfig", token: str, routing: dict[str, str]
+    config: "OwnerAdapterConfig", token: str, routing: dict[str, str], zone: str
 ) -> OwnerInboundAdapter:
     """Registry factory: build an `OwnerInboundAdapter` (channels/manifest.py)."""
-    return OwnerInboundAdapter(config, token, routing)
+    return OwnerInboundAdapter(config, token, routing, zone)

@@ -92,7 +92,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   and the receiver discards whatever arrived before any gate reads it (`channels/ADAPTERS.md`, gate
   3); `chain_signatures` are the signatures themselves. `payload`, `payload_digest` and `payload_ref`
   are bound as subjects and `provenance` as hops. Everything else is in the predicate: today
-  `schema_version`, `event_id`, `principal`, the whole `sender` claim, `ts` and `expiry`. A field
+  `schema_version`, `event_id`, `principal`, `audience`, the whole `sender` claim, `ts` and `expiry`. A field
   added to the envelope later is signed without anyone adding it to a list, and
   `test_every_envelope_field_is_signed_or_named_as_unsigned` fails if the partition stops covering
   the model. The signer is handed the finished envelope (`ChainSigner.sign_envelope`), never a set
@@ -156,6 +156,21 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   ON with nobody enrolled, so every signer is unknown; it is never read as OFF. Sender identities are
   compared after `canonical_identity` (strip and casefold), so two peers whose identities differ only
   by case or by a casefold pair such as `ß` and `ss` cannot be enrolled as distinct senders.
+- **S9 — an envelope is addressed to one receiver.** Every envelope carries a required `audience`,
+  the zone id of the receiver it is for, and the signature covers it like any other field (S1d).
+  A receiver drops an envelope whose `audience` is not exactly its own zone id as
+  `audience_mismatch`. This is the role the `aud` claim has in a JWT (RFC 7519). Without it, an
+  envelope broker A signed for one receiver verified at any other receiver that enrolled A's key
+  and served a principal of the same name, so anyone holding the second receiver's transport token
+  could deliver it there. One operator's `development` and `production` airlocks are the plain
+  case. Changing `audience` on a signed envelope breaks the signature, so a captured envelope
+  cannot be re-addressed. The check runs at gate 3, before verification and whether or not
+  verification is on (`channels/ADAPTERS.md`). The drop record therefore carries no verification
+  evidence, and the watchdog attributes it to the transport identity that delivered the envelope,
+  never to the signer, who addressed it elsewhere (`channels/WATCHDOG.md`). The field has no
+  default, because an envelope allowed to omit it would be bound to no receiver. The check tells
+  receivers apart by zone id alone: two airlocks configured with the same zone accept each
+  other's envelopes, so each receiver needs its own.
 - **S5 — ships OFF (friction doctrine).** With no verification-keys ARN configured
   (`BROKER_VERIFY_KEYS_SECRET_ARN` unset → `resolve_verification_keys()` returns `None` →
   `make_gate(None)` returns `None`), the airlock skips the verify gate (Gate 3.5) and unsigned peers
@@ -194,7 +209,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   covered by this zone's signature. An earlier revision of this line said inbound signatures were
   preserved, which contradicted PTC-13 and `publish.py`; it never described the code.
 - **Receiver.** Gate 3.5 in `safe_agents/channels/dispatch.py` — the injected `verify_chain` seam,
-  placed **after `normalize` (Gate 3) and before `expiry` (Gate 4)** so a forged chain is rejected
+  placed **after `normalize` and the audience check (Gate 3, S9) and before `expiry` (Gate 4)** so a forged chain is rejected
   before any trust-map, dedupe, or screen budget is spent (the same reasoning that puts expiry ahead
   of the budget gates). A drop uses the verification reason verbatim (a closed `DropReason`
   vocabulary). On success, Gate 8 records `sig:pass` in the receiver's provenance evidence **only when
@@ -214,6 +229,7 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 | S3 (broker-keyed, agent never signs) | `test_broker_signs_agent_has_no_key` · `test_signing_key_resolved_at_cold_start_from_secret` |
 | S4 (verify & quarantine, fail-closed) | `test_tampered_hop_fails_closed` · `test_tampered_payload_fails_closed` · `test_unknown_signer_quarantines` · `test_unsigned_chain_missing` · `test_covers_out_of_range_invalid` · `test_a_signature_has_one_spelling_and_a_bounded_count` · `test_a_signature_has_exactly_one_base64_spelling` · `test_verification_does_not_accept_a_padded_signature` · `test_every_signature_must_pass_every_check` · `test_a_co_signature_from_another_zone_is_refused_as_not_the_top_hop` · `test_the_result_names_the_first_signer_when_two_keys_sign` · `test_known_answer_for_the_pae_the_statement_and_the_signature` · `test_later_drops_cite_the_verification_that_passed` · `test_forged_chain_drops_before_trust_map` · `test_airlock_handler.py::test_handler_with_verification_on_accepts_signed_and_drops_unsigned` · `test_airlock_handler.py::test_a_forged_copy_does_not_shadow_the_genuine_message` |
 | S8 (a key verifies only within its enrolled zone and sender identities) | `test_an_enrolled_key_cannot_sign_for_another_zone` · `test_an_enrolled_key_cannot_sign_for_another_sender` · `test_a_signature_must_name_the_zone_of_the_hop_it_adds` · `test_scope_is_checked_on_every_signature_however_many_ride` · `test_identity_scope_is_checked_however_many_signatures_ride` · `test_each_peer_still_verifies_within_its_own_scope` · `test_casefold_is_the_identity_rule_on_both_sides` · `test_a_verification_key_without_a_full_scope_is_refused` · `test_a_key_id_listed_twice_is_refused` · `test_a_bad_public_key_names_the_key_and_nothing_else` · `test_an_empty_key_map_is_verification_on_with_nobody_enrolled` · `test_a_secret_that_is_not_a_map_fails_closed` · `test_key_scope_values_that_could_never_match_are_refused` · `test_a_field_listed_twice_inside_one_key_entry_is_refused` · `test_key_ids_are_matched_exactly` · `test_a_malformed_secret_does_not_ride_out_on_the_error` · `test_a_key_out_of_scope_is_named_only_after_its_signature_verified` · `test_the_identity_rule_is_the_same_in_every_module` · `test_verification_keys_resolve_and_fail_closed` |
+| S9 (an envelope is addressed to one receiver; checked before verification) | `test_an_envelope_signed_for_one_receiver_is_refused_at_another` · `test_audience_is_checked_with_verification_off` · `test_no_signed_field_can_change_after_signing` (the `audience` case) · `test_bound_values_are_bound_exactly` (the `audience` cases) · `test_adapters.py::test_an_envelope_addressed_to_another_zone_drops_before_verification` · `test_airlock_handler.py::test_an_envelope_signed_for_another_airlock_is_dropped_unverified` · `test_event_trigger.py::test_audience_is_required_and_kept_as_written` · `test_publish.py::TestAgentAuthorsIntentNotIdentity::test_audience_is_the_brokers_to_set_and_has_no_default` |
 | S5 (ships OFF; locally built envelopes are not chain-verified) | `test_verification_ships_off_unsigned_passes` · `test_owner_adapter.py::test_owner_command_is_delivered_with_chain_verification_on` · `test_the_origin_flag_must_be_exactly_true` |
 | S4/S5 (gate placement + evidence) | `test_verify_gate_runs_after_normalize_before_expiry` · `test_sig_pass_evidence_recorded` |
 | S6 (non-repudiation ≠ correctness) | the absence of any propagation-correctness claim is the contract text itself (the banked §8 problem) |

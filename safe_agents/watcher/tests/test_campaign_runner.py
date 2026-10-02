@@ -22,6 +22,9 @@ Covers:
   7. execute() zero campaigns: no content alarm, clean return
   8. execute() reader exception: routes to emit_meta_alarm (SystemExit(1),
      structured stderr JSON per safe_agents/reliability/META-ALARM-STANDARD.md)
+  9. Every `DropReason` the airlock can write sits in exactly one of the
+     engine's attribution sets; an envelope signed for another receiver and
+     replayed here is attributed to the transport, never to its signer
 """
 from __future__ import annotations
 
@@ -31,7 +34,12 @@ from pathlib import Path
 
 import pytest
 
-from safe_agents.channels.trust_map import make_drop_record
+from safe_agents.channels.dispatch import dispatch
+from safe_agents.channels.signing import make_gate
+from safe_agents.channels.tests import test_signing as signing_fixtures
+from safe_agents.channels.trust_map import DropReason, digest_identity, make_drop_record
+from safe_agents.watcher import campaign as campaign_module
+from safe_agents.watcher.campaign import CampaignThresholds, analyze
 from safe_agents.watcher.campaign_runner import (
     day_prefixes,
     execute,
@@ -316,3 +324,68 @@ def test_execute_reader_exception_routes_to_meta_alarm(capsys):
     assert record["level"] == "META_ALARM"
     assert "bucket unreachable" in record["msg"]
     assert record["component"] == "campaign-watchdog"
+
+
+# ---------------------------------------------------------------------------
+# 9. The airlock's drop vocabulary against the engine's attribution table
+# ---------------------------------------------------------------------------
+
+
+def test_every_drop_reason_sits_in_exactly_one_attribution_set():
+    """channels/WATCHDOG.md calls the attribution table exhaustive over
+    `DropReason`. A reason the airlock can write and the engine has not placed
+    would fall to `unattributable` without anyone having decided that."""
+    from typing import get_args
+
+    sets = [
+        campaign_module.VECTOR_AUTH_REASONS,
+        campaign_module.FORGERY_REASONS,
+        campaign_module.UNATTRIBUTABLE_REASONS,
+    ]
+    placed = [reason for group in sets for reason in group]
+    assert sorted(placed) == sorted(get_args(DropReason))
+    assert campaign_module.DEDUPE_CAPPED_REASONS <= campaign_module.VECTOR_AUTH_REASONS
+
+
+def test_a_replayed_envelope_for_another_receiver_is_never_counted_against_its_signer():
+    """End to end: broker A signs for another receiver, and the bytes are
+    delivered to this airlock three times. A's key is enrolled here and the
+    signature would verify. The records the airlock writes, read back the way
+    the runner reads them, attribute the campaign to the transport identity."""
+    priv, pub = signing_fixtures._keypair()
+    signer = signing_fixtures.signer_from_pem("broker:A", "zone-a", priv)
+    resolver = signing_fixtures._peer_resolver({"broker:A": (pub, "zone-a", ["peer:example"])})
+    elsewhere = signing_fixtures._signed_outbound(signer, audience="another-receiver")
+    assert signing_fixtures.verify_chain(elsewhere, resolver).ok
+
+    drops: list = []
+    for _ in range(3):
+        accepted = dispatch(
+            None,
+            adapter=signing_fixtures._RecordingAdapter(elsewhere),
+            trust_map=signing_fixtures._trust_map(),
+            screen=None,
+            verify_chain=make_gate(resolver),
+            dedupe_store=set(),
+            drops=drops,
+            now=signing_fixtures._NOW,
+            zone=signing_fixtures._RECV,
+        )
+        assert accepted is None
+
+    events = [
+        parse_drop_record(f"channels/drops/k{i}.json", record.model_dump_json().encode())
+        for i, record in enumerate(drops)
+    ]
+    assert [event.reason for event in events] == ["audience_mismatch"] * 3
+    reports = analyze(
+        events,
+        [],
+        CampaignThresholds(min_attempts=3, window_seconds=3600),
+        signing_fixtures._NOW,
+    )
+    assert len(reports) == 1
+    report = reports[0]
+    assert report.basis == "transport-token"
+    assert report.attribution_key == f"webhook#{digest_identity('peer:example')}"
+    assert "broker:A" not in report.model_dump_json()
