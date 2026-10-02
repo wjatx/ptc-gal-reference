@@ -1,0 +1,68 @@
+# artifacts.lock: every third-party file the substrate arms download, pinned.
+#
+# One file per line, five whitespace-separated columns:
+#
+#     name  platform  version  sha256  url
+#
+# platform is linux-x86_64, linux-aarch64 or any. Lines are sorted by name, then
+# platform. Shell reads a line with awk and needs no other parser:
+#
+#     awk '$1 == "node" && $2 == "linux-x86_64" { print $4, $5 }' artifacts.lock
+#
+# Install scripts do not read this file at run time. They carry the url and sha256
+# of one line as literals (fetch-verified.sh), and
+# safe_agents/arms/tests/test_pinned_fetches.py fails when a script carries a pair
+# that is not a line here. Move a pin with scripts/update-artifact-pin.py, which
+# downloads the file, recomputes the hash, and rewrites this line and every use.
+# README.md in this directory has the rest.
+argocd linux-x86_64 3.5.3 b860f73f57cbddd993cd446f5236d797c1b1ac8554857b2683d2669f17e765b4 https://github.com/argoproj/argo-cd/releases/download/v3.5.3/argocd-linux-amd64
+awscli linux-aarch64 2.37.8 00c4bac1cac8624b728d991f821428d5de1e0cb56e3803045b85bff63bedee8b https://awscli.amazonaws.com/awscli-exe-linux-aarch64-2.37.8.zip
+awscli linux-x86_64 2.37.8 6a2f98fee0901ff623ff9abb5c80f4d67c40e5c0ac5e2ad7afa2ba756a7d5088 https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.37.8.zip
+bat linux-x86_64 0.26.1 726f04c8f576a7fd18b7634f1bbf2f915c43494c1c0f013baa3287edb0d5a2a3 https://github.com/sharkdp/bat/releases/download/v0.26.1/bat-v0.26.1-x86_64-unknown-linux-gnu.tar.gz
+epel-release any 9-11.el9 b434245bffd8b40ea486157e72363d08b36e38145c8f917c5c00adfca3f2101b https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/e/epel-release-9-11.el9.noarch.rpm
+gh linux-x86_64 2.102.0 bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386 https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_linux_amd64.tar.gz
+gitleaks linux-x86_64 8.30.1 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+go linux-x86_64 1.27.1 63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445 https://go.dev/dl/go1.27.1.linux-amd64.tar.gz
+helm linux-x86_64 4.3.0 86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
+node linux-aarch64 22.23.3 5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2 https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-arm64.tar.gz
+node linux-x86_64 22.23.3 1084aa36196bba4c3a5e69a1ee388a6e4ff729dad09445fbcd434b28fe3c24af https://nodejs.org/dist/v22.23.3/node-v22.23.3-linux-x64.tar.gz
+oc linux-x86_64 4.22.15 106732249c301f477905e043c45141b147886af2d8179ae5da7cf5e839c8ce41 https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/4.22.15/openshift-client-linux-4.22.15.tar.gz
+openshell linux-x86_64 0.1.2 fd30a8340c0208559e874e86382c488b85d4f19b50932b97d1dede98a690141f https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell-0.1.2-1.fc44.x86_64.rpm
+openshell-checksums any 0.1.2 13ed9929ef1a9bc0dbbbbddfd13f14870cea2f64bee3786d848c7b1836785dc7 https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell-checksums-sha256.txt
+openshell-gateway linux-x86_64 0.1.2 bc79d2addf34abbd1a17d5e7eb326025120c07d1e4d95ff7330c29e968872810 https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell-gateway-0.1.2-1.fc44.x86_64.rpm
+openshell-installer any 6648bd0c290efbc41ba131ee9831ee45cd431f94 5c98a86a4b811c471b212219cb2a62d458244220ffa71ac8e3baf3700b17b871 https://raw.githubusercontent.com/NVIDIA/OpenShell/6648bd0c290efbc41ba131ee9831ee45cd431f94/install.sh
+openshell-prover linux-x86_64 0.1.2 158d40ddaaee002949274eb683143ef35d4da48b75595e1ab6cba7d09841d093 https://github.com/NVIDIA/OpenShell/releases/download/v0.1.2/openshell-prover-0.1.2-1.fc44.x86_64.rpm
+ripgrep linux-x86_64 15.2.0 33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz
+rust linux-x86_64 1.99.0 891c6366d7100feda0bca4c03ce63f3c9ac827cbebbc283e7433061d42c6a376 https://static.rust-lang.org/dist/rust-1.99.0-x86_64-unknown-linux-gnu.tar.xz
+ssm-agent linux-x86_64 3.3.5390.0 85369679511b67f8f01824043ae17a679b6f21edd78229ccd1d5acd6c347f82f https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/3.3.5390.0/linux_amd64/amazon-ssm-agent.rpm
+terraform linux-x86_64 1.16.4 dc94af0eef1147718ad7c8daea792ed199e3e0492eec180d0adafa2a65a879df https://releases.hashicorp.com/terraform/1.16.4/terraform_1.16.4_linux_amd64.zip
+uv linux-aarch64 0.12.22 6f66a14e8239871fb477f9746c941fedfa77e8fe28a8bc7c07e1dc7f53a66712 https://github.com/astral-sh/uv/releases/download/0.12.22/uv-aarch64-unknown-linux-gnu.tar.gz
+uv linux-x86_64 0.12.22 b9980552309f09c15172b8be828555e375097f16deb459795ce7bfd200380f0b https://github.com/astral-sh/uv/releases/download/0.12.22/uv-x86_64-unknown-linux-gnu.tar.gz
+yq linux-x86_64 4.54.1 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux_amd64
+# Pins that no script uses yet. `update-artifact-pin.py --check` fails when a line
+# above is neither used nor listed here, and when a line listed here is in use, so
+# this list only shrinks. One per line: `#:unused name platform`.
+#:unused argocd linux-x86_64
+#:unused awscli linux-aarch64
+#:unused awscli linux-x86_64
+#:unused bat linux-x86_64
+#:unused epel-release any
+#:unused gh linux-x86_64
+#:unused gitleaks linux-x86_64
+#:unused go linux-x86_64
+#:unused helm linux-x86_64
+#:unused node linux-aarch64
+#:unused node linux-x86_64
+#:unused oc linux-x86_64
+#:unused openshell linux-x86_64
+#:unused openshell-checksums any
+#:unused openshell-gateway linux-x86_64
+#:unused openshell-installer any
+#:unused openshell-prover linux-x86_64
+#:unused ripgrep linux-x86_64
+#:unused rust linux-x86_64
+#:unused ssm-agent linux-x86_64
+#:unused terraform linux-x86_64
+#:unused uv linux-aarch64
+#:unused uv linux-x86_64
+#:unused yq linux-x86_64
