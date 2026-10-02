@@ -18,8 +18,12 @@ schemaVersion: 1.0
 #     scripts/update-artifact-pin.py, which rewrites this file.
 #   - dnf installs named packages from Amazon Linux's own signed repositories.
 #
-# This form of the component has not been baked. The first bake is the first place
-# the pinned downloads and the arm64 Claude Code binary run on Amazon Linux 2023.
+# Component 2.0.0 was baked once: on 2026-10-02, in us-east-1, on c7g.medium. In that
+# build VerifyInstalls printed `2.1.285 (Claude Code)` and `aws-cli/2.37.8`, and the
+# validate phase passed (no node or npm, managed settings present). That is one build on
+# one day; a later bake takes a different parent image and different dnf packages. This
+# note was written after that bake, so the header of the component that was baked does
+# not contain it.
 #
 # Deploy with:
 #   aws imagebuilder create-component \

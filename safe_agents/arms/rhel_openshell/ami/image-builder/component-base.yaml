@@ -45,13 +45,28 @@ schemaVersion: 1.0
 #   - SELinux runs in Enforcing mode on RHEL AMIs; the arm relies on restorecon. This
 #     component MUST NOT disable SELinux (the validate phase asserts it stayed Enforcing).
 #
-# Deploy with:
+# Component 2.0.0 was baked once: on 2026-10-02, in us-east-1, on m7i.large, from parent
+# RHEL-9.8.0_HVM-20260908-x86_64-0-Hourly2-GP3, created from an S3 upload with --uri. Every
+# build step ran and the validate phase passed. VerifyInstalls printed `2.1.285 (Claude Code)`,
+# `aws-cli/2.37.8`, `bat 0.26.1`, `ripgrep 15.2.0`, `gh version 2.102.0`, `uv 0.12.22` and
+# `ruff 0.15.20`, and found htop and nft. That is one build on one day, and it ran this
+# component only: the boot scripts named above have not run on a host in their pinned
+# form, and nothing that only the interactive profile installs was exercised. This note
+# was written after that bake, so the header of the component that was baked does not
+# contain it.
+#
+# Deploy with the two commands below. create-component accepts at most 16,000 characters
+# through --data, and this file is larger, so it is uploaded to the environment's deploy
+# bucket and passed with --uri. Do not shrink the file to fit: the comments record the
+# invariants above and stay beside the code.
+#   aws s3 cp component-base.yaml \
+#     s3://safe-agents-<ENVIRONMENT>-deploy/image-builder-components/safe-agents-base-rhel-2.0.0.yaml
 #   aws imagebuilder create-component \
 #     --name safe-agents-base-rhel \
 #     --semantic-version 2.0.0 \
 #     --platform Linux \
 #     --supported-os-versions '["Red Hat Enterprise Linux 9"]' \
-#     --data file://component-base.yaml \
+#     --uri s3://safe-agents-<ENVIRONMENT>-deploy/image-builder-components/safe-agents-base-rhel-2.0.0.yaml \
 #     --region <REGION>
 #
 # HARNESS-COUPLING BLOCK: only the ClaudeCodeCLI step below couples safe-agents
@@ -218,9 +233,9 @@ phases:
         inputs:
           commands:
             # Fail the bake early rather than ship a broken AMI. Each pinned binary is RUN,
-            # not just found: a file that cannot execute on this host fails here. This is
-            # the first place the x86_64 Claude Code binary runs. HOME is set for it in case
-            # the build agent's shell has none.
+            # not just found: a file that cannot execute on this host fails here. The
+            # x86_64 Claude Code binary ran here in the bake of 2026-10-02 (see the header).
+            # HOME is set for it in case the build agent's shell has none.
             - git --version
             - python3 --version
             - export PATH="/usr/local/bin:$PATH" HOME="${HOME:-/root}"; DISABLE_UPDATES=1 claude --version

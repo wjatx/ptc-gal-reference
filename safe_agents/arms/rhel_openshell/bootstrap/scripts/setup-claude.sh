@@ -50,7 +50,9 @@ export PATH="/usr/local/bin:$HOME/.local/bin:$PATH"
 export DISABLE_UPDATES=1
 
 if ! command -v claude &>/dev/null; then
-    # x86_64 only, like the arm. This binary's first run on a real host is the first bake.
+    # x86_64 only, like the arm. The binary at this pin ran on RHEL 9 in the component bake
+    # of 2026-10-02 (ami/README.md). This script's own download and install has not run on
+    # a host in this form.
     fetch_verified \
         https://downloads.claude.ai/claude-code-releases/2.1.285/linux-x64/claude \
         33dad1ec615a2e08cc78b494f05c110e49916de2c79d78ec8799ebf46b233d29 \

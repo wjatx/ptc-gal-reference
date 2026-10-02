@@ -88,8 +88,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         dest="allow_newest_ami",
         help=(
             f"Override: with no {AMI_ID_FLAG}, launch the newest AMI by the arm's tag rule "
-            "(rhel-openshell falls back to the newest Red Hat marketplace AMI when no baked AMI "
-            "exists). What launches may not be what was reviewed."
+            "(rhel-openshell falls back to the Red Hat marketplace AMI with the highest release "
+            "when no baked AMI exists). What launches may not be what was reviewed."
         ),
     )
     image.add_argument(

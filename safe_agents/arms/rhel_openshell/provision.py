@@ -21,7 +21,8 @@ RHEL-specific differences from the EC2 arm:
               With no id the provision refuses. Under the allow_newest_ami override
               it takes the newest baked AMI by tag, and only when none exists falls
               back to the RHEL 9 marketplace AMI (Red Hat owner 309956199498 + name
-              filter), saying so in its WARNING line. See resolve_base_ami.
+              filter, highest release in the name), saying so in its WARNING line.
+              See resolve_base_ami.
     Instance: m7i.xlarge (x86_64, 4 vCPU, 16 GB). Root /dev/sda1, 100 GB gp3.
               RHEL+OpenShell is x86_64 only; arm64 is not supported by OpenShell.
     Subnet:   agent-subnet-ids (isolated, no NAT) + agent SG + endpoint SG — the same
@@ -232,12 +233,24 @@ BASE_RHEL_AMI_TAG_FILTER: dict[str, str] = {"safe-agents:ami": "base-rhel"}
 RHEL_OWNER_ID = "309956199498"
 
 # Name glob for RHEL 9 x86_64 Hourly2 GP3 AMIs (marketplace).
-# To refresh the latest AMI ID for a region:
+# To list the candidates in a region:
 #   aws ec2 describe-images --owners 309956199498 \
 #     --filters "Name=name,Values=RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3" \
-#     --query "sort_by(Images, &CreationDate)[-1].{id:ImageId,name:Name}" \
+#     --query "sort_by(Images, &CreationDate)[].[ImageId,Name,CreationDate]" \
 #     --output table
+# Read the release from the name. The last line by CreationDate is not necessarily the
+# newest release: Red Hat rebuilds older minor releases after newer ones ship. On
+# 2026-10-02 the listing ended RHEL-9.6.0_HVM-20260811, RHEL-9.8.0_HVM-20260908,
+# RHEL-9.6.0_HVM-20260922, in that order, so the latest CreationDate was RHEL 9.6.
 RHEL9_NAME_PATTERN = "RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3"
+
+# The release and the build date Red Hat writes into a marketplace AMI name, e.g.
+# RHEL-9.8.0_HVM-20260908-x86_64-0-Hourly2-GP3. _pick_newest_rhel_ami ranks by these.
+RHEL_AMI_NAME_FORM = "RHEL-<major>.<minor>.<patch>_HVM-<yyyymmdd>-..."
+_RHEL_AMI_NAME_RE = re.compile(r"^RHEL-(\d+)\.(\d+)\.(\d+)_HVM-(\d{8})-")
+
+# How many unrankable names an error message spells out before it counts the rest.
+_UNRANKABLE_NAMES_SHOWN = 5
 
 # How this arm names its AMI and what its override does (safe_agents/pipeline/image_pin.py).
 # The two rules are different trust statements: the first picks an image this account baked,
@@ -251,8 +264,12 @@ AMI_PIN = AmiPinSpec(
     ),
     fallback_rule=(
         f"the AMI owned by Red Hat (account {RHEL_OWNER_ID}) whose name matches "
-        f"{RHEL9_NAME_PATTERN} with the latest CreationDate, used because no self-owned AMI "
-        "tagged safe-agents:ami=base-rhel exists. A marketplace image has no toolchain baked "
+        f"{RHEL9_NAME_PATTERN} with the highest RHEL release in its name "
+        f"({RHEL_AMI_NAME_FORM}), a tie going to the later build date in the name and then to "
+        "the later CreationDate, used because no self-owned AMI tagged "
+        "safe-agents:ami=base-rhel exists. CreationDate alone does not order releases, because "
+        "Red Hat rebuilds older minor releases after newer ones ship; a matching AMI whose name "
+        "does not have that form stops the run. A marketplace image has no toolchain baked "
         "in and completes bootstrap only in a subnet with egress, so in the isolated agent "
         "subnet run the safe-agents-base-rhel Image Builder pipeline first"
     ),
@@ -260,20 +277,60 @@ AMI_PIN = AmiPinSpec(
 )
 
 
-def _pick_newest_rhel_ami(images: list[dict]) -> str:
-    """Return the image_id of the newest RHEL 9 AMI.
+def _rhel_release_key(image: dict) -> Optional[tuple[int, int, int, str, str]]:
+    """Rank of a RHEL marketplace AMI, or None when its name does not say.
 
-    Selects the most recently created image by creation_date (ISO 8601 string,
-    lexicographically sortable). Raises RuntimeError when the list is empty.
+    (major, minor, patch) as integers, so 9.10 ranks above 9.8; then the build date in the
+    name; then creation_date. Both dates are fixed-width, so they compare as strings.
+    """
+    match = _RHEL_AMI_NAME_RE.match(image.get("name") or "")
+    if match is None:
+        return None
+    major, minor, patch, build_date = match.groups()
+    return int(major), int(minor), int(patch), build_date, image.get("creation_date") or ""
+
+
+def _pick_newest_rhel_ami(images: list[dict]) -> str:
+    """Return the image_id of the RHEL 9 marketplace AMI with the highest release.
+
+    The release is read from the AMI name (RHEL_AMI_NAME_FORM). A tie goes to the later build
+    date in the name, then to the later creation_date. creation_date is the last key and never
+    the first: Red Hat rebuilds older minor releases after newer ones ship, so the most
+    recently created image can be an older release (see the RHEL9_NAME_PATTERN comment).
+
+    Raises RuntimeError when the list is empty, and when any name does not have that form.
+    A name that cannot be read cannot be ranked. Ranking it below the others would drop it
+    without a word, and a changed naming scheme would most likely arrive on the newest
+    releases, so the rule would go on choosing an old image while saying it chose the highest.
+    Letting it win would launch an image the rule cannot describe. The operator's way out is
+    to name the AMI.
     """
     if not images:
         raise RuntimeError(
             "rhel_openshell_provision: no RHEL 9 AMI found for owner "
             f"{RHEL_OWNER_ID!r} with name pattern {RHEL9_NAME_PATTERN!r}. "
-            "Run the describe-images refresh command (see RHEL9_NAME_PATTERN comment) "
+            "Run the describe-images listing command (see RHEL9_NAME_PATTERN comment) "
             "to confirm the AMI is available in this region."
         )
-    return max(images, key=lambda img: img.get("creation_date", ""))["image_id"]
+    ranked = [(_rhel_release_key(image), image) for image in images]
+    unrankable = [image for key, image in ranked if key is None]
+    if unrankable:
+        shown = ", ".join(
+            f"{image['image_id']} (name {image.get('name')!r})"
+            for image in unrankable[:_UNRANKABLE_NAMES_SHOWN]
+        )
+        more = len(unrankable) - _UNRANKABLE_NAMES_SHOWN
+        rest = f", and {more} more" if more > 0 else ""
+        raise RuntimeError(
+            "rhel_openshell_provision: cannot choose the highest RHEL 9 release. "
+            f"{len(unrankable)} of the {len(images)} AMIs returned for owner {RHEL_OWNER_ID!r} "
+            f"with name pattern {RHEL9_NAME_PATTERN!r} have a name that is not of the form "
+            f"{RHEL_AMI_NAME_FORM}: {shown}{rest}. Their release cannot be read, so they "
+            "cannot be ranked, and the override does not guess. List the candidates (see the "
+            f"RHEL9_NAME_PATTERN comment), choose one, and pass {AMI_PIN.explicit_hint()}."
+        )
+    # Every key is a tuple here; the unrankable case raised above.
+    return max(ranked, key=lambda pair: pair[0])[1]["image_id"]
 
 
 def resolve_base_ami(
@@ -292,9 +349,14 @@ def resolve_base_ami(
          has the toolchain baked in, so the box boots config-only in the ISOLATED no-NAT agent
          subnet.
       2. Only when that lookup returns nothing (a fresh account, or before the first bake) the
-         newest RHEL 9 marketplace AMI (owner + name filter) is chosen. It only completes
-         bootstrap in a subnet with egress, and it is an image Red Hat published, not one this
-         account baked, so the WARNING line names it as the marketplace fallback.
+         RHEL 9 marketplace AMI (owner + name filter) with the highest release in its name is
+         chosen; see _pick_newest_rhel_ami. It only completes bootstrap in a subnet with
+         egress, and it is an image Red Hat published, not one this account baked, so the
+         WARNING line names it as the marketplace fallback.
+
+    The two steps sort differently on purpose. Baked AMIs are ours, one per bake, so creation
+    order is release order. Red Hat's are not: an older minor release can be rebuilt after a
+    newer one ships.
 
     A failed lookup raises and stops the run. An error in the baked-AMI lookup is never read as
     "no baked AMI", so it cannot cause the fallback.
@@ -418,8 +480,8 @@ def rhel_openshell_provision(
         AWS call. There is no default AMI.
     allow_newest_ami:
         Override. When True (and image_id is None), launch from the newest self-owned AMI
-        tagged safe-agents:ami=base-rhel, or, when none exists, the newest RHEL 9
-        marketplace AMI. The id and the rule that chose it are logged at WARNING. A
+        tagged safe-agents:ami=base-rhel, or, when none exists, the RHEL 9 marketplace
+        AMI with the highest release. The id and the rule that chose it are logged at WARNING. A
         per-run switch: pass it from the caller, never from a manifest or the environment.
         See resolve_base_ami.
 

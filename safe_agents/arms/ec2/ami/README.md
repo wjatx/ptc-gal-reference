@@ -51,8 +51,12 @@ Move a pin with `scripts/update-artifact-pin.py`, which rewrites the component. 
 component needs a new `--semantic-version`, and the recipe's `componentArn` to match,
 before Image Builder will take it. The component and the recipe are both at 2.0.0.
 
-This form of the component has not been baked. The `VerifyInstalls` step runs the Claude
-Code binary, so a file that cannot execute on the build instance fails the bake.
+Component 2.0.0 has been baked once: on 2026-10-02, in us-east-1, on a `c7g.medium` build
+instance. In that build the `VerifyInstalls` step printed `2.1.285 (Claude Code)` and
+`aws-cli/2.37.8`, and the validate phase passed (no `node` or `npm`, managed settings
+present). That is one build on one day. A later bake takes a different parent image and
+different `dnf` packages, and can fail where this one passed. The `VerifyInstalls` step runs
+the Claude Code binary, so a file that cannot execute on the build instance fails the bake.
 
 ## AMI tagging convention
 
@@ -138,7 +142,7 @@ aws imagebuilder create-infrastructure-configuration \
 aws imagebuilder create-distribution-configuration \
   --cli-input-json file://image-builder/dist-config.json
 
-# 4. Create the recipe (substitute ${AWS_REGION}, ${AWS_ACCOUNT_ID}; resolve parentImage ARN)
+# 4. Create the recipe (substitute ${AWS_REGION}, ${AWS_ACCOUNT_ID}; see the parentImage note below)
 aws imagebuilder create-image-recipe \
   --cli-input-json file://image-builder/recipe-base.json
 
@@ -147,14 +151,29 @@ aws imagebuilder create-image-pipeline \
   --cli-input-json file://image-builder/pipeline.json
 ```
 
-**Resolving the AL2023 arm64 parent image ARN:** Image Builder managed parent images follow the
-pattern `arn:aws:imagebuilder:<region>:aws:image/amazon-linux-2023-arm64/x.x.x/1`. Look up the
-current version in the Image Builder console or with the command below.
+An account that already has the pipeline from an earlier component version keeps that pipeline.
+After creating the new component and recipe (steps 1 and 4), move it with
+`aws imagebuilder update-image-pipeline --image-pipeline-arn <PIPELINE_ARN> --image-recipe-arn <new recipe ARN> ...`.
+The `...` is every other setting in `pipeline.json`. AWS documents, in the Image Builder API
+reference for `UpdateImagePipeline`, that the call replaces the pipeline's whole configuration: a
+setting left out is removed or reset to its default, and the default status is `ENABLED`. Pass the
+infrastructure and distribution configuration ARNs, the schedule and `--status DISABLED` again.
 
-The `x.x.x` in the recipe's `parentImage` is deliberate. It takes the newest Amazon Linux 2023
-image at bake time, and `dnf update` then takes the newest packages, so the operating system
-is whatever Amazon published on the day of the bake. That content is pinned by the bake's
+**The AL2023 arm64 parent image ARN.** The recipe names the AWS-managed parent image as
+`arn:aws:imagebuilder:<region>:aws:image/amazon-linux-2023-arm64/x.x.x`, and nothing follows the
+version. On 2026-10-02 `create-image-recipe` refused the same ARN with a build version appended
+(`.../x.x.x/1`: "The supplied image identifier is not in a supported format") and accepted this
+one. `safe_agents/arms/tests/test_image_builder_definitions.py` fails if a build version follows
+a wildcard version.
+
+The `x.x.x` in the recipe's `parentImage` is deliberate. It asks for the newest Amazon Linux 2023
+image instead of naming one, and `dnf update` then takes the newest packages, so the operating
+system is whatever Amazon had published by the day of the bake. In the 2026-10-02 run Image
+Builder resolved the wildcard to the current version when it created the recipe. Whether a later
+bake from the same recipe resolves it again was not tested. That content is pinned by the bake's
 output: the AMI id is the pin, and it does not change after the bake.
+
+To see the versions Amazon publishes:
 
 ```sh
 aws imagebuilder list-images \
@@ -175,14 +194,16 @@ aws imagebuilder start-image-pipeline-execution \
 
 `pipeline.json` carries a weekly schedule (Sunday 02:00 UTC, when AL2023 updates are
 available) and `"status": "DISABLED"`, so a pipeline created from it never bakes on a
-timer. A bake is a deliberate act. Provisioning
-launches from the newest AMI carrying the bake tag, so a scheduled bake would change what the
-next provision picks up without anyone having decided that it should.
+timer. A bake is a deliberate act. Provisioning launches the AMI the operator names with
+`--ami-id`, so a scheduled bake does not change what a normal provision launches. It changes
+what a provision run under `--allow-newest-ami` picks up, and it adds images nobody reviewed
+to the set the bake tag lists.
 
 Run a bake by hand with the command above. `start-image-pipeline-execution` starts a build
 whether the pipeline is enabled or disabled (AWS documents this in the Image Builder API
 reference for `StartImagePipelineExecution`). To turn the schedule on for an account, set
-`"status": "ENABLED"` in the deployed pipeline with `aws imagebuilder update-image-pipeline`;
+`"status": "ENABLED"` in the deployed pipeline with `aws imagebuilder update-image-pipeline`
+(which replaces the whole pipeline configuration; see the note under one-time setup);
 the copy in this repository stays `DISABLED`, and
 `safe_agents/arms/tests/test_image_builder_definitions.py` fails if it does not.
 
@@ -237,8 +258,35 @@ The CI role needs only `s3:PutObject` on `arn:aws:s3:::safe-agents-*-deploy/agen
 ### Build instance profile (used by the Image Builder build instance)
 
 Attach AWS managed policy `EC2InstanceProfileForImageBuilder` plus SSM core actions for console
-access. The build instance needs internet egress for `dnf` and the pinned release downloads. It does
-NOT need access to the agent S3 bucket, DynamoDB, or Secrets Manager.
+access. The build instance needs internet egress for `dnf` and the pinned release downloads.
+
+The shipped `infra-config.json` sends build logs to
+`s3://safe-agents-<env>-deploy/image-builder-logs/`, so the build role must be able to write
+there. The role used for the 2026-10-02 bakes allowed `s3:PutObject` on that prefix and
+`s3:GetBucketLocation` on the bucket through an inline policy, in addition to the managed
+policies above. As statements:
+
+```json
+[
+  {
+    "Effect": "Allow",
+    "Action": ["s3:PutObject"],
+    "Resource": "arn:aws:s3:::safe-agents-<env>-deploy/image-builder-logs/*"
+  },
+  {
+    "Effect": "Allow",
+    "Action": ["s3:GetBucketLocation"],
+    "Resource": "arn:aws:s3:::safe-agents-<env>-deploy"
+  }
+]
+```
+
+Whether the managed policies alone would have been enough was not tested.
+
+The build instance writes its own log prefix and needs nothing else in the deploy bucket: it does
+NOT need the agent bundles under `agents/`, DynamoDB, or Secrets Manager. The RHEL bakery
+(`safe_agents/arms/rhel_openshell/ami/README.md`) ships the same logging configuration and has the
+same requirement.
 
 ### CI deploy role (used by the bundle upload script)
 

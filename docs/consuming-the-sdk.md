@@ -195,7 +195,7 @@ and makes no AWS call, so it does not confirm that the AMI or the image exists.
 Two overrides exist for the case where you cannot name the exact thing:
 
 - `--allow-newest-ami` resolves the newest AMI by the arm's tag rule. On `rhel-openshell`, when no
-  baked AMI exists, it falls back to the newest Red Hat marketplace AMI.
+  baked AMI exists, it falls back to the Red Hat marketplace AMI with the highest release.
 - `--allow-mutable-image-tag` lets `--image-uri` name a tag instead of a digest. `--image-uri` is
   still required. No flag brings back an implicit `latest`.
 

@@ -70,7 +70,13 @@ REPO_ROOT = Path(__file__).parent.parent.parent.parent.parent  # safe-agents/
 SMOKE_MANIFEST = REPO_ROOT / "agents" / "smoke-rhel-openshell.yaml"
 
 _RHEL_AMI_ID = "ami-0dcaef0e21f109874"
-_RHEL_AMI_NAME = "RHEL-9.8_HVM-20250506-x86_64-1893-Hourly2-GP3"
+_RHEL_AMI_NAME = "RHEL-9.8.0_HVM-20250506-x86_64-1893-Hourly2-GP3"
+# The last three rows of the Red Hat listing on 2026-10-02: (id, name, CreationDate).
+_MARKETPLACE_LISTING_2026_10_02 = (
+    ("ami-07006ea0a33e11e4e", "RHEL-9.6.0_HVM-20260811-x86_64-0-Hourly2-GP3", "2026-08-11"),
+    ("ami-0fec1400d2a5313ec", "RHEL-9.8.0_HVM-20260908-x86_64-0-Hourly2-GP3", "2026-09-10"),
+    ("ami-0b07d2bc8152a1d84", "RHEL-9.6.0_HVM-20260922-x86_64-0-Hourly2-GP3", "2026-09-22"),
+)
 _BAKED_AMI_ID = "ami-0ba5ed00000000001"
 # The normal path: an AMI the operator names. Never seeded in FakeAWS.
 _EXPLICIT_AMI_ID = "ami-0123456789abcdef0"
@@ -714,7 +720,24 @@ class TestAmiIsPinned:
         assert _RHEL_AMI_ID in line
         assert RHEL_OWNER_ID in line                       # the marketplace owner
         assert RHEL9_NAME_PATTERN in line                  # the name pattern
+        assert "highest RHEL release in its name" in line  # the sort key
+        assert "with the latest CreationDate" not in line  # the key it used to state
         assert "no self-owned AMI tagged safe-agents:ami=base-rhel exists" in line
+
+    def test_marketplace_fallback_takes_the_highest_release_not_the_latest_created(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The marketplace listing observed on 2026-10-02: a rebuild of RHEL 9.6 was created
+        after 9.8. The fallback launches 9.8, and its WARNING names that AMI."""
+        aws = _seed_infra(FakeAWS())
+        for image_id, name, created in _MARKETPLACE_LISTING_2026_10_02:
+            aws.seed_marketplace_image(image_id, RHEL_OWNER_ID, name, creation_date=created)
+        with caplog.at_level(logging.WARNING, logger=_PROVISION_LOGGER):
+            selection = resolve_base_ami(aws, allow_newest_ami=True)
+        assert selection.source == "marketplace-fallback"
+        assert selection.reference == "ami-0fec1400d2a5313ec"
+        assert _override_warnings(caplog) == [selection.describe()]
+        assert "--ami-id ami-0fec1400d2a5313ec" in selection.describe()
 
     def test_error_in_baked_lookup_propagates_and_does_not_fall_back(self) -> None:
         """An AWS error is not 'no baked AMI'. The marketplace lookup must not run, and
@@ -769,6 +792,7 @@ class TestPipelineAmiFlags:
         assert "MARKETPLACE FALLBACK" in steps[0]
         assert RHEL_OWNER_ID in steps[0]
         assert RHEL9_NAME_PATTERN in steps[0]
+        assert "highest RHEL release in its name" in steps[0]
         assert aws.calls == []
 
     def test_plan_no_longer_claims_an_owner_and_name_lookup_by_default(self) -> None:
@@ -810,6 +834,28 @@ class TestPipelineAmiFlags:
         assert captured["image_id"] == _RHEL_AMI_ID
         assert len([c for c in aws.calls if c[0] == "describe_images"]) == 1
         assert len([c for c in aws.calls if c[0] == "describe_images_by_owner_name"]) == 1
+
+    def test_live_unrankable_marketplace_name_fails_the_phase_and_launches_nothing(
+        self,
+    ) -> None:
+        """A marketplace AMI whose name carries no readable release stops the fallback. The
+        phase reports it; nothing launches."""
+        aws = _seed_infra(FakeAWS())
+        aws.seed_marketplace_image(
+            _RHEL_AMI_ID, RHEL_OWNER_ID, _RHEL_AMI_NAME, creation_date="2025-05-06T00:00:00Z"
+        )
+        aws.seed_marketplace_image(
+            "ami-0dd00000000000001", RHEL_OWNER_ID,
+            "RHEL-9.9_HVM-20260930-x86_64-0-Hourly2-GP3", creation_date="2026-09-30T00:00:00Z",
+        )
+        manifest = load_manifest(SMOKE_MANIFEST)
+        result = provision_phase(
+            manifest, aws, dry_run=False, environment=self.ENV, allow_newest_ami=True
+        )
+        assert not result.success
+        assert "cannot choose the highest RHEL 9 release" in result.error
+        assert "ami-0dd00000000000001" in result.error
+        assert not aws.was_called("run_instances")
 
     def test_live_baked_lookup_error_stops_the_run(self) -> None:
         aws = _seed_infra(_BakedLookupFails())

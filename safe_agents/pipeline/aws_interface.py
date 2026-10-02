@@ -159,11 +159,13 @@ class AWSInterface(abc.ABC):
 
         An AWS error MUST propagate, for the same reason as describe_images.
 
-        To refresh the RHEL 9 AMI for a region:
+        To list the RHEL 9 AMIs for a region:
             aws ec2 describe-images --owners 309956199498 \\
                 --filters "Name=name,Values=RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3" \\
-                --query "sort_by(Images, &CreationDate)[-1].{id:ImageId,name:Name}" \\
+                --query "sort_by(Images, &CreationDate)[].[ImageId,Name,CreationDate]" \\
                 --output table
+        The last by CreationDate is not necessarily the newest release; the caller ranks by
+        the release in the name (safe_agents/arms/rhel_openshell/provision.py).
         """
 
     # -------------------------------------------------------------------------

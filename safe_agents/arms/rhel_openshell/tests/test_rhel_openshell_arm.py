@@ -4,7 +4,7 @@ RHEL+OpenShell arm tests — acceptance criteria.
 All tests are AWS-free: AWS calls go through FakeAWS (no live boto3 needed).
 
 Acceptance criteria:
-  1. RHEL AMI resolved by owner/name filter; newest wins.
+  1. RHEL AMI resolved by owner/name filter; the highest release in the name wins.
   2. Thin user-data template renders with required root-essentials only:
        - cgroups v2 delegation before dev user setup
        - SSM agent install (RHEL-specific, must be first major step)
@@ -45,6 +45,7 @@ import pytest
 from safe_agents.arms.rhel_openshell.provision import (
     BROKER_CONNECTOR_KEYS_RESOURCE_PATTERN,
     RHEL9_NAME_PATTERN,
+    RHEL_AMI_NAME_FORM,
     RHEL_OWNER_ID,
     agent_role_extensions,
     render_user_data,
@@ -116,7 +117,7 @@ _VALID_PARAMS = {
 AMI_ID = "ami-0123456789abcdef0"
 # The marketplace AMI the fixture seeds, reachable only through the newest-AMI override.
 _RHEL_AMI_ID = "ami-0dcaef0e21f109874"
-_RHEL_AMI_NAME = "RHEL-9.8_HVM-20250506-x86_64-1893-Hourly2-GP3"
+_RHEL_AMI_NAME = "RHEL-9.8.0_HVM-20250506-x86_64-1893-Hourly2-GP3"
 
 # Pass to rhel_openshell_provision in all unit tests to avoid real sleeps.
 # The EC2 arm's _wait_for_iam_propagation calls _time.sleep(extra_buffer) with
@@ -169,22 +170,106 @@ def fake_aws() -> FakeAWS:
 
 
 # ---------------------------------------------------------------------------
-# Criterion 1: RHEL AMI resolved by owner/name filter, newest wins
+# Criterion 1: RHEL AMI resolved by owner/name filter, highest release wins
 # ---------------------------------------------------------------------------
+
+def _marketplace(image_id: str, release: str, build_date: str, creation_date: str) -> dict:
+    """One describe_images_by_owner_name row, named the way Red Hat names its AMIs."""
+    return {
+        "image_id": image_id,
+        "name": f"RHEL-{release}_HVM-{build_date}-x86_64-0-Hourly2-GP3",
+        "creation_date": creation_date,
+    }
+
+
+# The last three rows of the marketplace listing on 2026-10-02, in CreationDate order.
+# Red Hat rebuilt RHEL 9.6 after 9.8 had shipped, so the latest CreationDate is 9.6.
+_NEWEST_RELEASE_2026_10_02 = "ami-0fec1400d2a5313ec"
+_LATEST_CREATED_2026_10_02 = "ami-0b07d2bc8152a1d84"
+_LISTING_2026_10_02 = [
+    _marketplace("ami-07006ea0a33e11e4e", "9.6.0", "20260811", "2026-08-11"),
+    _marketplace(_NEWEST_RELEASE_2026_10_02, "9.8.0", "20260908", "2026-09-10"),
+    _marketplace(_LATEST_CREATED_2026_10_02, "9.6.0", "20260922", "2026-09-22"),
+]
+
 
 class TestRhelAmiLookup:
     def test_pick_newest_rhel_ami_single(self) -> None:
         """_pick_newest_rhel_ami returns the only image in a single-item list."""
-        images = [{"image_id": "ami-0abc", "name": "RHEL-9.8-foo", "creation_date": "2025-01-01"}]
+        images = [_marketplace("ami-0abc", "9.8.0", "20250506", "2025-05-06")]
         assert _pick_newest_rhel_ami(images) == "ami-0abc"
 
-    def test_pick_newest_rhel_ami_multiple(self) -> None:
-        """_pick_newest_rhel_ami selects the most recently created image."""
+    @pytest.mark.parametrize("order", [1, -1], ids=["as-listed", "reversed"])
+    def test_a_later_rebuild_of_an_older_release_does_not_win(self, order: int) -> None:
+        """The listing observed on 2026-10-02. The image created last is a rebuild of 9.6;
+        the highest release is 9.8, and that is the one chosen."""
+        images = _LISTING_2026_10_02[::order]
+        latest_created = max(images, key=lambda image: image["creation_date"])
+        assert latest_created["image_id"] == _LATEST_CREATED_2026_10_02, (
+            "the fixture must tell a release sort from a CreationDate sort"
+        )
+        assert _pick_newest_rhel_ami(images) == _NEWEST_RELEASE_2026_10_02
+
+    @pytest.mark.parametrize(
+        "loser, winner",
+        [
+            pytest.param(
+                ("9.8.0", "20260908", "2026-09-10"), ("9.10.0", "20260801", "2026-08-01"),
+                id="minor-compares-as-a-number",
+            ),
+            pytest.param(
+                ("9.8.0", "20260908", "2026-09-10"), ("9.8.1", "20260801", "2026-08-01"),
+                id="patch-outranks-both-dates",
+            ),
+            pytest.param(
+                ("9.8.0", "20260801", "2026-09-30"), ("9.8.0", "20260908", "2026-09-10"),
+                id="tie-goes-to-the-build-date-in-the-name",
+            ),
+            pytest.param(
+                ("9.8.0", "20260908", "2026-09-10"), ("9.8.0", "20260908", "2026-09-12"),
+                id="then-to-the-creation-date",
+            ),
+        ],
+    )
+    def test_release_then_build_date_then_creation_date(self, loser, winner) -> None:
+        images = [_marketplace("ami-loser", *loser), _marketplace("ami-winner", *winner)]
+        assert _pick_newest_rhel_ami(images) == "ami-winner"
+        assert _pick_newest_rhel_ami(images[::-1]) == "ami-winner"
+
+    @pytest.mark.parametrize(
+        "unreadable",
+        [
+            pytest.param({"name": "RHEL-9.8_HVM-20260930-x86_64-0-Hourly2-GP3"}, id="no-patch"),
+            pytest.param({"name": "RHEL-9.9.0_HVM-2026-x86_64-0-Hourly2-GP3"}, id="short-date"),
+            pytest.param({"name": "RHEL-9.x.0_HVM-20260930-x86_64-0-Hourly2-GP3"}, id="not-a-number"),
+            pytest.param({"name": ""}, id="empty-name"),
+            pytest.param({}, id="no-name"),
+        ],
+    )
+    def test_a_name_that_does_not_parse_stops_the_run(self, unreadable: dict) -> None:
+        """An AMI whose release cannot be read is neither chosen nor dropped. It is created
+        last here, so a CreationDate sort would pick it, and a sort that skipped it would
+        pick 9.8 without saying a candidate was left out."""
+        odd = {"image_id": "ami-0dd", "creation_date": "2026-09-30", **unreadable}
+        with pytest.raises(RuntimeError) as excinfo:
+            _pick_newest_rhel_ami([*_LISTING_2026_10_02, odd])
+        message = str(excinfo.value)
+        assert "cannot choose the highest RHEL 9 release" in message
+        assert "1 of the 4 AMIs" in message
+        assert "ami-0dd" in message
+        assert repr(unreadable.get("name")) in message
+        assert RHEL_AMI_NAME_FORM in message
+        assert "--ami-id <ami-id>" in message              # the way out
+
+    def test_many_unreadable_names_are_counted_not_all_listed(self) -> None:
         images = [
-            {"image_id": "ami-old", "name": "RHEL-9.0-foo", "creation_date": "2024-01-01"},
-            {"image_id": "ami-new", "name": "RHEL-9.8-foo", "creation_date": "2025-05-06"},
+            {"image_id": f"ami-0dd{n}", "name": f"odd-{n}", "creation_date": ""} for n in range(7)
         ]
-        assert _pick_newest_rhel_ami(images) == "ami-new"
+        with pytest.raises(RuntimeError, match="7 of the 7 AMIs") as excinfo:
+            _pick_newest_rhel_ami(images)
+        message = str(excinfo.value)
+        assert "ami-0dd4" in message and "ami-0dd5" not in message
+        assert "and 2 more" in message
 
     def test_pick_newest_rhel_ami_raises_when_empty(self) -> None:
         """_pick_newest_rhel_ami must raise RuntimeError when no images are found."""

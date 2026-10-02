@@ -68,8 +68,23 @@ commands, and `tests/test_rhel_ami.py` fails if the two sets of pins differ. Mov
 `--semantic-version` (and the recipe's `componentArn` to match) before Image Builder will
 take it. The component and the recipe are both at 2.0.0.
 
-The component's `VerifyInstalls` step runs each pinned binary. That step is the first
-place the x86_64 Claude Code binary executes; it has been hashed, and not run.
+Component 2.0.0 has been baked once: on 2026-10-02, in us-east-1, on an `m7i.large` build
+instance, from parent `RHEL-9.8.0_HVM-20260908-x86_64-0-Hourly2-GP3`, created from an S3
+upload with `--uri`. Every build step ran and the validate phase passed
+(`ValidateDirectoryLayout`, `ValidatePinnedHarness`, `ValidateSelinuxAndNft`), so SELinux was
+still Enforcing at the end of the build. The `VerifyInstalls` step runs each pinned binary. It
+printed `2.1.285 (Claude Code)`, `aws-cli/2.37.8` (reporting `exe/x86_64.rhel.9`), `bat 0.26.1`,
+`ripgrep 15.2.0`, `gh version 2.102.0`, `uv 0.12.22` and `ruff 0.15.20`, and found `htop` and
+`nft`. In that build the x86_64 Claude Code binary executed on RHEL 9, and the hashed
+`pip install` of ruff worked on the system Python 3.9 (pip 21.3.1, which printed an upgrade
+notice and nothing else). That is one build on one day.
+
+The bake runs the component and nothing else. The boot-path scripts under `bootstrap/scripts/`
+and `user-data.sh.tmpl` have not run on a host in their pinned form. Neither has anything that
+only the interactive profile installs: Node.js, Go, Rust, the Kubernetes tools (oc, helm,
+argocd, terraform, yq, gitleaks) and OpenShell. The OpenShell 0.1.2 packages are built for
+Fedora and remain untested on RHEL 9; `bootstrap/scripts/install-openshell.sh` says so in its
+header.
 
 ## AMI tagging convention
 
@@ -107,7 +122,12 @@ under the override `--allow-newest-ami` (`allow_newest_ami=True`), implemented b
 1. It takes the self-owned AMI tagged `safe-agents:ami=base-rhel` with the latest `CreationDate`.
 2. Only when that lookup returns nothing (a fresh account, or before the first bake), it falls back
    to the RHEL 9 marketplace AMI: owner `309956199498` (Red Hat), name
-   `RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3`, latest `CreationDate`. That is the behavior before the
+   `RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3`, and among those the highest RHEL release read from the
+   name (`RHEL-<major>.<minor>.<patch>_HVM-<yyyymmdd>-...`). A tie goes to the later build date in
+   the name, then to the later `CreationDate`. `CreationDate` alone does not order releases,
+   because Red Hat rebuilds older minor releases after newer ones ship (the listing under
+   "Resolve the RHEL 9 x86_64 parent AMI first" shows one). A matching AMI whose name does not
+   have that form cannot be ranked, and it stops the run. The fallback is the behavior before the
    prebuilt AMI, and it only completes bootstrap in a subnet with egress.
 
 The two steps are different trust statements. The first launches an image this account baked; the
@@ -121,31 +141,54 @@ nothing reads it from the manifest or the environment.
 
 ### Resolve the RHEL 9 x86_64 parent AMI first
 
-The recipe's `parentImage` is a `${RHEL9_PARENT_AMI}` placeholder — RHEL is a marketplace AMI,
-so there is no AWS-managed Image Builder parent. Resolve the current RHEL 9 x86_64 AMI ID (the
-same lookup `provision.py` uses) and substitute it:
+The recipe's `parentImage` is a `${RHEL9_PARENT_AMI}` placeholder. RHEL is a marketplace AMI,
+so there is no AWS-managed Image Builder parent. List the RHEL 9 x86_64 AMIs Red Hat publishes
+(the owner and name filter `provision.py` uses for its fallback), choose the release you mean to
+build on, and substitute its id:
 
 ```sh
 aws ec2 describe-images --owners 309956199498 \
   --filters "Name=name,Values=RHEL-9.*_HVM-*-x86_64-*-Hourly2-GP3" \
-  --query "sort_by(Images, &CreationDate)[-1].{id:ImageId,name:Name}" \
+  --query "sort_by(Images, &CreationDate)[].[ImageId,Name,CreationDate]" \
   --output table
 ```
+
+Read the release from the name. The last line by creation date is not necessarily the newest
+release, because Red Hat rebuilds older minor releases after newer ones ship. On 2026-10-02 the
+listing ended with these three:
+
+```
+ami-07006ea0a33e11e4e  RHEL-9.6.0_HVM-20260811-x86_64-0-Hourly2-GP3  2026-08-11
+ami-0fec1400d2a5313ec  RHEL-9.8.0_HVM-20260908-x86_64-0-Hourly2-GP3  2026-09-10
+ami-0b07d2bc8152a1d84  RHEL-9.6.0_HVM-20260922-x86_64-0-Hourly2-GP3  2026-09-22
+```
+
+The last line is a rebuild of RHEL 9.6. The newest release among them is 9.8, one line up.
 
 ### One-time setup (done once per AWS account)
 
 Substitute `${AWS_REGION}`, `${AWS_ACCOUNT_ID}`, `${RHEL9_PARENT_AMI}`,
 `${IMAGE_BUILDER_INSTANCE_PROFILE}`, `${BUILD_SECURITY_GROUP_ID}`, `${BUILD_SUBNET_ID}`, and
-`${ENVIRONMENT}` first.
+`${ENVIRONMENT}` first. The build instance profile is the one described under "IAM requirements"
+in `safe_agents/arms/ec2/ami/README.md`, including write access to the log prefix
+`image-builder-logs/`: this arm's `infra-config.json` logs to the same place.
+
+Step 1 uploads the component and creates it from the upload. `create-component` accepts at most
+16,000 characters through `--data`, and this file is larger, so it is passed with `--uri` (the EC2
+arm's component is under the limit and its runbook passes it inline). The object goes in the
+environment's deploy bucket, the one `infra-config.json` already logs to, under a prefix of its
+own. Its key carries the component version and moves with `--semantic-version`.
 
 ```sh
-# 1. Component
+# 1. Component: upload the file, then create the component from the upload
+COMPONENT_URI="s3://safe-agents-${ENVIRONMENT}-deploy/image-builder-components/safe-agents-base-rhel-2.0.0.yaml"
+aws s3 cp image-builder/component-base.yaml "$COMPONENT_URI"
 aws imagebuilder create-component \
   --name safe-agents-base-rhel \
   --semantic-version 2.0.0 \
   --platform Linux \
   --supported-os-versions '["Red Hat Enterprise Linux 9"]' \
-  --data file://image-builder/component-base.yaml \
+  --uri "$COMPONENT_URI" \
   --region "$AWS_REGION"
 
 # 2. Infrastructure configuration
@@ -165,6 +208,14 @@ aws imagebuilder create-image-pipeline \
   --cli-input-json file://image-builder/pipeline.json
 ```
 
+An account that already has the pipeline from an earlier component version keeps that pipeline.
+After creating the new component and recipe (steps 1 and 4), move it with
+`aws imagebuilder update-image-pipeline --image-pipeline-arn <PIPELINE_ARN> --image-recipe-arn <new recipe ARN> ...`.
+The `...` is every other setting in `pipeline.json`. AWS documents, in the Image Builder API
+reference for `UpdateImagePipeline`, that the call replaces the pipeline's whole configuration: a
+setting left out is removed or reset to its default, and the default status is `ENABLED`. Pass the
+infrastructure and distribution configuration ARNs, the schedule and `--status DISABLED` again.
+
 ### Triggering a bake
 
 ```sh
@@ -179,14 +230,16 @@ validate phase).
 
 `pipeline.json` carries a weekly schedule (Sunday 03:00 UTC, when RHEL updates are
 available) and `"status": "DISABLED"`, so a pipeline created from it never bakes on a
-timer. A bake is a deliberate act. Provisioning
-launches from the newest AMI carrying the bake tag, so a scheduled bake would change what the
-next provision picks up without anyone having decided that it should.
+timer. A bake is a deliberate act. Provisioning launches the AMI the operator names with
+`--ami-id`, so a scheduled bake does not change what a normal provision launches. It changes
+what a provision run under `--allow-newest-ami` picks up, and it adds images nobody reviewed
+to the set the bake tag lists.
 
 Run a bake by hand with the command above. `start-image-pipeline-execution` starts a build
 whether the pipeline is enabled or disabled (AWS documents this in the Image Builder API
 reference for `StartImagePipelineExecution`). To turn the schedule on for an account, set
-`"status": "ENABLED"` in the deployed pipeline with `aws imagebuilder update-image-pipeline`;
+`"status": "ENABLED"` in the deployed pipeline with `aws imagebuilder update-image-pipeline`
+(which replaces the whole pipeline configuration; see the note under one-time setup);
 the copy in this repository stays `DISABLED`, and
 `safe_agents/arms/tests/test_image_builder_definitions.py` fails if it does not.
 
@@ -202,7 +255,8 @@ cd core && .venv/bin/python bin/destroy-image --arm rhel-openshell [--env develo
 
 It removes the RHEL AMIs + snapshots, the RHEL Image Builder resources, the RHEL IB IAM
 role+profile, and this bake's `image-builder-logs/` objects. It **never** deletes the shared
-deploy bucket or the infra stacks.
+deploy bucket or the infra stacks. It does not remove the component file uploaded under
+`image-builder-components/` in one-time setup; delete that object by hand.
 
 ## HARNESS-COUPLING note
 

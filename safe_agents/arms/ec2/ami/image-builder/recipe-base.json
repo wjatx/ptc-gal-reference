@@ -7,7 +7,7 @@
       "componentArn": "arn:aws:imagebuilder:${AWS_REGION}:${AWS_ACCOUNT_ID}:component/safe-agents-base/2.0.0"
     }
   ],
-  "parentImage": "arn:aws:imagebuilder:${AWS_REGION}:aws:image/amazon-linux-2023-arm64/x.x.x/1",
+  "parentImage": "arn:aws:imagebuilder:${AWS_REGION}:aws:image/amazon-linux-2023-arm64/x.x.x",
   "blockDeviceMappings": [
     {
       "deviceName": "/dev/xvda",
