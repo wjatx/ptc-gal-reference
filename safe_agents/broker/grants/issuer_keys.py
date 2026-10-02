@@ -36,6 +36,14 @@ BOTH roles' verify maps is a configuration error and refuses here, at cold
 start, where both parameter names can be named — a key with two roles is no
 split at all.
 
+The verify side has two sources per role as well, exactly one of which may be
+set: the SSM parameter, or a local file holding the same JSON map
+(``ISSUER_VERIFY_KEYS_FILE`` / ``EVALUATOR_VERIFY_KEYS_FILE``). The file arm is
+what lets a machine with no AWS account check the signatures its own ceremony
+wrote (#108). It carries no file-mode rule and no store-arm refusal, unlike the
+signing file: the content is public, and an auditor outside the deployment
+verifies with exactly this, a map of public keys handed over as a file.
+
 Ships OFF, per role: with NO signing env configured for a role,
 ``resolve_record_signer`` / ``resolve_evaluator_signer`` return None and that
 role's writers keep today's unsigned behaviour (ratify is the exception — it
@@ -43,7 +51,7 @@ REFUSES unless the operator passes ``--allow-unsigned``, and acknowledge
 refuses outright). Half-configured — a key_id without the key source, or a key
 source without a key_id/zone — REFUSES: the operator intended to sign,
 so degrading to an unsigned record is minting a weaker artifact than asked for.
-With no parameter name configured, the verify resolver is None and the audit
+With no verify-key source configured, the verify resolver is None and the audit
 skips RECORD_SIGNATURE_VERIFIES loudly. A set-but-unresolvable value fails
 closed on both paths rather than silently degrading — the same posture as
 ``channels.keys``.
@@ -91,7 +99,15 @@ ISSUER_SIGNING_KEY_FILE_ENV = "ISSUER_SIGNING_KEY_FILE"
 # absence = OFF (the audit skips RECORD_SIGNATURE_VERIFIES, loudly).
 ISSUER_VERIFY_KEYS_PARAM_ENV = "ISSUER_VERIFY_KEYS_PARAM"
 
-# The EVALUATOR's four, mirroring the issuer contract exactly — same two
+# The LOCAL arm's verify-key source (#108): a path to a file holding the SAME
+# JSON ``{key_id: public_key_pem}`` map the SSM parameter holds, for a machine
+# with no parameter store to reach. Mutually exclusive with the parameter.
+# Public material, so no owner-only file mode is required and the dynamo arm
+# does not refuse it. What the map decides is which signatures count, so it is
+# still named by the operator and never defaulted.
+ISSUER_VERIFY_KEYS_FILE_ENV = "ISSUER_VERIFY_KEYS_FILE"
+
+# The EVALUATOR's five, mirroring the issuer contract exactly — same two
 # mutually-exclusive sources, same half-configured refusal, same dynamo-arm
 # refusal on the file arm, same public verify parameter. Separate NAMES are the
 # control: which key an identity can reach is decided by what its environment
@@ -101,6 +117,7 @@ EVALUATOR_SIGNING_KEY_ID_ENV = "EVALUATOR_SIGNING_KEY_ID"
 EVALUATOR_SIGNING_ZONE_ENV = "EVALUATOR_SIGNING_ZONE"
 EVALUATOR_SIGNING_KEY_FILE_ENV = "EVALUATOR_SIGNING_KEY_FILE"
 EVALUATOR_VERIFY_KEYS_PARAM_ENV = "EVALUATOR_VERIFY_KEYS_PARAM"
+EVALUATOR_VERIFY_KEYS_FILE_ENV = "EVALUATOR_VERIFY_KEYS_FILE"
 
 
 class IssuerSigningConfigError(RuntimeError):
@@ -128,6 +145,7 @@ class SigningRoleEnv:
     key_id_env: str
     zone_env: str
     verify_keys_param_env: str
+    verify_keys_file_env: str
 
 
 ISSUER_ROLE_ENV = SigningRoleEnv(
@@ -137,6 +155,7 @@ ISSUER_ROLE_ENV = SigningRoleEnv(
     key_id_env=ISSUER_SIGNING_KEY_ID_ENV,
     zone_env=ISSUER_SIGNING_ZONE_ENV,
     verify_keys_param_env=ISSUER_VERIFY_KEYS_PARAM_ENV,
+    verify_keys_file_env=ISSUER_VERIFY_KEYS_FILE_ENV,
 )
 
 EVALUATOR_ROLE_ENV = SigningRoleEnv(
@@ -146,6 +165,7 @@ EVALUATOR_ROLE_ENV = SigningRoleEnv(
     key_id_env=EVALUATOR_SIGNING_KEY_ID_ENV,
     zone_env=EVALUATOR_SIGNING_ZONE_ENV,
     verify_keys_param_env=EVALUATOR_VERIFY_KEYS_PARAM_ENV,
+    verify_keys_file_env=EVALUATOR_VERIFY_KEYS_FILE_ENV,
 )
 
 SIGNING_ROLE_ENVS: tuple[SigningRoleEnv, ...] = (ISSUER_ROLE_ENV, EVALUATOR_ROLE_ENV)
@@ -227,9 +247,29 @@ def _fetch_parameter(name: str) -> str:
     return boto3.client("ssm").get_parameter(Name=name)["Parameter"]["Value"]
 
 
+def _read_verify_keys_file(path: str) -> str:
+    """Read a role's verify-key map from a local file (the local arm, #108).
+
+    The content is the JSON the SSM parameter would hold. No file-mode check:
+    these are public keys. An unreadable file raises, and the caller turns that
+    into a refusal, so a named file that cannot be read never becomes a skipped
+    signature rule.
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    return Path(path).read_text(encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
 # The shared resolvers — parameterized by role, identical rules
 # ---------------------------------------------------------------------------
+
+
+def _verify_keys_source_env(role_env: SigningRoleEnv) -> str:
+    """The env name this role's verify keys come from, for an error message."""
+    if os.environ.get(role_env.verify_keys_file_env):
+        return role_env.verify_keys_file_env
+    return role_env.verify_keys_param_env
 
 
 def _verify_keys_for_role(
@@ -244,18 +284,29 @@ def _verify_keys_for_role(
     fails LOUD.
     """
     param_name = os.environ.get(role_env.verify_keys_param_env)
-    if not param_name:
+    keys_file = os.environ.get(role_env.verify_keys_file_env)
+    if param_name and keys_file:
+        raise IssuerSigningConfigError(
+            f"both {role_env.verify_keys_param_env} and "
+            f"{role_env.verify_keys_file_env} are set. The {role_env.role}'s verify "
+            "keys have two candidate sources, and picking one silently would decide "
+            "which signatures count without the operator having said so. Set exactly one."
+        )
+    if not param_name and not keys_file:
         return None
+    source_env = _verify_keys_source_env(role_env)
     try:
-        pem_by_key_id = json.loads(_fetch_parameter(param_name))
+        pem_by_key_id = json.loads(
+            _fetch_parameter(param_name) if param_name else _read_verify_keys_file(keys_file)
+        )
         if not isinstance(pem_by_key_id, dict):
-            raise ValueError("verify-keys parameter must be a JSON object")
+            raise ValueError("the verify-keys value must be a JSON object")
         # key_resolver_from_map parses every PEM up front, so a malformed key
         # fails HERE, at cold start, not on the first record verified.
         resolver = key_resolver_from_map(pem_by_key_id)
     except Exception as exc:
         raise IssuerSigningConfigError(
-            f"{role_env.verify_keys_param_env} is set but the {role_env.role} verify "
+            f"{source_env} is set but the {role_env.role} verify "
             f"keys could not be resolved ({type(exc).__name__})"
         ) from exc
     return frozenset(pem_by_key_id), resolver
@@ -372,7 +423,7 @@ def resolve_record_key_resolvers() -> RoleKeyResolvers | None:
 
     Refuses a key_id present in both maps: a key with two roles is no split at
     all, and the failure must be loud at cold start rather than per-record at
-    verify time — here, the message can name both parameters and the key.
+    verify time — here, the message can name both sources and the key.
     """
     issuer = _verify_keys_for_role(ISSUER_ROLE_ENV)
     evaluator = _verify_keys_for_role(EVALUATOR_ROLE_ENV)
@@ -384,7 +435,8 @@ def resolve_record_key_resolvers() -> RoleKeyResolvers | None:
     if shared:
         raise IssuerSigningConfigError(
             f"key_id(s) {shared} appear in BOTH "
-            f"{ISSUER_VERIFY_KEYS_PARAM_ENV} and {EVALUATOR_VERIFY_KEYS_PARAM_ENV} — "
+            f"{_verify_keys_source_env(ISSUER_ROLE_ENV)} and "
+            f"{_verify_keys_source_env(EVALUATOR_ROLE_ENV)} — "
             "one key cannot hold two signing roles, or the evaluator could mint "
             "promotion records. Provision a separate key per role."
         )

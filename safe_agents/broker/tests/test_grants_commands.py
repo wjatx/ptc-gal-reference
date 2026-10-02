@@ -1203,6 +1203,101 @@ def test_resolve_issuer_verify_keys_fails_closed_on_unfetchable_param(monkeypatc
 
 
 # ---------------------------------------------------------------------------
+# issuer_keys: the verify-keys FILE arm (the local floor, #108)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _no_verify_key_env(monkeypatch):
+    for role_env in issuer_keys.SIGNING_ROLE_ENVS:
+        monkeypatch.delenv(role_env.verify_keys_param_env, raising=False)
+        monkeypatch.delenv(role_env.verify_keys_file_env, raising=False)
+
+
+@pytest.mark.parametrize(
+    ("role_env", "resolve"),
+    [
+        (issuer_keys.ISSUER_ROLE_ENV, issuer_keys.resolve_issuer_verify_keys),
+        (issuer_keys.EVALUATOR_ROLE_ENV, issuer_keys.resolve_evaluator_verify_keys),
+    ],
+    ids=["issuer", "evaluator"],
+)
+def test_verify_keys_file_resolves_the_same_map_the_parameter_holds(
+    monkeypatch, tmp_path, _no_verify_key_env, role_env, resolve
+):
+    """Both roles, one code path: a local floor names a file of PUBLIC keys and
+    gets the resolver an SSM parameter would have produced, with no AWS call."""
+    _, public_pem = _generate_issuer_key()
+    keys_file = tmp_path / "verify-keys.json"
+    keys_file.write_text(json.dumps({"local-key-1": public_pem}), encoding="utf-8")
+    monkeypatch.setenv(role_env.verify_keys_file_env, str(keys_file))
+    monkeypatch.setattr(
+        issuer_keys, "_fetch_parameter", lambda name: pytest.fail("the file arm reached SSM")
+    )
+
+    resolver = resolve()
+
+    assert resolver("local-key-1") is not None
+    assert resolver("unknown-key") is None
+
+
+def test_verify_keys_file_and_parameter_together_refuse(monkeypatch, tmp_path, _no_verify_key_env):
+    """Two candidate sources decide which signatures count; picking one
+    silently is not the operator's choice."""
+    keys_file = tmp_path / "verify-keys.json"
+    keys_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv(issuer_keys.ISSUER_VERIFY_KEYS_FILE_ENV, str(keys_file))
+    monkeypatch.setenv(issuer_keys.ISSUER_VERIFY_KEYS_PARAM_ENV, "/safe-agents/x/issuer/verify-keys")
+    monkeypatch.setattr(issuer_keys, "_fetch_parameter", lambda name: "{}")
+
+    with pytest.raises(issuer_keys.IssuerSigningConfigError, match="Set exactly one"):
+        issuer_keys.resolve_issuer_verify_keys()
+
+
+@pytest.mark.parametrize(
+    "content",
+    [None, "not json", '["a-list"]', '{"local-key-1": "not-a-pem"}'],
+    ids=["missing-file", "bad-json", "non-object", "malformed-pem"],
+)
+def test_verify_keys_file_fails_closed_on_bad_content(
+    monkeypatch, tmp_path, _no_verify_key_env, content
+):
+    """A named file that cannot produce keys REFUSES, naming the file's env
+    var. It never degrades to a skipped signature rule."""
+    keys_file = tmp_path / "verify-keys.json"
+    if content is not None:
+        keys_file.write_text(content, encoding="utf-8")
+    monkeypatch.setenv(issuer_keys.ISSUER_VERIFY_KEYS_FILE_ENV, str(keys_file))
+
+    with pytest.raises(
+        issuer_keys.IssuerSigningConfigError, match=issuer_keys.ISSUER_VERIFY_KEYS_FILE_ENV
+    ):
+        issuer_keys.resolve_issuer_verify_keys()
+
+
+def test_a_key_id_in_both_roles_refuses_across_file_and_parameter(
+    monkeypatch, tmp_path, _no_verify_key_env
+):
+    """The one-key-two-roles refusal holds whichever source each role uses, and
+    its message names the source each role actually read."""
+    _, public_pem = _generate_issuer_key()
+    shared = json.dumps({"shared-1": public_pem})
+    keys_file = tmp_path / "issuer-verify-keys.json"
+    keys_file.write_text(shared, encoding="utf-8")
+    monkeypatch.setenv(issuer_keys.ISSUER_VERIFY_KEYS_FILE_ENV, str(keys_file))
+    monkeypatch.setenv(issuer_keys.EVALUATOR_VERIFY_KEYS_PARAM_ENV, "/evaluator")
+    monkeypatch.setattr(issuer_keys, "_fetch_parameter", lambda name: shared)
+
+    with pytest.raises(issuer_keys.IssuerSigningConfigError) as refusal:
+        issuer_keys.resolve_record_key_resolvers()
+
+    message = str(refusal.value)
+    assert "shared-1" in message
+    assert issuer_keys.ISSUER_VERIFY_KEYS_FILE_ENV in message
+    assert issuer_keys.EVALUATOR_VERIFY_KEYS_PARAM_ENV in message
+
+
+# ---------------------------------------------------------------------------
 # _resolve_envelope_hash — manifest mode refuses a principal mismatch;
 # store mode stays keyed by the principal argument
 # ---------------------------------------------------------------------------
