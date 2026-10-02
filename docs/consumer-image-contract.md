@@ -104,10 +104,17 @@ labels them (a)–(f).
 
 - **arm64.** The task definition registers `runtimePlatform` `ARM64`/`LINUX`, with
   cpu `256` / memory `512` by default. Build (or cross-build) the image for arm64.
-- **Push target.** The environment's agent ECR repo (`ecr-agent-repo-uri` infra export); the
-  task definition images **`:latest`** from that repo.
-- **Known limitation.** The agent ECR repo is currently shared per environment — a
-  second consumer pushing `:latest` clobbers the first. Per-agent tags/repos are an open
+- **Push target.** The environment's agent ECR repo (`ecr-agent-repo-uri` infra export). Its tags
+  are immutable where the Compute stack creates it, so push each image under a tag that has not
+  been used, read the digest back (`podman push --digestfile <file> ...`, or
+  `aws ecr describe-images --repository-name safe-agents-<env>-agent --image-ids imageTag=<tag>
+  --query 'imageDetails[0].imageDigest' --output text`), and pass the full reference
+  `<ecr-agent-repo-uri>@<digest>` as `fargate_provision`'s `image_uri`, so the task definition
+  names the image you reviewed. A second push of a tag that exists, `latest` included, is
+  refused.
+- **Known limitation.** The agent ECR repo is currently shared per environment. With immutable
+  tags one consumer can no longer overwrite another's tag, but the two still share one repository
+  and its keep-last-10 lifecycle rule. Per-agent tags/repos are an open
   question tracked in #68 / `docs/environments.md`; until it resolves, one consumer image
   per environment.
 

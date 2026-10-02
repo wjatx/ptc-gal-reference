@@ -15,6 +15,7 @@ import { Construct } from 'constructs';
 import { Environment, isEphemeral, removalPolicyFor } from './environment';
 import { FoundationStackProps } from './foundation-props';
 import { importValue, publish, resourceName } from './naming';
+import { resolveImagePin } from './image-pin';
 
 /**
  * ChannelsStack — the inbound airlock for the channels contracts: a single
@@ -60,9 +61,21 @@ export class ChannelsStack extends Stack {
         ? true
         : deployFunctionCtx === true || deployFunctionCtx === 'true';
 
-    // -c channelsAirlockImageTag=<tag|digest> — the image the function runs; default `latest`.
-    const imageTag =
-      (this.node.tryGetContext('channelsAirlockImageTag') as string | undefined) ?? 'latest';
+    // -c channelsAirlockImageDigest=sha256:<64 hex>: the image the function runs, by digest.
+    // Required whenever the function is deployed, and there is no default: a redeploy that
+    // forgets it is refused, where it used to repoint the live function at `latest`.
+    // -c channelsAirlockImageTag=<tag> is honoured only with -c allowMutableImageTags=true.
+    // The rules, and what the override records, are in image-pin.ts.
+    const airlockImagePin = resolveImagePin(
+      this,
+      {
+        image: 'channels-airlock',
+        digestKey: 'channelsAirlockImageDigest',
+        tagKey: 'channelsAirlockImageTag',
+        repositoryName: resourceName(env, 'airlock'),
+      },
+      deployFunction,
+    );
 
     // -c channelsManifestPath=/app/agents/channels-manifest.yaml — the in-image path of the
     // CONSUMER's channels manifest (the consumer-image-layer pattern, same shape as ComputeStack's
@@ -90,65 +103,85 @@ export class ChannelsStack extends Stack {
     // (`safe_agents/channels/keys.py::resolve_verification_keys` returns None on an unset ARN).
     const verifyKeysArn = this.node.tryGetContext('channelsVerifyKeysArn') as string | undefined;
 
-    // -c channelsDrainImageTag=<tag|digest> — the drain worker image. This tag IS the
-    // drain's phase gate: unset (the default), the drain Lambda + event source are not created and
-    // the stack synthesizes exactly as before — only the drain ECR repo exists so the image can be
-    // pushed before the tag is first supplied (the airlock's two-phase-bringup pattern, with the
-    // tag itself as the switch).
-    const drainImageTag = this.node.tryGetContext('channelsDrainImageTag') as string | undefined;
+    // -c channelsDrainImageDigest=sha256:<64 hex>: the drain worker image, by digest. The image
+    // key IS the drain's phase gate: with neither channelsDrainImageDigest nor
+    // channelsDrainImageTag set (the default), the drain Lambda + event source are not created
+    // and only the drain ECR repo exists, so the image can be pushed before the key is first
+    // supplied (the airlock's two-phase-bringup pattern, with the key itself as the switch).
+    // -c channelsDrainImageTag=<tag> is honoured only with -c allowMutableImageTags=true. A key
+    // that is present but empty is a synth error, never "unset" (image-pin.ts).
+    const drainRepoName = resourceName(env, 'channels-drain');
+    const drainImagePin = resolveImagePin(
+      this,
+      {
+        image: 'channels-drain',
+        digestKey: 'channelsDrainImageDigest',
+        tagKey: 'channelsDrainImageTag',
+        repositoryName: drainRepoName,
+      },
+      false,
+    );
 
     // -c channelsDrainManifestPath / -c channelsDrainReceiver — the drain's image-baked env
     // contract (channels/DRAIN.md D6): the in-image AgentManifest path and the dotted receiver
-    // provider path. Both are REQUIRED whenever the image tag is set — a drain without them fails
+    // provider path. Both are REQUIRED whenever a drain image key is set — a drain without them fails
     // every invocation loudly at runtime, so fail the synth instead.
     const drainManifestPath = this.node.tryGetContext('channelsDrainManifestPath') as
       | string
       | undefined;
     const drainReceiver = this.node.tryGetContext('channelsDrainReceiver') as string | undefined;
-    if (drainImageTag && (!drainManifestPath || !drainReceiver)) {
+    if (drainImagePin && (!drainManifestPath || !drainReceiver)) {
       throw new Error(
-        'channelsDrainImageTag is set but channelsDrainManifestPath and/or channelsDrainReceiver ' +
-          'is missing — the drain Lambda requires both (channels/DRAIN.md D6). ' +
+        'A channelsDrain image key is set but channelsDrainManifestPath and/or ' +
+          'channelsDrainReceiver is missing — the drain Lambda requires both (channels/DRAIN.md D6). ' +
           'Pass -c channelsDrainManifestPath=<in-image path> -c channelsDrainReceiver=<pkg.module:ClassName>.',
       );
     }
     // The drain lives on the phase-2 path (it is created after the airlock's early return below),
     // so requesting it while channelsDeployFunction=false would pass the D6 guard above and then
     // silently deploy no drain at all. Fail the synth instead of shipping a no-op.
-    if (drainImageTag && !deployFunction) {
+    if (drainImagePin && !deployFunction) {
       throw new Error(
-        'channelsDrainImageTag is set but channelsDeployFunction=false — the drain worker is ' +
+        'A channelsDrain image key is set but channelsDeployFunction=false — the drain worker is ' +
           'part of the phase-2 deploy and would be silently skipped. Re-run with ' +
-          'channelsDeployFunction unset (or true), or drop channelsDrainImageTag for phase 1.',
+          'channelsDeployFunction unset (or true), or drop the channelsDrain image key for phase 1.',
       );
     }
 
-    // -c channelsMissileerDrainImageTag=<tag|digest> — the SECOND drain consumer: its own
+    // -c channelsMissileerDrainImageDigest=sha256:<64 hex> — the SECOND drain consumer: its own
     // queue, own log group, own audit-chain prefix, so two consumers never compete on one queue or
-    // fork one hash chain. Same phase-gate posture as channelsDrainImageTag: unset (the default),
-    // neither the missileer queue nor its drain are created.
-    const missileerDrainImageTag = this.node.tryGetContext('channelsMissileerDrainImageTag') as
-      | string
-      | undefined;
+    // fork one hash chain. Same phase-gate posture and the same pinning rules as the drain image
+    // keys above: with neither missileer image key set (the default), neither the missileer queue
+    // nor its drain are created. Both drains read the one drain repository.
+    const missileerDrainImagePin = resolveImagePin(
+      this,
+      {
+        image: 'channels-missileer-drain',
+        digestKey: 'channelsMissileerDrainImageDigest',
+        tagKey: 'channelsMissileerDrainImageTag',
+        repositoryName: drainRepoName,
+      },
+      false,
+    );
     const missileerDrainManifestPath = this.node.tryGetContext(
       'channelsMissileerDrainManifestPath',
     ) as string | undefined;
     const missileerDrainReceiver = this.node.tryGetContext('channelsMissileerDrainReceiver') as
       | string
       | undefined;
-    if (missileerDrainImageTag && (!missileerDrainManifestPath || !missileerDrainReceiver)) {
+    if (missileerDrainImagePin && (!missileerDrainManifestPath || !missileerDrainReceiver)) {
       throw new Error(
-        'channelsMissileerDrainImageTag is set but channelsMissileerDrainManifestPath and/or ' +
+        'A channelsMissileerDrain image key is set but channelsMissileerDrainManifestPath and/or ' +
           'channelsMissileerDrainReceiver is missing — the drain Lambda requires both ' +
           '(channels/DRAIN.md D6). Pass -c channelsMissileerDrainManifestPath=<in-image path> ' +
           '-c channelsMissileerDrainReceiver=<pkg.module:ClassName>.',
       );
     }
-    if (missileerDrainImageTag && !deployFunction) {
+    if (missileerDrainImagePin && !deployFunction) {
       throw new Error(
-        'channelsMissileerDrainImageTag is set but channelsDeployFunction=false — the drain ' +
+        'A channelsMissileerDrain image key is set but channelsDeployFunction=false — the drain ' +
           'worker is part of the phase-2 deploy and would be silently skipped. Re-run with ' +
-          'channelsDeployFunction unset (or true), or drop channelsMissileerDrainImageTag for phase 1.',
+          'channelsDeployFunction unset (or true), or drop the channelsMissileerDrain image key for phase 1.',
       );
     }
 
@@ -173,27 +206,32 @@ export class ChannelsStack extends Stack {
     const ledgerKeyArn = importValue(env, 'ledger-key-arn');
 
     // ── ECR repository (airlock image) ────────────────────────────────────────────────────────────
-    // The airlock container image is pushed here; the function pulls `channelsAirlockImageTag`.
-    // Same lifecycle/removal pattern as ComputeStack's repos. Created in both bringup phases.
+    // The airlock container image is pushed here; the function pulls the digest named by
+    // channelsAirlockImageDigest. Same lifecycle/removal pattern and the same IMMUTABLE tags as
+    // ComputeStack's repos (see the note there: the keep-last-10 rule can expire a digest a
+    // function still names, and an imported repository keeps whatever mutability it had).
+    // Created in both bringup phases.
     const repo = reuseArtifacts
       ? ecr.Repository.fromRepositoryName(this, 'AirlockRepo', resourceName(env, 'airlock'))
       : new ecr.Repository(this, 'AirlockRepo', {
           repositoryName: resourceName(env, 'airlock'),
           imageScanOnPush: true,
+          imageTagMutability: ecr.TagMutability.IMMUTABLE,
           removalPolicy: removalPolicyFor(env),
           ...(isEphemeral(env) && { emptyOnDelete: true }),
           lifecycleRules: [{ maxImageCount: 10, description: 'Keep the last 10 airlock images' }],
         });
 
     // ── ECR repository (drain worker image) ───────────────────────────────────────────────
-    // Created unconditionally (even while channelsDrainImageTag is unset) so the drain image can be
-    // pushed BEFORE the tag is first supplied — the same repo-before-function bringup order as the
+    // Created unconditionally (even while no drain image key is set) so the drain image can be
+    // pushed BEFORE the key is first supplied — the same repo-before-function bringup order as the
     // airlock's.
     const drainRepo = reuseArtifacts
-      ? ecr.Repository.fromRepositoryName(this, 'DrainRepo', resourceName(env, 'channels-drain'))
+      ? ecr.Repository.fromRepositoryName(this, 'DrainRepo', drainRepoName)
       : new ecr.Repository(this, 'DrainRepo', {
-          repositoryName: resourceName(env, 'channels-drain'),
+          repositoryName: drainRepoName,
           imageScanOnPush: true,
+          imageTagMutability: ecr.TagMutability.IMMUTABLE,
           removalPolicy: removalPolicyFor(env),
           ...(isEphemeral(env) && { emptyOnDelete: true }),
           lifecycleRules: [{ maxImageCount: 10, description: 'Keep the last 10 drain images' }],
@@ -219,9 +257,9 @@ export class ChannelsStack extends Stack {
     // A SECOND consumer's own queue so it never competes with webhook-peer's `acceptedQueue` — the
     // drain's S3 audit sink resumes a hash chain by prefix, and two drains sharing one queue would
     // interleave messages from both consumers onto whichever runtime happened to poll them. Created
-    // ONLY when channelsMissileerDrainImageTag is set (the same phased-bringup gate the drain itself
+    // ONLY when a missileer drain image key is set (the same phased-bringup gate the drain itself
     // uses below). Same encryption/retention/visibility rationale as `acceptedQueue`.
-    const missileerAcceptedQueue = missileerDrainImageTag
+    const missileerAcceptedQueue = missileerDrainImagePin
       ? new sqs.Queue(this, 'MissileerAcceptedQueue', {
           queueName: resourceName(env, 'channel-accepted-missileer'),
           encryption: sqs.QueueEncryption.SQS_MANAGED,
@@ -419,7 +457,7 @@ export class ChannelsStack extends Stack {
     // inside the timeout).
     const fn = new lambda.DockerImageFunction(this, 'Airlock', {
       functionName: resourceName(env, 'airlock'),
-      code: lambda.DockerImageCode.fromEcr(repo, { tagOrDigest: imageTag }),
+      code: lambda.DockerImageCode.fromEcr(repo, { tagOrDigest: airlockImagePin }),
       architecture: lambda.Architecture.ARM_64,
       memorySize: 256,
       timeout: Duration.seconds(15),
@@ -465,7 +503,7 @@ export class ChannelsStack extends Stack {
     // The worker-side half of the airlock (channels/DRAIN.md §"Reference binding"): drains an
     // accepted queue, builds an ephemeral in-process BrokerRuntime per message, ingests the
     // envelope's provenance chain into the broker-held turn, then hands the envelope to the
-    // consumer's Receiver. Each drain is gated entirely on its own image tag — unset, that drain
+    // consumer's Receiver. Each drain is gated entirely on its own image key — unset, that drain
     // (and its dedicated queue, for missileer) does not exist. The two drains share the Dynamo
     // tables / audit bucket / ledger bucket / secrets substrate (per-principal scoping is an
     // app-layer concern); the ONLY per-drain isolation at the infra layer is the queue each reads
@@ -489,15 +527,15 @@ export class ChannelsStack extends Stack {
       secretsKeyArn,
     };
 
-    if (drainImageTag) {
+    if (drainImagePin) {
       // The primary drain keeps the ORIGINAL construct ids (id '') so it stays the SAME
       // CloudFormation resources the single-drain stack deployed — a namespaced id would change the
       // logical ids and force CloudFormation to create a new drain with the same explicit physical
       // names (function `channels-drain`, log group `/channels-drain`) before deleting the old one,
-      // which collides and rolls back. In-place update: only its image tag + manifest/receiver env
+      // which collides and rolls back. In-place update: only its image pin + manifest/receiver env
       // change (this is the missileer->webhook-peer cutover on the existing accepted queue).
       this.addDrain('', acceptedQueue, {
-        imageTag: drainImageTag,
+        imagePin: drainImagePin,
         manifestPath: drainManifestPath!,
         receiver: drainReceiver!,
         logGroupName: `/safe-agents/${env}/channels-drain`,
@@ -508,9 +546,9 @@ export class ChannelsStack extends Stack {
       });
     }
 
-    if (missileerDrainImageTag && missileerAcceptedQueue) {
+    if (missileerDrainImagePin && missileerAcceptedQueue) {
       this.addDrain('Missileer', missileerAcceptedQueue, {
-        imageTag: missileerDrainImageTag,
+        imagePin: missileerDrainImagePin,
         manifestPath: missileerDrainManifestPath!,
         receiver: missileerDrainReceiver!,
         logGroupName: `/safe-agents/${env}/channels-drain-missileer`,
@@ -533,7 +571,7 @@ export class ChannelsStack extends Stack {
     id: string,
     acceptedQueue: sqs.IQueue,
     opts: DrainSharedProps & {
-      imageTag: string;
+      imagePin: string;
       manifestPath: string;
       receiver: string;
       logGroupName: string;
@@ -559,7 +597,7 @@ export class ChannelsStack extends Stack {
       grantsTableName,
       countersTableName,
       intentsTableName,
-      imageTag,
+      imagePin,
       manifestPath,
       receiver,
       logGroupName,
@@ -731,7 +769,7 @@ export class ChannelsStack extends Stack {
     // grant load, envelope-store load, audit-chain resume — per message before the receiver acts.
     const drainFn = new lambda.DockerImageFunction(this, `${id}Drain`, {
       functionName,
-      code: lambda.DockerImageCode.fromEcr(drainRepo, { tagOrDigest: imageTag }),
+      code: lambda.DockerImageCode.fromEcr(drainRepo, { tagOrDigest: imagePin }),
       architecture: lambda.Architecture.ARM_64,
       memorySize: 256,
       timeout: Duration.seconds(60),

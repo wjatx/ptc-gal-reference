@@ -11,6 +11,7 @@ import { Construct } from 'constructs';
 import { Environment, isEphemeral, removalPolicyFor } from './environment';
 import { NetworkModeStackProps } from './foundation-props';
 import { importValue, publish, resourceName, ssmParameterName } from './naming';
+import { resolveImagePin } from './image-pin';
 import { CapabilityRoles, CapabilitySpec } from './capability-roles';
 
 // valueFromLookup returns this sentinel prefix before the SSM lookup is cached (fresh synth / CI
@@ -129,6 +130,24 @@ export class ComputeStack extends Stack {
         ? (JSON.parse(capabilityRolesCtx) as CapabilitySpec[])
         : (capabilityRolesCtx ?? []);
 
+    // Context: -c brokerImageDigest=sha256:<64 hex>, the broker image by digest. ONE image
+    // serves both task definitions below (the broker service and the client task read the same
+    // repository), so one key pins both. There is no default and no `latest`: with neither key
+    // the stack carries an error and `cdk deploy` refuses it, rather than deploying whatever a
+    // tag points at today, and rather than dropping the service. -c brokerImageTag=<tag> is
+    // honoured only with -c allowMutableImageTags=true (the first bringup, before any image
+    // exists, is the intended use); see image-pin.ts for the rules and what the override records.
+    const brokerImagePin = resolveImagePin(
+      this,
+      {
+        image: 'broker',
+        digestKey: 'brokerImageDigest',
+        tagKey: 'brokerImageTag',
+        repositoryName: resourceName(env, 'broker'),
+      },
+      true,
+    );
+
     // Optional context: -c reuseComputeArtifacts=true — reference the ECR repos and the broker
     // and client log groups by name instead of creating them. Needed when RE-creating this stack in a durable
     // (RETAIN-polarity) environment: the repos and log group survive stack deletion by design
@@ -220,14 +239,22 @@ export class ComputeStack extends Stack {
     }
 
     // ── ECR repository (broker image) ─────────────────────────────────────────────────────────────
-    // Phase C pushes the broker image here; the service pulls `latest` from it. Lifecycle rule keeps
-    // the last 10 images so the repo does not grow unbounded. emptyOnDelete cleans up in dev; only
-    // used for ephemeral (development) environments where removal policy is DESTROY.
+    // Phase C pushes the broker image here; the service pulls the digest named by
+    // brokerImageDigest. Lifecycle rule keeps the last 10 images so the repo does not grow
+    // unbounded; it counts images, not references, so a digest still named by a task definition
+    // can be expired, and the next task start then fails at the pull. emptyOnDelete cleans up in
+    // dev; only used for ephemeral (development) environments where removal policy is DESTROY.
+    //
+    // Tags are IMMUTABLE: a tag, once pushed, cannot be re-pointed at a different image, so every
+    // push needs a tag that has not been used. That holds only where this stack creates the
+    // repository. Under reuseComputeArtifacts it is imported by name and its mutability is
+    // whatever it already was.
     const repo = reuseArtifacts
       ? ecr.Repository.fromRepositoryName(this, 'BrokerRepo', resourceName(env, 'broker'))
       : new ecr.Repository(this, 'BrokerRepo', {
           repositoryName: resourceName(env, 'broker'),
           imageScanOnPush: true,
+          imageTagMutability: ecr.TagMutability.IMMUTABLE,
           removalPolicy: removalPolicyFor(env),
           ...(isEphemeral(env) && { emptyOnDelete: true }),
           lifecycleRules: [{ maxImageCount: 10, description: 'Keep the last 10 broker images' }],
@@ -242,6 +269,7 @@ export class ComputeStack extends Stack {
       : new ecr.Repository(this, 'AgentRepo', {
           repositoryName: resourceName(env, 'agent'),
           imageScanOnPush: true,
+          imageTagMutability: ecr.TagMutability.IMMUTABLE,
           removalPolicy: removalPolicyFor(env),
           ...(isEphemeral(env) && { emptyOnDelete: true }),
           lifecycleRules: [{ maxImageCount: 10, description: 'Keep the last 10 agent images' }],
@@ -291,7 +319,7 @@ export class ComputeStack extends Stack {
 
     const container = taskDef.addContainer('broker', {
       // Default entrypoint (broker-entrypoint.sh) runs the broker server + model-proxy.
-      image: ecs.ContainerImage.fromEcrRepository(repo, 'latest'),
+      image: ecs.ContainerImage.fromEcrRepository(repo, brokerImagePin),
       logging: ecs.LogDrivers.awsLogs({ logGroup, streamPrefix: 'broker' }),
       environment: {
         // AWS mode per safe_agents/arms/fargate/BROKER_ENV.md.
@@ -411,8 +439,9 @@ export class ComputeStack extends Stack {
     // and nothing else. If the client could reach a credential, the demonstration would be of a
     // broker that decides for a caller who could have acted without it.
     //
-    // It runs the broker image's `latest`, which carries the SDK the client lives in, with the
-    // broker entrypoint replaced. Placement is the run-task caller's: the agent subnets and agent SG
+    // It runs the SAME broker image the service runs (brokerImagePin), which carries the SDK the
+    // client lives in, with the broker entrypoint replaced. Placement is the run-task caller's:
+    // the agent subnets and agent SG
     // Network already publishes (agent-subnet-ids, agent-sg-id), since the broker SG admits only the
     // agent SG. In open mode those subnets are public, so the task needs assignPublicIp=ENABLED to
     // pull its image; in secure mode the pull goes through the interface endpoints.
@@ -437,7 +466,7 @@ export class ComputeStack extends Stack {
       },
     });
     clientTaskDef.addContainer('client', {
-      image: ecs.ContainerImage.fromEcrRepository(repo, 'latest'),
+      image: ecs.ContainerImage.fromEcrRepository(repo, brokerImagePin),
       // Replace the broker entrypoint, so a run-task containerOverrides.command supplies only the
       // client's arguments. No default command: the base image's ENTRYPOINT already reset the
       // python image's CMD, so an un-overridden run sends no calls and prints the registry.

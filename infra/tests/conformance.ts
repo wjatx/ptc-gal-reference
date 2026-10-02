@@ -4,12 +4,18 @@
  * Encodes the `ARCHITECTURE.md` pre-deployment checklist (lines 103–121) as machine-checkable
  * assertions against *synthesized* CloudFormation. No AWS calls: the stacks are instantiated in
  * process and inspected via `Template.fromStack(...).toJSON()`. Each row names the invariant it
- * guards, so a failure says exactly which line of the checklist broke.
+ * guards, so a failure says exactly which line of the checklist broke. One row
+ * (`images/cli-refuses-unpinned-stack-only`) runs the installed CDK CLI as a child process, with
+ * no AWS credentials in its environment, because the rule it checks is enforced by the CLI.
  *
  * Run: `npm test` (wired to `ts-node tests/conformance.ts`). Exits non-zero on any failure.
  */
-import { App, Tags } from 'aws-cdk-lib';
-import { Template } from 'aws-cdk-lib/assertions';
+import { spawnSync } from 'child_process';
+import { readdirSync, readFileSync } from 'fs';
+import { devNull, tmpdir } from 'os';
+import { join, resolve } from 'path';
+import { App, Stack, Stage, Tags } from 'aws-cdk-lib';
+import { Annotations, Match, Template } from 'aws-cdk-lib/assertions';
 import { Environment } from '../lib/environment';
 import { exportName, resourceName, stackName } from '../lib/naming';
 import { NetworkStack } from '../lib/network-stack';
@@ -17,14 +23,35 @@ import { StateStack } from '../lib/state-stack';
 import { IdentityStack } from '../lib/identity-stack';
 import { ChannelsStack } from '../lib/channels-stack';
 import { ComputeStack } from '../lib/compute-stack';
+import {
+  ALLOW_MUTABLE_TAGS_KEY,
+  MUTABLE_IMAGE_TAGS_STACK_TAG,
+  UNPINNED_PLACEHOLDER,
+} from '../lib/image-pin';
 
 const ENV: Environment = 'development';
+
+// Every image is pinned by digest (lib/image-pin.ts), and there is no default, so each stack
+// below that deploys an image names one. The values are well-formed digests of nothing: a synth
+// pulls no image. One distinct value per image, so a check can tell which key reached which
+// resource.
+const BROKER_DIGEST = `sha256:${'a'.repeat(64)}`;
+const AIRLOCK_DIGEST = `sha256:${'b'.repeat(64)}`;
+const DRAIN_DIGEST = `sha256:${'c'.repeat(64)}`;
+const MISSILEER_DRAIN_DIGEST = `sha256:${'d'.repeat(64)}`;
+
+// For the one row that runs the CDK CLI as a child process: a config path that holds no profile,
+// and a fixed assembly directory that each run overwrites (nothing accumulates, nothing to clean).
+const NO_AWS_CONFIG = devNull;
+const CLI_CHECK_OUTDIR = join(tmpdir(), 'safe-agents-conformance-cdk-out');
 
 // Instantiate the foundation exactly as the app does, so we assert what actually deploys. The
 // network flag is passed explicitly (not read from ambient context) so each mode is asserted
 // deterministically. `templates.network` is the SECURE topology — every existing Network invariant
 // runs against it; the open topology is synthesized separately below for the cost-guard checks.
-const app = new App({ context: { environment: ENV } });
+const app = new App({
+  context: { environment: ENV, channelsAirlockImageDigest: AIRLOCK_DIGEST },
+});
 const network = new NetworkStack(app, stackName(ENV, 'Network'), {
   environment: ENV,
   secureNetwork: true,
@@ -48,7 +75,8 @@ const templates = {
 
 // The airlock stack synthesized with channelsDeployFunction=false (its own App to avoid a
 // stack-name clash) — the first-phase bringup that lays down repo + queue + secret but no
-// function or API. Asserted by the two-phase-skip check below.
+// function or API. Asserted by the two-phase-skip check below. It names no airlock image on
+// purpose: phase 1 runs before any image exists, so it must not need one.
 const noFnApp = new App({ context: { environment: ENV, channelsDeployFunction: false } });
 const channelsNoFn = new ChannelsStack(noFnApp, stackName(ENV, 'Channels'), { environment: ENV });
 Tags.of(noFnApp).add('Project', 'safe-agents');
@@ -63,7 +91,11 @@ const SCREEN_MODEL_ARNS = [
   'arn:aws:bedrock:us-east-1::foundation-model/example-model',
 ];
 const screenedApp = new App({
-  context: { environment: ENV, channelsScreenModelArns: SCREEN_MODEL_ARNS.join(',') },
+  context: {
+    environment: ENV,
+    channelsAirlockImageDigest: AIRLOCK_DIGEST,
+    channelsScreenModelArns: SCREEN_MODEL_ARNS.join(','),
+  },
 });
 const channelsScreened = new ChannelsStack(screenedApp, stackName(ENV, 'Channels'), {
   environment: ENV,
@@ -78,7 +110,11 @@ const channelsScreenedTemplate = Template.fromStack(channelsScreened).toJSON() a
 const VERIFY_KEYS_ARN =
   'arn:aws:secretsmanager:us-east-1:111122223333:secret:example-verify-keys-AbCdEf';
 const verifyKeysApp = new App({
-  context: { environment: ENV, channelsVerifyKeysArn: VERIFY_KEYS_ARN },
+  context: {
+    environment: ENV,
+    channelsAirlockImageDigest: AIRLOCK_DIGEST,
+    channelsVerifyKeysArn: VERIFY_KEYS_ARN,
+  },
 });
 const channelsVerifyKeys = new ChannelsStack(verifyKeysApp, stackName(ENV, 'Channels'), {
   environment: ENV,
@@ -137,7 +173,7 @@ Tags.of(operatorApp).add('Project', 'safe-agents');
 Tags.of(operatorApp).add('Environment', ENV);
 const identityOperatorTemplate = Template.fromStack(identityOperator).toJSON() as CfnTemplate;
 
-// The channels stack with the drain worker enabled: image tag + the two required
+// The channels stack with the drain worker enabled: image digest + the two required
 // image-baked env context keys. Asserted by the drain checks — the default template above stays
 // the drain-off shape (repo only), so drain-off-by-default is asserted against `templates.channels`.
 const DRAIN_MANIFEST_PATH = '/app/agents/drain-manifest.yaml';
@@ -145,7 +181,8 @@ const DRAIN_RECEIVER = 'example_pkg.receivers:ExampleReceiver';
 const drainApp = new App({
   context: {
     environment: ENV,
-    channelsDrainImageTag: 'drain-test-1',
+    channelsAirlockImageDigest: AIRLOCK_DIGEST,
+    channelsDrainImageDigest: DRAIN_DIGEST,
     channelsDrainManifestPath: DRAIN_MANIFEST_PATH,
     channelsDrainReceiver: DRAIN_RECEIVER,
   },
@@ -173,7 +210,7 @@ const openNetworkTemplate = Template.fromStack(openNetwork).toJSON() as CfnTempl
 // no capability role, no sts:AssumeRole grant on the broker role, and (mechanically) the same shape
 // the pre-capability-role stack synthesized. Its own App to avoid a stack-name clash with the compute-with-
 // capabilities variant below.
-const computeApp = new App({ context: { environment: ENV } });
+const computeApp = new App({ context: { environment: ENV, brokerImageDigest: BROKER_DIGEST } });
 const computeDefault = new ComputeStack(computeApp, stackName(ENV, 'Compute'), {
   environment: ENV,
   secureNetwork: false,
@@ -191,7 +228,11 @@ const CAPABILITY_SPEC = {
   resources: ['arn:aws:s3:::b/*'],
 };
 const computeCapApp = new App({
-  context: { environment: ENV, capabilityRoles: JSON.stringify([CAPABILITY_SPEC]) },
+  context: {
+    environment: ENV,
+    brokerImageDigest: BROKER_DIGEST,
+    capabilityRoles: JSON.stringify([CAPABILITY_SPEC]),
+  },
 });
 const computeWithCapabilities = new ComputeStack(computeCapApp, stackName(ENV, 'Compute'), {
   environment: ENV,
@@ -238,6 +279,40 @@ function exportNames(tmpl: CfnTemplate): Set<string> {
     if (out.Export?.Name) names.add(out.Export.Name);
   }
   return names;
+}
+
+/** A ComputeStack in its own App (open network), with `environment` plus the given context. */
+function computeWith(context: Record<string, unknown>): ComputeStack {
+  const a = new App({ context: { environment: ENV, ...context } });
+  return new ComputeStack(a, stackName(ENV, 'Compute'), {
+    environment: ENV,
+    secureNetwork: false,
+  });
+}
+
+/** A ChannelsStack in its own App, with `environment` plus the given context. */
+function channelsWith(context: Record<string, unknown>): ChannelsStack {
+  const a = new App({ context: { environment: ENV, ...context } });
+  return new ChannelsStack(a, stackName(ENV, 'Channels'), { environment: ENV });
+}
+
+/**
+ * Run a stack constructor that must throw, and require the message to name every needle. The
+ * message is matched because a bare "it threw" passes on a throw from an unrelated guard.
+ */
+function expectThrowNaming(what: string, build: () => unknown, needles: string[]): void {
+  let message: string | undefined;
+  try {
+    build();
+  } catch (err) {
+    message = err instanceof Error ? err.message : String(err);
+  }
+  if (message === undefined) throw new Error(`${what}: the synth did not throw`);
+  const thrown = message;
+  const missing = needles.filter((n) => !thrown.includes(n));
+  if (missing.length > 0) {
+    throw new Error(`${what}: threw without naming ${missing.join(', ')}: ${thrown}`);
+  }
 }
 
 // ── checks: Network ────────────────────────────────────────────────────────────────────────
@@ -1438,9 +1513,9 @@ function channelsScreenModelArnsScoped(): boolean {
 
 // ── checks: Channels drain worker ───────────────────────────────────────────────────────
 function drainOffByDefault(): boolean {
-  // No channelsDrainImageTag → no drain function, no event source mapping; only the drain ECR
-  // repo (push-before-tag bringup) exists. The default template must synthesize exactly one
-  // Lambda (the airlock).
+  // Neither drain image key (channelsDrainImageDigest, channelsDrainImageTag) → no drain
+  // function, no event source mapping; only the drain ECR repo (push-before-key bringup) exists.
+  // The default template must synthesize exactly one Lambda (the airlock).
   const fns = resourcesOfType(templates.channels, 'AWS::Lambda::Function');
   const mappings = resourcesOfType(templates.channels, 'AWS::Lambda::EventSourceMapping');
   const drainRepos = resourcesOfType(templates.channels, 'AWS::ECR::Repository').filter(([, r]) =>
@@ -1450,7 +1525,7 @@ function drainOffByDefault(): boolean {
 }
 
 function drainWiredWhenEnabled(): boolean {
-  // With the tag set: a second Lambda exists, outside any VPC, arm64, 60 s, carrying the two
+  // With the image key set: a second Lambda exists, outside any VPC, arm64, 60 s, carrying the two
   // image-baked drain vars plus the broker backend posture (read-only grant load, store-loaded
   // envelope), consuming the accepted queue at batchSize 1 with partial-batch failures reported.
   const fns = resourcesOfType(channelsDrainTemplate, 'AWS::Lambda::Function');
@@ -1483,17 +1558,19 @@ function drainWiredWhenEnabled(): boolean {
 }
 
 function drainConfigGuardThrows(): boolean {
-  // channelsDrainImageTag without the manifest/receiver context keys must fail the SYNTH, not
-  // deploy a drain that fails every invocation at runtime (channels/DRAIN.md D6).
-  const badApp = new App({
-    context: { environment: ENV, channelsDrainImageTag: 'drain-test-1' },
-  });
-  try {
-    new ChannelsStack(badApp, stackName(ENV, 'Channels'), { environment: ENV });
-    return false;
-  } catch {
-    return true;
-  }
+  // A drain image key without the manifest/receiver context keys must fail the SYNTH, not
+  // deploy a drain that fails every invocation at runtime (channels/DRAIN.md D6). The message is
+  // matched, so a throw from an unrelated guard (the image-pin rules) cannot satisfy this row.
+  expectThrowNaming(
+    'a drain image key with no manifest/receiver',
+    () =>
+      channelsWith({
+        channelsAirlockImageDigest: AIRLOCK_DIGEST,
+        channelsDrainImageDigest: DRAIN_DIGEST,
+      }),
+    ['channelsDrainManifestPath', 'channelsDrainReceiver'],
+  );
+  return true;
 }
 
 function drainFunction(): CfnResource | undefined {
@@ -1584,23 +1661,20 @@ function drainQueueVisibilityCoversTimeout(): boolean {
 }
 
 function drainPhaseOneComboThrows(): boolean {
-  // channelsDrainImageTag together with channelsDeployFunction=false must fail the synth: the
+  // A drain image key together with channelsDeployFunction=false must fail the synth: the
   // drain lives on the phase-2 path, and the combination would silently deploy no drain at all.
-  const badApp = new App({
-    context: {
-      environment: ENV,
-      channelsDeployFunction: false,
-      channelsDrainImageTag: 'drain-test-1',
-      channelsDrainManifestPath: DRAIN_MANIFEST_PATH,
-      channelsDrainReceiver: DRAIN_RECEIVER,
-    },
-  });
-  try {
-    new ChannelsStack(badApp, stackName(ENV, 'Channels'), { environment: ENV });
-    return false;
-  } catch {
-    return true;
-  }
+  expectThrowNaming(
+    'a drain image key with channelsDeployFunction=false',
+    () =>
+      channelsWith({
+        channelsDeployFunction: false,
+        channelsDrainImageDigest: DRAIN_DIGEST,
+        channelsDrainManifestPath: DRAIN_MANIFEST_PATH,
+        channelsDrainReceiver: DRAIN_RECEIVER,
+      }),
+    ['channelsDeployFunction=false'],
+  );
+  return true;
 }
 
 function drainNoWildcardResource(): boolean {
@@ -1917,6 +1991,450 @@ function clientExecutionRoleOnlyPullsAndLogs(): boolean {
     }
   }
   if (statements === 0) throw new Error('client execution role has no policy statements (cannot pull its image)');
+  return true;
+}
+
+// ── checks: image pinning (lib/image-pin.ts) ───────────────────────────────────────────────────
+// Every image reference goes through one helper. A digest is the only reference accepted without
+// an override; a tag needs allowMutableImageTags=true and is recorded on the stack; nothing has a
+// default. The rows assert the rendered template and the stack's assembly entry, since those are
+// what deploy. Each check throws with what it found, so a failure names the broken rule.
+
+const MISSILEER_DRAIN_CONTEXT = {
+  channelsMissileerDrainManifestPath: '/app/agents/missileer-manifest.yaml',
+  channelsMissileerDrainReceiver: 'example_pkg.receivers:MissileerReceiver',
+};
+const DRAIN_CONTEXT = {
+  channelsDrainManifestPath: DRAIN_MANIFEST_PATH,
+  channelsDrainReceiver: DRAIN_RECEIVER,
+};
+
+// The four pinned images. `build` supplies everything ELSE its stack needs, so the only rule
+// that can fire on the context under test is the image-pin rule.
+interface PinnedImage {
+  image: string;
+  digestKey: string;
+  tagKey: string;
+  build: (context: Record<string, unknown>) => Stack;
+}
+const PINNED_IMAGES: PinnedImage[] = [
+  {
+    image: 'broker',
+    digestKey: 'brokerImageDigest',
+    tagKey: 'brokerImageTag',
+    build: (context) => computeWith(context),
+  },
+  {
+    image: 'channels-airlock',
+    digestKey: 'channelsAirlockImageDigest',
+    tagKey: 'channelsAirlockImageTag',
+    build: (context) => channelsWith(context),
+  },
+  {
+    image: 'channels-drain',
+    digestKey: 'channelsDrainImageDigest',
+    tagKey: 'channelsDrainImageTag',
+    build: (context) =>
+      channelsWith({ channelsAirlockImageDigest: AIRLOCK_DIGEST, ...DRAIN_CONTEXT, ...context }),
+  },
+  {
+    image: 'channels-missileer-drain',
+    digestKey: 'channelsMissileerDrainImageDigest',
+    tagKey: 'channelsMissileerDrainImageTag',
+    build: (context) =>
+      channelsWith({
+        channelsAirlockImageDigest: AIRLOCK_DIGEST,
+        ...MISSILEER_DRAIN_CONTEXT,
+        ...context,
+      }),
+  },
+];
+
+/**
+ * The literal tail of a rendered image reference. CDK renders `<repository-uri>` as an Fn::Join
+ * of tokens and appends the pin as the last, literal element: `@sha256:...` for a digest,
+ * `:<tag>` for a tag.
+ */
+function imageRefTail(value: unknown, what: string): string {
+  const parts = (value as { 'Fn::Join'?: [string, unknown[]] } | undefined)?.['Fn::Join']?.[1];
+  const last = parts?.[parts.length - 1];
+  if (typeof last !== 'string') {
+    throw new Error(`${what}: image reference has no literal tail: ${JSON.stringify(value)}`);
+  }
+  return last;
+}
+
+/** container name → image tail, across every task definition in the template. */
+function taskImageTails(tmpl: CfnTemplate): Record<string, string> {
+  const tails: Record<string, string> = {};
+  for (const [, taskDef] of resourcesOfType(tmpl, 'AWS::ECS::TaskDefinition')) {
+    const containers = (taskDef.Properties?.ContainerDefinitions ?? []) as {
+      Name: string;
+      Image: unknown;
+    }[];
+    for (const c of containers) tails[c.Name] = imageRefTail(c.Image, `container ${c.Name}`);
+  }
+  return tails;
+}
+
+/** function name → image tail, across every container-image Lambda in the template. */
+function lambdaImageTails(tmpl: CfnTemplate): Record<string, string> {
+  const tails: Record<string, string> = {};
+  for (const [, fn] of resourcesOfType(tmpl, 'AWS::Lambda::Function')) {
+    const name = String(fn.Properties?.FunctionName);
+    const code = fn.Properties?.Code as { ImageUri?: unknown } | undefined;
+    tails[name] = imageRefTail(code?.ImageUri, `function ${name}`);
+  }
+  return tails;
+}
+
+function expectTails(what: string, actual: Record<string, string>, expected: Record<string, string>): void {
+  const canon = (r: Record<string, string>) => JSON.stringify(Object.entries(r).sort());
+  if (canon(actual) !== canon(expected)) {
+    throw new Error(`${what}: rendered ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`);
+  }
+}
+
+/** The stack tags CloudFormation is given at deploy, read from the cloud assembly. */
+function deployedStackTags(stack: Stack): Record<string, string> {
+  const stage = Stage.of(stack);
+  if (!stage) throw new Error(`${stack.stackName} is not in a stage`);
+  return stage.synth().getStackByName(stack.stackName).tags;
+}
+
+function annotationMessages(stack: Stack, level: 'error' | 'warning', pattern: string): string[] {
+  const annotations = Annotations.fromStack(stack);
+  const found =
+    level === 'error'
+      ? annotations.findError('*', Match.stringLikeRegexp(pattern))
+      : annotations.findWarning('*', Match.stringLikeRegexp(pattern));
+  return found.map((m) => String(m.entry.data));
+}
+
+const AIRLOCK_FN = resourceName(ENV, 'airlock');
+const DRAIN_FN = resourceName(ENV, 'channels-drain');
+const MISSILEER_DRAIN_FN = resourceName(ENV, 'channels-drain-missileer');
+
+function digestsRenderByDigest(): boolean {
+  // The digest path, for all five places an image is named: `<repository-uri>@sha256:<hex>`, never
+  // `<repository-uri>:<anything>`. The broker and client containers carry the SAME digest: one
+  // key pins both, because both read the broker repository.
+  expectTails('compute', taskImageTails(computeDefaultTemplate), {
+    broker: `@${BROKER_DIGEST}`,
+    client: `@${BROKER_DIGEST}`,
+  });
+  const channelsAll = channelsWith({
+    channelsAirlockImageDigest: AIRLOCK_DIGEST,
+    channelsDrainImageDigest: DRAIN_DIGEST,
+    ...DRAIN_CONTEXT,
+    channelsMissileerDrainImageDigest: MISSILEER_DRAIN_DIGEST,
+    ...MISSILEER_DRAIN_CONTEXT,
+    // The override flag with no tag key must change nothing and record nothing.
+    [ALLOW_MUTABLE_TAGS_KEY]: true,
+  });
+  expectTails('channels', lambdaImageTails(Template.fromStack(channelsAll).toJSON() as CfnTemplate), {
+    [AIRLOCK_FN]: `@${AIRLOCK_DIGEST}`,
+    [DRAIN_FN]: `@${DRAIN_DIGEST}`,
+    [MISSILEER_DRAIN_FN]: `@${MISSILEER_DRAIN_DIGEST}`,
+  });
+  // The reuse flags import each repository by name instead of creating it. The stack then does
+  // not manage the repository (so its tag mutability is not ours to assert), and the image
+  // reference must still be a digest.
+  const reused: [string, Record<string, string>][] = [
+    [
+      'compute with reuseComputeArtifacts',
+      taskImageTails(
+        Template.fromStack(
+          computeWith({ brokerImageDigest: BROKER_DIGEST, reuseComputeArtifacts: true }),
+        ).toJSON() as CfnTemplate,
+      ),
+    ],
+    [
+      'channels with reuseChannelsArtifacts',
+      lambdaImageTails(
+        Template.fromStack(
+          channelsWith({ channelsAirlockImageDigest: AIRLOCK_DIGEST, reuseChannelsArtifacts: true }),
+        ).toJSON() as CfnTemplate,
+      ),
+    ],
+  ];
+  for (const [what, tails] of reused) {
+    const notByDigest = Object.entries(tails).filter(([, tail]) => !/@sha256:[0-9a-f]{64}$/.test(tail));
+    if (Object.keys(tails).length === 0 || notByDigest.length > 0) {
+      throw new Error(`${what}: not every image is named by digest: ${JSON.stringify(tails)}`);
+    }
+  }
+  for (const stack of [computeDefault, channelsAll]) {
+    if (MUTABLE_IMAGE_TAGS_STACK_TAG in deployedStackTags(stack)) {
+      throw new Error(`${stack.stackName} is pinned by digest and still carries the override tag`);
+    }
+    const noise = [
+      ...annotationMessages(stack, 'error', 'image'),
+      ...annotationMessages(stack, 'warning', 'deployed by tag'),
+    ];
+    if (noise.length > 0) throw new Error(`${stack.stackName} pinned by digest reports: ${noise.join(' | ')}`);
+  }
+  return true;
+}
+
+function missingRequiredImageIsAStackError(): boolean {
+  // No key, where the stack deploys the image: an ERROR on that stack naming the digest key, and
+  // a template that names UNPINNED_PLACEHOLDER (a digest no image has). Never a default tag, and
+  // never a dropped resource: the service and the function are still in the template, so a
+  // redeploy that forgot the key cannot delete them.
+  const compute = computeWith({});
+  const computeTemplate = Template.fromStack(compute).toJSON() as CfnTemplate;
+  if (annotationMessages(compute, 'error', 'brokerImageDigest').length !== 1) {
+    throw new Error('ComputeStack with no broker image key carries no error naming brokerImageDigest');
+  }
+  expectTails('compute with no key', taskImageTails(computeTemplate), {
+    broker: `@${UNPINNED_PLACEHOLDER}`,
+    client: `@${UNPINNED_PLACEHOLDER}`,
+  });
+  if (resourcesOfType(computeTemplate, 'AWS::ECS::Service').length !== 1) {
+    throw new Error('ComputeStack with no broker image key dropped the broker service');
+  }
+
+  const unpinnedChannels = channelsWith({});
+  const channelsTemplate = Template.fromStack(unpinnedChannels).toJSON() as CfnTemplate;
+  if (annotationMessages(unpinnedChannels, 'error', 'channelsAirlockImageDigest').length !== 1) {
+    throw new Error('ChannelsStack with no airlock image key carries no error naming channelsAirlockImageDigest');
+  }
+  expectTails('channels with no key', lambdaImageTails(channelsTemplate), {
+    [AIRLOCK_FN]: `@${UNPINNED_PLACEHOLDER}`,
+  });
+
+  // Phase 1 (channelsDeployFunction=false) deploys no function, so it needs no image and must
+  // carry no error: it is the deploy that creates the repository the first image is pushed to.
+  const phaseOneErrors = annotationMessages(channelsNoFn, 'error', '.*');
+  if (phaseOneErrors.length > 0) {
+    throw new Error(`phase-1 ChannelsStack reports errors: ${phaseOneErrors.join(' | ')}`);
+  }
+  return true;
+}
+
+// Values an operator could plausibly pass as a digest. Each must be refused, never coerced.
+const MALFORMED_DIGESTS: unknown[] = [
+  '', // an empty shell variable: must not read as "unset" and quietly close a drain's gate
+  'latest',
+  'sha256:abc',
+  `sha256:${'a'.repeat(63)}`,
+  `sha256:${'a'.repeat(65)}`,
+  `sha256:${'A'.repeat(64)}`,
+  'a'.repeat(64),
+  `sha512:${'a'.repeat(64)}`,
+  `${BROKER_DIGEST}\n`,
+  ` ${BROKER_DIGEST}`,
+  `repository@${BROKER_DIGEST}`,
+  true,
+];
+
+function malformedDigestThrows(): boolean {
+  for (const img of PINNED_IMAGES) {
+    for (const bad of MALFORMED_DIGESTS) {
+      expectThrowNaming(
+        `${img.digestKey}=${JSON.stringify(bad)}`,
+        () => img.build({ [img.digestKey]: bad }),
+        [img.digestKey, 'is not an image digest', '64 lowercase hexadecimal'],
+      );
+    }
+  }
+  return true;
+}
+
+function tagWithoutOverrideThrows(): boolean {
+  // A tag key alone is refused, and the message says what to pass instead (the digest key) and
+  // names the override. Anything other than true / 'true' is not the override.
+  for (const img of PINNED_IMAGES) {
+    for (const allow of [undefined, false, 'false', 'yes', '1', '']) {
+      for (const tag of ['v1', 'latest']) {
+        expectThrowNaming(
+          `${img.tagKey}=${tag} with ${ALLOW_MUTABLE_TAGS_KEY}=${JSON.stringify(allow)}`,
+          () => img.build({ [img.tagKey]: tag, [ALLOW_MUTABLE_TAGS_KEY]: allow }),
+          [img.tagKey, img.digestKey, `${ALLOW_MUTABLE_TAGS_KEY}=true`],
+        );
+      }
+    }
+  }
+  return true;
+}
+
+function bothKeysThrow(): boolean {
+  // Digest and tag together are ambiguous, with or without the override.
+  for (const img of PINNED_IMAGES) {
+    for (const allow of [undefined, true]) {
+      expectThrowNaming(
+        `${img.digestKey} and ${img.tagKey} together (override ${JSON.stringify(allow)})`,
+        () =>
+          img.build({
+            [img.digestKey]: BROKER_DIGEST,
+            [img.tagKey]: 'v1',
+            [ALLOW_MUTABLE_TAGS_KEY]: allow,
+          }),
+        ['Both', img.digestKey, img.tagKey],
+      );
+    }
+  }
+  return true;
+}
+
+function overrideRefusesANonTag(): boolean {
+  // Under the override the tag key takes a TAG. A digest passed there would render as a digest
+  // while being recorded as a mutable tag, so it is refused and pointed at the digest key.
+  for (const img of PINNED_IMAGES) {
+    for (const bad of [BROKER_DIGEST, '', 'has space', '-leading-dash', 'a'.repeat(129)]) {
+      expectThrowNaming(
+        `${img.tagKey}=${JSON.stringify(bad)} under the override`,
+        () => img.build({ [img.tagKey]: bad, [ALLOW_MUTABLE_TAGS_KEY]: true }),
+        [img.tagKey, 'is not an image tag', img.digestKey],
+      );
+    }
+  }
+  return true;
+}
+
+function overrideRendersTagWarnsAndRecords(): boolean {
+  // The override, end to end: the tag renders, a warning names the image and the tag, and the
+  // stack tag CloudFormation receives lists every image deployed by tag in that stack.
+  const compute = computeWith({ brokerImageTag: 'bootstrap', [ALLOW_MUTABLE_TAGS_KEY]: true });
+  expectTails(
+    'compute under the override',
+    taskImageTails(Template.fromStack(compute).toJSON() as CfnTemplate),
+    { broker: ':bootstrap', client: ':bootstrap' },
+  );
+  const computeRecord = deployedStackTags(compute)[MUTABLE_IMAGE_TAGS_STACK_TAG];
+  if (computeRecord !== 'broker=bootstrap') {
+    throw new Error(`compute stack tag ${MUTABLE_IMAGE_TAGS_STACK_TAG} is ${JSON.stringify(computeRecord)}`);
+  }
+  if (annotationMessages(compute, 'warning', 'broker image is deployed by tag "bootstrap"').length !== 1) {
+    throw new Error('compute under the override carries no warning naming the broker image and its tag');
+  }
+
+  // Three images by tag in one stack, with the flag as the string the CLI passes.
+  const channelsByTag = channelsWith({
+    channelsAirlockImageTag: 'airlock-1',
+    channelsDrainImageTag: 'drain-1',
+    ...DRAIN_CONTEXT,
+    channelsMissileerDrainImageTag: 'missileer-1',
+    ...MISSILEER_DRAIN_CONTEXT,
+    [ALLOW_MUTABLE_TAGS_KEY]: 'true',
+  });
+  expectTails(
+    'channels under the override',
+    lambdaImageTails(Template.fromStack(channelsByTag).toJSON() as CfnTemplate),
+    { [AIRLOCK_FN]: ':airlock-1', [DRAIN_FN]: ':drain-1', [MISSILEER_DRAIN_FN]: ':missileer-1' },
+  );
+  const channelsRecord = deployedStackTags(channelsByTag)[MUTABLE_IMAGE_TAGS_STACK_TAG];
+  const expectedRecord =
+    'channels-airlock=airlock-1 channels-drain=drain-1 channels-missileer-drain=missileer-1';
+  if (channelsRecord !== expectedRecord) {
+    throw new Error(`channels stack tag ${MUTABLE_IMAGE_TAGS_STACK_TAG} is ${JSON.stringify(channelsRecord)}`);
+  }
+  if (annotationMessages(channelsByTag, 'warning', 'deployed by tag').length !== 3) {
+    throw new Error('channels under the override does not carry one warning per image deployed by tag');
+  }
+
+  // Mixed: only the image deployed by tag is recorded.
+  const mixed = channelsWith({
+    channelsAirlockImageDigest: AIRLOCK_DIGEST,
+    channelsDrainImageTag: 'drain-1',
+    ...DRAIN_CONTEXT,
+    [ALLOW_MUTABLE_TAGS_KEY]: true,
+  });
+  const mixedRecord = deployedStackTags(mixed)[MUTABLE_IMAGE_TAGS_STACK_TAG];
+  if (mixedRecord !== 'channels-drain=drain-1') {
+    throw new Error(`mixed channels stack tag is ${JSON.stringify(mixedRecord)}`);
+  }
+  return true;
+}
+
+function allEcrRepositoriesImmutable(): boolean {
+  // The four repositories the stacks create, in every template shape that creates them. With
+  // IMMUTABLE tags a pushed tag cannot be re-pointed at a different image.
+  const repos = [computeDefaultTemplate, templates.channels, channelsNoFnTemplate].flatMap((t) =>
+    resourcesOfType(t, 'AWS::ECR::Repository'),
+  );
+  const names = [...new Set(repos.map(([, r]) => String(r.Properties?.RepositoryName)))].sort();
+  const expected = ['agent', 'airlock', 'broker', 'channels-drain'].map((n) => resourceName(ENV, n)).sort();
+  if (JSON.stringify(names) !== JSON.stringify(expected)) {
+    throw new Error(`expected repositories ${expected.join(', ')}; found ${names.join(', ')}`);
+  }
+  const mutable = repos.filter(([, r]) => r.Properties?.ImageTagMutability !== 'IMMUTABLE');
+  if (mutable.length > 0) {
+    throw new Error(
+      `not IMMUTABLE: ${mutable.map(([, r]) => `${String(r.Properties?.RepositoryName)} (${String(r.Properties?.ImageTagMutability)})`).join(', ')}`,
+    );
+  }
+  return true;
+}
+
+function noLatestLiteralInInfraSource(): boolean {
+  // No quoted 'latest' string literal in the stack sources. Raw lines are scanned, comments
+  // included: stripping comments by regex is unsound here (an ARN suffix such as `/*` inside a
+  // string reads as a comment opener and blanks the code after it), and the cost of scanning
+  // them is only that a comment discussing the tag writes it in backticks, as they all do.
+  const QUOTED_LATEST = /(['"])latest\1/;
+  const infraDir = resolve(__dirname, '..');
+  const offenders: string[] = [];
+  for (const dir of ['lib', 'bin']) {
+    const sources = readdirSync(join(infraDir, dir)).filter(
+      (f) => f.endsWith('.ts') && !f.endsWith('.d.ts'),
+    );
+    for (const file of sources) {
+      readFileSync(join(infraDir, dir, file), 'utf8')
+        .split('\n')
+        .forEach((line, i) => {
+          if (QUOTED_LATEST.test(line)) offenders.push(`infra/${dir}/${file}:${i + 1}`);
+        });
+    }
+  }
+  if (offenders.length > 0) throw new Error(`quoted 'latest' literal at ${offenders.join(', ')}`);
+  return true;
+}
+
+function cliRefusesTheUnpinnedStackOnly(): boolean {
+  // The missing-key rule is an error ANNOTATION, so its force is the CDK CLI's: the CLI must
+  // refuse a selection that includes the unpinned stack, and must leave a stack that deploys no
+  // image alone. This row runs the installed CLI for both, so a CLI upgrade that changed either
+  // behaviour fails here. It covers `cdk synth`; `cdk deploy` and `cdk diff` reach the same
+  // validation and are not run, because they call AWS. The child gets no AWS credentials, so its
+  // stacks stay environment-agnostic and it makes no AWS call, exactly as in CI.
+  const infraDir = resolve(__dirname, '..');
+  const env: NodeJS.ProcessEnv = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !k.startsWith('AWS_') && !k.startsWith('CDK_')),
+  );
+  env.AWS_CONFIG_FILE = NO_AWS_CONFIG;
+  env.AWS_SHARED_CREDENTIALS_FILE = NO_AWS_CONFIG;
+  env.AWS_EC2_METADATA_DISABLED = 'true';
+  const synth = (stack: string) =>
+    spawnSync(
+      process.execPath,
+      [
+        require.resolve('aws-cdk/bin/cdk'),
+        'synth',
+        stack,
+        '-c',
+        `environment=${ENV}`,
+        '--quiet',
+        '--no-notices',
+        '--no-version-reporting',
+        '-o',
+        CLI_CHECK_OUTDIR,
+      ],
+      { cwd: infraDir, env, encoding: 'utf8' },
+    );
+
+  const unpinned = synth(stackName(ENV, 'Compute'));
+  if (unpinned.status === 0) {
+    throw new Error('cdk synth of the Compute stack with no broker image key exited 0');
+  }
+  if (!`${unpinned.stdout}${unpinned.stderr}`.includes('brokerImageDigest')) {
+    throw new Error(`cdk synth failed without naming brokerImageDigest: ${unpinned.stderr.slice(-400)}`);
+  }
+  const imageless = synth(stackName(ENV, 'Network'));
+  if (imageless.status !== 0) {
+    throw new Error(`cdk synth of the Network stack needed an image key: ${imageless.stderr.slice(-400)}`);
+  }
   return true;
 }
 
@@ -2363,7 +2881,7 @@ const ROWS: Row[] = [
   {
     id: 'channels/drain-off-by-default',
     group: 'Channels',
-    desc: 'no channelsDrainImageTag → no drain Lambda or event source; only the drain ECR repo',
+    desc: 'neither drain image key → no drain Lambda or event source; only the drain ECR repo',
     check: drainOffByDefault,
   },
   {
@@ -2375,7 +2893,7 @@ const ROWS: Row[] = [
   {
     id: 'channels/drain-config-guard',
     group: 'Channels',
-    desc: 'channelsDrainImageTag without manifest/receiver context fails the synth (DRAIN.md D6)',
+    desc: 'a drain image key without manifest/receiver context fails the synth (DRAIN.md D6)',
     check: drainConfigGuardThrows,
   },
   {
@@ -2417,7 +2935,7 @@ const ROWS: Row[] = [
   {
     id: 'channels/drain-phase1-combo-throws',
     group: 'Channels',
-    desc: 'channelsDrainImageTag with channelsDeployFunction=false fails the synth (no silent no-op)',
+    desc: 'a drain image key with channelsDeployFunction=false fails the synth (no silent no-op)',
     check: drainPhaseOneComboThrows,
   },
   {
@@ -2487,6 +3005,67 @@ const ROWS: Row[] = [
     group: 'Compute',
     desc: 'the broker ECS service can never run two tasks at once (MaximumPercent <= 100, AZ rebalancing DISABLED), because concurrent brokers fork the audit chain',
     check: brokerServiceCannotRunTwoTasks,
+  },
+  // Image pinning (lib/image-pin.ts)
+  {
+    id: 'images/digest-renders-by-digest',
+    group: 'Images',
+    desc: 'a digest key renders <repository-uri>@sha256:<hex> for the broker task, the client task, the airlock and both drains, with no override record',
+    check: digestsRenderByDigest,
+  },
+  {
+    id: 'images/missing-key-is-a-stack-error',
+    group: 'Images',
+    desc: 'no image key: an error on the stack naming the digest key, an unpullable placeholder in the template, no default tag, and the service/function still present',
+    check: missingRequiredImageIsAStackError,
+  },
+  {
+    id: 'images/cli-refuses-unpinned-stack-only',
+    group: 'Images',
+    desc: 'the installed CDK CLI refuses to synth the Compute stack with no broker image key, and still synths the Network stack',
+    check: cliRefusesTheUnpinnedStackOnly,
+  },
+  {
+    id: 'images/malformed-digest-throws',
+    group: 'Images',
+    desc: 'a digest key that is not sha256:<64 lowercase hex> (including empty) fails the synth, for every image',
+    check: malformedDigestThrows,
+  },
+  {
+    id: 'images/tag-without-override-throws',
+    group: 'Images',
+    desc: 'a tag key without allowMutableImageTags=true fails the synth naming the digest key and the override, for every image',
+    check: tagWithoutOverrideThrows,
+  },
+  {
+    id: 'images/both-keys-throw',
+    group: 'Images',
+    desc: 'a digest key and a tag key for one image fail the synth, with or without the override',
+    check: bothKeysThrow,
+  },
+  {
+    id: 'images/override-refuses-a-non-tag',
+    group: 'Images',
+    desc: 'under the override the tag key takes a tag: a digest or a malformed tag fails the synth',
+    check: overrideRefusesANonTag,
+  },
+  {
+    id: 'images/override-renders-tag-warns-and-records',
+    group: 'Images',
+    desc: 'the override renders the tag, warns naming image and tag, and records every image deployed by tag on the stack tag safe-agents:mutable-image-tags',
+    check: overrideRendersTagWarnsAndRecords,
+  },
+  {
+    id: 'images/repositories-immutable',
+    group: 'Images',
+    desc: 'all four ECR repositories (broker, agent, airlock, channels-drain) set ImageTagMutability IMMUTABLE',
+    check: allEcrRepositoriesImmutable,
+  },
+  {
+    id: 'images/no-latest-literal',
+    group: 'Images',
+    desc: "no quoted 'latest' literal remains in infra/lib or infra/bin",
+    check: noLatestLiteralInInfraSource,
   },
 ];
 

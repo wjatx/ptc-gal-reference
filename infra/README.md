@@ -140,22 +140,35 @@ The app lives here as an npm project (`package.json`, `cdk.json`, `bin/`, `lib/`
 takes the target environment as **context**, validated against `development` / `staging` /
 `production` — a missing or misspelled value (`dev`) fails fast with an actionable error.
 
-> **`docs/cdk-context-contract.md` is the reference for all 25 context values.** `environment` is
-> the only one that stops you on every deploy; eight more hard-fail under a condition, four take
-> harmless defaults, and **twelve degrade silently** — a deploy that omits `channelsVerifyKeysArn`
+> **`docs/cdk-context-contract.md` is the reference for all 31 context values.** `environment` is
+> the only one that stops you on every deploy; ten more hard-fail under a condition, nine take
+> harmless defaults, and **eleven degrade silently** — a deploy that omits `channelsVerifyKeysArn`
 > comes up green with peer signature verification off. One that omits `brokerManifestPath` fails
 > later: the broker refuses to boot and the circuit breaker rolls the service back.
-> Read it before a first deploy. This README documents two of the twenty-five.
+> Read it before a first deploy. This README documents only a few of the thirty-one.
 
 ```bash
 cd infra
 npm install                                   # one-time / on dependency change
 npx cdk list   -c environment=development     # the three foundation stacks
-npx cdk synth  -c environment=development      # synthesize CloudFormation (no AWS creds needed)
+npx cdk synth SafeAgents-Network-development -c environment=development --quiet
+                                               # synthesize CloudFormation (no AWS creds needed)
 npm test                                       # conformance gate — asserts invariants on synth
-npx cdk deploy -c environment=development --all   # deploy (needs credentials; see bootstrap below)
+npx cdk deploy -c environment=development --all \
+  -c brokerImageDigest=sha256:<64 hex> -c channelsAirlockImageDigest=sha256:<64 hex>
+                                               # deploy (needs credentials; see bootstrap below)
 npm run build                                  # tsc type-check
 ```
+
+**Images are deployed by digest, and no image has a default.** The Compute stack needs
+`-c brokerImageDigest=sha256:<64 hex>` and the Channels stack needs
+`-c channelsAirlockImageDigest=sha256:<64 hex>` (unless `channelsDeployFunction=false`). A stack
+with no image key is refused by `cdk synth`, `cdk diff` and `cdk deploy`; the Network, State and
+Identity stacks deploy no image and need none, which is why the synth line above names one of
+them. A tag is accepted only with `-c allowMutableImageTags=true`, which prints a warning and
+records the override on the stack. `docs/cdk-context-contract.md` has the rules, how to read a
+digest back after a push, and the first-deploy sequence for a stack whose image does not exist
+yet.
 
 The conformance gate (`npm test`) is the deterministic exit predicate for the foundation: it
 instantiates the stacks in process and asserts the `ARCHITECTURE.md` pre-deployment checklist

@@ -99,8 +99,11 @@ podman build --platform linux/arm64 -f examples/embedded_agent/Containerfile.bro
   --build-arg BASE_IMAGE=safe-agents-broker:base -t safe-agents-broker:embedded .
 ```
 
-Push the second image as the broker repository's `latest` and deploy Compute with
-`-c brokerManifestPath=/app/examples/embedded_agent/manifest.yaml`. The calls themselves come from
+Push the second image to the broker repository under a tag that has not been used, read its
+digest back, and deploy Compute with `-c brokerImageDigest=<digest>
+-c brokerManifestPath=/app/examples/embedded_agent/manifest.yaml`. Steps 1, 2 and 4 of the AWS
+tour in `docs/evaluating.md` have the commands, including the first deploy before any image
+exists. The calls themselves come from
 `python -m safe_agents.broker.prototype.call_client`, which Compute packages as the
 `safe-agents-<env>-client` task definition under the zero-authority agent role.
 

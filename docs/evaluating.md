@@ -190,7 +190,8 @@ corpus, and `notify.send` is classified but not granted.
 
 It takes about fifteen minutes of commands and waiting. Every step below was run as written, from
 an account with no `SafeAgents-*` stacks, on 2026-09-25; the transcript is attached to the issue
-that asked for this tour (#42).
+that asked for this tour (#42). Steps 1, 2 and 4 have changed since that run, to deploy the broker
+image by digest instead of as `latest`, and the changed commands have not been run against AWS.
 
 ### Before you start
 
@@ -210,8 +211,8 @@ the provider exists, so an account without one deploys, and those two roles trus
 pass `-c githubOidcSubjects=...`.
 
 The commands are for bash or zsh on macOS or Linux; on Windows, use WSL. Keep variables braced as
-shown (`"${REPO}:latest"`): in zsh, `$REPO:latest` is read as a history modifier and names a
-repository that does not exist.
+shown (`"${REPO}:${TAG}"`): in zsh, a colon and a letter after a bare `$REPO` are read as a
+history modifier, and the result names a repository that does not exist.
 
 Stay on `development`. `staging` and `production` keep their resources on teardown and put a
 seven-year GOVERNANCE-mode Object Lock on the audit bucket. Leave the network-security layer off
@@ -233,13 +234,18 @@ npm ci
 npx cdk deploy SafeAgents-Network-${ENV} SafeAgents-State-${ENV} SafeAgents-Identity-${ENV} \
   -c environment=${ENV}
 npx cdk deploy SafeAgents-Compute-${ENV} -c environment=${ENV} -c brokerDesiredCount=0 \
+  -c brokerImageTag=bootstrap -c allowMutableImageTags=true \
   -c brokerManifestPath=/app/examples/embedded_agent/manifest.yaml
 cd ..
 ```
 
 CDK asks you to approve the IAM changes; read them, since they are the broker's and the agent's
 identities. The broker service is created with no running task, because its image does not exist
-yet. `brokerManifestPath` is required: on the DynamoDB store the broker refuses to boot without a
+yet. For the same reason this one deploy names the image by a tag, `bootstrap`, under an explicit
+override. Every image is otherwise deployed by digest, so that what runs is what was reviewed, and
+there is no digest until step 2 has pushed an image. CDK prints a warning naming the override and
+tags the stack `safe-agents:mutable-image-tags`; step 4 removes both. `brokerManifestPath` is
+required: on the DynamoDB store the broker refuses to boot without a
 named manifest rather than fall back to an example (`docs/cdk-context-contract.md`).
 
 ### 2. Build and push the broker image
@@ -257,8 +263,19 @@ podman build --platform linux/arm64 -f examples/embedded_agent/Containerfile.bro
 REPO=$(aws ssm get-parameter --name "/safe-agents/${ENV}/ecr-broker-repo-uri" \
   --query Parameter.Value --output text)
 aws ecr get-login-password | podman login --username AWS --password-stdin "${REPO%%/*}"
-podman tag safe-agents-broker:embedded "${REPO}:latest"
-podman push "${REPO}:latest"
+TAG="embedded-$(git rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
+podman push --digestfile /tmp/broker.digest safe-agents-broker:embedded "${REPO}:${TAG}"
+DIGEST="$(cat /tmp/broker.digest)"; echo "${DIGEST}"
+```
+
+The repository's tags are immutable, so each push needs a tag that has not been used; this one is
+built from the commit and the time. `--digestfile` writes down the digest of what the push sent
+(`sha256:` and 64 hex characters), and step 4 deploys that digest. With docker, push the same tag
+without `--digestfile` and read the digest from the registry:
+
+```bash
+DIGEST=$(aws ecr describe-images --repository-name "safe-agents-${ENV}-broker" \
+  --image-ids imageTag="${TAG}" --query 'imageDetails[0].imageDigest' --output text)
 ```
 
 The tasks run on arm64. On an x86 machine the build goes through emulation and is slower.
@@ -290,15 +307,22 @@ in step 5 is recorded as `allow/failed` and the agent receives a deny.
 
 ### 4. Start the broker
 
+Deploy Compute again, this time by digest. Leaving out `brokerDesiredCount` returns the count to
+its default of one, so this deploy also starts the task.
+
 ```bash
-aws ecs update-service --cluster "safe-agents-${ENV}-cluster" \
-  --service "safe-agents-${ENV}-broker" --desired-count 1
+cd infra
+npx cdk deploy SafeAgents-Compute-${ENV} -c environment=${ENV} \
+  -c brokerImageDigest="${DIGEST}" \
+  -c brokerManifestPath=/app/examples/embedded_agent/manifest.yaml
+cd ..
 aws ecs wait services-stable --cluster "safe-agents-${ENV}-cluster" \
   --services "safe-agents-${ENV}-broker"
 aws logs tail "/safe-agents/${ENV}/broker" --since 10m
 ```
 
-The wait took about a minute. The log should end with the broker naming its stores (DynamoDB, the
+Both task definitions, the broker's and the client's in step 5, now name the image you built by
+its digest. The log should end with the broker naming its stores (DynamoDB, the
 S3 audit bucket, Secrets Manager) and `tool-call API on http://0.0.0.0:8080 (registry: 1 ops)`.
 
 ### 5. Send one allowed and one refused call

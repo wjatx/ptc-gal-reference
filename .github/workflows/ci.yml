@@ -181,11 +181,23 @@ jobs:
       # template plus the bootstrap scripts. A stale snapshot would let a drift
       # auditor diff a live host against an outdated policy and miss real drift,
       # so any difference fails. Regenerate and commit to fix:
-      #   cd infra && npx cdk synth -c environment=development && \
-      #     python3 scripts/gen-egress-snapshot.py
+      #   cd infra && npx cdk synth SafeAgents-Network-development \
+      #     -c environment=development --quiet && python3 scripts/gen-egress-snapshot.py
+      #
+      # This step synthesizes all five stacks, so it has to name the two images a
+      # default synth deploys: there is no default image, and a stack with no image
+      # key fails the synth (infra/lib/image-pin.ts). The values are placeholders,
+      # well-formed digests that no image has. That is sound here only because this
+      # job deploys nothing; the snapshot is read from the Network template, which
+      # names no image.
       - name: Egress snapshots are fresh
+        env:
+          PLACEHOLDER_DIGEST: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
         run: |
-          npx cdk synth -c environment=development --quiet
+          npx cdk synth -c environment=development \
+            -c brokerImageDigest="${PLACEHOLDER_DIGEST}" \
+            -c channelsAirlockImageDigest="${PLACEHOLDER_DIGEST}" \
+            --quiet
           python3 scripts/gen-egress-snapshot.py
           git -C "$GITHUB_WORKSPACE" diff --exit-code infra/snapshots/
         working-directory: infra

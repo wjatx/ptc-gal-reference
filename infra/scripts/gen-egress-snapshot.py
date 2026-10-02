@@ -14,7 +14,10 @@ The output is derived from those source-of-truth files, never hand-maintained: r
 this after any `cdk synth` or any change to the bootstrap scripts, and commit the result.
 CI compares the committed snapshot to a fresh run to catch un-regenerated drift.
 
-One-line regeneration (from the repo root, after `cd infra && npx cdk synth -c environment=development`):
+One-line regeneration (from the repo root, after
+`cd infra && npx cdk synth SafeAgents-Network-development -c environment=development --quiet`;
+naming the Network stack keeps the synth from asking for the image digests the Compute and
+Channels stacks require):
 
     python3 infra/scripts/gen-egress-snapshot.py
 
@@ -259,7 +262,8 @@ def main() -> int:
     if not TEMPLATE.exists():
         raise SystemExit(
             f"synth template not found: {TEMPLATE}\n"
-            "Run `cd infra && npx cdk synth -c environment=development` first."
+            "Run `cd infra && npx cdk synth SafeAgents-Network-development "
+            "-c environment=development --quiet` first."
         )
     template = json.loads(TEMPLATE.read_text())
     layer1 = sg_rules(template)

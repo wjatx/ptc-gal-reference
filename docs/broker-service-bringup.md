@@ -32,7 +32,7 @@ All commands from the repo root unless noted, with the repository's virtual envi
 - A broker image buildable locally (podman). arm64 (the Fargate task is arm64).
 - The virtual environment from the root `README.md`; its `[dev]` extra carries boto3 for seeding.
 
-## 1. Deploy Compute at desiredCount=0 FIRST
+## 1. Deploy Compute at desiredCount=0 FIRST, under the image override
 
 The broker task references a Secrets Manager HMAC secret and an ECR image that don't exist yet.
 If you deploy Compute at desiredCount≥1 before they exist, the task can't start → the ECS
@@ -46,8 +46,16 @@ aws cloudformation wait stack-delete-complete --stack-name SafeAgents-Compute-de
 
 cd infra && npx cdk deploy SafeAgents-Compute-development \
   -c environment=development -c brokerDesiredCount=0 --require-approval never \
+  -c brokerImageTag=bootstrap -c allowMutableImageTags=true \
   -c brokerManifestPath=/app/safe_agents/broker/prototype/example_manifest.yaml
 ```
+
+The broker image is deployed by digest, and there is no default image
+(`docs/cdk-context-contract.md`). No digest exists until §2 has pushed an image to the repository
+this deploy creates, so this one deploy names a tag, `bootstrap`, under
+`allowMutableImageTags=true`. Nothing pulls that tag, because no task runs at a desired count of
+zero. Synth prints a warning naming the override, and the stack is tagged
+`safe-agents:mutable-image-tags` until §4 redeploys by digest.
 
 `brokerManifestPath` is the manifest's path inside the image. The broker runs on the DynamoDB
 store, where an unset `BROKER_MANIFEST` refuses to boot rather than fall back to an example, so
@@ -72,10 +80,19 @@ podman build --platform linux/arm64 -t safe-agents-broker:dev -f safe_agents/arm
 
 REPO="$(aws ssm get-parameter --name /safe-agents/development/ecr-broker-repo-uri --query Parameter.Value --output text)"
 aws ecr get-login-password | podman login --username AWS --password-stdin "${REPO%%/*}"
-# Keep the braces: in zsh, `$REPO:latest` reads `:l` as a history modifier and pushes to a
-# repository path ending in "atest".
-podman push safe-agents-broker:dev "docker://${REPO}:latest"
+# A tag that has not been used: the repository's tags are immutable, so a second push of the
+# same tag is refused.
+TAG="broker-$(git rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
+# Keep the braces: in zsh, a colon and a letter after a bare `$REPO` are read as a history
+# modifier, and the push goes to a mangled repository path.
+podman push --digestfile /tmp/broker.digest safe-agents-broker:dev "docker://${REPO}:${TAG}"
+DIGEST="$(cat /tmp/broker.digest)"; echo "${DIGEST}"     # sha256:<64 hex>
 ```
+
+`--digestfile` records the digest of what that push sent, and the digest is what §4 deploys.
+Without podman, read it from the registry instead:
+`aws ecr describe-images --repository-name safe-agents-development-broker --image-ids
+imageTag="${TAG}" --query 'imageDetails[0].imageDigest' --output text`.
 
 ## 3. Seed the secrets + grants (teardown force-deleted them)
 
@@ -139,11 +156,14 @@ for A in smoke-ec2 smoke-rhel-openshell smoke-fargate smoke-woken; do
 done
 ```
 
-## 4. Scale the broker to 1 + verify healthy
+## 4. Redeploy by digest (scales the broker to 1) + verify healthy
 
 ```
-aws ecs update-service --cluster safe-agents-development-cluster \
-  --service safe-agents-development-broker --desired-count 1 --force-new-deployment
+# DIGEST is from §2; in a new shell, DIGEST="$(cat /tmp/broker.digest)".
+cd infra && npx cdk deploy SafeAgents-Compute-development \
+  -c environment=development --require-approval never \
+  -c brokerImageDigest="${DIGEST}" \
+  -c brokerManifestPath=/app/safe_agents/broker/prototype/example_manifest.yaml
 
 # poll runningCount -> 1. If it stays 0, the task is crash-looping: read the reason:
 aws logs get-log-events --log-group-name /safe-agents/development/broker \
@@ -151,6 +171,10 @@ aws logs get-log-events --log-group-name /safe-agents/development/broker \
      --order-by LastEventTime --descending --query 'logStreams[0].logStreamName' --output text)" \
   --query 'events[].message' --output text | tail -25
 ```
+
+This deploy drops `brokerDesiredCount=0`, so the count returns to its default of 1, and it
+replaces the `bootstrap` tag with the digest in both task definitions (the broker's and the
+client's). Pass again any other context the first deploy carried, such as `brokerGrantClasses`.
 
 The Cloud Map A record is `broker.safe-agents.local`; confirm it resolves to the task IP:
 `aws servicediscovery list-instances --service-id <broker svc id> --query 'Instances[].Attributes.AWS_INSTANCE_IPV4'`.
@@ -165,7 +189,12 @@ The Cloud Map A record is `broker.safe-agents.local`; confirm it resolves to the
   first restart AFTER real audit records exist. Both fixed in `infra/lib/identity-stack.ts`;
   tamper-evidence rests on Object Lock + the hash chain, not read-denial.
 - **desiredCount=0 on the first Compute deploy** (§1) — the #1 cause of a rolled-back stack.
-- **Brace `${REPO}` when pushing** (§2): in zsh the bare `$REPO:latest` form mangles the tag.
+- **Brace `${REPO}` when pushing** (§2): in zsh a bare `$REPO` followed by a colon and a tag
+  mangles the reference.
+- **A new image is a new tag, a new digest and a redeploy** (§2, §4). The repository refuses a
+  second push of a tag, and the task definition names a digest, so
+  `aws ecs update-service --force-new-deployment` restarts the same image. To run a rebuilt
+  image, push it under a new tag and deploy with its digest.
 - **Same HMAC to seed and read** (§3) — a mismatch quarantines every grant silently.
 - **Secrets outlive the stacks.** `cdk destroy` leaves every secret above in place. Delete them
   with `--force-delete-without-recovery` if you want the names free for the next bringup: a

@@ -38,9 +38,13 @@ bootstrap scripts for the netns/proxy layer. Regenerate after any `cdk synth` or
 confinement scripts, then commit:
 
 ```
-cd infra && npx cdk synth -c environment=development   # refresh the SG template
-python3 infra/scripts/gen-egress-snapshot.py            # rewrite infra/snapshots/*.json
+cd infra && npx cdk synth SafeAgents-Network-development -c environment=development --quiet
+cd .. && python3 infra/scripts/gen-egress-snapshot.py   # rewrite infra/snapshots/*.json
 ```
+
+The first command refreshes the SG template. It names the Network stack because a synth of every
+stack needs the image digests the Compute and Channels stacks require
+(`docs/cdk-context-contract.md`), and the snapshot reads only the Network template.
 
 That check belongs in CI: re-run `cdk synth` and the generator on every change, and fail on any
 `git diff` in `infra/snapshots/`, so the committed snapshot cannot silently lag the synth template

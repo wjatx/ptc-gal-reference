@@ -33,26 +33,27 @@ All commands from the repo root unless noted. `us-east-1`, `development`.
   `aws ecr describe-repositories --repository-names safe-agents-development-channels-drain`.
 - podman, arm64-capable (the function is arm64).
 
-> **Airlock-preserving context (this bites).** The drain lives in the SAME stack as the airlock.
-> `channelsAirlockImageTag` **defaults to `latest`** — a bare `cdk deploy` would revert the live
-> screened airlock (which runs `screened-2`) to `latest` and strip its Bedrock screen grant. EVERY
-> `cdk deploy` of this stack must re-pass the airlock's live context:
-> `-c channelsAirlockImageTag=<live tag> -c channelsManifestPath=/var/task/channels-manifest.yaml
-> -c channelsScreenModelArns=<the live screen ARNs>`. Recover the live tag from
-> `aws lambda get-function --function-name safe-agents-development-airlock --query Code.ImageUri`
-> and the screen ARNs from the airlock role's `bedrock:InvokeModel` statement. Always `cdk diff`
-> first and confirm the ONLY airlock delta is none.
+> **Airlock-preserving context (this bites).** The drain lives in the SAME stack as the airlock,
+> so EVERY `cdk deploy` of this stack must re-pass the airlock's live context:
+> `-c channelsAirlockImageDigest=<live digest> -c channelsManifestPath=/var/task/channels-manifest.yaml
+> -c channelsScreenModelArns=<the live screen ARNs>`. A deploy that omits the airlock digest is
+> refused at synth; before images were pinned it reverted the live airlock to `latest`. The other
+> two values are not checked: a deploy that omits `channelsScreenModelArns` strips the screened
+> airlock's Bedrock grant. Recover the live digest from `aws lambda get-function --function-name
+> safe-agents-development-airlock --query Code.ResolvedImageUri` (the part after `@`) and the
+> screen ARNs from the airlock role's `bedrock:InvokeModel` statement. Always `cdk diff` first and
+> confirm the ONLY airlock delta is none.
 
 ## 1. Ensure the drain ECR repo exists (phase 1)
 
 The `DockerImageFunction` cannot be created before its image exists. The drain repo is created
-unconditionally (even with `channelsDrainImageTag` unset), so a deploy WITHOUT drain context lays
+unconditionally (even with no drain image key set), so a deploy WITHOUT drain context lays
 down the repo while leaving the airlock and drain function untouched:
 
 ```
 cd infra && npx cdk deploy SafeAgents-Channels-development \
   -c environment=development \
-  -c channelsAirlockImageTag=screened-2 \
+  -c channelsAirlockImageDigest=<live airlock digest> \
   -c channelsManifestPath=/var/task/channels-manifest.yaml \
   -c channelsScreenModelArns=<live screen ARNs, comma-separated> \
   --require-approval never --exclusively
@@ -81,13 +82,18 @@ podman build --platform linux/arm64 \
   -t "$ECR_URI:$TAG" \
   -f examples/webhook_peer/Containerfile.drain .
 
-podman push "$ECR_URI:$TAG"
+podman push --digestfile /tmp/drain.digest "$ECR_URI:$TAG"
+DRAIN_DIGEST=$(cat /tmp/drain.digest); echo "$DRAIN_DIGEST"     # sha256:<64 hex>
 ```
 
-**Image-tag discipline:** CloudFormation only updates the function when its ImageUri *changes* —
-push each new image under a fresh tag and deploy with `-c channelsDrainImageTag=<tag>`. (The
-missileer drain image is built the same way from `examples/missileer/Containerfile.drain`, under
-its own tag — see §"The missileer drain".)
+**Image pinning:** the drain is deployed by digest, with `-c channelsDrainImageDigest=<digest>`
+(`docs/cdk-context-contract.md`). The repository's tags are immutable, so each push needs a tag
+that has not been used, and a rebuilt image is a new digest that takes effect only when a deploy
+names it. `--digestfile` records the digest of what the push sent; without podman, read it with
+`aws ecr describe-images --repository-name safe-agents-development-channels-drain --image-ids
+imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text`. (The missileer drain image
+is built the same way from `examples/missileer/Containerfile.drain`, under its own tag and with
+its own digest; see §"The missileer drain".)
 
 ## 3. Seed the consumer's broker read-state
 
@@ -148,10 +154,10 @@ too. `notify` is already seeded on the dev floor.)
 ```
 cd infra && npx cdk deploy SafeAgents-Channels-development \
   -c environment=development \
-  -c channelsAirlockImageTag=screened-2 \
+  -c channelsAirlockImageDigest=<live airlock digest> \
   -c channelsManifestPath=/var/task/channels-manifest.yaml \
   -c channelsScreenModelArns=<live screen ARNs> \
-  -c channelsDrainImageTag=$TAG \
+  -c channelsDrainImageDigest=$DRAIN_DIGEST \
   -c channelsDrainManifestPath=/var/task/examples/webhook_peer/drain-manifest.yaml \
   -c channelsDrainReceiver=examples.webhook_peer.inbound_log_receiver:InboundLogReceiver \
   --require-approval never --exclusively
@@ -198,7 +204,8 @@ podman build --platform linux/arm64 \
   --build-arg DRAIN_BASE_IMAGE=safe-agents-channels-drain:dev \
   -t "$ECR_URI:$TAG" \
   -f examples/missileer/Containerfile.drain .
-podman push "$ECR_URI:$TAG"
+podman push --digestfile /tmp/missileer-drain.digest "$ECR_URI:$TAG"
+MISSILEER_DRAIN_DIGEST=$(cat /tmp/missileer-drain.digest)
 
 export BROKER_MANIFEST=examples/missileer/manifest.yaml
 BROKER_ENVELOPE_MANIFEST=examples/missileer/manifest.yaml \
@@ -214,20 +221,20 @@ aws secretsmanager create-secret \
 
 cd infra && npx cdk deploy SafeAgents-Channels-development \
   -c environment=development \
-  -c channelsAirlockImageTag=screened-2 \
+  -c channelsAirlockImageDigest=<live airlock digest> \
   -c channelsManifestPath=/var/task/channels-manifest.yaml \
   -c channelsScreenModelArns=<live screen ARNs> \
-  -c channelsDrainImageTag=$TAG \
+  -c channelsDrainImageDigest=$DRAIN_DIGEST \
   -c channelsDrainManifestPath=/var/task/examples/webhook_peer/drain-manifest.yaml \
   -c channelsDrainReceiver=examples.webhook_peer.inbound_log_receiver:InboundLogReceiver \
-  -c channelsMissileerDrainImageTag=$TAG \
+  -c channelsMissileerDrainImageDigest=$MISSILEER_DRAIN_DIGEST \
   -c channelsMissileerDrainManifestPath=/var/task/examples/missileer/manifest.yaml \
   -c channelsMissileerDrainReceiver=examples.missileer.duty_log_receiver:DutyLogReceiver \
   --require-approval never --exclusively
 ```
 
-Gated on `channelsMissileerDrainImageTag`: unset, neither the missileer queue nor its drain
-function is created (phased, like the existing drain gate). Its log group is
+Gated on the missileer drain's image key (`channelsMissileerDrainImageDigest`): unset, neither
+the missileer queue nor its drain function is created (phased, like the existing drain gate). Its log group is
 `/safe-agents/development/channels-drain-missileer`, its audit prefix `audit-drain-missileer/` —
 distinct from webhook-peer's `audit-drain/` so the two hash chains never interleave. missileer's
 `search` connector maps via the manifest's `connector_secrets` to the leaf `track-feed-token`,

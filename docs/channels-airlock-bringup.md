@@ -43,17 +43,24 @@ aws ecr get-login-password | podman login --username AWS --password-stdin "${ECR
 podman build --platform linux/arm64 \
   -f safe_agents/channels/airlock/Containerfile -t safe-agents-channels-airlock:dev .
 
+TAG=airlock-$(git rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)
 podman build --platform linux/arm64 \
   --build-arg AIRLOCK_BASE_IMAGE=safe-agents-channels-airlock:dev \
-  -t "$ECR_URI:latest" \
+  -t "$ECR_URI:$TAG" \
   -f examples/webhook_peer/Containerfile.airlock examples/webhook_peer
 
-podman push "$ECR_URI:latest"
+podman push --digestfile /tmp/airlock.digest "$ECR_URI:$TAG"
+AIRLOCK_DIGEST=$(cat /tmp/airlock.digest); echo "$AIRLOCK_DIGEST"     # sha256:<64 hex>
 ```
 
-**Image-tag discipline (why it bites):** CloudFormation only updates the function when its
-ImageUri *changes*. Re-pushing `:latest` with new content does NOT redeploy the code — push each
-new image under a fresh tag and deploy with `-c channelsAirlockImageTag=<tag>`.
+**Image pinning (why it bites):** the function is deployed by digest, with
+`-c channelsAirlockImageDigest=<digest>`, and there is no default image
+(`docs/cdk-context-contract.md`). The repository's tags are immutable, so each push needs a tag
+that has not been used, and a second push of the same tag is refused. A rebuilt image is a new
+digest, and the function changes only when a deploy names that digest. `--digestfile` records the
+digest of what the push sent. Without podman, read it from the registry:
+`aws ecr describe-images --repository-name safe-agents-development-airlock --image-ids
+imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text`.
 
 ## 3. Seed the webhook secret
 
@@ -76,6 +83,7 @@ containers (any function-config update, or wait out the idle recycle).
 ```
 cd infra && npx cdk deploy SafeAgents-Channels-development \
   -c environment=development \
+  -c channelsAirlockImageDigest="$AIRLOCK_DIGEST" \
   -c channelsManifestPath=/var/task/channels-manifest.yaml --require-approval never
 ```
 
@@ -140,14 +148,15 @@ Enabling the Bedrock classifier screen is config only — no base code changes:
 1. **Consumer manifest** with a `screen:` block (see
    `examples/webhook_peer/channels-manifest-screened.yaml`, which also turns on the verdict sink —
    the observability valve for an enabled screen). Build the consumer layer with
-   `--build-arg MANIFEST_FILE=channels-manifest-screened.yaml`, push under a NEW tag.
+   `--build-arg MANIFEST_FILE=channels-manifest-screened.yaml`, push under a NEW tag, and read
+   its digest back (§2).
 2. **Deploy-time grant.** The role carries no bedrock permission by default (an OFF control's
    authority must not sit in the role). Declare the ARNs the screen may invoke:
 
    ```
    npx cdk deploy SafeAgents-Channels-development -c environment=development \
      -c channelsManifestPath=/var/task/channels-manifest.yaml \
-     -c channelsAirlockImageTag=<new tag> \
+     -c channelsAirlockImageDigest=<new digest> \
      -c channelsScreenModelArns=<profile-arn>,<foundation-model-arns...> --require-approval never
    ```
 
