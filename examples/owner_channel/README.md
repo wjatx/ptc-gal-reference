@@ -37,7 +37,10 @@ gate 1, before the body is parsed); the token lives in Secrets Manager, never in
 manifest.
 
 The body carries no `audience`. The adapter addresses the envelope it builds to this
-airlock's own `zone`, from the manifest, and nothing in the request can set it.
+airlock's own `zone`, from the manifest, and nothing in the request can set it. `zone`
+is required and has no default; each manifest here names its own
+(`owner-channel-example`, `owner-channel-development`, `owner-channel-gal-development`),
+and a real deployment gives every airlock, and every environment, a different id.
 
 ## What it shows
 

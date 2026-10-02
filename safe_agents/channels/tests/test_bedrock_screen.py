@@ -255,7 +255,8 @@ def test_dispatch_passing_screen_emits_envelope_unchanged():
 
 def test_build_airlock_resolves_bedrock_kind_after_lazy_import():
     manifest = ChannelsManifest(
-        screen=ScreenConfig(kind="bedrock_classifier", params={"model_id": _MODEL_ID})
+        zone="example-airlock",
+        screen=ScreenConfig(kind="bedrock_classifier", params={"model_id": _MODEL_ID}),
     )
     rt = build_airlock(manifest, token=_TOKEN)
     assert isinstance(rt.screen, BedrockClassifierScreen)
@@ -264,7 +265,9 @@ def test_build_airlock_resolves_bedrock_kind_after_lazy_import():
 
 
 def test_build_airlock_bedrock_missing_model_id_raises_validation_error():
-    manifest = ChannelsManifest(screen=ScreenConfig(kind="bedrock_classifier", params={}))
+    manifest = ChannelsManifest(
+        zone="example-airlock", screen=ScreenConfig(kind="bedrock_classifier", params={})
+    )
     with pytest.raises(ValidationError):
         build_airlock(manifest, token=_TOKEN)
 

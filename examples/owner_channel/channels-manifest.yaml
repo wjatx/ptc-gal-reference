@@ -11,11 +11,15 @@
 #
 # This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
 
-# The receiver's provenance zone, stamped onto every accepted envelope at gate 8.
-# It is also the `audience` an envelope must name to be accepted here (gate 3). Two
-# airlocks that share a zone id accept each other's envelopes, so a real deployment
-# gives each airlock, and each environment, its own.
-zone: channels
+# REQUIRED, no default. The id of this one airlock deployment: the provenance zone
+# stamped onto every accepted envelope at gate 8, and the `audience` an envelope must
+# name to be accepted here (gate 3). The owner adapter builds its envelope inside this
+# airlock and addresses it to this zone itself. A real deployment still gives each
+# airlock its own id, and each environment of the same agent its own too: an airlock
+# that takes signed peer envelopes tells receivers apart by this id alone
+# (channels/SIGNING.md S9). Nothing checks that across deployments; it is the
+# operator's to get right.
+zone: owner-channel-example
 
 # The owner adapter: the human owner proves authenticity with a shared secret
 # token in this header (the token itself lives in Secrets Manager, never in the

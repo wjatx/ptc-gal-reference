@@ -26,9 +26,12 @@ import time
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from safe_agents.channels.manifest import load_channels_manifest
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("AIRLOCK_LIVE_SMOKE"),
@@ -41,10 +44,23 @@ _AIRLOCK_LOG_GROUP = f"/safe-agents/{_ENV}/channels-airlock"
 # The example consumer wired on the dev floor (examples/webhook-peer).
 _PEER = "peer:example"
 _PRINCIPAL = "example-agent"
-# The deployed airlock's zone, from the manifest baked into its image
-# (examples/webhook_peer/channels-manifest.yaml). An envelope addressed to any
-# other zone is dropped `audience_mismatch`.
-_AIRLOCK_ZONE = "channels"
+_WEBHOOK_PEER = Path(__file__).resolve().parents[3] / "examples" / "webhook_peer"
+
+
+def airlock_zone(manifest_name: str = "channels-manifest.yaml") -> str:
+    """The zone id the named webhook-peer example manifest declares.
+
+    Read from the file an airlock image bakes in, so this suite addresses the
+    zone a current image answers to. An image built from an earlier manifest
+    answers to a different id and drops everything sent here as
+    `audience_mismatch` until it is rebuilt.
+    """
+    return load_channels_manifest(_WEBHOOK_PEER / manifest_name).zone
+
+
+# The deployed airlock's zone. An envelope addressed to any other zone is
+# dropped `audience_mismatch`.
+_AIRLOCK_ZONE = airlock_zone()
 _TOKEN_HEADER = "x-airlock-token"
 
 
@@ -104,13 +120,14 @@ def _envelope(
     identity: str = _PEER,
     expiry_minutes: int = 60,
     payload: dict | None = None,
+    audience: str = _AIRLOCK_ZONE,
 ) -> str:
     now = datetime.now(timezone.utc)
     return json.dumps(
         {
             "event_id": event_id,
             "principal": _PRINCIPAL,
-            "audience": _AIRLOCK_ZONE,
+            "audience": audience,
             "sender": {"channel_type": "webhook", "channel_identity": identity, "evidence": []},
             "payload": payload if payload is not None else {"msg": "live smoke"},
             "provenance": [

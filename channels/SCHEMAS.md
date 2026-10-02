@@ -90,7 +90,12 @@ Per-field notes:
   sending broker sets it from its own configuration of the peer (`channels/PUBLISH.md`), and an
   adapter that builds the envelope itself sets it to its own airlock's zone. The signature covers
   it (`channels/SIGNING.md` S9). `principal` names who the envelope is for inside a zone;
-  `audience` names which zone.
+  `audience` names which zone. A zone id names one receiver's deployment. Two deployments must
+  not share one, including two environments of the same agent, whenever they enrol any of the
+  same signer keys, because an envelope signed for one would then be accepted as addressed to
+  the other. The audience check is only as strong as that distinctness, and the base cannot
+  verify it across deployments. A receiver's zone id is therefore required configuration with no
+  default (`ChannelsManifest.zone`).
 - **sender.evidence** — stamped by the adapter that *performed* the verification. A receiver MUST
   NOT treat sender-asserted evidence as its own: it re-verifies what it can at its transport
   (signature, token) and records its own checks in its own provenance entry.
@@ -164,6 +169,8 @@ Verified authenticity never cleans a payload's taint.
 - **C9 — an envelope names its one receiver.** `audience` is required and non-blank on every
   envelope, and a receiver refuses an envelope whose `audience` is not exactly its own zone id.
   The field is never optional: an envelope allowed to omit it would be accepted by every receiver.
+  The clause separates two receivers only when their zone ids differ. Choosing distinct ids is
+  the operator's job, and no conformance test can observe it across deployments.
 
 ## Conformance
 

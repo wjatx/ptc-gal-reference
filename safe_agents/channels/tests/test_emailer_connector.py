@@ -32,7 +32,7 @@ def _stamped_envelope():
         turn_tainted=False,
         event_id="conf-1234",
         principal="example-agent",
-        audience="channels",
+        audience="example-airlock",
         payload={"signal": "buy"},
         ts=_TS,
         expiry=_EXPIRY,

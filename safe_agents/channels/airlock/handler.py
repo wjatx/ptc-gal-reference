@@ -13,7 +13,8 @@ would make the provider retry, the retry would dedupe, and the record would
 strand — so the airlock never signals failure back over the wire.
 
 Env contract (fixed; the infra side binds these):
-  CHANNELS_MANIFEST            in-image manifest path (unset ⇒ empty manifest)
+  CHANNELS_MANIFEST            in-image manifest path (unset ⇒ no trust map, so
+                               every sender drops; the zone is `unconfigured`)
   CHANNELS_DEDUPE_TABLE        DynamoDB dedupe table name
   CHANNELS_DROP_BUCKET         S3 bucket for drop (and verdict) records
   CHANNELS_DROP_PREFIX         drop key prefix (default channels/drops/)
@@ -37,6 +38,7 @@ from typing import Any
 
 from safe_agents.channels.dispatch import dispatch
 from safe_agents.channels.manifest import (
+    UNCONFIGURED_ZONE,
     AirlockRuntime,
     ChannelsManifest,
     build_airlock,
@@ -134,7 +136,10 @@ _STATE: _HandlerState | None = None
 def _load_manifest() -> ChannelsManifest:
     path = os.environ.get("CHANNELS_MANIFEST")
     if not path:
-        return ChannelsManifest()
+        # No consumer manifest: an empty trust map, so gate 5 drops every sender.
+        # The zone is a named placeholder for this case. A manifest that IS
+        # configured must name its own zone and never inherits this one.
+        return ChannelsManifest(zone=UNCONFIGURED_ZONE)
     return load_channels_manifest(path)
 
 

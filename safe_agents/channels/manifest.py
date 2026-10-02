@@ -3,9 +3,9 @@
 The channels analogue of `broker/schemas/manifest.py`'s `AgentManifest`: a
 consumer supplies a `ChannelsManifest` (in-image YAML, `extra="forbid"`) and the
 airlock is built ENTIRELY from it — no channel-specific constant is baked into
-base source. `build_airlock` is the composition root; the empty manifest is the
-safe agent-agnostic default (empty trust map ⇒ every sender unmapped ⇒ everything
-drops, per channels/dispatch.py gate 5).
+base source. `build_airlock` is the composition root; a manifest that sets
+nothing but its `zone` is the safe agent-agnostic floor (empty trust map ⇒ every
+sender unmapped ⇒ everything drops, per channels/dispatch.py gate 5).
 
 The injection screen ships OFF (docs/friction-doctrine.md): `screen=None`. A
 manifest that DOES enable a screen must name a `kind` registered in
@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from safe_agents.channels.adapters import InboundAdapter
 from safe_agents.channels.owner import build as _build_owner_adapter
 from safe_agents.channels.schemas import EventTrigger
+from safe_agents.channels.schemas.event_trigger import ZONE_ID_RULE, is_zone_id
 from safe_agents.channels.screening import ScreenVerdict
 from safe_agents.channels.trust_map import ChannelTrustMap, TrustMapEntry
 from safe_agents.channels.webhook import SignedWebhookAdapter
@@ -119,17 +120,41 @@ class ScreenConfig(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+# The zone an airlock runs as when no manifest is configured (`CHANNELS_MANIFEST`
+# unset). That airlock has an empty trust map and drops every sender, so the id
+# names a receiver nothing can be delivered to. It is a named placeholder for
+# that one case and never a value a configured manifest falls back to.
+UNCONFIGURED_ZONE = "unconfigured"
+
+_ZONE_REQUIRED = (
+    "channels manifest sets no `zone`, and there is no default. `zone` is the id of "
+    "this one airlock deployment: it is stamped on every envelope accepted here and "
+    "is the `audience` an inbound envelope must name. Give each deployment its own "
+    "id, including each environment of the same agent: where two airlocks share an "
+    "id and enrol the same signer key, an envelope signed for one verifies at the "
+    "other (channels/SIGNING.md S9)."
+)
+
+
 class ChannelsManifest(BaseModel):
     """The whole inbound airlock as consumer config.
 
-    Every field defaults, so `ChannelsManifest()` is the empty manifest: the
-    handler uses it when `CHANNELS_MANIFEST` is unset, and its empty trust map
-    drops every sender — the safe default for a base with no consumer wired.
+    `zone` is required and has no default. It is the id of this one airlock
+    deployment: the provenance zone stamped on every accepted envelope, and the
+    `audience` an envelope must name to be accepted here (dispatch gate 3,
+    channels/SIGNING.md S9). Two deployments that enrol any of the same signer
+    keys must not share an id, including two environments of the same agent,
+    and a default would give every deployment built from it the same one.
+    Nothing here can check that two deployments chose different ids.
+
+    Every other field defaults. A manifest that sets only `zone` has an empty
+    trust map and drops every sender; the handler runs exactly that, as
+    `UNCONFIGURED_ZONE`, when `CHANNELS_MANIFEST` is unset.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    zone: str = "channels"
+    zone: str
     adapter: WebhookAdapterConfig | OwnerAdapterConfig = Field(
         default_factory=WebhookAdapterConfig, discriminator="kind"
     )
@@ -137,8 +162,8 @@ class ChannelsManifest(BaseModel):
     # adapter's `normalize` resolves the command's leading address token through
     # this table (a miss passes the raw token through as the claimed principal).
     # The trust map stays the SOLE authorization authority — gate 5 never sees
-    # the token (design answers Q2). Empty dict ⇒ byte-for-byte the empty
-    # manifest. Only the owner adapter consumes it; a non-owner manifest that
+    # the token (design answers Q2). Empty dict, the default, is no indirection
+    # at all. Only the owner adapter consumes it; a non-owner manifest that
     # sets it is a config error (see `_routing_requires_owner_adapter`).
     routing: dict[str, str] = Field(default_factory=dict)
     trust_map: list[TrustMapEntry] = Field(default_factory=list)
@@ -146,6 +171,25 @@ class ChannelsManifest(BaseModel):
     screen: ScreenConfig | None = None
     verdict_sink: bool = False
     dedupe_ttl_days: int = 30
+
+    @model_validator(mode="before")
+    @classmethod
+    def _zone_has_no_default(cls, data: object) -> object:
+        # The generic "Field required" would not tell an operator what a zone is
+        # or why no default exists. A YAML `zone:` with no value loads as None
+        # and gets the same answer.
+        if isinstance(data, dict) and data.get("zone") is None:
+            raise ValueError(_ZONE_REQUIRED)
+        return data
+
+    @field_validator("zone")
+    @classmethod
+    def _zone_is_an_exact_id(cls, value: str) -> str:
+        # The rule a verification key's zone is held to (`keys._peer_key`): the
+        # id is refused, never trimmed, so what is written is what is compared.
+        if not is_zone_id(value):
+            raise ValueError(f"zone {ZONE_ID_RULE}")
+        return value
 
     @field_validator("adapter", mode="before")
     @classmethod

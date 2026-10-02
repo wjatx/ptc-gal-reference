@@ -39,7 +39,7 @@ _EXPIRY = "2026-07-11T01:00:00+00:00"
 _NOW = datetime.fromisoformat(_TS)
 # The airlock's own zone: what the adapter is built with and what the `dispatch`
 # calls below run as.
-_ZONE = "channels"
+_ZONE = "example-airlock"
 
 
 def _adapter(
@@ -422,7 +422,7 @@ def test_owner_command_is_delivered_with_chain_verification_on():
 
 # --- audience: the adapter addresses its envelope to its own airlock ---------
 
-# Deliberately not the manifest default, so a hardcoded zone cannot pass.
+# Deliberately not the zone the rest of this file runs as, so a hardcoded zone cannot pass.
 _OWN_ZONE = "owner-airlock-7"
 
 

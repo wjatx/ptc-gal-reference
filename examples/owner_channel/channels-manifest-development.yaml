@@ -1,12 +1,16 @@
 # owner-channel/channels-manifest-development.yaml — the DEVELOPMENT-floor deployment
 # variant of channels-manifest.yaml (which stays the fictional reference). Same shape,
-# one real value: the trust map admits the actual dev-floor owner identity. Baked into
-# the dev airlock image via `--build-arg MANIFEST_FILE=channels-manifest-development.yaml`
-# (the webhook-peer screened-variant pattern).
+# its own zone id, and one real value: the trust map admits the actual dev-floor owner
+# identity. Baked into the dev airlock image via
+# `--build-arg MANIFEST_FILE=channels-manifest-development.yaml` (the webhook-peer
+# screened-variant pattern).
 #
 # This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
 
-zone: channels
+# REQUIRED, no default. The id of this one airlock deployment (see the comment in
+# channels-manifest.yaml). It names the environment as well as the agent: a production
+# floor of the same agent takes a different id.
+zone: owner-channel-development
 
 # The owner adapter: the human owner proves authenticity with a shared secret
 # token in this header (the token itself lives in Secrets Manager, never in the

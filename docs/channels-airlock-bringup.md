@@ -150,6 +150,10 @@ Enabling the Bedrock classifier screen is config only — no base code changes:
    the observability valve for an enabled screen). Build the consumer layer with
    `--build-arg MANIFEST_FILE=channels-manifest-screened.yaml`, push under a NEW tag, and read
    its digest back (§2).
+   That manifest declares its own zone id (`webhook-peer-screened-example`), so a sender
+   addressing this airlock writes that id as `audience`. The unscreened smoke in section 5
+   addresses the plain manifest's zone and is dropped `audience_mismatch` here; the screened
+   smoke in step 3 reads the zone from the screened manifest.
 2. **Deploy-time grant.** The role carries no bedrock permission by default (an OFF control's
    authority must not sit in the role). Declare the ARNs the screen may invoke:
 

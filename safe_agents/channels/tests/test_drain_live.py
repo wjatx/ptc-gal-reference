@@ -89,13 +89,13 @@ def _envelope(event_id: str, *, principal: str = _PRINCIPAL, source: str = _INTE
         {
             "event_id": event_id,
             "principal": principal,
-            "audience": "channels",
+            "audience": "example-airlock",
             "sender": {"channel_type": "webhook", "channel_identity": source, "evidence": []},
             "payload": {"msg": "drain live smoke"},
             "sender_class": "owner",
             "provenance": [
                 {"zone": "internal", "source": source, "evidence": [], "label": "trusted", "ts": now.isoformat()},
-                {"zone": "channels", "source": "channel:webhook", "evidence": [], "label": "trusted", "ts": now.isoformat()},
+                {"zone": "example-airlock", "source": "channel:webhook", "evidence": [], "label": "trusted", "ts": now.isoformat()},
             ],
             "ts": now.isoformat(),
             "expiry": (now + timedelta(minutes=60)).isoformat(),

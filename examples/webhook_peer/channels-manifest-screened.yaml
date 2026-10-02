@@ -1,18 +1,24 @@
 # webhook-peer/channels-manifest-screened.yaml — the ENABLED variant of the sibling
 # channels-manifest.yaml (still a FICTIONAL example consumer, A2A peer).
 #
-# Same trust map, zone, and adapter as channels-manifest.yaml — the ONLY difference is
-# that the injection screen (gate 7) and its observability valve are turned ON. Enabling
-# a screen is config, never code: a consumer ships THIS file instead of the sibling. No
-# base source changes; the named `kind` is resolved from SCREEN_REGISTRY at build time.
+# Same trust map and adapter as channels-manifest.yaml. The injection screen (gate 7)
+# and its observability valve are turned ON, and the zone id is this variant's own.
+# Enabling a screen is config, never code: a consumer ships THIS file instead of the
+# sibling. No base source changes; the named `kind` is resolved from SCREEN_REGISTRY at
+# build time.
 #
 # This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
 
-# The receiver's provenance zone, stamped onto every accepted envelope at gate 8.
-# It is also the `audience` an envelope must name to be accepted here (gate 3). Two
-# airlocks that share a zone id accept each other's envelopes, so a real deployment
-# gives each airlock, and each environment, its own.
-zone: channels
+# REQUIRED, no default. The id of this one airlock deployment: the provenance zone
+# stamped onto every accepted envelope at gate 8, and the `audience` an envelope must
+# name to be accepted here (gate 3). If two airlocks share a zone id and enrol the same
+# signer key, an envelope signed for one passes the audience check and verifies at the
+# other. So a real deployment gives each airlock its own id, and each environment of
+# the same agent its own too. Nothing checks that across deployments; it is the
+# operator's to get right.
+# This variant has its own id so that no two shipped manifests share one: a peer
+# addressing the screened airlock writes this id, not the sibling's.
+zone: webhook-peer-screened-example
 
 # The signed-webhook adapter — unchanged from the sibling manifest.
 adapter:

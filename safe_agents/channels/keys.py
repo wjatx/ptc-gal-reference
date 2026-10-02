@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 
+from safe_agents.channels.schemas.event_trigger import ZONE_ID_RULE, is_zone_id
 from safe_agents.channels.signing import (
     ChainSigner,
     KeyResolver,
@@ -130,11 +131,8 @@ def _peer_key(key_id: str, entry: object) -> PeerKey:
             f"verification key {key_id!r} must be an object of the form {_PEER_KEY_SHAPE}"
         )
     zone, identities = entry["zone"], entry["sender_identities"]
-    if not isinstance(zone, str) or not zone or zone != zone.strip():
-        raise SigningConfigError(
-            f"verification key {key_id!r}: zone must be a non-empty string with no "
-            "surrounding whitespace (zones are compared exactly)"
-        )
+    if not is_zone_id(zone):
+        raise SigningConfigError(f"verification key {key_id!r}: zone {ZONE_ID_RULE}")
     if (
         not isinstance(identities, list)
         or not identities

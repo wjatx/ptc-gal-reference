@@ -145,12 +145,12 @@ def _owner_body(
         {
             "event_id": event_id,
             "principal": principal,
-            "audience": "channels",
+            "audience": "example-airlock",
             "sender": {"channel_type": "owner", "channel_identity": identity, "evidence": []},
             "payload": payload,
             "provenance": [
                 {"zone": "owner", "source": f"owner:{identity}", "evidence": [], "label": "trusted", "ts": _TS},
-                {"zone": "channels", "source": "channel:owner", "evidence": ["token:pass"], "label": "trusted", "ts": _TS},
+                {"zone": "example-airlock", "source": "channel:owner", "evidence": ["token:pass"], "label": "trusted", "ts": _TS},
             ],
             "sender_class": sender_class,
             "ts": _TS,

@@ -24,11 +24,17 @@ Which inbound adapter the airlock runs is consumer config, not a base constant. 
 names `adapter.kind`; `build_airlock` looks that kind up in **`ADAPTER_REGISTRY`** (the adapter
 mirror of `SCREEN_REGISTRY`) and builds the concrete adapter from its typed config, the injected
 token, the manifest `routing` table, and the manifest `zone`. Every factory takes all four; the
-webhook factory ignores the last two. Two invariants hold this seam:
+webhook factory ignores the last two. Three invariants hold this seam:
 
-- **The default keeps the empty manifest byte-for-byte.** `adapter.kind` defaults to
-  `signed-webhook`; a pre-existing kind-less adapter block resolves to it, so an unenriched manifest
-  is unchanged.
+- **A kind-less adapter block keeps its meaning.** `adapter.kind` defaults to `signed-webhook`,
+  so an adapter block written before kinds existed resolves to the webhook adapter.
+- **`zone` has no default.** It is the id of this one airlock deployment: the provenance zone
+  the airlock stamps at gate 8 and the `audience` an envelope must name at gate 3. A manifest that
+  omits it, leaves it empty, or pads it with whitespace fails to load. Two deployments must not
+  share an id, including two environments of the same agent, whenever they enrol any of the same
+  signer keys; the audience check is only as strong as that distinctness, and the base cannot
+  verify it across deployments (`channels/SIGNING.md` S9). An airlock deployed with no manifest
+  runs as the placeholder zone `unconfigured` with an empty trust map and drops every sender.
 - **An unregistered kind fails loudly.** A named kind with no registered factory raises at build
   time rather than silently degrading to pass-through or dropping all traffic — the friction
   doctrine's rule for any configured-but-unbuildable seam (`docs/friction-doctrine.md`), identical
@@ -273,6 +279,8 @@ the out-of-band release seam (`safe_agents/broker/tests/test_out_of_band_approva
 | an owner approval does not overcome authority withdrawn since the hold (grant revoked, cap exhausted) | `test_release_revalidation.py::test_grant_revoked_between_hold_and_release_refuses` · `::test_action_cap_exhausted_between_hold_and_release_refuses` |
 | the owner adapter addresses its envelope to the airlock that built it, with verification on or off, and nothing in the request sets the audience | `test_owner_adapter.py::test_owner_envelope_is_addressed_to_the_airlock_that_built_it` · `::test_nothing_in_the_request_sets_the_owner_envelopes_audience` · `::test_an_owner_adapter_built_for_another_zone_is_refused_like_any_sender` |
 | every registered adapter factory takes the airlock's zone | `test_manifest.py::test_every_registered_adapter_factory_takes_the_airlock_zone` |
+| `zone` is required with no default; a missing, empty or padded zone fails the load; a manifestless airlock runs as `unconfigured` and drops everything | `test_manifest.py::test_zone_is_required_and_has_no_default` · `::test_a_manifest_without_a_zone_is_refused_and_told_why` · `::test_a_manifest_file_without_a_zone_does_not_load` · `::test_a_zone_that_could_never_match_is_refused` · `test_airlock_handler.py::test_an_airlock_with_no_manifest_drops_everything` · `::test_a_configured_manifest_that_names_no_zone_accepts_nothing` |
+| every shipped example manifest names a different zone, and an envelope addressed to one is dropped `audience_mismatch` at each of the others | `test_manifest.py::test_every_shipped_manifest_is_listed_and_names_its_own_zone` · `::test_a_shipped_airlock_accepts_an_envelope_addressed_to_it` · `::test_an_envelope_addressed_to_one_shipped_airlock_is_refused_at_every_other` |
 | unknown adapter kind rejected loudly at manifest validation (discriminated union) | `test_manifest.py::test_unknown_adapter_kind_fails_validation_loudly` |
 | `routing` set on a non-owner adapter fails loudly | `test_manifest.py::test_routing_on_non_owner_adapter_fails_loudly` |
 

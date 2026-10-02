@@ -138,7 +138,7 @@ gap this table exists to make visible.
 | # | Channel | Enters at | Mechanical defense | Pinned by |
 |---|---|---|---|---|
 | 4 | Agent-authored `/call` fields (tool, op, args, confidence, idempotency key) | `safe_agents/broker/prototype/broker_server.py:1030`; `safe_agents/broker/gateway/surface.py:198` | Unclassified `(tool, op)` is denied and recorded before the PDP; a malformed confidence artifact is a loud deny and a missing one draws the worst-case budget; the idempotency key cannot set turn identity; the egress arg is byte-capped and budget-metered | `test_runtime.py:551,568`, `test_gateway_surface.py:93,129` (name invariance and unclassified refusal); `test_confidence_wiring.py` and the read-gating egress cases pin the confidence and egress halves |
-| 5 | Inbound envelopes at the airlock (peer webhook, owner transport) | `safe_agents/channels/airlock/handler.py:199`; `safe_agents/channels/owner.py:100` | Constant-time token verify before any body parse; schema check; identity/transport binding; exact-match trust map as sole authorization authority; the stamp overwrites any wire `sender_class`; the handler answers 200 always, so no error oracle | `test_adapters.py`, `test_drain_owner.py:243,301` |
+| 5 | Inbound envelopes at the airlock (peer webhook, owner transport) | `safe_agents/channels/airlock/handler.py:206`; `safe_agents/channels/owner.py:100` | Constant-time token verify before any body parse; schema check; identity/transport binding; exact-match trust map as sole authorization authority; the stamp overwrites any wire `sender_class`; the handler answers 200 always, so no error oracle | `test_adapters.py`, `test_drain_owner.py:243,301` |
 | 6 | Sender-asserted provenance chains feeding turn taint | `safe_agents/channels/drain/handler.py:340` | The label floor: a source is trusted only when its chain label is trusted AND the receiver's own map trusts it, so a forged `trusted` stamp launders nothing. The broker-side ingest surfaces (`session_turn`, `ingested_sources`) are wired to no agent-facing route | `test_trust_map.py:195,240`, `test_drain_handler.py` |
 | 7 | MCP discovery output: server-advertised names, descriptions, schemas | `safe_agents/broker/mcp/client.py:93` | Two-key admission as a pure function: undeclared coordinates are UNLISTED, a hash mismatch is DRIFTED and uncallable, the description sits deliberately inside the signed set, duplicate names fail closed, and `server_id` comes from our config, never the server | `test_mcp_discovery.py:102,133`, `test_mcp_host.py` |
 | 8 | Model verdicts re-entering deterministic flow (screen gate 7; grants evidence reviewer) | `safe_agents/channels/screens/bedrock_classifier.py:137`; `safe_agents/broker/grants/reviewers/bedrock_reviewer.py:202` | Forced tool use so prose is structurally unavailable; verdicts map onto closed machine-code vocabularies; the screen refuses or passes and never blesses, failing closed at the seam; a reviewer failure degrades to a recorded `reviewer_error`, never a gate flip | `test_screening.py:45,117,257`, `test_grants_reviewer.py` |
@@ -201,6 +201,15 @@ reviewer.
 - **Egress confinement has two halves with different defaults.** The code/credential half is always
   on; the network topology (`secureNetwork`) ships OFF on the experiment floor, so posture claims
   must name their posture (`docs/posture-ladder.md`).
+- **The audience check separates receivers only where their zone ids differ.** An airlock
+  refuses an envelope whose `audience` is not its own zone id (`channels/SIGNING.md` S9). A zone id
+  names one receiver's deployment. Two deployments must not share one, including two environments
+  of the same agent, whenever they enrol any of the same signer keys: where they do, an envelope
+  signed for one passes the check and verifies at the other, and anyone holding that airlock's
+  transport token can deliver it there. The check is only as strong as that distinctness, and the
+  base cannot verify it across deployments. What the base does is narrower: the manifest's `zone`
+  is required with no default, so a configured deployment never runs under an id it did not
+  choose, and the shipped example manifests each name their own.
 - **Every proof here is a drill we designed to pass.** No third party has attacked these claims;
   that gap is tracked, not waved away (`/assumption-testing`).
 

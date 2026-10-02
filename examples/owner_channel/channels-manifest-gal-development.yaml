@@ -1,6 +1,7 @@
 # owner-channel/channels-manifest-gal-development.yaml — the GAL terminal-proof
 # DEVELOPMENT-floor cutover variant. Identical to channels-manifest-development.yaml
-# except every route and the one trust-map row point at the FRESH principal
+# except the zone id is its own and every route and the one trust-map row point at the
+# FRESH principal
 # `gal-terminal-agent` (the trust map forbids duplicate (channel_type, channel_identity)
 # keys, so the owner identity maps to exactly ONE principal per manifest — this variant
 # DISPLACES the reference principal for the drill window, the same one-adapter-per-airlock
@@ -9,7 +10,8 @@
 #
 # This is a ChannelsManifest (safe_agents/channels/manifest.py, extra="forbid").
 
-zone: channels
+# REQUIRED, no default. This deployment's own id (see channels-manifest-development.yaml).
+zone: owner-channel-gal-development
 
 adapter:
   kind: owner

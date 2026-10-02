@@ -140,7 +140,7 @@ def _envelope_body(
         {
             "event_id": event_id,
             "principal": principal,
-            "audience": "channels",
+            "audience": "example-airlock",
             "sender": {
                 "channel_type": "webhook",
                 "channel_identity": "peer:example",
@@ -150,7 +150,7 @@ def _envelope_body(
             "provenance": [
                 {"zone": "peer", "source": source, "evidence": [], "label": label, "ts": _TS},
                 {
-                    "zone": "channels",
+                    "zone": "example-airlock",
                     "source": "channel:webhook",
                     "evidence": ["token:pass"],
                     "label": "trusted",

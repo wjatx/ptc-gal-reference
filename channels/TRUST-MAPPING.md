@@ -137,6 +137,14 @@ interface TrustMapEntry {
   it appends exactly one receiver entry via the envelope's `stamped()` helper and sets
   `sender_class` from the resolution, unconditionally overwriting any inbound value (closes
   `channels/SCHEMAS.md` C4).
+- **The `zone` it stamps is the receiving airlock's own zone id,** the required `zone` of its
+  manifest and the same value an inbound envelope's `audience` is compared with
+  (`channels/ADAPTERS.md`, gate 3). A zone id names one receiver's deployment. Two deployments
+  must not share one, including two environments of the same agent, whenever they enrol any of
+  the same signer keys; the audience check is only as strong as that distinctness, and the base
+  cannot verify it across deployments (`channels/SIGNING.md` S9). The trust map does not stand in
+  for it: two environments of one agent that admit the same sender for the same principal resolve
+  it identically, so gate 5 passes an envelope meant for the other.
 
 ## DropRecord
 

@@ -25,10 +25,15 @@ channel-agnostic — everything peer-shaped lives in `channels-manifest.yaml`:
 - **one trust-map row** admits `peer:example` as principal `example-agent`, sender class
   `peer-agent`. An empty trust map (the base default) drops every sender; this row is the
   single deliberate admission.
-- **`zone`** is this airlock's id, and the `audience` a peer must write on an envelope
-  meant for it. An envelope addressed to any other zone is dropped `audience_mismatch`
-  at gate 3, before its signature is looked at (`channels/SIGNING.md` S9). The check
-  tells receivers apart only by zone id, so each deployed airlock needs its own.
+- **`zone`** is this airlock's id (`webhook-peer-example`), and the `audience` a peer
+  must write on an envelope meant for it. An envelope addressed to any other zone is
+  dropped `audience_mismatch` at gate 3, before its signature is looked at
+  (`channels/SIGNING.md` S9). The field is required and has no default. The check tells
+  receivers apart only by zone id, so each deployed airlock needs its own, and so does
+  each environment of the same agent; nothing verifies that across deployments. The
+  screened variant (`channels-manifest-screened.yaml`) declares
+  `webhook-peer-screened-example`, so a peer addressing an airlock built from it writes
+  that id.
 - **the screen is OFF** (no `screen:` block) — the friction-doctrine default
   (`docs/friction-doctrine.md`). Authenticity is not content trust: an admitted peer's
   payload still rides through as `peer-agent` provenance, tainting exactly as its chain says.

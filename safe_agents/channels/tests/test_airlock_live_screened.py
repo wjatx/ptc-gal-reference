@@ -24,6 +24,7 @@ from safe_agents.channels.tests.test_airlock_live import (
     _await_accept,
     _envelope,
     _post,
+    airlock_zone,
     resolve_live,
 )
 
@@ -34,6 +35,10 @@ pytestmark = pytest.mark.skipif(
 
 _ENV = os.environ.get("AIRLOCK_ENV", "development")
 _AIRLOCK_LOG_GROUP = f"/safe-agents/{_ENV}/channels-airlock"
+
+# The screened manifest declares its own zone, and this suite runs only against
+# an airlock built from it.
+_SCREENED_ZONE = airlock_zone("channels-manifest-screened.yaml")
 
 _BENIGN = {"msg": "Weekly status: all systems nominal, no action needed."}
 _INJECTION = {
@@ -66,10 +71,12 @@ def test_screened_airlock_matrix(live):
 
     benign_id = f"evt-{uuid.uuid4()}"
     inject_id = f"evt-{uuid.uuid4()}"
-    inject_body = _envelope(inject_id, payload=_INJECTION)
+    inject_body = _envelope(inject_id, payload=_INJECTION, audience=_SCREENED_ZONE)
 
     # A benign payload passes the screen and is accepted.
-    resp = _post(live, _envelope(benign_id, payload=_BENIGN), live.token)
+    resp = _post(
+        live, _envelope(benign_id, payload=_BENIGN, audience=_SCREENED_ZONE), live.token
+    )
     assert resp == {"status": 200, "body": {"ok": True}}
     assert _await_accept(live.logs, _AIRLOCK_LOG_GROUP, benign_id, timeout=45), (
         "benign envelope never logged channel_accepted — screen misfiring?"

@@ -14,6 +14,7 @@ import pytest
 
 import safe_agents.channels.airlock.handler as h
 from safe_agents.channels import keys as keys_mod
+from safe_agents.channels.manifest import UNCONFIGURED_ZONE
 from safe_agents.channels.publish import stamp_outbound
 from safe_agents.channels.schemas import EventTrigger
 from safe_agents.channels.schemas.event_trigger import MAX_ENVELOPE_BYTES, MAX_FORWARD_BYTES
@@ -23,7 +24,9 @@ _TOKEN = "test-airlock-token"
 _TS = "2026-07-08T00:00:00+00:00"
 _FUTURE = "2099-01-01T00:00:00+00:00"
 # The airlock's own zone, as its manifest below declares it.
-_ZONE = "channels"
+_ZONE = "example-airlock"
+# What `zone` defaulted to before it became required. No airlock answers to it now.
+_RETIRED_DEFAULT_ZONE = "channels"
 
 _MANIFEST_YAML = f"""\
 zone: {_ZONE}
@@ -322,6 +325,45 @@ def test_a_request_addressed_to_another_airlock_enqueues_nothing(wired):
     assert len(wired.sqs.messages) == 1
 
 
+@pytest.mark.parametrize(
+    "audience,reason",
+    [
+        pytest.param(UNCONFIGURED_ZONE, "unmapped", id="addressed to the placeholder zone"),
+        pytest.param(_ZONE, "audience_mismatch", id="addressed to a configured zone"),
+        pytest.param(_RETIRED_DEFAULT_ZONE, "audience_mismatch", id="addressed to the old default"),
+    ],
+)
+def test_an_airlock_with_no_manifest_drops_everything(wired, monkeypatch, audience, reason):
+    """`CHANNELS_MANIFEST` unset is a supported deploy. It runs as the placeholder
+    zone with an empty trust map, so even an envelope that names it is dropped."""
+    monkeypatch.delenv("CHANNELS_MANIFEST")
+
+    resp = h.handler(_event(_envelope_json(audience=audience)), None)
+
+    assert resp["statusCode"] == 200
+    assert h._STATE.airlock.zone == UNCONFIGURED_ZONE
+    assert wired.sqs.messages == [] and wired.dynamo.items == {}
+    assert _drop_reasons(wired) == [(reason, None)]
+
+
+def test_a_configured_manifest_that_names_no_zone_accepts_nothing(
+    wired, monkeypatch, tmp_path, caplog
+):
+    """A manifest that is configured never inherits a zone it did not name: not
+    the placeholder, and not the old default. It fails to load, and the handler
+    answers 200 with nothing accepted."""
+    zoneless = tmp_path / "zoneless.yaml"
+    zoneless.write_text(_MANIFEST_YAML.replace(f"zone: {_ZONE}\n", ""), encoding="utf-8")
+    monkeypatch.setenv("CHANNELS_MANIFEST", str(zoneless))
+
+    for audience in (_RETIRED_DEFAULT_ZONE, UNCONFIGURED_ZONE, _ZONE):
+        assert h.handler(_event(_envelope_json(audience=audience)), None)["statusCode"] == 200
+
+    assert wired.sqs.messages == [] and wired.dynamo.items == {}
+    assert h._STATE is None
+    assert "sets no `zone`" in caplog.text
+
+
 def test_an_envelope_signed_for_another_airlock_is_dropped_unverified(verifying):
     """Verification ON, the signer enrolled, the signature genuine. The record
     names no signer: the envelope was never this airlock's to verify."""
@@ -366,7 +408,10 @@ def test_an_envelope_at_the_inbound_ceiling_is_forwarded_and_one_past_it_is_drop
     wired.sqs.messages.clear()
     wired.dynamo.items.clear()
     # A sender cannot stamp one this large, so it is built past stamp_outbound.
-    over = _padded_to(MAX_ENVELOPE_BYTES).model_copy(update={"event_id": "evt-2z"})
+    # One more character on whatever event id the padding settled on, so the size
+    # is one past the ceiling whichever way `_padded_to` rounded.
+    at_ceiling = _padded_to(MAX_ENVELOPE_BYTES)
+    over = at_ceiling.model_copy(update={"event_id": at_ceiling.event_id + "z"})
     assert len(over.to_wire(max_bytes=None)) == MAX_ENVELOPE_BYTES + 1
     h.handler(_event(over.to_wire(max_bytes=None)), None)
     assert wired.sqs.messages == [] and wired.dynamo.items == {}

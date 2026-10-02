@@ -46,6 +46,20 @@ def _non_blank(v: str, field_name: str) -> str:
     return v
 
 
+# What a zone id must be wherever configuration names one: an airlock's own zone
+# in its channels manifest, and the zone a verification key is enrolled for.
+# Zone ids are compared exactly, so an empty or padded value could never match
+# and is refused where it is written down.
+ZONE_ID_RULE = (
+    "must be a non-empty string with no surrounding whitespace (zones are compared exactly)"
+)
+
+
+def is_zone_id(value: object) -> bool:
+    """Whether `value` can be configured as a zone id (see `ZONE_ID_RULE`)."""
+    return isinstance(value, str) and bool(value) and value == value.strip()
+
+
 def require_tz_aware(v: str, field_name: str) -> str:
     """Validate `v` parses as ISO-8601 and carries tzinfo; return it unchanged.
 
