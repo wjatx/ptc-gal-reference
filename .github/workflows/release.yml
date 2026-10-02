@@ -1,0 +1,184 @@
+# Release: build the `safe-agents` distribution and publish it to PyPI.
+#
+# The filename and the environment name are load-bearing. PyPI's trusted
+# publisher for `safe-agents` names this repository, this workflow file
+# (`release.yml`) and the environment `pypi`; all three must match the OIDC token
+# or the upload is refused. Renaming either breaks publishing until the PyPI
+# configuration is changed to match. No API token is stored anywhere.
+#
+# How a release is cut:
+#
+#   1. Set `version` in pyproject.toml on `main` and wait for CI to pass there.
+#   2. Tag that commit `v<version>` and push the tag.
+#   3. Run this workflow against the tag:
+#        gh workflow run release.yml --ref v<version>
+#
+# Run against a branch instead, it builds and checks the distribution and
+# publishes nothing. That is the rehearsal, and it is the only one: there is no
+# TestPyPI leg, because a rehearsal that uploads somewhere else exercises a
+# different publisher configuration from the one that matters.
+#
+# What it deliberately does not do. There is no tag or push trigger. A PyPI
+# version number can never be reused, even after the release is deleted, so
+# publishing is a separate deliberate act and never a side effect of tagging.
+#
+# What a tag run refuses:
+#
+#   tag != version   the tag says one thing and the metadata another, and the
+#                    artifact carries the metadata.
+#   not on main      the tag points at a commit that never landed.
+#   CI not green     the release would be the first run of the suite on that
+#                    commit. A run still in progress counts as not green; wait
+#                    for it and run this again.
+#
+# The build job holds no credential and the publish job runs no project code:
+# it downloads the files the build job checked and hands them to the upload
+# action. That split is why they are two jobs.
+
+name: Release
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+
+  build:
+    name: "build: sdist and wheel, checked and installed"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Reads this commit's CI result. Nothing here writes.
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: the ancestry check below compares against origin/main.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: The tag names the version in pyproject.toml
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match pyproject.toml version $version (expected v$version)."
+            exit 1
+          fi
+
+      - name: The tagged commit is on main
+        if: github.ref_type == 'tag'
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not an ancestor of origin/main. Release only what has landed."
+            exit 1
+          fi
+
+      # Pull-request runs are excluded: their head_sha is the branch head, and
+      # what they tested is the merge commit, which is a different tree.
+      - name: CI passed on this commit
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          green=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&status=success" \
+            --jq '[.workflow_runs[] | select(.event != "pull_request")] | length')
+          if [ "$green" -lt 1 ]; then
+            echo "::error::No successful CI run for $GITHUB_SHA. Wait for CI on main to pass, then run this again."
+            exit 1
+          fi
+
+      - name: Build sdist and wheel
+        # `build` makes the sdist and then builds the wheel from that sdist, so a
+        # wheel existing at all is the proof the sdist is buildable.
+        run: |
+          python -m pip install build==1.6.1 twine==7.0.0
+          python -m build --outdir dist
+
+      - name: Metadata renders on PyPI
+        run: python -m twine check --strict dist/*
+
+      # pyproject.toml excludes the test packages and names two top-level
+      # packages. This reads the wheel rather than trusting that configuration,
+      # so a later edit to it cannot quietly change what ships.
+      - name: The wheel carries the packages it should and no test suites
+        run: |
+          python - <<'PY'
+          import pathlib, sys, zipfile
+
+          EXPECTED_TOP_LEVEL = {"safe_agents", "reliability"}
+
+          wheels = list(pathlib.Path("dist").glob("*.whl"))
+          if len(wheels) != 1:
+              sys.exit(f"expected one wheel, found {wheels}")
+          names = zipfile.ZipFile(wheels[0]).namelist()
+          top_level = {n.split("/")[0] for n in names if ".dist-info/" not in n}
+          if top_level != EXPECTED_TOP_LEVEL:
+              sys.exit(f"wheel top-level is {sorted(top_level)}, expected {sorted(EXPECTED_TOP_LEVEL)}")
+          suites = [n for n in names if "/tests/" in n]
+          if suites:
+              sys.exit(f"wheel carries test suites: {suites[:10]}")
+          print(f"{wheels[0].name}: {len(names)} entries, top-level {sorted(top_level)}")
+          PY
+
+      # Run from outside the checkout. From inside it, `import safe_agents`
+      # resolves to the source tree and this step passes whatever the wheel
+      # contains.
+      - name: The wheel installs into a fresh environment and imports
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install "$(ls "$PWD"/dist/*.whl)[mcp]"
+          cd "$RUNNER_TEMP"
+          venv/bin/python - <<'PY'
+          import pathlib
+
+          import safe_agents
+          import safe_agents.broker.schemas
+          import safe_agents.connectors
+          import safe_agents.pipeline
+          from safe_agents.broker.api import GatewayClient, build_runtime  # noqa: F401
+
+          origin = pathlib.Path(safe_agents.__file__).resolve()
+          assert "site-packages" in origin.parts, f"imported the checkout, not the wheel: {origin}"
+          print(f"imported from {origin.parent}")
+          PY
+          venv/bin/safe-agents --help > /dev/null
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: "publish: PyPI, by trusted publisher"
+    needs: build
+    # A branch run stops after the build. A fork cannot mint this repository's
+    # OIDC identity, and failing here is clearer than failing at the upload.
+    if: github.ref_type == 'tag' && github.event.repository.fork == false
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/safe-agents/
+    permissions:
+      # The OIDC token PyPI exchanges for an upload credential. This job checks
+      # nothing out, so it needs no read access to the repository.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dist
+          path: dist/
+
+      # Pinned to a commit rather than the moving `release/v1` ref, because this
+      # is the one step that runs holding the publish identity.
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
