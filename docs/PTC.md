@@ -171,7 +171,7 @@ A capability's autonomy rung is bounded by what the mesh can currently *prove* a
 |---|---|
 | taint **bit** propagates (today) | correct gating *if you trust the sender* → paper trades autonomous-ish |
 | full **lineage** in the chain (§8 fix) | receiver derives its own taint; human sees origin → live trade *with approval* |
-| **signed** lineage (§6) | receiver can't be lied to → autonomous cross-mesh high-blast |
+| **signed** lineage (§6) | forging a chain takes the signing key, which the receiver has recorded as out of the signer's agent's reach (`channels/SIGNING.md` S10) → autonomous cross-mesh high-blast |
 
 So the live-brokerage `trade.place` rung stays in-loop until receiver-side verification is ON in
 production. The other two conditions this section used to carry are now met: the grant-lifecycle

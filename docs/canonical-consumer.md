@@ -140,7 +140,7 @@ path, config-only difference" safe rather than reckless:
 |---|---|
 | taint **bit** propagates (today) | correct gating *if you trust the sender* → paper trades autonomous-ish |
 | full **lineage** in the chain | receiver derives its own taint; human sees origin → live trade *with approval* |
-| **signed** lineage (verify OFF) | receiver can't be lied to → autonomous cross-mesh high-blast |
+| **signed** lineage (verify OFF) | forging a chain takes the signing key, which the receiver has recorded as out of the signer's agent's reach (`channels/SIGNING.md` S10) → autonomous cross-mesh high-blast |
 
 So a live-brokerage `trade.place` stays pinned to `in-loop` in its envelope until signed-provenance
 verification runs ON — not as a limitation of the code, but as the honest expression of what the trust
