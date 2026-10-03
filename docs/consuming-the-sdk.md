@@ -108,6 +108,29 @@ decision engine can route around the decision it is meant to be subject to, so y
 runtime, never the runtime's parts. `safe_agents/broker/tests/test_consumer_boundary.py` enforces this, and an
 earlier version of this table wrongly listed PDP/PEP/Doer/SecretsProvider as exposed.
 
+### Commands a consumer runs
+
+A consumer may also run the broker's commands as child processes. Importing the modules behind
+them stays outside the surface: the rule above is about what a consumer can hold in its own
+process, and a command runs in a process of its own, under the caller's ambient identity, and
+decides for itself. A consumer that starts one can supply arguments and read the result, and has
+no way to alter the decision. That is the same position `GatewayClient` puts it in.
+
+| Command | What it does | Published forms |
+|---|---|---|
+| `python -m safe_agents.broker.gateway` | the stdio MCP gateway that a wrapped harness spawns | no arguments; configured from the environment (`broker/GATEWAY.md`) |
+| `python -m safe_agents.broker.mcp.commands` | the MCP tool-admission ceremony | `snapshot`, `show`, `diff`, `admit-propose`, `admit-ratify`, `admit-reject`, `bulk-propose`, `bulk-ratify` |
+| `python -m safe_agents.broker.grants.commands` | the grant ceremony | `seed`, `re-seed`, `propose`, `ratify`, `reject`, `acknowledge`, `tighten` |
+| `python -m safe_agents.broker.grants.audit_command` | a read-only integrity audit of a store | `--sqlite PATH` or `--table NAME`, with `--json` |
+| `python -m safe_agents.broker.approval.release_cli` | releases one held call | `<intent_id>`, with `--yes` and `--json` |
+| `python -m safe_agents.broker.auditor.tape_cli` | reads an audit tape and verifies its chain | `--path PATH` or `--s3-bucket BUCKET`, with `--verify` and `--json` |
+
+These six module paths, and the subcommands and flags in the table, are published: a release that
+renames or removes one is a breaking change. Each command's `--help` is the reference for its full
+argument list, and where a command takes `--json`, that output is the form to parse. Text printed
+for a person may change between releases. `safe_agents/broker/tests/test_command_surface.py` holds
+this table to the code in both directions.
+
 Note what an import does *not* buy: `build_runtime` composes whatever backends the environment
 selects, in-memory ones included. Identity separation, IAM confinement and the tamper-evident audit
 chain are properties of a **deployment**, not of an import.
