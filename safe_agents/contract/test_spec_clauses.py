@@ -130,7 +130,7 @@ def test_gal_appended_clauses_are_blockquote_marked(
 
 @pytest.mark.parametrize(
     "clause_id",
-    ["PTC-1", "PTC-4", "PTC-26", "PTC-34", "GAL-3", "GAL-30", "GAL-34", "GAL-37", "GAL-38"],
+    ["PTC-1", "PTC-4", "PTC-26", "PTC-34", "PTC-35", "GAL-3", "GAL-16", "GAL-18", "GAL-30", "GAL-34", "GAL-38"],
 )
 def test_neighbouring_clauses_are_unmarked(rows: list[ClauseRow], clause_id: str) -> None:
     """
@@ -148,6 +148,10 @@ def test_neighbouring_clauses_are_unmarked(rows: list[ClauseRow], clause_id: str
     Re-picked again for 0.3.0-draft, which marked GAL-32. GAL-34 and GAL-38 now
     stand directly before the blockquote cases GAL-36 and GAL-35, and GAL-37
     directly after the inline run GAL-31..33.
+
+    Re-picked again for 0.3.1-draft, which marked GAL-17 and GAL-37 and unmarked
+    PTC-35. GAL-37 leaves the set; GAL-16 and GAL-18 bracket GAL-17, and PTC-35
+    joins as a clause whose marker was removed, so a stale marker would show here.
     """
     row = _by_id(rows, clause_id)
     assert row.marker_state == MARKER_STATE_UNMARKED

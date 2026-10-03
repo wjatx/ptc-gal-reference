@@ -178,7 +178,9 @@ An optional **response screen** — the gate-7 analog for MCP responses, a model
 the returned content — **ships OFF** (`docs/friction-doctrine.md`: every non-floor bound is an
 Envelope knob defaulting off). With it unset, responses taint as above and nothing is screened;
 enabling it is a consumer knob, never a base default, and it never *blesses* content — it can only
-refuse or pass, exactly as the channels screen does.
+refuse or pass, exactly as the channels screen does. **The knob is not built yet** (#25): today
+there is no response screen to enable, and PTC-35 constrains one only where an implementation
+provides it.
 
 ## Native construction — the manifest spawns the server
 

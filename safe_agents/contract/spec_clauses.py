@@ -123,7 +123,6 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     "PTC-25": (MARKER_FORM_INLINE, "#16"),
     "PTC-28": (MARKER_FORM_INLINE, "#23"),
     "PTC-33": (MARKER_FORM_INLINE, "#24"),
-    "PTC-35": (MARKER_FORM_INLINE, "#25"),
     "PTC-42": (MARKER_FORM_INLINE, "#26"),
     # Conformance-audit GAL findings
     "GAL-4":  (MARKER_FORM_INLINE, "#27"),
@@ -162,6 +161,14 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # names that one conjunct; the rest of both clauses ships.
     "GAL-31": (MARKER_FORM_INLINE, "#157"),
     "GAL-32": (MARKER_FORM_INLINE, "#158"),
+    # Added by GAL 0.3.1-draft. 0.3.0 made direction a shape rule and continuity
+    # an audit rule for the evaluator's records only. GAL-17 now also refuses a
+    # promotion that skips a rung wherever a record is parsed, and GAL-37 holds
+    # every record to continuity whichever role signed it. Each marker names the
+    # issuer-record half; the evaluator half ships. (PTC-35 left this set in PTC
+    # 0.3.1-draft: the clause is conditional, so its marker overstated the gap.)
+    "GAL-17": (MARKER_FORM_INLINE, "#159"),
+    "GAL-37": (MARKER_FORM_INLINE, "#159"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from
