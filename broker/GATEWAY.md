@@ -75,8 +75,8 @@ from `failed`, which means the effect was attempted and broke.
 **Drift is checked at connect, not per call.** The gateway is long-lived, which makes connect-time-
 only drift checking a hole here specifically — **#92**.
 
-**stdio only.** The HTTP mouth and the CLI call seam are open items. Resources and prompts are
-**#89** (decision only).
+**stdio only.** Serving MCP over a network transport is **#161**; the CLI call seam is an open
+item. Resources and prompts are **#89** (decision only).
 
 **Nothing is confined.** The gateway runs as the same OS user as the agent it serves, and MCP-stdio
 children run unconfined (**#104**). This is posture 1 (`docs/posture-ladder.md`); a gateway does not

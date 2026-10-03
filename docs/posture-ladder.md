@@ -86,6 +86,10 @@ per-harness containment profile), never to implement a sandbox. The composition 
 gateway being reachable over HTTP as well as stdio, which is why that transport is first-class
 rather than an extra.
 
+> **Implementation status:** NOT YET IMPLEMENTED in the reference implementation (tracking: #161).
+> The gateway serves stdio only (`broker/GATEWAY.md`), so this composition cannot be stood up from
+> this repository as it is.
+
 ### Posture 3 — the cloud floor
 
 The broker runs as its **own cloud identity**, with per-capability IAM scoping, and the agent has no
