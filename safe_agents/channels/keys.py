@@ -23,10 +23,12 @@ import os
 
 from safe_agents.channels.schemas.event_trigger import ZONE_ID_RULE, is_zone_id
 from safe_agents.channels.signing import (
+    ACCEPTED_CUSTODY_EVIDENCE,
+    CUSTODY_ATTESTED,
+    SIGNER_POSTURES,
     ChainSigner,
     KeyResolver,
     PeerKey,
-    PeerKeyResolver,
     canonical_identity,
     load_public_key,
     signer_from_pem,
@@ -34,8 +36,8 @@ from safe_agents.channels.signing import (
 
 # Env names — the sender's signing key (a Secrets-Manager ARN → PEM private key),
 # the key_id a receiver resolves it by, and the receiver's verification-key map
-# (an ARN → JSON ``{key_id: {public_key, zone, sender_identities}}``, see
-# `peer_key_resolver_from_map`). All optional; absence = OFF.
+# (an ARN → JSON ``{key_id: {public_key, zone, sender_identities, signer_posture,
+# custody_evidence}}``, see `peer_key_resolver_from_map`). All optional; absence = OFF.
 SIGNING_KEY_SECRET_ARN_ENV = "BROKER_SIGNING_KEY_SECRET_ARN"
 SIGNING_KEY_ID_ENV = "BROKER_SIGNING_KEY_ID"
 VERIFY_KEYS_SECRET_ARN_ENV = "BROKER_VERIFY_KEYS_SECRET_ARN"
@@ -99,9 +101,11 @@ def key_resolver_from_map(pem_by_key_id: dict[str, str]) -> KeyResolver:
 
 # The fields of one verification-key entry. Closed: an unrecognized field is a
 # configuration error, never ignored.
-_PEER_KEY_FIELDS = frozenset({"public_key", "zone", "sender_identities"})
+_CUSTODY_FIELDS = frozenset({"signer_posture", "custody_evidence"})
+_PEER_KEY_FIELDS = frozenset({"public_key", "zone", "sender_identities"}) | _CUSTODY_FIELDS
 _PEER_KEY_SHAPE = (
-    '{"public_key": "<PEM>", "zone": "<zone>", "sender_identities": ["<identity>", ...]}'
+    '{"public_key": "<PEM>", "zone": "<zone>", "sender_identities": ["<identity>", ...], '
+    '"signer_posture": <1|2|3>, "custody_evidence": "declared"}'
 )
 
 
@@ -125,10 +129,41 @@ def _peer_key(key_id: str, entry: object) -> PeerKey:
     The message carries the ``key_id`` and the expected shape, never key
     material. A bare PEM string is the pre-scope format and is refused: a key
     with no scope would be trusted to sign for every zone and every sender.
+
+    The custody record (``signer_posture``, ``custody_evidence``) is required
+    and has no default. A default would write down, on the operator's behalf, a
+    statement about a peer that nobody made.
     """
-    if not isinstance(entry, dict) or set(entry) != _PEER_KEY_FIELDS:
+    if not isinstance(entry, dict):
         raise SigningConfigError(
             f"verification key {key_id!r} must be an object of the form {_PEER_KEY_SHAPE}"
+        )
+    missing_custody = sorted(_CUSTODY_FIELDS - set(entry))
+    if missing_custody:
+        raise SigningConfigError(
+            f"verification key {key_id!r} has no custody record: missing "
+            f"{', '.join(missing_custody)}; an entry has the form {_PEER_KEY_SHAPE}"
+        )
+    if set(entry) != _PEER_KEY_FIELDS:
+        raise SigningConfigError(
+            f"verification key {key_id!r} must be an object of the form {_PEER_KEY_SHAPE}"
+        )
+    posture, custody_evidence = entry["signer_posture"], entry["custody_evidence"]
+    # `type(...) is int`: True and False are ints to isinstance, and 2.0 == 2.
+    if type(posture) is not int or posture not in SIGNER_POSTURES:
+        raise SigningConfigError(
+            f"verification key {key_id!r}: signer_posture must be one of the integers "
+            f"{sorted(SIGNER_POSTURES)} (docs/posture-ladder.md)"
+        )
+    if custody_evidence == CUSTODY_ATTESTED:
+        raise SigningConfigError(
+            f"verification key {key_id!r}: custody_evidence {CUSTODY_ATTESTED!r} is reserved; "
+            "no procedure in this version produces it, so a record cannot claim it"
+        )
+    if not isinstance(custody_evidence, str) or custody_evidence not in ACCEPTED_CUSTODY_EVIDENCE:
+        raise SigningConfigError(
+            f"verification key {key_id!r}: custody_evidence must be one of "
+            f"{sorted(ACCEPTED_CUSTODY_EVIDENCE)}"
         )
     zone, identities = entry["zone"], entry["sender_identities"]
     if not is_zone_id(zone):
@@ -154,23 +189,47 @@ def _peer_key(key_id: str, entry: object) -> PeerKey:
         public_key=public_key,
         zone=zone,
         sender_identities=frozenset(canonical_identity(identity) for identity in identities),
+        signer_posture=posture,
+        custody_evidence=custody_evidence,
     )
 
 
-def peer_key_resolver_from_map(entry_by_key_id: dict[str, object]) -> PeerKeyResolver:
-    """Turn a ``{key_id: {public_key, zone, sender_identities}}`` map into a resolver.
+class EnrolledPeerKeys:
+    """The receiver's enrolled verification keys: a `PeerKeyResolver` that can be listed.
 
-    Each key carries the one zone it may sign for and the sender identities an
-    envelope it signs may claim (`signing.PeerKey`). Every entry is parsed up
-    front, so a malformed one fails at cold start and not on the first inbound
-    chain. An unknown key_id resolves to None, which verification treats as an
-    unknown signer and quarantines.
+    Calling it resolves one ``key_id``, as `verify_chain` needs. ``enrolled``
+    lists every key, which is what `signing.deployment_provenance_tier` reads to
+    say what the receiver's custody records support as a whole.
     """
-    parsed = {key_id: _peer_key(key_id, entry) for key_id, entry in entry_by_key_id.items()}
-    return lambda key_id: parsed.get(key_id)
+
+    def __init__(self, key_by_id: dict[str, PeerKey]) -> None:
+        self._key_by_id = dict(key_by_id)
+
+    def __call__(self, key_id: str) -> PeerKey | None:
+        return self._key_by_id.get(key_id)
+
+    @property
+    def enrolled(self) -> tuple[PeerKey, ...]:
+        return tuple(self._key_by_id.values())
 
 
-def resolve_verification_keys() -> PeerKeyResolver | None:
+def peer_key_resolver_from_map(entry_by_key_id: dict[str, object]) -> EnrolledPeerKeys:
+    """Turn the verification-keys map into a resolver.
+
+    The map is ``{key_id: {public_key, zone, sender_identities, signer_posture,
+    custody_evidence}}``. Each key carries the one zone it may sign for, the
+    sender identities an envelope it signs may claim, and its custody record
+    (`signing.PeerKey`). Every entry is parsed up front, so a malformed one
+    fails at cold start and not on the first inbound chain. An unknown key_id
+    resolves to None, which verification treats as an unknown signer and
+    quarantines.
+    """
+    return EnrolledPeerKeys(
+        {key_id: _peer_key(key_id, entry) for key_id, entry in entry_by_key_id.items()}
+    )
+
+
+def resolve_verification_keys() -> EnrolledPeerKeys | None:
     """Build the receiver's PeerKeyResolver from its cold-start environment, or None.
 
     Returns None when no verification-keys ARN is configured — the airlock skips

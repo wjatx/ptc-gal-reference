@@ -148,8 +148,9 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   from the receiver's own configuration and never from the envelope. Without it, any enrolled broker
   could sign an envelope naming another broker's zone and identity, and the receiver's trust map
   would resolve the impersonated identity and record `sig:pass`. The verification-keys secret is
-  JSON of the form `{key_id: {"public_key": PEM, "zone": ..., "sender_identities": [...]}}`
-  (`keys.peer_key_resolver_from_map`). An entry with a missing, empty or unrecognized field is a
+  JSON of the form
+  `{key_id: {"public_key": PEM, "zone": ..., "sender_identities": [...], "signer_posture": 1|2|3, "custody_evidence": "declared"}}`
+  (`keys.peer_key_resolver_from_map`; the last two fields are the custody record, S10). An entry with a missing, empty or unrecognized field is a
   `SigningConfigError` naming the key, including a bare PEM string, which was the format before keys
   had a scope: an unscoped key would be trusted for every zone and sender. A `key_id` listed twice is
   refused too, since a JSON parser would keep the second entry silently. An empty map is verification
@@ -182,6 +183,55 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   different zone. An airlock deployed with no manifest at all runs as the placeholder zone
   `unconfigured` (`manifest.UNCONFIGURED_ZONE`) with an empty trust map, so it drops every sender
   whatever the envelope names.
+- **S10 — a verification key carries a custody record.** A signature excludes whoever lacks the
+  key. Where a signer's key sits within reach of its own agent, as when a broker and its agent run as
+  one OS user, an agent under injection can produce a chain that verifies, and the receiver cannot
+  tell that chain from an honest one. So each verification key is enrolled with two more required
+  fields. `signer_posture` is the posture the receiver's operator recorded for the signer, on the
+  ladder of `docs/posture-ladder.md`: 1, 2 or 3. `custody_evidence` is the evidence class of that
+  record. A key is in **agent-separated custody** when its recorded posture is 2 or higher
+  (`signing.AGENT_SEPARATED_MIN_POSTURE`, `PeerKey.agent_separated_custody`). Posture 1 means the
+  key sits under the same OS user as the signer's agent.
+
+  The evidence vocabulary is closed, with two names. `declared` is the only value accepted: the
+  operator wrote down what was established with the peer's operator out of band. `attested` is
+  reserved for evidence a receiver can check. No procedure in this version produces it, so an entry
+  that claims it is refused at load. An entry with no custody record, a posture outside 1, 2 and 3
+  (a boolean, a float and a string included) or an unknown class is refused the same way, as a
+  `SigningConfigError` naming the key and the fault. There is no default, because a default would
+  record a statement about a peer that nobody made. This changed the secret's format: an entry
+  written for S8 alone no longer loads.
+
+  **A `declared` record verifies nothing about the peer.** The receiver has not inspected the
+  signer's deployment and has no means to. A peer that misdescribes its arrangement, or changes it
+  after enrolment, is still recorded as agent-separated, and nothing the receiver computes detects
+  either. What the record buys is narrower: the assumption is written down per key, a gate reads
+  it, an audit can question it, and a peer known to keep its key within its agent's reach is held
+  to the lower tier even though its signatures verify. The record also says nothing about a
+  signer whose broker is itself compromised, since the broker holds the key by design.
+
+  The record takes no part in verification. A chain signed by a key recorded at posture 1 passes
+  or fails on S4 and S8 alone, and observer attribution is unchanged. On success
+  `ChainVerifyResult` reports `agent_separated_custody`, true only when every signature on the
+  envelope was made by a key recorded in agent-separated custody, and `custody_evidence`, the
+  weakest class among those keys' records. On failure both stay unset, like the signer fields.
+  When the gate ran, passed, and every signing key is agent-separated, gate 8 appends
+  `custody:declared` after `sig:pass` in the receiver's hop evidence. That entry names a record
+  consulted in the receiver's own configuration. It is never written when verification is off,
+  skipped for an adapter that builds its own envelope, or failed, and a verified chain with a
+  posture 1 key gets `sig:pass` alone.
+
+  Two pure functions state what the records support, in the maturity vocabulary of the promotion
+  predicate. `signing.envelope_provenance_tier` reads one verification result.
+  `signing.deployment_provenance_tier` reads whether verification is configured and the enrolled
+  keys (`EnrolledPeerKeys.enrolled`). Each returns `signed-lineage` together with the evidence
+  class, or `lineage` with none. A deployment is at `signed-lineage` only when verification is on
+  and every enrolled key is agent-separated; one key recorded at posture 1 holds the whole
+  deployment at `lineage`, because nothing after the airlock separates what that key's traffic
+  influenced from the rest. Verification on with nobody enrolled is `lineage` too: no chain is
+  accepted, so there is no record for the higher tier to rest on. Neither function feeds the
+  promotion ceremony. The maturity a promotion is licensed at is still asserted by the proposer,
+  and deriving it from these records is tracked at #21.
 - **S5 — ships OFF (friction doctrine).** With no verification-keys ARN configured
   (`BROKER_VERIFY_KEYS_SECRET_ARN` unset → `resolve_verification_keys()` returns `None` →
   `make_gate(None)` returns `None`), the airlock skips the verify gate (Gate 3.5) and unsigned peers
@@ -225,8 +275,9 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
   of the budget gates). A drop uses the verification reason verbatim (a closed `DropReason`
   vocabulary). On success, Gate 8 records `sig:pass` in the receiver's provenance evidence **only when
   the gate actually ran** — evidence of a check performed, never asserted for an unverified chain
-  (the same discipline as `sender.evidence`). `resolve_verification_keys()` builds the scoped
-  resolver (S8), or `None` to ship the gate OFF.
+  (the same discipline as `sender.evidence`). `custody:declared` follows it under the same rule,
+  and only when every signing key is recorded in agent-separated custody (S10).
+  `resolve_verification_keys()` builds the scoped resolver (S8), or `None` to ship the gate OFF.
 
 ## Conformance
 
@@ -242,6 +293,9 @@ The shape is `docs/tce-signing-shape.md`'s Decision, built:
 | S8 (a key verifies only within its enrolled zone and sender identities) | `test_an_enrolled_key_cannot_sign_for_another_zone` · `test_an_enrolled_key_cannot_sign_for_another_sender` · `test_a_signature_must_name_the_zone_of_the_hop_it_adds` · `test_scope_is_checked_on_every_signature_however_many_ride` · `test_identity_scope_is_checked_however_many_signatures_ride` · `test_each_peer_still_verifies_within_its_own_scope` · `test_casefold_is_the_identity_rule_on_both_sides` · `test_a_verification_key_without_a_full_scope_is_refused` · `test_a_key_id_listed_twice_is_refused` · `test_a_bad_public_key_names_the_key_and_nothing_else` · `test_an_empty_key_map_is_verification_on_with_nobody_enrolled` · `test_a_secret_that_is_not_a_map_fails_closed` · `test_key_scope_values_that_could_never_match_are_refused` · `test_a_field_listed_twice_inside_one_key_entry_is_refused` · `test_key_ids_are_matched_exactly` · `test_a_malformed_secret_does_not_ride_out_on_the_error` · `test_a_key_out_of_scope_is_named_only_after_its_signature_verified` · `test_the_identity_rule_is_the_same_in_every_module` · `test_verification_keys_resolve_and_fail_closed` |
 | S9 (an envelope is addressed to one receiver; checked before verification) | `test_an_envelope_signed_for_one_receiver_is_refused_at_another` · `test_audience_is_checked_with_verification_off` · `test_no_signed_field_can_change_after_signing` (the `audience` case) · `test_bound_values_are_bound_exactly` (the `audience` cases) · `test_adapters.py::test_an_envelope_addressed_to_another_zone_drops_before_verification` · `test_airlock_handler.py::test_an_envelope_signed_for_another_airlock_is_dropped_unverified` · `test_event_trigger.py::test_audience_is_required_and_kept_as_written` · `test_publish.py::TestAgentAuthorsIntentNotIdentity::test_audience_is_the_brokers_to_set_and_has_no_default` |
 | S9 (the receiver's zone id is required, has no default, and differs in every shipped manifest) | `test_manifest.py::test_zone_is_required_and_has_no_default` · `::test_a_manifest_without_a_zone_is_refused_and_told_why` · `::test_a_manifest_file_without_a_zone_does_not_load` · `::test_a_zone_that_could_never_match_is_refused` · `::test_every_shipped_manifest_is_listed_and_names_its_own_zone` · `::test_an_envelope_addressed_to_one_shipped_airlock_is_refused_at_every_other` · `test_airlock_handler.py::test_an_airlock_with_no_manifest_drops_everything` · `::test_a_configured_manifest_that_names_no_zone_accepts_nothing` |
+| S10 (the custody record is required, closed, and `attested` is refused) | `test_a_verification_key_without_a_valid_custody_record_is_refused` · `test_each_posture_on_the_ladder_is_accepted_and_only_two_and_up_are_agent_separated` · `test_the_custody_vocabulary_is_the_drafts_and_the_threshold_is_posture_two` |
+| S10 (custody is reported and stamped only for a verified chain whose every signing key is agent-separated) | `test_a_verified_chain_reports_the_custody_records_of_every_signing_key` · `test_custody_evidence_is_stamped_only_when_every_signing_key_is_agent_separated` · `test_a_failed_verification_reports_no_custody` · `test_no_custody_evidence_with_verification_off` · `test_no_custody_evidence_for_an_envelope_the_adapter_built_itself` · `test_a_passing_gate_that_reports_no_custody_gets_sig_pass_alone` · `test_airlock_handler.py::test_handler_with_verification_on_accepts_signed_and_drops_unsigned` |
+| S10 (the maturity the records support, with its evidence class) | `test_the_tier_a_deployments_custody_records_support` · `test_the_tier_one_verification_result_supports` · `test_the_maturity_names_are_the_promotion_predicates` |
 | S5 (ships OFF; locally built envelopes are not chain-verified) | `test_verification_ships_off_unsigned_passes` · `test_owner_adapter.py::test_owner_command_is_delivered_with_chain_verification_on` · `test_the_origin_flag_must_be_exactly_true` |
 | S4/S5 (gate placement + evidence) | `test_verify_gate_runs_after_normalize_before_expiry` · `test_sig_pass_evidence_recorded` |
 | S6 (non-repudiation ≠ correctness) | the absence of any propagation-correctness claim is the contract text itself (the banked §8 problem) |

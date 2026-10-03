@@ -22,8 +22,9 @@ Env contract (fixed; the infra side binds these):
   CHANNELS_ACCEPTED_QUEUE_URL  SQS queue for accepted, stamped envelopes
   CHANNELS_WEBHOOK_SECRET_ARN  Secrets Manager ARN of the shared webhook token
   BROKER_VERIFY_KEYS_SECRET_ARN  optional; ARN of the JSON chain-verification map
-                               {key_id: {public_key, zone, sender_identities}}
-                               (channels/SIGNING.md S8; unset ⇒ verification OFF)
+                               {key_id: {public_key, zone, sender_identities,
+                               signer_posture, custody_evidence}}
+                               (channels/SIGNING.md S8 and S10; unset ⇒ verification OFF)
 """
 
 from __future__ import annotations
@@ -170,7 +171,8 @@ def _build_state() -> _HandlerState:
     # Chain-signature verification (channels/SIGNING.md). Ships OFF: with no
     # BROKER_VERIFY_KEYS_SECRET_ARN configured the resolver is None, make_gate
     # returns None, and dispatch skips the gate — unsigned peers pass. A
-    # set-but-unfetchable/malformed keys secret fails the cold start closed.
+    # set-but-unfetchable/malformed keys secret fails the cold start closed,
+    # and so does an entry with no custody record (SIGNING.md S10).
     verify_chain = make_gate(resolve_verification_keys())
 
     return _HandlerState(

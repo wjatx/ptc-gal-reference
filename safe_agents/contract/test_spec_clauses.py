@@ -130,7 +130,10 @@ def test_gal_appended_clauses_are_blockquote_marked(
 
 @pytest.mark.parametrize(
     "clause_id",
-    ["PTC-1", "PTC-4", "PTC-26", "PTC-34", "PTC-35", "GAL-3", "GAL-16", "GAL-18", "GAL-30", "GAL-34", "GAL-38"],
+    [
+        "PTC-1", "PTC-4", "PTC-26", "PTC-34", "PTC-35", "PTC-48",
+        "GAL-3", "GAL-16", "GAL-18", "GAL-19", "GAL-21", "GAL-30", "GAL-34", "GAL-38",
+    ],
 )
 def test_neighbouring_clauses_are_unmarked(rows: list[ClauseRow], clause_id: str) -> None:
     """
@@ -152,6 +155,11 @@ def test_neighbouring_clauses_are_unmarked(rows: list[ClauseRow], clause_id: str
     Re-picked again for 0.3.1-draft, which marked GAL-17 and GAL-37 and unmarked
     PTC-35. GAL-37 leaves the set; GAL-16 and GAL-18 bracket GAL-17, and PTC-35
     joins as a clause whose marker was removed, so a stale marker would show here.
+
+    Extended for 0.4.0-draft, which added PTC-48 unmarked and marked GAL-20.
+    PTC-48 is the last PTC row and is built (channels/SIGNING.md S10), so a
+    marker leaking onto it from a neighbour would show here. GAL-19 and GAL-21
+    bracket GAL-20.
     """
     row = _by_id(rows, clause_id)
     assert row.marker_state == MARKER_STATE_UNMARKED

@@ -14,7 +14,7 @@ from typing import Any, Callable
 from safe_agents.channels.adapters import InboundAdapter
 from safe_agents.channels.schemas import EventTrigger
 from safe_agents.channels.screening import SCREEN_ERROR, ScreenVerdict, make_screen_record
-from safe_agents.channels.signing import ChainVerifyResult
+from safe_agents.channels.signing import CUSTODY_EVIDENCE_PREFIX, ChainVerifyResult
 from safe_agents.channels.trust_map import ChannelTrustMap, make_drop_record, stamp_inbound
 
 
@@ -160,8 +160,15 @@ def dispatch(
     # receiver wrote. The gate is skipped for it and no `sig:pass` is recorded.
     # Which adapter an airlock runs is fixed in its image-baked manifest, so
     # nothing on the wire can select this path.
+    #
+    # Custody (channels/SIGNING.md S10): when the gate ran and passed, and every
+    # signature was made by a key the receiver has recorded in agent-separated
+    # custody, the evidence class of those records is carried to gate 8. It is
+    # a record consulted in the receiver's own configuration, never a check on
+    # the peer, and it stays None when the gate is off, skipped or failed.
     chain_verified = False
     signer_key_id: str | None = None
+    custody_evidence: str | None = None
     if verify_chain is not None and getattr(adapter, "originates_envelope", False) is not True:
         result = verify_chain(envelope)
         if not result.ok:
@@ -177,6 +184,8 @@ def dispatch(
             return None
         chain_verified = True
         signer_key_id = result.signer_key_id
+        if result.agent_separated_custody:
+            custody_evidence = result.custody_evidence
 
     # Gate 4 — expiry, ahead of any budget-spending gate.
     if envelope.is_expired(now):
@@ -271,10 +280,15 @@ def dispatch(
     # provenance entry and sets sender_class, overwriting any wire value.
     # `sig:pass` is recorded only when the signature gate actually ran and
     # passed — evidence of a check performed, never asserted for an unverified
-    # chain (the same discipline as `sender.evidence`).
+    # chain (the same discipline as `sender.evidence`). The custody entry
+    # (e.g. `custody:declared`) follows it under the same rule, and only when
+    # every signing key is recorded in agent-separated custody: a chain signed
+    # by a key recorded at posture 1 is verified and gets `sig:pass` alone.
     evidence = ["token:pass"]
     if chain_verified:
         evidence.append("sig:pass")
+        if custody_evidence is not None:
+            evidence.append(f"{CUSTODY_EVIDENCE_PREFIX}{custody_evidence}")
     return stamp_inbound(
         envelope,
         resolution,

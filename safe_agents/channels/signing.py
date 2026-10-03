@@ -37,6 +37,7 @@ import base64
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Callable
 
@@ -82,10 +83,41 @@ _RAW_DIGEST_RE = re.compile(rf"{DIGEST_ALGORITHM}:([0-9a-f]{{64}})")
 # this shape; the provenance chain uses the scoped `PeerKeyResolver` below.
 KeyResolver = Callable[[str], Ed25519PublicKey | None]
 
+# The posture a receiver records for a signer, on the posture ladder of
+# docs/posture-ladder.md. Posture 1 is a local wrapper: the signing key sits
+# under the same OS user as the signer's agent, so the agent can reach it. At
+# posture 2 and above the key is on the far side of a boundary the signer's
+# platform enforces.
+SIGNER_POSTURES = frozenset({1, 2, 3})
+AGENT_SEPARATED_MIN_POSTURE = 2
+
+# Evidence classes of a custody record (PTC-SPEC §7.1). The vocabulary is closed.
+# ``declared`` is the receiver's operator writing down what was established
+# with the peer's operator out of band: the receiver checks nothing. ``attested``
+# is a reserved name for evidence a receiver can check. No procedure in this
+# version produces it, so configuration load refuses it (`keys._peer_key`).
+CUSTODY_DECLARED = "declared"
+CUSTODY_ATTESTED = "attested"
+CUSTODY_EVIDENCE_CLASSES = frozenset({CUSTODY_DECLARED, CUSTODY_ATTESTED})
+ACCEPTED_CUSTODY_EVIDENCE = frozenset({CUSTODY_DECLARED})
+# Weakest first. A statement resting on several records names the weakest.
+_CUSTODY_EVIDENCE_STRENGTH = {CUSTODY_DECLARED: 0, CUSTODY_ATTESTED: 1}
+
+# The prefix of the hop-evidence entry a receiver stamps when every signature
+# on a chain it verified was made by a key recorded in agent-separated custody,
+# e.g. ``custody:declared``. The entry names a record consulted. It is never
+# evidence of a check performed on the peer.
+CUSTODY_EVIDENCE_PREFIX = "custody:"
+
+
+def weakest_custody_evidence(classes: Iterable[str]) -> str | None:
+    """The weakest evidence class among ``classes``, or None when there are none."""
+    return min(classes, key=_CUSTODY_EVIDENCE_STRENGTH.__getitem__, default=None)
+
 
 @dataclass(frozen=True)
 class PeerKey:
-    """A peer broker's verification key, and what that key may sign for.
+    """A peer broker's verification key, what it may sign for, and its custody record.
 
     Being known to the receiver does not let a key speak for every peer. Without
     a scope, any enrolled broker could sign an envelope naming another broker's
@@ -95,11 +127,30 @@ class PeerKey:
     are the ``sender.channel_identity`` values, in canonical form, that an
     envelope this key signs in full may claim. Both come from the receiver's own
     configuration, never from the envelope.
+
+    ``signer_posture`` and ``custody_evidence`` are the custody record: the
+    posture (docs/posture-ladder.md) the receiver's operator recorded for the
+    signer, and the evidence class of that record. Both are also the receiver's
+    own configuration. The record is an assumption about the peer written down
+    where a gate can read it and an audit can question it. Nothing here checks
+    the peer, and the record has no bearing on whether a signature verifies.
     """
 
     public_key: Ed25519PublicKey
     zone: str
     sender_identities: frozenset[str]
+    signer_posture: int
+    custody_evidence: str
+
+    @property
+    def agent_separated_custody(self) -> bool:
+        """Whether the record says the signer's agent cannot reach this key.
+
+        True from posture 2 up. At posture 1 the key sits under the same OS
+        user as the signer's agent, and an agent under injection can produce a
+        chain that verifies.
+        """
+        return self.signer_posture >= AGENT_SEPARATED_MIN_POSTURE
 
 
 # Maps a signature's ``key_id`` to the scoped key, or None when the signer is
@@ -144,6 +195,14 @@ class ChainVerifyResult:
     watchdog can attribute the event at the authentication strength the
     airlock actually verified. They stay None on any failure; a gate that
     didn't verify must never name a signer it didn't check.
+
+    ``agent_separated_custody``/``custody_evidence`` report the custody records
+    of the keys that signed (channels/SIGNING.md S10). On success the first is
+    True only when EVERY signature was made by a key recorded in agent-separated
+    custody, and the second is the weakest evidence class among those keys'
+    records. They report records the receiver consulted in its own
+    configuration, never a check performed on the peer. On any failure they
+    stay at False and None, under the same rule as the signer fields.
     """
 
     ok: bool
@@ -151,6 +210,8 @@ class ChainVerifyResult:
     signer_key_id: str | None = None
     signer_zone: str | None = None
     detail: str | None = None
+    agent_separated_custody: bool = False
+    custody_evidence: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +496,10 @@ def verify_chain(envelope: EventTrigger, key_resolver: PeerKeyResolver) -> Chain
     post-signature. The zone-matches-top-hop check ties each signature to the
     hop its broker added, and the key's own scope ties that broker to the zone
     and sender identity it is enrolled for.
+
+    A key's custody record takes no part in any of that. A chain signed by a
+    key recorded at posture 1 passes or fails on the checks above; the result
+    then reports that not every signing key is in agent-separated custody.
     """
     signatures = envelope.chain_signatures
     if not signatures:
@@ -442,6 +507,7 @@ def verify_chain(envelope: EventTrigger, key_resolver: PeerKeyResolver) -> Chain
 
     n = len(envelope.provenance)
     sender_identity = canonical_identity(envelope.sender.channel_identity)
+    signing_keys: list[PeerKey] = []
     for signature in signatures:
         if signature.covers != n or signature.payload_type != DSSE_PAYLOAD_TYPE:
             return ChainVerifyResult(ok=False, reason=SIGNATURE_INVALID)
@@ -462,9 +528,16 @@ def verify_chain(envelope: EventTrigger, key_resolver: PeerKeyResolver) -> Chain
             return ChainVerifyResult(
                 ok=False, reason=SIGNATURE_INVALID, detail=SIGNER_IDENTITY_OUT_OF_SCOPE
             )
+        signing_keys.append(key)
 
     first = signatures[0]
-    return ChainVerifyResult(ok=True, signer_key_id=first.key_id, signer_zone=first.zone)
+    return ChainVerifyResult(
+        ok=True,
+        signer_key_id=first.key_id,
+        signer_zone=first.zone,
+        agent_separated_custody=all(key.agent_separated_custody for key in signing_keys),
+        custody_evidence=weakest_custody_evidence(key.custody_evidence for key in signing_keys),
+    )
 
 
 def make_gate(
@@ -480,3 +553,85 @@ def make_gate(
     if key_resolver is None:
         return None
     return lambda envelope: verify_chain(envelope, key_resolver)
+
+
+# ---------------------------------------------------------------------------
+# Provenance maturity the receiver's records support (channels/SIGNING.md S10)
+# ---------------------------------------------------------------------------
+
+# The two maturities a receiver's verification configuration can distinguish.
+# The strings are the ones `safe_agents/broker/grants/predicate.py` names in
+# `ProvenanceMaturity`. They are restated here because this module imports
+# nothing from the broker, and `test_signing.py` holds the two in step.
+MATURITY_LINEAGE = "lineage"
+MATURITY_SIGNED_LINEAGE = "signed-lineage"
+
+
+@dataclass(frozen=True)
+class ProvenanceTier:
+    """A provenance maturity and, at ``signed-lineage``, the evidence class under it.
+
+    ``custody_evidence`` is None below ``signed-lineage``. At ``signed-lineage``
+    it is always set, because the class travels with the tier (PTC-SPEC §7.1):
+    a statement of ``signed-lineage`` that omits the class reads as stronger
+    than the records behind it. ``declared`` means the tier rests on an
+    operator's written statement about each signing peer, which the receiver
+    has not checked.
+    """
+
+    maturity: str
+    custody_evidence: str | None = None
+
+
+_LINEAGE_TIER = ProvenanceTier(maturity=MATURITY_LINEAGE)
+
+
+def deployment_provenance_tier(
+    *, verification_configured: bool, enrolled_keys: Iterable[PeerKey]
+) -> ProvenanceTier:
+    """The maturity a receiver's verification configuration supports, as a whole.
+
+    ``signed-lineage`` only when verification is configured, at least one key is
+    enrolled, and every enrolled key is recorded in agent-separated custody.
+    One enrolled key recorded otherwise holds the deployment at ``lineage``: a
+    grant's rung is held per capability, and nothing downstream of the airlock
+    separates what that key's traffic influenced from the rest.
+
+    Zero enrolled keys is ``lineage``. A receiver that enrols nobody accepts no
+    signed chain, so it has no custody record to rest the higher tier on, and
+    "every enrolled key" must not be satisfied by there being none.
+
+    This reads the receiver's own records and nothing else. It does not feed
+    the promotion predicate, whose maturity is still a proposer assertion.
+    """
+    keys = tuple(enrolled_keys)
+    if not verification_configured or not keys:
+        return _LINEAGE_TIER
+    if not all(key.agent_separated_custody for key in keys):
+        return _LINEAGE_TIER
+    return ProvenanceTier(
+        maturity=MATURITY_SIGNED_LINEAGE,
+        custody_evidence=weakest_custody_evidence(key.custody_evidence for key in keys),
+    )
+
+
+def envelope_provenance_tier(result: ChainVerifyResult | None) -> ProvenanceTier:
+    """The maturity one envelope's verification result supports.
+
+    ``result`` is what the verify gate returned for the envelope, or None when
+    the gate did not run on it (verification off, or an envelope the receiving
+    adapter built itself). ``signed-lineage`` only when the gate ran, passed,
+    and every signature was made by a key recorded in agent-separated custody.
+    Everything else is ``lineage``, including a result that failed: the airlock
+    drops that envelope, and this function never reports it above the floor.
+    """
+    if (
+        result is None
+        or not result.ok
+        or not result.agent_separated_custody
+        or result.custody_evidence is None
+    ):
+        return _LINEAGE_TIER
+    return ProvenanceTier(
+        maturity=MATURITY_SIGNED_LINEAGE, custody_evidence=result.custody_evidence
+    )

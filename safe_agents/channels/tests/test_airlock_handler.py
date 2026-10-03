@@ -278,7 +278,13 @@ def verifying(wired, monkeypatch):
     pub = key.public_key().public_bytes(
         serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
     ).decode()
-    entry = {"public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]}
+    entry = {
+        "public_key": pub,
+        "zone": "zone-a",
+        "sender_identities": ["peer:example"],
+        "signer_posture": 2,
+        "custody_evidence": "declared",
+    }
     monkeypatch.setenv(keys_mod.VERIFY_KEYS_SECRET_ARN_ENV, "arn:verify")
     monkeypatch.setattr(keys_mod, "_fetch_secret", lambda arn: json.dumps({"broker:A": entry}))
     monkeypatch.setattr(h, "_STATE", None)
@@ -295,7 +301,7 @@ def test_handler_with_verification_on_accepts_signed_and_drops_unsigned(verifyin
     h.handler(_event(_outbound(signer).to_wire()), None)
     assert len(wired.sqs.messages) == 1
     stamped = EventTrigger.model_validate_json(wired.sqs.messages[0]["MessageBody"])
-    assert stamped.provenance[-1].evidence == ["token:pass", "sig:pass"]
+    assert stamped.provenance[-1].evidence == ["token:pass", "sig:pass", "custody:declared"]
 
 
 def test_a_forged_copy_does_not_shadow_the_genuine_message(verifying):

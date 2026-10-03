@@ -43,8 +43,14 @@ from safe_agents.channels.schemas.event_trigger import (
     ChainSignature,
 )
 from safe_agents.channels.signing import (
+    AGENT_SEPARATED_MIN_POSTURE,
+    CUSTODY_ATTESTED,
+    CUSTODY_DECLARED,
+    CUSTODY_EVIDENCE_CLASSES,
     DSSE_PAYLOAD_TYPE,
     HOP_FIELDS,
+    MATURITY_LINEAGE,
+    MATURITY_SIGNED_LINEAGE,
     PREDICATE_TYPE,
     SIGNATURE_INVALID,
     SIGNATURE_MISSING,
@@ -54,9 +60,13 @@ from safe_agents.channels.signing import (
     SUBJECT_FIELDS,
     UNSIGNED_FIELDS,
     ChainSigner,
+    ChainVerifyResult,
+    ProvenanceTier,
     bound_envelope,
     build_statement,
     canonical_identity,
+    deployment_provenance_tier,
+    envelope_provenance_tier,
     load_private_key,
     make_gate,
     pae,
@@ -99,11 +109,27 @@ def _keypair() -> tuple[str, str]:
     return priv, pub
 
 
-def _peer_resolver(keys: dict[str, tuple[str, str, list[str]]]):
-    """``key_id -> (public_pem, zone, sender_identities)``, the scope each key is enrolled with."""
+# The custody record most fixtures enrol a key with: a signer whose key its own
+# agent cannot reach, on the operator's say-so. Tests about custody override it.
+_CUSTODY = {"signer_posture": 2, "custody_evidence": CUSTODY_DECLARED}
+
+
+def _peer_resolver(
+    keys: dict[str, tuple[str, str, list[str]]], *, postures: dict[str, int] | None = None
+):
+    """``key_id -> (public_pem, zone, sender_identities)``, the scope each key is enrolled with.
+
+    ``postures`` overrides the recorded signer posture for the key ids it names.
+    """
     return peer_key_resolver_from_map(
         {
-            key_id: {"public_key": pem, "zone": zone, "sender_identities": identities}
+            key_id: {
+                **_CUSTODY,
+                "public_key": pem,
+                "zone": zone,
+                "sender_identities": identities,
+                **({"signer_posture": postures[key_id]} if key_id in (postures or {}) else {}),
+            }
             for key_id, (pem, zone, identities) in keys.items()
         }
     )
@@ -422,7 +448,7 @@ def test_verification_keys_resolve_and_fail_closed(monkeypatch):
     assert resolve_verification_keys() is None
 
     monkeypatch.setenv(keys_mod.VERIFY_KEYS_SECRET_ARN_ENV, "arn:verify")
-    entry = {"public_key": pub, "zone": "zone-a", "sender_identities": [" Peer:Example "]}
+    entry = {**_CUSTODY, "public_key": pub, "zone": "zone-a", "sender_identities": [" Peer:Example "]}
     monkeypatch.setattr(keys_mod, "_fetch_secret", lambda arn: json.dumps({"broker:A": entry}))
     resolver = resolve_verification_keys()
     assert resolver is not None and resolver("nope") is None
@@ -471,7 +497,7 @@ def test_a_verification_key_without_a_full_scope_is_refused(monkeypatch, entry):
 
     _, pub = _keypair()
     if isinstance(entry, dict):
-        entry = {**entry, "public_key": pub}
+        entry = {**_CUSTODY, **entry, "public_key": pub}
     monkeypatch.setenv(keys_mod.VERIFY_KEYS_SECRET_ARN_ENV, "arn:verify")
     monkeypatch.setattr(keys_mod, "_fetch_secret", lambda arn: json.dumps({"broker:A": entry}))
     with pytest.raises(SigningConfigError, match="broker:A"):
@@ -592,7 +618,7 @@ def test_sig_pass_evidence_recorded(signer_and_resolver):
     env = _signed_outbound(signer)
     out, drops, _ = _run(env, gate=make_gate(resolver))
     assert out is not None and drops == []
-    assert out.provenance[-1].evidence == ["token:pass", "sig:pass"]
+    assert out.provenance[-1].evidence == ["token:pass", "sig:pass", "custody:declared"]
 
 
 # ---------------------------------------------------------------------------
@@ -1588,7 +1614,7 @@ def test_an_envelope_signed_for_one_receiver_is_refused_at_another(signer_and_re
     out, drops = _receive_at("r1", wire, resolver, set())
     assert out is not None and drops == []
     assert out.audience == "r1"
-    assert out.provenance[-1].evidence == ["token:pass", "sig:pass"]
+    assert out.provenance[-1].evidence == ["token:pass", "sig:pass", "custody:declared"]
 
 
 def test_audience_is_checked_with_verification_off():
@@ -1673,7 +1699,9 @@ def test_a_key_id_listed_twice_is_refused(monkeypatch):
     """A JSON parser keeps the last duplicate silently, so a second entry would
     replace the first one's key and scope with nothing said."""
     _, pub = _keypair()
-    entry = json.dumps({"public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]})
+    entry = json.dumps(
+        {**_CUSTODY, "public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]}
+    )
     _keys_secret(monkeypatch, f'{{"broker:A": {entry}, "broker:A": {entry}}}')
     with pytest.raises(SigningConfigError, match="broker:A"):
         resolve_verification_keys()
@@ -1681,7 +1709,12 @@ def test_a_key_id_listed_twice_is_refused(monkeypatch):
 
 @pytest.mark.parametrize("public_key", ["not a pem", 7, None], ids=["garbage", "number", "null"])
 def test_a_bad_public_key_names_the_key_and_nothing_else(monkeypatch, public_key):
-    entry = {"public_key": public_key, "zone": "zone-a", "sender_identities": ["peer:example"]}
+    entry = {
+        **_CUSTODY,
+        "public_key": public_key,
+        "zone": "zone-a",
+        "sender_identities": ["peer:example"],
+    }
     _keys_secret(monkeypatch, json.dumps({"broker:A": entry}))
     with pytest.raises(SigningConfigError) as raised:
         resolve_verification_keys()
@@ -1964,7 +1997,7 @@ def test_the_identity_rule_is_the_same_in_every_module():
 )
 def test_key_scope_values_that_could_never_match_are_refused(monkeypatch, entry_change):
     _, pub = _keypair()
-    entry = {"public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]}
+    entry = {**_CUSTODY, "public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]}
     _keys_secret(monkeypatch, json.dumps({"broker:A": {**entry, **entry_change}}))
     with pytest.raises(SigningConfigError, match="broker:A"):
         resolve_verification_keys()
@@ -1972,7 +2005,7 @@ def test_key_scope_values_that_could_never_match_are_refused(monkeypatch, entry_
 
 def test_a_field_listed_twice_inside_one_key_entry_is_refused(monkeypatch):
     _, pub = _keypair()
-    body = json.dumps({"public_key": pub, "sender_identities": ["peer:example"]})[:-1]
+    body = json.dumps({**_CUSTODY, "public_key": pub, "sender_identities": ["peer:example"]})[:-1]
     _keys_secret(monkeypatch, f'{{"broker:A": {body}, "zone": "zone-a", "zone": "zone-z"}}}}')
     with pytest.raises(SigningConfigError, match="zone"):
         resolve_verification_keys()
@@ -1980,7 +2013,7 @@ def test_a_field_listed_twice_inside_one_key_entry_is_refused(monkeypatch):
 
 def test_key_ids_are_matched_exactly(monkeypatch):
     _, pub = _keypair()
-    entry = {"public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]}
+    entry = {**_CUSTODY, "public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"]}
     _keys_secret(monkeypatch, json.dumps({"broker:A": entry}))
     resolver = resolve_verification_keys()
     assert resolver("broker:A") is not None
@@ -1995,3 +2028,259 @@ def test_a_malformed_secret_does_not_ride_out_on_the_error(monkeypatch):
         resolve_verification_keys()
     assert raised.value.__cause__ is None
     assert "PEM-TEXT-IN-THE-SECRET" not in str(raised.value)
+
+
+# ---------------------------------------------------------------------------
+# S10: the custody record of a verification key
+# ---------------------------------------------------------------------------
+
+_CUSTODY_ENTRY = "custody:declared"
+_LINEAGE = ProvenanceTier(MATURITY_LINEAGE)
+_SIGNED_LINEAGE_DECLARED = ProvenanceTier(MATURITY_SIGNED_LINEAGE, CUSTODY_DECLARED)
+
+
+def _scoped_entry(**custody) -> dict:
+    """One verification-key entry with a valid scope and exactly the custody fields given."""
+    _, pub = _keypair()
+    return {"public_key": pub, "zone": "zone-a", "sender_identities": ["peer:example"], **custody}
+
+
+@pytest.mark.parametrize(
+    "custody, says",
+    [
+        pytest.param({}, "no custody record", id="no custody record at all"),
+        pytest.param({"signer_posture": 2}, "custody_evidence", id="posture with no evidence class"),
+        pytest.param({"custody_evidence": "declared"}, "signer_posture", id="evidence class with no posture"),
+        *[
+            pytest.param(
+                {"signer_posture": posture, "custody_evidence": "declared"},
+                "signer_posture must be",
+                id=f"posture {posture!r}",
+            )
+            for posture in [0, 4, -1, True, False, 2.0, "2", None, [2]]
+        ],
+        *[
+            pytest.param(
+                {"signer_posture": 2, "custody_evidence": evidence},
+                "custody_evidence must be",
+                id=f"evidence class {evidence!r}",
+            )
+            for evidence in ["verified", "Declared", " declared", "", None, 1, ["declared"]]
+        ],
+        pytest.param(
+            {"signer_posture": 3, "custody_evidence": "attested"},
+            "reserved; no procedure in this version produces it",
+            id="attested is a reserved name",
+        ),
+    ],
+)
+def test_a_verification_key_without_a_valid_custody_record_is_refused(monkeypatch, custody, says):
+    """A custody record is required, has no default, and takes its values from
+    closed sets. The refusal names the key and the fault and carries no key material."""
+    entry = _scoped_entry(**custody)
+    _keys_secret(monkeypatch, json.dumps({"broker:A": entry}))
+    with pytest.raises(SigningConfigError) as raised:
+        resolve_verification_keys()
+    message = str(raised.value)
+    assert "broker:A" in message and says in message
+    assert entry["public_key"] not in message and "BEGIN PUBLIC KEY" not in message
+
+
+@pytest.mark.parametrize("posture, separated", [(1, False), (2, True), (3, True)])
+def test_each_posture_on_the_ladder_is_accepted_and_only_two_and_up_are_agent_separated(
+    monkeypatch, posture, separated
+):
+    entry = _scoped_entry(signer_posture=posture, custody_evidence="declared")
+    _keys_secret(monkeypatch, json.dumps({"broker:A": entry}))
+    resolver = resolve_verification_keys()
+    key = resolver("broker:A")
+    assert (key.signer_posture, key.custody_evidence) == (posture, CUSTODY_DECLARED)
+    assert key.agent_separated_custody is separated
+    assert resolver.enrolled == (key,)
+
+
+def test_the_custody_vocabulary_is_the_drafts_and_the_threshold_is_posture_two():
+    assert CUSTODY_EVIDENCE_CLASSES == {"declared", "attested"}
+    assert (CUSTODY_DECLARED, CUSTODY_ATTESTED) == ("declared", "attested")
+    assert AGENT_SEPARATED_MIN_POSTURE == 2
+
+
+def _signed_by(postures: list[int]):
+    """One envelope signed by ``len(postures)`` keys of zone-a, each enrolled at
+    the posture given. Returns ``(envelope, resolver)``."""
+    pairs = [_keypair() for _ in postures]
+    key_ids = [f"broker:A{n}" for n in range(len(postures))]
+    resolver = _peer_resolver(
+        {key_id: (pub, "zone-a", ["peer:example"]) for key_id, (_, pub) in zip(key_ids, pairs)},
+        postures=dict(zip(key_ids, postures)),
+    )
+    env = _signed_outbound(signer_from_pem(key_ids[0], "zone-a", pairs[0][0]))
+    bare = env.model_copy(update={"chain_signatures": []})
+    signatures = [
+        signer_from_pem(key_id, "zone-a", priv).sign_envelope(bare)
+        for key_id, (priv, _) in zip(key_ids, pairs)
+    ]
+    return env.model_copy(update={"chain_signatures": signatures}), resolver
+
+
+_CUSTODY_CASES = [
+    pytest.param([1], False, id="one key at posture 1"),
+    pytest.param([2], True, id="one key at posture 2"),
+    pytest.param([3], True, id="one key at posture 3"),
+    pytest.param([2, 3], True, id="two keys, both agent-separated"),
+    pytest.param([2, 1], False, id="two keys, the second at posture 1"),
+    pytest.param([1, 2], False, id="two keys, the first at posture 1"),
+]
+
+
+@pytest.mark.parametrize("postures, separated", _CUSTODY_CASES)
+def test_a_verified_chain_reports_the_custody_records_of_every_signing_key(postures, separated):
+    """Custody is reported for the chain only when EVERY signature was made by a
+    key recorded in agent-separated custody. The record has no bearing on
+    whether the chain verifies: it passes at any posture."""
+    env, resolver = _signed_by(postures)
+    result = verify_chain(env, resolver)
+    assert result.ok and result.signer_key_id == "broker:A0"
+    assert result.agent_separated_custody is separated
+    assert result.custody_evidence == CUSTODY_DECLARED
+    assert envelope_provenance_tier(result) == (_SIGNED_LINEAGE_DECLARED if separated else _LINEAGE)
+
+
+@pytest.mark.parametrize("postures, separated", _CUSTODY_CASES)
+def test_custody_evidence_is_stamped_only_when_every_signing_key_is_agent_separated(
+    postures, separated
+):
+    """`custody:declared` follows `sig:pass` in the receiver's hop evidence. A
+    chain signed by a key recorded at posture 1 is still verified and still
+    gets `sig:pass`, with no custody entry."""
+    env, resolver = _signed_by(postures)
+    out, drops, _ = _run(env, gate=make_gate(resolver))
+    assert out is not None and drops == []
+    expected = ["token:pass", "sig:pass", *([_CUSTODY_ENTRY] if separated else [])]
+    assert out.provenance[-1].evidence == expected
+
+
+def test_a_failed_verification_reports_no_custody(signer_and_resolver):
+    """Custody fields stay unset on any failure, like the signer fields: a gate
+    that did not verify must not report records for keys it did not accept."""
+    signer, resolver = signer_and_resolver  # enrolled at posture 2
+    forged = _signed_outbound(signer).model_copy(update={"payload": {"tampered": True}})
+    result = verify_chain(forged, resolver)
+    assert not result.ok
+    assert (result.agent_separated_custody, result.custody_evidence) == (False, None)
+    assert envelope_provenance_tier(result) == _LINEAGE
+    out, drops, _ = _run(forged, gate=make_gate(resolver))
+    assert out is None and [d.reason for d in drops] == [SIGNATURE_INVALID]
+
+
+def test_no_custody_evidence_with_verification_off(signer_and_resolver):
+    """With the gate off nothing was verified, so nothing is recorded, even for
+    a chain whose signer is one this receiver would have on record."""
+    signer, _ = signer_and_resolver
+    out, drops, _ = _run(_signed_outbound(signer), gate=None)
+    assert out is not None and drops == []
+    assert out.provenance[-1].evidence == ["token:pass"]
+
+
+def test_no_custody_evidence_for_an_envelope_the_adapter_built_itself():
+    """The gate is skipped for an originating adapter. It records neither a
+    signature check nor a custody record, even when the gate it was handed
+    would have reported both."""
+
+    class _Originates(_RecordingAdapter):
+        originates_envelope = True
+
+    gate_calls: list[EventTrigger] = []
+
+    def gate(envelope: EventTrigger) -> ChainVerifyResult:
+        gate_calls.append(envelope)
+        return ChainVerifyResult(
+            ok=True, signer_key_id="broker:A", agent_separated_custody=True, custody_evidence="declared"
+        )
+
+    def run(adapter):
+        return dispatch(
+            None,
+            adapter=adapter,
+            trust_map=_trust_map(),
+            screen=None,
+            verify_chain=gate,
+            dedupe_store=set(),
+            drops=[],
+            now=_NOW,
+            zone=_RECV,
+        )
+
+    out = run(_Originates(_unsigned()))
+    assert gate_calls == [] and out.provenance[-1].evidence == ["token:pass"]
+    # The same gate, reached through an adapter that does not originate, stamps both.
+    out = run(_RecordingAdapter(_unsigned()))
+    assert len(gate_calls) == 1
+    assert out.provenance[-1].evidence == ["token:pass", "sig:pass", _CUSTODY_ENTRY]
+
+
+def test_a_passing_gate_that_reports_no_custody_gets_sig_pass_alone():
+    """Custody is opt-in on the result. A gate that reports a pass and says
+    nothing about custody is recorded as verified and no more."""
+    out, drops, _ = _run(_unsigned(), gate=lambda envelope: ChainVerifyResult(ok=True))
+    assert out is not None and out.provenance[-1].evidence == ["token:pass", "sig:pass"]
+
+
+@pytest.mark.parametrize(
+    "configured, postures, expected",
+    [
+        pytest.param(False, [], _LINEAGE, id="verification off"),
+        pytest.param(False, [2, 3], _LINEAGE, id="verification off, whatever the records say"),
+        pytest.param(True, [], _LINEAGE, id="verification on, nobody enrolled"),
+        pytest.param(True, [1], _LINEAGE, id="the one enrolled key at posture 1"),
+        pytest.param(True, [2, 3, 1], _LINEAGE, id="one enrolled key of three at posture 1"),
+        pytest.param(True, [2], _SIGNED_LINEAGE_DECLARED, id="the one enrolled key at posture 2"),
+        pytest.param(True, [2, 3], _SIGNED_LINEAGE_DECLARED, id="every enrolled key agent-separated"),
+    ],
+)
+def test_the_tier_a_deployments_custody_records_support(configured, postures, expected):
+    """`signed-lineage` needs verification on, somebody enrolled, and every
+    enrolled key recorded in agent-separated custody. The class is named with it."""
+    _, resolver = _signed_by(postures) if postures else (None, _peer_resolver({}))
+    tier = deployment_provenance_tier(
+        verification_configured=configured, enrolled_keys=resolver.enrolled
+    )
+    assert tier == expected
+    assert (tier.custody_evidence is None) == (tier.maturity != MATURITY_SIGNED_LINEAGE)
+
+
+@pytest.mark.parametrize(
+    "result, expected",
+    [
+        pytest.param(None, _LINEAGE, id="the gate did not run"),
+        pytest.param(ChainVerifyResult(ok=False, reason=SIGNATURE_INVALID), _LINEAGE, id="failed"),
+        pytest.param(ChainVerifyResult(ok=True), _LINEAGE, id="passed, custody not reported"),
+        pytest.param(
+            ChainVerifyResult(ok=True, custody_evidence="declared"),
+            _LINEAGE,
+            id="passed, a signing key outside agent-separated custody",
+        ),
+        pytest.param(
+            ChainVerifyResult(ok=False, agent_separated_custody=True, custody_evidence="declared"),
+            _LINEAGE,
+            id="a failed result is never raised by its custody fields",
+        ),
+        pytest.param(
+            ChainVerifyResult(ok=True, agent_separated_custody=True, custody_evidence="declared"),
+            _SIGNED_LINEAGE_DECLARED,
+            id="passed, every signing key agent-separated",
+        ),
+    ],
+)
+def test_the_tier_one_verification_result_supports(result, expected):
+    assert envelope_provenance_tier(result) == expected
+
+
+def test_the_maturity_names_are_the_promotion_predicates():
+    """`signing` restates two maturity names so it imports nothing from the
+    broker. They must stay the names the promotion predicate ranks."""
+    from typing import get_args
+
+    from safe_agents.broker.grants.predicate import ProvenanceMaturity
+
+    assert {MATURITY_LINEAGE, MATURITY_SIGNED_LINEAGE} <= set(get_args(ProvenanceMaturity))

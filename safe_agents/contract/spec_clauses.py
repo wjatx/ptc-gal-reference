@@ -93,9 +93,10 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 # --- Exit predicate, asserted by verify_extraction on every run -----
 
 # PTC grew from 44 to 47 with 0.3.0-draft: PTC-45 (audience), PTC-46
-# (verification key scope) and PTC-47 (wire form).
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 47, SPEC_GAL: 39}
-EXPECTED_TOTAL_ROWS = 86
+# (verification key scope) and PTC-47 (wire form). 0.4.0-draft added PTC-48
+# (the custody record of a verification key).
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 48, SPEC_GAL: 39}
+EXPECTED_TOTAL_ROWS = 87
 
 # clause_id -> (marker_form, tracking issue)
 #
@@ -169,6 +170,15 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # 0.3.1-draft: the clause is conditional, so its marker overstated the gap.)
     "GAL-17": (MARKER_FORM_INLINE, "#159"),
     "GAL-37": (MARKER_FORM_INLINE, "#159"),
+    # Added by GAL 0.4.0-draft, following PTC 0.4.0-draft's redefinition of
+    # `signed-lineage`. GAL-20 now requires the predicate text of a promotion
+    # into an acting rung to state the maturity it was licensed at and that
+    # maturity's evidence class, and the ratifier to be shown both. The maturity
+    # here is still a proposer assertion that carries no class, so that half is
+    # marked; the ceiling itself ships. PTC-48, added by the same draft, is
+    # unmarked: the custody record, its refusals at load and the per-chain
+    # evidence are built (channels/SIGNING.md S10).
+    "GAL-20": (MARKER_FORM_INLINE, "#21"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from

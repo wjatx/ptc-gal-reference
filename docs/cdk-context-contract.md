@@ -215,9 +215,13 @@ non-negotiable floor, every other bound an envelope knob shipping off), but each
 you may believe you have and do not.
 
 **`channelsVerifyKeysArn`** points at a Secrets Manager secret holding peer verification keys, as
-JSON of the form `{key_id: {"public_key": PEM, "zone": ..., "sender_identities": [...]}}`
-(`channels/SIGNING.md` S8). A secret in any other shape, including the earlier `{key_id: PEM}`,
-fails the airlock closed at cold start. The stack never creates it. Omitted, the execution role gets no second `GetSecretValue` statement and
+JSON of the form
+`{key_id: {"public_key": PEM, "zone": ..., "sender_identities": [...], "signer_posture": 1|2|3, "custody_evidence": "declared"}}`
+(`channels/SIGNING.md` S8 for the scope, S10 for the custody record in the last two fields). A
+secret in any other shape, including the earlier `{key_id: PEM}` and an entry with a scope and no
+custody record, fails the airlock closed at cold start. The custody record is the operator's own
+statement of where the peer keeps its signing key. The airlock records it and checks nothing about
+the peer. The stack never creates it. Omitted, the execution role gets no second `GetSecretValue` statement and
 `BROKER_VERIFY_KEYS_SECRET_ARN` is unset, so key resolution returns nothing and **unsigned peers
 pass**. This key is the one that was documented nowhere before this file existed.
 
