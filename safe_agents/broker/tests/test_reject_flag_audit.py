@@ -148,6 +148,36 @@ def test_reject_cas_win_writes_one_rejected_record():
     verify_chain(sink.records())
 
 
+def test_reject_labels_and_record_share_one_bucket_across_a_period_rollover(monkeypatch):
+    """The labels land on the bucket the record names, even when the period turns over.
+
+    reject_intent reads the period once and keys both label writes and the record on
+    that one reading. The clock is pinned here to a period that is long over, so a
+    label write that took its own reading of the clock (the default when no bucket
+    is passed) would land on today's bucket while the record named the pinned one.
+    """
+    pinned = "20200101"
+    monkeypatch.setattr(
+        "safe_agents.broker.runtime.pep.current_period_bucket", lambda period: pinned
+    )
+    store = InMemoryStore()
+    runtime, sink, intent_store = _runtime(store)
+    intent_id = _materialize_held_intent(runtime, intent_store)
+
+    runtime.reject_intent(intent_id, _OWNER)
+
+    (record,) = _by_outcome(sink, "rejected")
+    assert record.evidenceBucket == pinned
+    for suffix in (HUMAN_OVERRIDE_SUFFIX, OBSERVATIONS_SUFFIX):
+        on_pinned = scoped_counter_key(
+            _PRINCIPAL, "payments", "transfer", suffix, bucket=pinned
+        )
+        on_today = scoped_counter_key(_PRINCIPAL, "payments", "transfer", suffix)
+        assert on_today != on_pinned
+        assert store.read_counter(on_pinned) == 1.0, suffix
+        assert store.read_counter(on_today) == 0.0, suffix
+
+
 def _reject_missing(runtime, intent_store):
     return "intent-does-not-exist"
 
