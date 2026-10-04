@@ -1024,7 +1024,8 @@ def resolve_manifest() -> AgentManifest:
 def __getattr__(name: str):  # PEP 562 — lazy, load-once module attribute
     """``broker_server._MANIFEST`` materialized on first access via
     ``resolve_manifest``: loading at import time both forced a load
-    store-mode ceremonies never need and froze the env read; loading per-access
+    some store-mode ceremonies never need (reject, tighten, acknowledge; propose
+    and ratify read the manifest in either mode) and froze the env read; loading per-access
     broke the one-consistent-object invariant. On the dynamo arm with
     BROKER_MANIFEST unset, access RAISES BrokerConfigError (never a proxy)."""
     if name == "_MANIFEST":

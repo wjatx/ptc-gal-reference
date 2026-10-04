@@ -87,8 +87,9 @@ def _resolve_inforce_envelope(principal: Principal, table_name: str | None) -> E
         )
 
     if _resolve_envelope_load_mode() == "store":
-        # Store mode never consults the manifest — no manifest resolution (and no
-        # dynamo-arm manifest refusal) happens on this path.
+        # In store mode the ENVELOPE never comes from the manifest, so this path
+        # resolves no manifest (and meets no dynamo-arm manifest refusal). propose
+        # and ratify still read the manifest for tool_ops (_ceremony_blast_context).
         store = (
             SqliteEnvelopeStore(resolve_sqlite_db_path())
             if resolve_store_arm() == "sqlite"

@@ -135,7 +135,8 @@ class TestManifestFallback:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The grants-ceremony shape: manifest-mode ceremonies call
-        ``resolve_manifest()`` explicitly (store mode never resolves it), and on
+        ``resolve_manifest()`` explicitly, as do propose and ratify in store mode
+        (the other store-mode ceremonies never resolve it), and on
         the dynamo arm a defaulted manifest refuses with a clean error —
         surfaced by commands.main as exit 2, never a traceback."""
         monkeypatch.setenv("BROKER_STORE", "dynamo")
