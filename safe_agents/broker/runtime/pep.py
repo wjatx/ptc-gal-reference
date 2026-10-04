@@ -135,6 +135,20 @@ INTENT_ID_COLLISION_REASON = "intent id already pending"
 _FLAG_MARKER_PREFIX = "flag-marker"
 _FLAG_MARKER_CAP = 1.0
 
+# The `error` on a rejection's audit record when the guarded evidence-label block
+# raised: the rejection stands, its record carries evidenceBucket=None, and this says
+# why, so the tape never claims a label landing that did not happen (#134).
+_EVIDENCE_LABEL_WRITE_FAILED = "evidence label write failed"
+
+
+def _actor_digest(identity: str) -> str:
+    """PII-safe digest of an authenticated owner identity (an email or handle).
+
+    The ONE derivation shared by the rejected/flagged AuditRecord's actorDigest and
+    the intent_flagged log line, so the two surfaces always join on the same value.
+    """
+    return "sha256:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
 
 def _utc_bucket_of(ts: str, period: CounterPeriod = "utc-day") -> str:
     """Render an ISO-8601 timestamp as the UTC period-bucket key segment.
@@ -866,6 +880,15 @@ class BrokerRuntime:
         connector is ever reached. Like approve_intent it holds the boundary
         invariant: self._intent_store is used INTERNALLY and only an ExecutionResult
         (always executed=False) is returned.
+
+        A rejection this call actually won writes exactly one AuditRecord (#134):
+        outcome "rejected" under the STORED call's coordinates, decision
+        "require_approval" (the verb the intent was held under), the intent's
+        receipts (intentId, storedCallDigest recomputed from the stored bytes),
+        actorDigest (the rejecter, digested), and evidenceBucket (the period bucket
+        both evidence labels were written under). If the label writes fail the record
+        is still written, with evidenceBucket None and `error` set. Every refused path
+        (missing, foreign, expired, already actioned, quarantined) writes no record.
         """
         # Fetch ONCE: the stored coordinates label the evidence counters below, and the
         # same read feeds the foreign-principal guard (avoids a third store read).
@@ -896,46 +919,83 @@ class BrokerRuntime:
             except QuarantinedIntentError as exc:
                 self._surface_quarantined_intent(exc, op="reject")
                 labeled = None
-            if labeled is not None:
-                req = labeled.materializedRequest
-                # ONE guard around BOTH increments — a label must never gate the
-                # rejection (friction doctrine: log, never gate). Ordered
-                # HUMAN_OVERRIDE first, then OBSERVATIONS: if a fault splits the pair,
-                # override-without-observation makes the predicate's
-                # "false + override <= observations" check refuse a later propose —
-                # failing toward LESS authority. The reverse order (observation without
-                # override) would underestimate the error rate and fail toward MORE.
-                try:
-                    self._enforcement_store.try_increment_counter(
-                        scoped_counter_key(
-                            req.principal,
-                            req.tool,
-                            req.op,
-                            HUMAN_OVERRIDE_SUFFIX,
-                            period=self._counter_period,
-                        ),
-                        1.0,
-                        UNBOUNDED_COUNTER_CAP,
-                    )
-                    self._enforcement_store.try_increment_counter(
-                        scoped_counter_key(
-                            req.principal,
-                            req.tool,
-                            req.op,
-                            OBSERVATIONS_SUFFIX,
-                            period=self._counter_period,
-                        ),
-                        1.0,
-                        UNBOUNDED_COUNTER_CAP,
-                    )
-                except Exception:  # noqa: BLE001 — a label must never gate the rejection
-                    logger.warning(
-                        "evidence counter increment failed (reject) for %s.%s — "
-                        "intent already rejected; continuing",
+            if labeled is None:
+                # No stored call survives to supply coordinates, so there is nothing
+                # to emit under. The rejection itself stands.
+                logger.error(
+                    "reject CAS won for intent %s but its stored call could not be "
+                    "re-read; no evidence labels and no audit record were written",
+                    intent_id,
+                )
+                return result
+            req = labeled.materializedRequest
+            # ONE bucket for both label writes AND the audit record, so the
+            # record's evidenceBucket is provably the key the labels landed on (a
+            # period boundary between the writes cannot split them).
+            bucket = current_period_bucket(self._counter_period)
+            evidence_bucket: str | None = bucket
+            evidence_error: str | None = None
+            # ONE guard around BOTH increments — a label must never gate the
+            # rejection (friction doctrine: log, never gate). Ordered
+            # HUMAN_OVERRIDE first, then OBSERVATIONS: if a fault splits the pair,
+            # override-without-observation makes the predicate's
+            # "false + override <= observations" check refuse a later propose —
+            # failing toward LESS authority. The reverse order (observation without
+            # override) would underestimate the error rate and fail toward MORE.
+            try:
+                self._enforcement_store.try_increment_counter(
+                    scoped_counter_key(
+                        req.principal,
                         req.tool,
                         req.op,
-                        exc_info=True,
-                    )
+                        HUMAN_OVERRIDE_SUFFIX,
+                        period=self._counter_period,
+                        bucket=bucket,
+                    ),
+                    1.0,
+                    UNBOUNDED_COUNTER_CAP,
+                )
+                self._enforcement_store.try_increment_counter(
+                    scoped_counter_key(
+                        req.principal,
+                        req.tool,
+                        req.op,
+                        OBSERVATIONS_SUFFIX,
+                        period=self._counter_period,
+                        bucket=bucket,
+                    ),
+                    1.0,
+                    UNBOUNDED_COUNTER_CAP,
+                )
+            except Exception:  # noqa: BLE001 — a label must never gate the rejection
+                logger.warning(
+                    "evidence counter increment failed (reject) for %s.%s — "
+                    "intent already rejected; continuing",
+                    req.tool,
+                    req.op,
+                    exc_info=True,
+                )
+                evidence_bucket = None
+                evidence_error = _EVIDENCE_LABEL_WRITE_FAILED
+            # The rejection's audit record (#134), written AFTER the labels so its
+            # evidenceBucket reports what actually landed. An emit() fault propagates,
+            # as at every other emit site here.
+            emit(
+                self._audit_sink,
+                principal=req.principal,
+                tool=req.tool,
+                op=req.op,
+                args=req.args,
+                decision="require_approval",
+                outcome="rejected",
+                envelope_hash=self._envelope_hash,
+                reason=REJECTED_BY_OWNER_REASON,
+                error=evidence_error,
+                intent_id=intent_id,
+                stored_call_digest=hash_stored_call(req),
+                actor_digest=_actor_digest(rejected_by),
+                evidence_bucket=evidence_bucket,
+            )
         return result
 
     def flag_intent(self, intent_id: str, flagged_by: str) -> ExecutionResult:
@@ -967,20 +1027,30 @@ class BrokerRuntime:
         deferred; the marker is claimed BEFORE the counter write so the common double-/flag
         case can never over- or double-count.
 
+        A clean flag writes exactly one AuditRecord (#34), after the false_action write:
+        outcome "flagged" under the STORED call's coordinates, decision
+        "require_approval" (the verb the intent was held under), the intent's receipts
+        (intentId, storedCallDigest recomputed from the stored bytes), actorDigest (the
+        flagger, digested), and evidenceBucket (the EXECUTION-period bucket the
+        false_action write landed on). Every refused path writes no record. If the audit
+        write itself fails, the result is a failed one naming it, and the false_action
+        count stands.
+
         Parameters
         ----------
         intent_id:
             The executed intent to flag.
         flagged_by:
             The authenticated human identity from the owner channel (never sourced from the
-            agent). Not persisted here — flag writes evidence, not intent state.
+            agent). Not persisted on the intent (flag writes evidence, not intent state);
+            the audit record and the log line carry only its digest.
 
         Returns
         -------
         ExecutionResult
             Always executed=False (nothing runs). rejection_reason is
             FLAGGED_BY_OWNER_REASON on a clean flag, or the matching
-            unknown / foreign / not-executed / already-flagged reason.
+            unknown / foreign / not-executed / already-flagged / write-failure reason.
         """
         # Fetch ONCE: the stored coordinates key the evidence counter below, and the same
         # read feeds the foreign-principal guard (mirrors reject_intent).
@@ -1059,18 +1129,46 @@ class BrokerRuntime:
                 rejection_reason=f"flag counter write failed: {exc}",
             )
 
-        # PII-safe attribution (the log-metric / drain log discipline): the authenticated
-        # flagger is NOT persisted on the intent (a flag writes evidence, not state), so
-        # a structured log is the only record of WHO flagged. flagged_by is digested — an
-        # owner identity is an email/handle — never emitted in clear; the bucket key
-        # locates the evidence write. A full AuditRecord for the reject/flag side is #82.
+        flagged_by_digest = _actor_digest(flagged_by)
+        try:
+            emit(
+                self._audit_sink,
+                principal=req.principal,
+                tool=req.tool,
+                op=req.op,
+                args=req.args,
+                decision="require_approval",
+                outcome="flagged",
+                envelope_hash=self._envelope_hash,
+                reason=FLAGGED_BY_OWNER_REASON,
+                intent_id=intent_id,
+                stored_call_digest=hash_stored_call(req),
+                actor_digest=flagged_by_digest,
+                evidence_bucket=original_bucket,
+            )
+        except Exception as exc:  # noqa: BLE001 — the caller must learn the flag is off-tape
+            # The false_action count is already written and stays: that fails toward
+            # LESS authority, and the caller is told the audit write did not land.
+            logger.error(
+                "flag audit write failed for intent %s after false_action was written",
+                intent_id,
+                exc_info=True,
+            )
+            return ExecutionResult(
+                intent_id=intent_id,
+                executed=False,
+                rejection_reason=f"flag audit write failed: {exc}",
+            )
+
+        # The audit record above carries the flagger's digest and the bucket the
+        # false_action write landed on. This structured line stays as the log-metric
+        # surface, keyed by the same digest so the two join.
         logger.info(
             json.dumps(
                 {
                     "event": "intent_flagged",
                     "intent_id": intent_id,
-                    "flagged_by_digest": "sha256:"
-                    + hashlib.sha256(flagged_by.encode("utf-8")).hexdigest(),
+                    "flagged_by_digest": flagged_by_digest,
                     "bucket": original_bucket,
                 }
             )

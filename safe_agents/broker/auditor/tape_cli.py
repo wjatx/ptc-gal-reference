@@ -94,6 +94,10 @@ def render_record(record) -> str:  # noqa: ANN001 — AuditRecord
         detail.append(f"         approved by {record.approvedBy}")
     if record.intentId:
         detail.append(f"         intent {record.intentId}")
+    if record.actorDigest:
+        detail.append(f"         by   {record.actorDigest}")
+    if record.evidenceBucket:
+        detail.append(f"         bucket {record.evidenceBucket}")
     if record.error:
         detail.append(f"         error {record.error}")
     return "\n".join([head, *detail])

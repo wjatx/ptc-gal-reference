@@ -335,7 +335,7 @@ Per-field notes:
   Copied into `AuditRecord.approvedBy` at execution time, and onto the refusal record when
   release-time revalidation refuses, so the tape shows who approved a release the broker declined.
 
-Intent is stored in **DynamoDB** (the same on-demand table as grants and counters). `AuditRecord.outcome = "held"` means an intent is pending; `"executed"` / `"denied"` are terminal.
+Intent is stored in **DynamoDB** (the same on-demand table as grants and counters). `AuditRecord.outcome = "held"` means an intent is pending; `"executed"` / `"denied"` / `"refused"` / `"failed"` are terminal, and an owner's "no" writes a `"rejected"` record.
 
 ---
 
@@ -355,12 +355,14 @@ interface AuditRecord {
   reason?: string
   envelopeHash: string             // the exact envelope in force when this was decided
   approvedBy?: string              // the human identity, for approved intents
-  outcome: "executed" | "denied" | "held" | "failed"
+  outcome: "executed" | "denied" | "held" | "refused" | "failed" | "rejected" | "flagged"
   error?: string
   seed?: string                    // committed randomization seed, where allocation was randomized (auditable randomness)
   intentId?: string                // approval receipt — held + release records: joins a hold to its release across the intent TTL
   storedCallDigest?: string        // approval receipt — digest of the frozen materializedRequest; hold-side == release-side ⇒ executed==approved is byte-provable post-TTL
   resultDigest?: string            // approval receipt — broker-written digest of the connector response (the effect receipt)
+  actorDigest?: string             // owner-verdict receipt: "sha256:" digest of the human who rejected or flagged; never the identity in clear
+  evidenceBucket?: string          // owner-verdict receipt: the counter period bucket the verdict's evidence write landed on
   prevHash: string                 // chains to the previous record
   hash: string                     // hash over this record incl. prevHash -> tamper-evident
 }
@@ -371,7 +373,14 @@ Per-field notes:
 - **argsDigest** — hash, not raw args, so the audit doesn't itself become a PII store.
 - **envelopeHash** — ties the decision to the exact signed envelope, so "under what authority?"
   reconstructs.
-- **outcome** — `held` is an intent awaiting approval; `executed`/`denied`/`failed` are terminal.
+- **outcome** — `held` is an intent awaiting approval; `executed`/`denied`/`refused`/`failed` are terminal.
+  `refused` means a control refused the call after the PDP decided (two-key MCP admission is the
+  first), so nothing was attempted; `failed` means the execution step broke.
+  `rejected` and `flagged` record an owner's verdict on an intent rather than a call's fate (#34,
+  #134). `rejected` is an owner's "no" to a held intent, so nothing ran. `flagged` is an owner
+  reviewing an executed intent as wrong, which writes the `false_action` evidence counter. Both
+  records carry the stored call's coordinates, `decision: "require_approval"` (the verb the intent
+  was held under), `intentId`, `storedCallDigest` and `actorDigest`.
 - **seed** — when scarcity allocation was randomized (high-stakes tier), the committed seed is logged
   (commit-reveal / VRF): unpredictable in advance, fully reconstructable after. "Why not engage that
   one?" has an answer in the log.
@@ -379,6 +388,14 @@ Per-field notes:
   of effect, agent-unforgeable; digests only, never raw content (the `argsDigest` discipline).
   OPTIONAL — absent == a pre-receipts record, and receipt fields are hash-covered only when
   present, so existing chains verify unchanged while stripping a present receipt breaks the chain.
+- **actorDigest / evidenceBucket**: the owner-verdict receipts, on `rejected` and `flagged`
+  records. `actorDigest` is `"sha256:"` plus the SHA-256 of the authenticated identity that acted,
+  so the tape names who acted without becoming a store of owner emails or handles.
+  `evidenceBucket` is the counter period-bucket key the verdict's evidence write landed on: the
+  current period for a rejection's `human_override` and `observations` labels, and the executed
+  op's own period for a flag's `false_action` back-write. A rejection whose label write failed
+  still gets its record, with `evidenceBucket` absent and `error` set, so the tape never claims a
+  write that did not land. Optional and hash-covered only when present, like the approval receipts.
 - **prevHash / hash** — the chain. Any later edit or deletion breaks it; any gap in `seq` shows.
 
 ---

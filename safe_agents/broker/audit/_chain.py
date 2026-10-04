@@ -25,7 +25,15 @@ _FALLBACK_LOCK = threading.Lock()
 # Receipt fields are hash-covered ONLY when present: absent (None) fields are
 # omitted from the hashed dict, so every pre-receipts record recomputes byte-for-byte,
 # while STRIPPING a present receipt field breaks the chain like any other mutation.
-_RECEIPT_FIELDS = ("intentId", "storedCallDigest", "resultDigest")
+# actorDigest and evidenceBucket (the owner-verdict receipts, #34 and #134) follow the
+# same rule, so every record written before them still hashes identically.
+_RECEIPT_FIELDS = (
+    "intentId",
+    "storedCallDigest",
+    "resultDigest",
+    "actorDigest",
+    "evidenceBucket",
+)
 
 
 def _hashable_fields(record_fields: dict) -> dict:
@@ -57,6 +65,8 @@ def emit(
     intent_id: str | None = None,
     stored_call_digest: str | None = None,
     result_digest: str | None = None,
+    actor_digest: str | None = None,
+    evidence_bucket: str | None = None,
 ) -> AuditRecord:
     """Build and append a tamper-evident AuditRecord for one broker decision.
 
@@ -100,6 +110,8 @@ def emit(
             "intentId": intent_id,
             "storedCallDigest": stored_call_digest,
             "resultDigest": result_digest,
+            "actorDigest": actor_digest,
+            "evidenceBucket": evidence_bucket,
             "prevHash": prev_hash,
         }
         record_hash = hash_record(_hashable_fields(record_fields))
@@ -175,6 +187,8 @@ def verify_chain(
             "intentId": record.intentId,
             "storedCallDigest": record.storedCallDigest,
             "resultDigest": record.resultDigest,
+            "actorDigest": record.actorDigest,
+            "evidenceBucket": record.evidenceBucket,
             "prevHash": record.prevHash,
         }
         computed = hash_record(_hashable_fields(record_fields))

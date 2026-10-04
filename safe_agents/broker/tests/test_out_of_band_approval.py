@@ -330,9 +330,10 @@ class TestRejectIntent:
         stored = intent_store.get_intent(intent_id)
         assert stored.status == "rejected"
         assert stored.approvedBy == "owner:maintainer@example.com"
-        # No connector call, and no executed/failed audit record was added.
+        # No connector call, and no executed/failed audit record was added; the
+        # rejection itself is on the tape (#134).
         assert len(stubs["payments"].calls) == 0
-        assert [r.outcome for r in sink.records()] == ["held"]
+        assert [r.outcome for r in sink.records()] == ["held", "rejected"]
 
     def test_not_found_refuses(self):
         """reject_intent on an unknown id refuses with a not-found reason."""

@@ -47,7 +47,14 @@ class AuditRecord(BaseModel):
     # attempted, or its credential could not be resolved, #35 -- `error` says which).
     # Without it a two-key refusal is shape-identical to a network blip, and
     # anything counting refusals counts none of them.
-    outcome: Literal["executed", "denied", "held", "refused", "failed"]
+    #
+    # `rejected` and `flagged` are owner verdicts on an intent, not call outcomes
+    # (#34, #134): an owner said no to a held intent (nothing ran), or reviewed an
+    # executed one as wrong. Both records carry the stored call's coordinates, the
+    # intent's receipts, and actorDigest.
+    outcome: Literal[
+        "executed", "denied", "held", "refused", "failed", "rejected", "flagged"
+    ]
     error: str | None = None
     # committed randomization seed, where allocation was randomized (auditable randomness);
     # allows "why not engage that one?" to have a reconstructable answer in the log
@@ -64,6 +71,14 @@ class AuditRecord(BaseModel):
     # Receipt gap B: broker-written digest of the connector's opaque response (the effect
     # receipt). Digest only, never raw content (PII discipline, the argsDigest precedent).
     resultDigest: str | None = None
+    # Owner-verdict receipt (#34, #134), on rejected/flagged records: digest of the
+    # authenticated human who acted, "sha256:" + sha256(identity). Digest only, never
+    # the identity in clear (an owner identity is an email or handle).
+    actorDigest: str | None = None
+    # Owner-verdict receipt: the counter period-bucket key the verdict's evidence
+    # write landed on. None on a rejected record means the label write failed and
+    # `error` says so; the tape never claims a landing that did not happen.
+    evidenceBucket: str | None = None
     # chains to the previous record (hash-chain integrity)
     prevHash: str
     # hash over this record including prevHash — any later edit is detectable
