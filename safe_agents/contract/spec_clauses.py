@@ -94,9 +94,11 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 
 # PTC grew from 44 to 47 with 0.3.0-draft: PTC-45 (audience), PTC-46
 # (verification key scope) and PTC-47 (wire form). 0.4.0-draft added PTC-48
-# (the custody record of a verification key).
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 48, SPEC_GAL: 39}
-EXPECTED_TOTAL_ROWS = 87
+# (the custody record of a verification key). GAL grew from 39 to 40 with
+# 0.5.0-draft: GAL-40 (a record's ts is its write instant, and the grant's ts
+# equals its latest record's).
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 48, SPEC_GAL: 40}
+EXPECTED_TOTAL_ROWS = 88
 
 # clause_id -> (marker_form, tracking issue)
 #
@@ -179,6 +181,17 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # unmarked: the custody record, its refusals at load and the per-chain
     # evidence are built (channels/SIGNING.md S10).
     "GAL-20": (MARKER_FORM_INLINE, "#21"),
+    # Added by GAL 0.5.0-draft, which makes the ledger journal every grant write.
+    # GAL-15 is reversed: re-attestation appends a `reattestation` record, and no
+    # other path rewrites a grant at an unchanged level. `re-seed` writes no
+    # record and `RungStateMachine.re_ratify` still exists, so the clause moved
+    # from implemented to marked. GAL-40 states what a record's ts denotes, which
+    # the ledger clock already provides, and the audit rule tying a grant's ts to
+    # its latest record, which nothing checks yet; the marker names that half.
+    # #165 (`certifiedUntil` on a lapse record) is a field-row marker in §5.2
+    # and §6.7.6 and has no conformance row of its own.
+    "GAL-15": (MARKER_FORM_INLINE, "#164"),
+    "GAL-40": (MARKER_FORM_INLINE, "#166"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from

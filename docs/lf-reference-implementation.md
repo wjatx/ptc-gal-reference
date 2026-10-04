@@ -36,7 +36,7 @@ is the weakest.
 
 ## Conformance status
 
-**59 of 87 conformance clauses are supported. 28 are not.**
+**58 of 88 conformance clauses are supported. 30 are not.**
 
 That statement is generated, never written by hand:
 
@@ -132,7 +132,7 @@ checkout with no cloud account:
 
 ```
 git clone --depth 1 https://github.com/wjatx/ptc-gal-standards spec
-python3 -m safe_agents.contract.spec_clauses --summary --spec-dir spec   # 87 rows, marker state, self-checks
+python3 -m safe_agents.contract.spec_clauses --summary --spec-dir spec   # 88 rows, marker state, self-checks
 python3 -m pytest                                                        # the full suite
 ```
 
