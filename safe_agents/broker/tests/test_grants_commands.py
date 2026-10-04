@@ -59,6 +59,7 @@ from safe_agents.broker.grants.record_signing import (
 from safe_agents.broker.grants.runner import RunnerConfigError
 from safe_agents.broker.grants.store import InMemoryGrantStore
 from safe_agents.broker.schemas import Grant
+from safe_agents.broker.schemas.brokered_call import ToolOp
 from safe_agents.broker.schemas.common import AutonomyLevel, Principal
 from safe_agents.broker.schemas.evidence import ConfidenceArtifact, SelfConsistencyEvidence
 from safe_agents.channels.keys import key_resolver_from_map
@@ -74,6 +75,9 @@ SEEDER_ARN = "arn:aws:sts::111111111111:assumed-role/PromotionRole/seeder-sessio
 PRINCIPAL = Principal(agentId="agent-cmd", skill="email", user="alice", tier="B")
 ACTION_CLASS = "email.send"
 ENVELOPE_HASH = "sha256:env-in-force"
+# What the manifest declares for ACTION_CLASS: an internal write, so the derived
+# blast class is medium (test_grants_blast_derivation.py covers the other rows).
+TOOL_OPS = [ToolOp(tool="email", op="send", effect="write", external=False)]
 NOW = datetime.datetime(2026, 7, 12, 12, 0, tzinfo=datetime.timezone.utc)
 
 _ARTIFACT = ConfidenceArtifact(
@@ -187,7 +191,6 @@ def propose_args(artifact_path, **overrides):
         "--min-observations": "10",
         "--threshold": "0.05",
         "--ttl-hours": "24",
-        "--effect": "write",
     }
     flags.update(overrides)
     argv = ["propose"]
@@ -245,7 +248,14 @@ def tighten_args(**overrides):
 
 
 def run_propose(
-    monkeypatch, artifact_path, grant_store, proposal_store, enforcement_store, **overrides
+    monkeypatch,
+    artifact_path,
+    grant_store,
+    proposal_store,
+    enforcement_store,
+    tool_ops=TOOL_OPS,
+    high_blast=(),
+    **overrides,
 ) -> int:
     set_caller(monkeypatch, MAKER_ARN)
     return propose_command(
@@ -254,6 +264,8 @@ def run_propose(
         proposal_store=proposal_store,
         enforcement_store=enforcement_store,
         envelope_hash=ENVELOPE_HASH,
+        tool_ops=tool_ops,
+        high_blast=high_blast,
         now=NOW,
     )
 
@@ -287,6 +299,8 @@ def test_propose_then_ratify_happy_path(
         grant_store=grant_store,
         record_store=record_store,
         proposal_store=proposal_store,
+        tool_ops=TOOL_OPS,
+        high_blast=(),
         signer=None,
         now=NOW,
     )
@@ -328,6 +342,8 @@ def test_maker_equals_checker_is_refused(
         grant_store=grant_store,
         record_store=record_store,
         proposal_store=proposal_store,
+        tool_ops=TOOL_OPS,
+        high_blast=(),
         signer=None,
         now=NOW,
     )
@@ -354,6 +370,8 @@ def _ratify(monkeypatch, proposal_id, stores, *, now=NOW, arn=CHECKER_ARN):
         grant_store=grant_store,
         record_store=record_store,
         proposal_store=proposal_store,
+        tool_ops=TOOL_OPS,
+        high_blast=(),
         signer=None,
         now=now,
     )
@@ -934,6 +952,8 @@ def test_ratify_signs_record_when_issuer_key_injected(
         grant_store=grant_store,
         record_store=record_store,
         proposal_store=proposal_store,
+        tool_ops=TOOL_OPS,
+        high_blast=(),
         signer=signer,
         now=NOW,
     )
@@ -966,6 +986,8 @@ def test_ratify_without_issuer_key_warns_loudly(
         grant_store=grant_store,
         record_store=record_store,
         proposal_store=proposal_store,
+        tool_ops=TOOL_OPS,
+        high_blast=(),
         signer=None,
         now=NOW,
     )
@@ -995,6 +1017,8 @@ def test_ratify_unsigned_without_flag_refuses_and_writes_nothing(
         grant_store=grant_store,
         record_store=record_store,
         proposal_store=proposal_store,
+        tool_ops=TOOL_OPS,
+        high_blast=(),
         signer=None,
         now=NOW,
     )
@@ -1428,6 +1452,8 @@ def test_propose_then_ratify_carries_the_term(
         grant_store=grant_store,
         record_store=record_store,
         proposal_store=proposal_store,
+        tool_ops=TOOL_OPS,
+        high_blast=(),
         signer=None,
         now=NOW,
     ) == 0

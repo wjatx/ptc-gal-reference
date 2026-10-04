@@ -49,6 +49,14 @@ Notes:
   directions; do not relax it to make a deploy pass.
 - Maker≠checker is credential separation (GAL §8): propose under MakerRole, ratify under
   CheckerRole — two ARNs the ceremony compares; the proposer cannot mint the checker's.
+- **`propose` and `ratify` both need `BROKER_MANIFEST`, in either `BROKER_ENVELOPE_LOAD` mode.**
+  The blast class of a promotion is derived from the ToolOp the manifest's `tool_ops` declares for
+  the action class, raised by the in-force envelope's `confidence.high_blast` list. `propose`
+  takes no blast flags, and refuses an action class the manifest does not declare. `ratify`
+  derives the class again, prints it, and refuses a stored proposal whose class differs: reject
+  that proposal and propose again. Both refuse a manifest whose principal is not the proposal's.
+  In store mode the checker therefore reads the principal's `ENVELOPE#` row, which CheckerRole's
+  grants-table `GetItem` already covers.
 - **The keyed audit has two invocations, both floor-proven.** `python -m
   safe_agents.broker.grants.audit_command --table <name> [--json]` landed 2026-07-26 as the
   operator/programmatic path and is the one a wrapper's `posture` command shells out to; its first

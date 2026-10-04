@@ -74,7 +74,10 @@ Part 11 of the philosophy doc). It writes a `PromotionRecord` and updates the `G
    be a **signed promotion predicate authored in advance** rather than a per-instance act — its
    stringency and ceremony scaling to blast radius. **High-blast action classes are always ratified
    per-instance by a human**; the pre-authored predicate may stand in only below that threshold
-   (locked 2026-07-11, autonomy epic; `docs/GAL.md` §5).
+   (locked 2026-07-11, autonomy epic; `docs/GAL.md` §5). The blast class is derived at propose
+   from the manifest's `tool_ops` entry for the action class and the in-force envelope's
+   `confidence.high_blast`, and derived again at ratify: a stored proposal whose class differs
+   from the derivation is refused, as is an action class the manifest does not declare.
 3. **The evidence must be sound.** Gathered where deployment conditions are *covered*. A thin
    observed-accuracy count over an irreversible action is an **unsound** predicate and must be
    rejected.

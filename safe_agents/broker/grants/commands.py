@@ -39,9 +39,14 @@ under whatever credentials the caller holds (PromotionRole in production) and
 never assume a role themselves, matching grants/runner.py.
 
 No domain defaults are baked anywhere: every threshold / window / TTL is a
-required flag. The consumer declares the ToolOp blast facts
-(--effect/--external/--reversible) on the command line for now — joining them
-from the manifest's ``tool_ops`` block is a later slice.
+required flag. The blast class is the exception, because it is not an operator
+input at all: propose derives it from the ToolOp the image-baked manifest's
+``tool_ops`` block declares for the action class, raised by the in-force
+envelope's tighten-only ``confidence.high_blast`` overrides
+(grants/blast.py). ratify derives it again from the same two sources, shows it
+to the checker, and refuses a stored proposal whose class differs. An action
+class the manifest does not declare is refused by both. So propose and ratify
+read BROKER_MANIFEST in both envelope load modes.
 """
 
 from __future__ import annotations
@@ -53,6 +58,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from typing import Collection, Sequence
 
 from pydantic import ValidationError
 
@@ -65,9 +71,9 @@ from safe_agents.broker.enforcement import (
 from safe_agents.broker.grants._commands_common import (
     _build_ack_store,
     _build_proposal_store,
+    _ceremony_blast_context,
     _manifest_context,
     _parse_args,
-    _resolve_envelope_hash,
 )
 from safe_agents.broker.grants.acknowledgments import (
     AcknowledgmentAlreadyExistsError,
@@ -75,6 +81,10 @@ from safe_agents.broker.grants.acknowledgments import (
     WAIVABLE_RULES,
     sign_acknowledgment,
     violation_detail_digest,
+)
+from safe_agents.broker.grants.blast import (
+    UndeclaredOperationError,
+    ceremony_blast_class,
 )
 from safe_agents.broker.grants.ceremony import (
     CheckerProtocol,
@@ -123,7 +133,7 @@ from safe_agents.broker.schemas import Grant, PromotionRecord
 from safe_agents.broker.schemas.brokered_call import ToolOp
 from safe_agents.broker.schemas.budgets import ErrorBudget
 from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger, Principal
-from safe_agents.broker.schemas.evidence import ConfidenceArtifact, effective_blast_class
+from safe_agents.broker.schemas.evidence import ConfidenceArtifact
 
 # ---------------------------------------------------------------------------
 # Evidence-counter suffixes — the durable scoped counters propose reads (same
@@ -405,6 +415,8 @@ def propose_command(
     proposal_store: ProposalStore,
     enforcement_store: EnforcementStore,
     envelope_hash: str,
+    tool_ops: Sequence[ToolOp],
+    high_blast: Collection[str],
     session: object = None,
     now: datetime.datetime | None = None,
 ) -> int:
@@ -413,6 +425,10 @@ def propose_command(
     The predicate runs locally for early feedback and its REASON is printed
     either way; an ineligible proposal is refused, never stored (a checker
     should never be summoned to a proposal that cannot pass the gate).
+
+    ``tool_ops`` is the image-baked manifest's ToolOp table and ``high_blast``
+    the in-force envelope's overrides: the blast class is derived from them and
+    the maker has no input to it.
     """
     principal = _principal_from_args(args)
     caller = _caller_identity(session)
@@ -421,6 +437,23 @@ def propose_command(
     if not tool or not op:
         print(f"REFUSED: --action-class must be 'tool.op', got {args.action_class!r}")
         return 1
+
+    # The blast class is derived, never declared by the maker: the ToolOp facts
+    # come from the manifest and the overrides from the in-force envelope
+    # (tighten-only). An action class the manifest does not declare has no
+    # facts to derive from, and there is no default to fall back to.
+    try:
+        blast_class = ceremony_blast_class(args.action_class, tool_ops, high_blast)
+    except UndeclaredOperationError as exc:
+        print(
+            f"REFUSED: {exc}. Declare {args.action_class!r} in the BROKER_MANIFEST "
+            "manifest's tool_ops and re-propose. Nothing was stored."
+        )
+        return 1
+    print(
+        f"blast class: {blast_class} (derived from the manifest's tool_ops and "
+        "the in-force envelope's high_blast)"
+    )
 
     read = grant_store.get_grant(principal, args.action_class)
     if read.quarantined:
@@ -510,18 +543,6 @@ def propose_command(
         )
         error_budget = ErrorBudget(tolerance=args.budget_tolerance, spent=spent)
 
-    # The consumer declares the ToolOp blast facts on the command line for now
-    # (the manifest tool_ops join is a later slice); the CLI carries no
-    # high-blast overrides, so effective == derived.
-    tool_op = ToolOp(
-        tool=tool,
-        op=op,
-        effect=args.effect,
-        external=args.external,
-        reversible={"true": True, "false": False, None: None}[args.reversible],
-    )
-    blast_class = effective_blast_class(tool_op, ())
-
     effective_now = _utc_now(now)
     proposal_id = str(uuid.uuid4())
     expires_at = (
@@ -604,6 +625,8 @@ def ratify_command(
     record_store: PromotionRecordStore,
     proposal_store: ProposalStore,
     signer: RecordSigner | None,
+    tool_ops: Sequence[ToolOp],
+    high_blast: Collection[str],
     checker: CheckerProtocol | None = None,
     session: object = None,
     now: datetime.datetime | None = None,
@@ -613,6 +636,11 @@ def ratify_command(
     checker: the optional evidence reviewer (findings recorded, never
     gated on). None — the default, and the state whenever GRANTS_REVIEWER_KIND
     is unset — is byte-for-byte the reviewer-less ceremony.
+
+    ``tool_ops`` / ``high_blast`` are the same two sources propose derived the
+    blast class from, read again here: the stored class is input, never
+    authority, so a proposal whose class differs from the derivation is refused
+    before the ceremony runs.
     """
     principal = _principal_from_args(args)
     caller = _caller_identity(session)
@@ -675,6 +703,34 @@ def ratify_command(
             else "none (the grant will carry no term)"
         )
     )
+
+    # The blast class decides whether per-instance human ratification is
+    # required, so the checker never takes the maker's word for it: derive it
+    # again from the manifest and the in-force envelope, show it, and refuse a
+    # stored class that differs in EITHER direction (the facts moved since
+    # propose, or the stored proposal never matched them). The refusal writes
+    # nothing and leaves the proposal pending for an explicit reject.
+    try:
+        blast_class = ceremony_blast_class(proposal.action_class, tool_ops, high_blast)
+    except UndeclaredOperationError as exc:
+        print(
+            f"REFUSED: {exc}. Reject proposal {args.proposal_id} and re-propose "
+            "once the BROKER_MANIFEST manifest declares the operation. Nothing "
+            "was written."
+        )
+        return 1
+    print(
+        f"blast class: {blast_class} (re-derived from the manifest's tool_ops "
+        "and the in-force envelope's high_blast)"
+    )
+    if blast_class != proposal.blast_class:
+        print(
+            f"REFUSED: proposal {args.proposal_id} is stored at blast class "
+            f"{proposal.blast_class!r} but the manifest and the in-force envelope "
+            f"derive {blast_class!r} for {proposal.action_class!r}. Reject this "
+            "proposal and re-propose. Nothing was written."
+        )
+        return 1
 
     if signer is None:
         # Reachable only via the explicit --allow-unsigned opt-in above.
@@ -932,23 +988,31 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.command == "propose":
             grant_store, _ = _build_stores(args.table_name)
+            tool_ops, high_blast, envelope_hash = _ceremony_blast_context(
+                _principal_from_args(args), args.table_name
+            )
             return propose_command(
                 args,
                 grant_store=grant_store,
                 proposal_store=_build_proposal_store(args.table_name),
                 enforcement_store=_build_enforcement_store(args.counters_table),
-                envelope_hash=_resolve_envelope_hash(
-                    _principal_from_args(args), args.table_name
-                ),
+                envelope_hash=envelope_hash,
+                tool_ops=tool_ops,
+                high_blast=high_blast,
             )
         if args.command == "ratify":
             grant_store, record_store = _build_stores(args.table_name)
+            tool_ops, high_blast, _ = _ceremony_blast_context(
+                _principal_from_args(args), args.table_name
+            )
             return ratify_command(
                 args,
                 grant_store=grant_store,
                 record_store=record_store,
                 proposal_store=_build_proposal_store(args.table_name),
                 signer=resolve_record_signer(zone=args.zone),
+                tool_ops=tool_ops,
+                high_blast=high_blast,
                 checker=_resolve_reviewer(),
             )
         if args.command == "tighten":

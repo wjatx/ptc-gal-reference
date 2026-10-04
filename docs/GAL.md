@@ -67,7 +67,10 @@ Every ingredient has prior art; the assembled lifecycle does not:
   shape, consumer owns the content — the same split as every other manifest block. **High-blast
   derives from the same fields** (`effect=write ∧ external ∧ ¬reversible`); a consumer may
   additionally *declare* a class high-blast but never un-declare a derived one (tighten-only —
-  decided 2026-07-12). A "blocked" class is simply the absence of a grant (the Recommend rung),
+  decided 2026-07-12). The promotion ceremony reads both itself: `propose` derives the class from
+  the manifest's `tool_ops` and the in-force envelope's `confidence.high_blast`, `ratify` derives
+  it again and refuses a stored proposal that disagrees, and neither accepts it as operator input.
+  A "blocked" class is simply the absence of a grant (the Recommend rung),
   not a flag; a never-grantable hard ceiling, if ever wanted, is a future tighten-only Envelope
   knob.
 

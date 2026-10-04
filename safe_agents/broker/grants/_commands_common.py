@@ -1,7 +1,7 @@
 """CLI plumbing for the grant-ceremony command surface (grants/commands.py).
 
-Argparse wiring plus the store / manifest / envelope-hash resolution main()
-binds — split out so commands.py stays the readable ceremony surface. Nothing
+Argparse wiring plus the store / manifest / envelope / blast-fact resolution
+main() binds — split out so commands.py stays the readable ceremony surface. Nothing
 here is imported by the command functions themselves (they are store-injected
 and AWS-free); only commands.main() consumes this module.
 """
@@ -20,6 +20,8 @@ from safe_agents.broker.prototype.boot_config import (
     resolve_sqlite_db_path,
     resolve_store_arm,
 )
+from safe_agents.broker.schemas import Envelope, compute_envelope_hash
+from safe_agents.broker.schemas.brokered_call import ToolOp
 from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger, Principal
 
 
@@ -59,10 +61,10 @@ def _build_ack_store(table_name: str | None):
     return DynamoDBAcknowledgmentStore(table_name=_resolve_table_name(table_name))
 
 
-def _resolve_envelope_hash(principal: Principal, table_name: str | None) -> str:
-    """The in-force envelope hash, honoring BROKER_ENVELOPE_LOAD like seed_grants:
+def _resolve_inforce_envelope(principal: Principal, table_name: str | None) -> Envelope:
+    """The in-force envelope, honoring BROKER_ENVELOPE_LOAD like seed_grants:
     'store' reads the seeded envelope for this principal (seed_envelope must have
-    run first); the default 'manifest' hashes the manifest's envelope block —
+    run first); the default 'manifest' takes the manifest's envelope block —
     but ONLY when the manifest's principal IS ``principal``: stamping a
     ceremony under a different manifest's envelope mints a grant the broker
     quarantines on first exercise, so a mismatch is refused, never
@@ -83,7 +85,6 @@ def _resolve_envelope_hash(principal: Principal, table_name: str | None) -> str:
             _resolve_envelope_load_mode,
             resolve_manifest,
         )
-        from safe_agents.broker.schemas import compute_envelope_hash  # noqa: PLC0415
 
     if _resolve_envelope_load_mode() == "store":
         # Store mode never consults the manifest — no manifest resolution (and no
@@ -94,7 +95,7 @@ def _resolve_envelope_hash(principal: Principal, table_name: str | None) -> str:
             else DynamoDBEnvelopeStore(table_name=_resolve_table_name(table_name))
         )
         try:
-            return compute_envelope_hash(load_inforce_envelope(store, principal))
+            return load_inforce_envelope(store, principal)
         except EnvelopeNotFoundError as exc:
             raise RunnerConfigError(
                 "BROKER_ENVELOPE_LOAD=store but no envelope is seeded — run "
@@ -116,7 +117,47 @@ def _resolve_envelope_hash(principal: Principal, table_name: str | None) -> str:
             f"manifest for {principal.agentId!r}> or set BROKER_ENVELOPE_LOAD=store "
             "to read the seeded in-force envelope."
         )
-    return compute_envelope_hash(_MANIFEST.envelope)
+    return _MANIFEST.envelope
+
+
+def _resolve_envelope_hash(principal: Principal, table_name: str | None) -> str:
+    """The hash of the in-force envelope (``_resolve_inforce_envelope``): the
+    hash and anything else read from that envelope come from ONE object."""
+    return compute_envelope_hash(_resolve_inforce_envelope(principal, table_name))
+
+
+def _ceremony_blast_context(
+    principal: Principal, table_name: str | None
+) -> tuple[list[ToolOp], list[str], str]:
+    """(tool_ops, high_blast, envelope_hash) for propose and ratify.
+
+    The ToolOp facts come from the image-baked manifest in BOTH envelope load
+    modes (a store never classifies an operation), and only when the manifest's
+    principal IS ``principal``: another agent's tool_ops would classify this
+    agent's operation by someone else's declaration. ``high_blast`` comes from
+    the in-force envelope, the SAME object the returned hash is computed from;
+    an envelope with no ``confidence`` knob carries no overrides."""
+    with grant_load_suppressed():
+        from safe_agents.broker.prototype.broker_server import (  # noqa: PLC0415
+            resolve_manifest,
+        )
+
+    _MANIFEST = resolve_manifest()
+    if _MANIFEST.principal != principal:
+        manifest_id = (
+            _MANIFEST.principal.agentId if _MANIFEST.principal is not None else "<none>"
+        )
+        raise RunnerConfigError(
+            f"refusing to derive the blast class for principal {principal.agentId!r} "
+            f"from the BROKER_MANIFEST manifest, whose principal is {manifest_id!r} — "
+            "the tool_ops of the wrong manifest would classify this agent's "
+            "operations by another agent's declarations. Export "
+            f"BROKER_MANIFEST=<the manifest for {principal.agentId!r}>; propose and "
+            "ratify read it in both BROKER_ENVELOPE_LOAD modes."
+        )
+    envelope = _resolve_inforce_envelope(principal, table_name)
+    high_blast = list(envelope.confidence.high_blast) if envelope.confidence else []
+    return list(_MANIFEST.tool_ops), high_blast, compute_envelope_hash(envelope)
 
 
 def _manifest_context(table_name: str | None):
@@ -267,9 +308,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "proposal; nothing can extend it later except a new promotion. Default: no "
         "term.",
     )
-    propose.add_argument("--effect", required=True, choices=["read", "write"])
-    propose.add_argument("--external", action="store_true", default=False)
-    propose.add_argument("--reversible", choices=["true", "false"], default=None)
     propose.add_argument(
         "--counters-table",
         help="counters table for the evidence counters (default: BROKER_COUNTERS_TABLE env)",
