@@ -1,14 +1,17 @@
 # GATEWAY.md — the broker as one MCP server
 
-**Status:** contract + reference implementation, written 2026-07-26. Code:
-`safe_agents/broker/gateway/`. Sibling to [`MCP-HOST.md`](MCP-HOST.md), which governs the broker as
+**Status:** contract + reference implementation, written 2026-07-26; the network transport
+(G11 to G20) added 2026-10-06. Code: `safe_agents/broker/gateway/`. Sibling to [`MCP-HOST.md`](MCP-HOST.md), which governs the broker as
 an MCP *client*; this governs the broker as an MCP *server*.
 
 ## What this is
 
 The broker's **second mouth**. The first is the JSON-over-HTTP `/call` handler in
-`prototype/broker_server.py`. This one speaks MCP over stdio, so a wrapped agent sees exactly ONE
-MCP server whose tools are the ops the broker will serve it. Every call goes through the full
+`prototype/broker_server.py`. This one speaks MCP, so a wrapped agent sees exactly ONE
+MCP server whose tools are the ops the broker will serve it. It is served over two transports:
+stdio, for a harness that spawns the gateway as its child, and streamable HTTP, for an agent that
+cannot be the gateway's parent because a boundary sits between them. "The HTTP mouth" in this
+repository already names `/call`, so the second transport is called the **network MCP mouth**. Every call goes through the full
 per-call path — PDP decision, taint, budgets, audit — because it goes through `handle_request` like
 every other caller.
 
@@ -22,13 +25,22 @@ configures and launches this gateway; it does not implement it.
 
 ## Shape
 
-Two modules, split the way the client side already splits:
+Split the way the client side already splits, with everything that can be stated without the
+SDK kept out of the one module that imports it:
 
 | Module | Tier | Owns |
 |---|---|---|
 | `gateway/surface.py` | contract | What is advertised and what is answered. **SDK-free** — testable with the optional `mcp` extra absent. |
-| `gateway/server.py` | reference | The thin `mcp` SDK binding: two handlers and a stdio runner. Lazy import. |
-| `gateway/__main__.py` | reference | `python -m safe_agents.broker.gateway` — what a harness spawns. |
+| `gateway/authn.py` | contract | Who may speak on the network MCP mouth: the closed authenticator catalog, the launch-token check, and the ledger that bounds how refusals reach the tape. **Standard library only.** |
+| `gateway/network.py` | contract | The network MCP mouth minus the SDK: the guard in front of every request, the one route, the serialization of calls into the runtime, and the launch settings. **SDK-free**, plain ASGI. |
+| `gateway/server.py` | reference | The thin `mcp` SDK binding: two handlers, a stdio runner and a streamable HTTP runner over the same `Server`. Lazy import. |
+| `gateway/__main__.py` | reference | `python -m safe_agents.broker.gateway` — what a harness spawns, or what a launcher starts beside a sandbox. |
+
+The clients that ask this gateway are not part of it. They are published as
+`safe_agents.broker.client`, the tier of what a consumer asks with: `GatewayClient` for stdio and
+`NetworkGatewayClient` for the network MCP mouth, both standard library only. They live outside
+`gateway/` so that importing them loads none of the modules above, and none of the runtime behind
+them (`docs/consuming-the-sdk.md` §2).
 
 ## Clauses
 
@@ -44,6 +56,28 @@ Two modules, split the way the client side already splits:
 | **G8** | **stdout belongs to the protocol.** MCP over stdio frames JSON-RPC on stdout; diagnostics go to stderr. Verified, not assumed: with `build_runtime`'s backend banner left on stdout, a real client dies on `Invalid JSON ... input_value='[broker] envelope load mode: manifest'`. |
 | **G9** | **One marshal.** Connector results are marshalled by `broker/marshal.py`, the dependency-free leaf homed once for exactly this reason. This is its third caller after the HTTP boundary and `enforce()`; a per-transport copy is the "a seam is proven per transport" lesson charging interest again. |
 | **G10** | **No second config surface.** The gateway takes its manifest and backends from the same environment the HTTP mouth uses. On a durable store arm an unnamed `BROKER_MANIFEST` refuses rather than defaulting to the example manifest (`docs/config-provenance.md`). |
+
+### The network MCP mouth
+
+G1 to G10 hold on both transports. G11 to G20 are what a socket adds. They follow the design ruling
+recorded on #161 [ruling: maintainer, 2026-10-06].
+
+| # | Clause |
+|---|---|
+| **G11** | **One surface, one binding, two transports.** The network MCP mouth serves the same `GatewaySurface` through the same SDK `Server` and the same two handlers as stdio. It has no handler and no result conversion of its own, so a `GatewayResult` becomes a wire result in exactly one place and a change there (#156) lands on both transports. A second conversion would be G9's per-transport copy under another name. |
+| **G12** | **No frame before authentication.** Every request is authenticated before anything behind the guard runs: before routing, before the session lookup, before the SDK reads a byte of the body. That covers `initialize`, `tools/list`, `tools/call`, the event stream and session teardown alike, and every HTTP method, including the ones no MCP client sends: an `OPTIONS` preflight or a `HEAD` probe is a request like any other, and an `OPTIONS` let past the guard is answered by the SDK with a JSON-RPC frame and a new session id. `handle_request` is never reached for a request that has not passed. Authentication is per request and never per session. A session id is something the caller sends, and nothing the caller sends stands in for the credential. A refused request gets one fixed `401` that does not say which check failed and is not a JSON-RPC frame. |
+| **G13** | **The authenticator is a closed catalog, selected by name.** `BROKER_GATEWAY_AUTH` names a member of `MouthAuthenticator`, a base-owned enum, the way a connector's credential strategy is named from `AuthStrategy` (`CONNECTOR-AUTH.md`). It is never an import path, so no configuration surface can supply one (`docs/config-provenance.md`, decision test 1). **Unnamed refuses to start.** There is no unauthenticated default, on loopback or anywhere else: loopback is reachable by every local process, whichever user it runs as. |
+| **G14** | **`launch_token`: a token bound at launch.** Whoever launches the gateway generates a secret, writes it to a file, names that file in `BROKER_GATEWAY_TOKEN_FILE`, and hands the same secret to the one agent it launches. The agent presents it as `Authorization: Bearer <token>` on every request. The mouth compares SHA-256 digests with a constant-time comparison and keeps the digest, not the token. The token reaches the gateway as a bare leaf from its launcher: by file, never as an environment value (every child the broker spawns for a connector would inherit it), and never from a manifest or a store. The file is refused if it is readable beyond its owner on a POSIX system, if the token is shorter than 32 characters, or if it contains a character a bearer credential cannot carry. A token in a URL query string is refused even beside a valid header, because URLs are what gets logged. |
+| **G15** | **Two names are reserved.** `oauth_bearer` is the MCP specification's own authorization for HTTP transports (OAuth 2.1 bearer tokens). `mtls_workload_identity` is mutual TLS with workload identity. They are the arms for a gateway reached from another machine, and each needs an issuer the single-machine case does not have. Selecting either refuses to start, saying it is not implemented. |
+| **G16** | **The caller never names the principal.** One runtime serves one principal, taken from its manifest, and that stays true here. The mouth does not learn who is calling. It decides whether this connection may speak as the runtime's one principal. No header, query parameter or body field names, widens or changes the principal, and the mouth lifts nothing out of a request into a field the broker would trust: it passes the tool name and the arguments, as sent. |
+| **G17** | **A refused connection is recorded, and the refused party cannot flood the tape.** The mouth holds no audit sink (G1). It records through one runtime method, `BrokerRuntime.record_refused_connections`, which writes a `deny`/`denied` record under the runtime's own principal with the reserved coordinate `broker-mouth` / `network-mcp`. What reaches the tape is a count per cause from a closed vocabulary (`RefusalCause`); no header, token, address or other caller-chosen byte does. Every refusal is counted. At most one record is written per 60-second window: the first refusal after a quiet window is recorded at once, the rest of that window's refusals ride the next record as counts, and shutdown writes the tail. A recording that fails never admits the connection; the counts are kept and the write is retried at the next window. |
+| **G18** | **Calls into the runtime are serialized, on the thread that built it.** The runtime is not thread-safe by design: two overlapping calls can drop one's taint or decide before a sibling's read has tainted the turn, and both fail open (`runtime/pep.py`, `_session_turn`; the reason `/call` is single-threaded). A sqlite store's connections also belong to the thread that opened them. So the event loop runs on the thread that built the runtime, the handlers enter the runtime synchronously on it, and `SerializedSurface` refuses, before the runtime, any call from another thread or any call that arrives while one is inside. While a call is inside, nothing else is served. Concurrency is not regained by threading; it needs per-session turn isolation in the PEP first (`docs/turn-identity.md`). |
+| **G19** | **Launch settings come from the environment (G10).** `BROKER_GATEWAY_TRANSPORT` selects the mouth from a closed set: unset or `stdio`, or `streamable-http`; anything else refuses. `BROKER_GATEWAY_HOST` is the bind address and defaults to `127.0.0.1`. `BROKER_GATEWAY_PORT` must be named; `0` takes a free port, reported on stderr. The path is `/mcp` and is not a setting. Every setting is checked, and the address is bound, before the runtime is built, so a mouth that refuses to start (an unnamed authenticator, an unusable token, an address it cannot bind, a port already taken) has touched no store. The address is announced on stderr once the runtime is built, and a stop signal is honoured from that announcement on: one `SIGTERM` or `SIGINT` stops the mouth by returning, so the last refusal counts are written (G17), including when it arrives before the server underneath has begun serving. A bind to a non-loopback address is allowed, because an agent in a virtual machine or a container reaches the host across one, and is announced on stderr as carrying the token in the clear. |
+| **G20** | **What a stranger can make the mouth write to stderr is bounded, and a request line is never written.** The HTTP server underneath the mouth logs a line for bytes it cannot parse and for an upgrade it does not serve. Both happen before the guard is asked anything, so a caller with no credential chooses how many are written, and a launcher that keeps the gateway's stderr in a file would be keeping a file that caller can grow. `DiagnosticBudget` admits at most 20 server diagnostics per 60-second window whatever they say, counts the rest, and reports the count on the first line of the next window or at shutdown. The server's access log is off: a request line carries the query string, which is where the credential G14 refuses would be. |
+
+> **Implementation status:** NOT YET IMPLEMENTED in the reference implementation (tracking: not yet
+> filed). The two reserved authenticators of G15, `oauth_bearer` and `mtls_workload_identity`, are
+> names only. No code resolves, verifies or serves either one; naming one refuses at startup.
 
 ## Known limits — v1
 
@@ -75,12 +109,48 @@ from `failed`, which means the effect was attempted and broke.
 **Drift is checked at connect, not per call.** The gateway is long-lived, which makes connect-time-
 only drift checking a hole here specifically — **#92**.
 
-**stdio only.** Serving MCP over a network transport is **#161**; the CLI call seam is an open
-item. Resources and prompts are **#89** (decision only).
+**The launch token is a bearer secret, and the agent holds it.** Anything that can read it can ask
+as the gateway's principal. It buys the right to ask and nothing more: the broker still decides
+every call, and a compromised agent with the token is exactly the compromised agent the broker was
+already built to face. Its exposure is bounded only by whatever boundary the agent sits in. It does
+not identify a caller, it does not distinguish two processes that both hold it, and it is not
+rotated while the gateway runs.
 
-**Nothing is confined.** The gateway runs as the same OS user as the agent it serves, and MCP-stdio
-children run unconfined (**#104**). This is posture 1 (`docs/posture-ladder.md`); a gateway does not
-move the posture, because a posture is about where the boundary is.
+**The network MCP mouth speaks plain HTTP.** There is no TLS. On loopback the token never leaves
+the machine. On any other bind address it crosses that network in the clear and is only as private
+as that network is; the launcher says so on stderr. The two reserved authenticators (G15) are the
+arms for a gateway reached from another machine, and neither is built.
+
+**A refusal record is coalesced, so it is late and it is a count.** G17 trades each later
+refusal's own timestamp for a bound on tape growth. A refusal inside a window that is followed by
+no further request waits for shutdown, and a process killed without the chance to shut down loses
+the counts it had not yet written. Guessing is not rate-limited; the 32-character floor on the
+token is what makes guessing hopeless.
+
+**G17 and G20 bound a rate, not a total.** A caller with no credential who sends one bad request a
+minute adds one bounded record to the tape per window for as long as it keeps going, and up to the
+window's budget of lines to stderr. Neither grows with the number of attempts inside a window.
+Both still grow with time, and what stops that is whatever keeps strangers off the socket.
+
+**G20 bounds what the HTTP server logs, not what the event loop logs.** `DiagnosticBudget` filters
+the server's own logger. A process that has run out of file descriptors fails in the event loop's
+accept, which reports each failure on a different logger with a traceback, and the budget does not
+see those. A caller with no credential who can hold enough idle connections open to exhaust the
+descriptor limit can therefore grow stderr past G20's bound. Found in review of this binding and
+not closed: the bound holds for requests the server reads, and a connection limit in front of the
+mouth is what holds it otherwise.
+
+**An unreachable gateway has no stated posture.** A network mouth makes this a live case in a way
+a stdio child never was: the agent can be up while the gateway is not. What the agent should do
+then depends on its polarity and is not decided here (**#106**).
+
+**The CLI call seam** is an open item. Resources and prompts are **#89** (decision only).
+
+**Nothing is confined by the gateway.** Launched over stdio, the gateway runs as the same OS user
+as the agent it serves. That is posture 1 (`docs/posture-ladder.md`). The network MCP mouth lets
+a boundary be put between the two, and does not put one there: a posture is about where the
+boundary is, and the sandbox is whoever launches the agent's to supply. On either transport,
+MCP-stdio children the broker spawns for connectors run unconfined (**#104**).
 
 ## Relationships
 
