@@ -239,6 +239,35 @@ class TestLaunchTokenCheck:
                 RefusalCause.CREDENTIAL_IN_QUERY,
                 id="right header AND a token in the query",
             ),
+            # The token is compared as the exact bytes presented. Each of these is a
+            # way a comparison gets loosened by someone being helpful, and each would
+            # shrink the space a guesser has to search or admit a credential that
+            # was never issued.
+            pytest.param(
+                ConnectionFacts(authorization=_bearer(TOKEN.upper())),
+                RefusalCause.WRONG_TOKEN,
+                id="the token in another case",
+            ),
+            pytest.param(
+                ConnectionFacts(authorization=_bearer(TOKEN + "=")),
+                RefusalCause.WRONG_TOKEN,
+                id="the token with padding added",
+            ),
+            pytest.param(
+                ConnectionFacts(authorization=_bearer(f'"{TOKEN}"')),
+                RefusalCause.WRONG_TOKEN,
+                id="the token in quotes",
+            ),
+            pytest.param(
+                ConnectionFacts(authorization=_bearer(TOKEN.replace("-", "%2D"))),
+                RefusalCause.WRONG_TOKEN,
+                id="the token percent-encoded",
+            ),
+            pytest.param(
+                ConnectionFacts(authorization=(f"BearerX {TOKEN}".encode(),)),
+                RefusalCause.WRONG_SCHEME,
+                id="a scheme that only starts with Bearer",
+            ),
             pytest.param(ConnectionFacts(authorization=_bearer()), ADMITTED, id="right token"),
             pytest.param(
                 ConnectionFacts(authorization=(f"bearer {TOKEN}".encode(),)),
