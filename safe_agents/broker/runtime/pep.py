@@ -34,10 +34,11 @@ import datetime
 import hashlib
 import json
 import logging
+import re
 import threading
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from pydantic import ValidationError
 
@@ -139,6 +140,17 @@ _FLAG_MARKER_CAP = 1.0
 # raised: the rejection stands, its record carries evidenceBucket=None, and this says
 # why, so the tape never claims a label landing that did not happen (#134).
 _EVIDENCE_LABEL_WRITE_FAILED = "evidence label write failed"
+
+# The reserved `tool` on the audit record a mouth writes for connections it refused
+# before serving them (`record_refused_connections`). Not a manifest coordinate: no
+# call was made, so the mouth's own code rides as the `op`, the way the
+# intent-quarantine record carries the seam that hit it.
+MOUTH_REFUSAL_TOOL = "broker-mouth"
+
+# The shape of a mouth code and of a refusal-cause code. Deliberately narrow: these
+# are the only mouth-supplied strings that reach the tape, and a caller-authored
+# value cannot be spelled in this alphabet at this length by accident.
+_MOUTH_CODE = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 
 
 def _actor_digest(identity: str) -> str:
@@ -390,6 +402,54 @@ class BrokerRuntime:
         and best-effort per connector; holds no request-path state, so a
         closed runtime simply has connectors that refuse."""
         self._doer.close()
+
+    def record_refused_connections(self, *, mouth: str, causes: Mapping[str, int]) -> None:
+        """Write ONE audit record for connections a mouth refused before serving them.
+
+        The seam a mouth that authenticates its callers records through
+        (`broker/GATEWAY.md` G17). A mouth holds this runtime and no audit sink, and
+        it stays that way: the record is written here, under this runtime's own
+        principal and envelope hash, in one fixed shape the mouth cannot vary.
+
+        Nothing in the record is caller-authored. `mouth` and the keys of `causes`
+        are short lowercase codes the mouth draws from its own closed vocabulary,
+        and they are re-checked here so that a refused caller's bytes cannot reach
+        the tape through a careless mouth. `causes` maps each code to how many
+        connections were refused for it since the mouth's last record; the mouth
+        coalesces, so the party being refused cannot grow the tape one record per
+        attempt. No decision is made here and no call is involved: there is no
+        coordinate, so the record carries a reserved one, the way the
+        intent-quarantine record does.
+
+        Raises ValueError on a malformed argument and whatever the sink raises on
+        a failed write. A mouth must treat either as a failed recording and never
+        as a reason to admit the connection.
+        """
+        if not _MOUTH_CODE.fullmatch(mouth):
+            raise ValueError(f"mouth must be a short lowercase code, got {mouth!r}")
+        if not causes:
+            raise ValueError("causes is empty: there is no refusal to record")
+        for cause, count in causes.items():
+            if not isinstance(cause, str) or not _MOUTH_CODE.fullmatch(cause):
+                raise ValueError(f"refusal cause must be a short lowercase code, got {cause!r}")
+            if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+                raise ValueError(f"refusal count for {cause!r} must be a positive int, got {count!r}")
+        ordered = {cause: causes[cause] for cause in sorted(causes)}
+        detail = ", ".join(f"{cause}={count}" for cause, count in ordered.items())
+        emit(
+            self._audit_sink,
+            principal=self._principal,
+            tool=MOUTH_REFUSAL_TOOL,
+            op=mouth,
+            args={"causes": ordered},
+            decision="deny",
+            outcome="denied",
+            envelope_hash=self._envelope_hash,
+            reason=(
+                f"{sum(ordered.values())} connection(s) refused before any frame "
+                f"was served: {detail}"
+            ),
+        )
 
     def new_turn(self) -> None:
         """Roll the broker-held turn boundary — discard accumulated taint so the
