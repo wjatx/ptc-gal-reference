@@ -304,13 +304,22 @@ def test_confinement_runtime_public_api_has_no_connector_or_doer():
     # IntentView of data — no store, no Intent model, no raw args — executes nothing,
     # transitions nothing, answers None for another principal's intent so it cannot
     # enumerate, and is wired to no agent-facing HTTP route.
+    # record_refused_connections (GATEWAY.md G17) is the seam a mouth that
+    # authenticates its callers records refusals through, so that the mouth never
+    # holds the audit sink. It takes a mouth code and {cause code: count}, both
+    # checked against a narrow alphabet, writes ONE record in a fixed shape under
+    # the runtime's own principal, and returns None. It executes nothing, decides
+    # nothing, and no sink, connector, Doer or secret crosses out. It is wired to no
+    # agent-facing route: a caller on the far side of a mouth cannot invoke it, and
+    # the party it records is by definition one the mouth refused.
     assert set(public_methods) == {
         "served_registry", "handle_request", "new_turn", "session_turn",
         "approve_intent", "reject_intent", "flag_intent", "describe_intent", "close",
+        "record_refused_connections",
     }, (
         "BrokerRuntime must expose only served_registry/handle_request/new_turn/"
-        "session_turn/approve_intent/reject_intent/flag_intent/describe_intent/close; "
-        f"found: {public_methods}"
+        "session_turn/approve_intent/reject_intent/flag_intent/describe_intent/close/"
+        f"record_refused_connections; found: {public_methods}"
     )
 
 
