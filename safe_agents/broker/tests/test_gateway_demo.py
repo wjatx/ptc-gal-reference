@@ -23,7 +23,7 @@ import pytest
 from safe_agents.broker.api import build_runtime
 from safe_agents.broker.gateway import GatewaySurface
 from safe_agents.broker.gateway import demo
-from safe_agents.broker.gateway.stdio_client import BROKER_ENV_VARS
+from safe_agents.broker.client.stdio import BROKER_ENV_VARS
 from safe_agents.broker.prototype.boot_config import load_named_manifest
 
 _REFUSAL = "payments.transfer refused by the broker: no manifest entry for payments.transfer"

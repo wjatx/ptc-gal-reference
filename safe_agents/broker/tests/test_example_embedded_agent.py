@@ -33,9 +33,15 @@ from safe_agents.broker.schemas import AgentManifest
 _EXAMPLE_ROOT = Path(__file__).resolve().parents[3] / "examples" / "embedded_agent"
 _MANIFEST_PATH = _EXAMPLE_ROOT / "manifest.yaml"
 
-# The two tiers a consumer may import [ruling: maintainer, 2026-07-26]: what it FILLS and
-# what it RUNS. Anything else under safe_agents.broker is internal.
-_SANCTIONED_BROKER_MODULES = {"safe_agents.broker.api", "safe_agents.broker.schemas"}
+# The tiers a consumer may import [ruling: maintainer, 2026-07-26; amended 2026-10-06]:
+# what it FILLS, what it RUNS and what it ASKS WITH. Anything else under
+# safe_agents.broker is internal. This example embeds the broker and asks through
+# no gateway, so `safe_agents.broker.client` is permitted here and not required.
+_SANCTIONED_BROKER_MODULES = {
+    "safe_agents.broker.api",
+    "safe_agents.broker.schemas",
+    "safe_agents.broker.client",
+}
 
 
 def _manifest() -> AgentManifest:

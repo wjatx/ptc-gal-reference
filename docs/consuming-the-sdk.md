@@ -95,18 +95,33 @@ From a clone, `CONTRIBUTING.md` gives the hash-locked development install.
 |---|---|
 | `safe_agents.pipeline` | the `provision → deploy → smoke` pipeline + its CLI (`safe_agents.pipeline.cli`) |
 | `safe_agents.broker.schemas` | what a consumer **fills**: the seven schemas, `AgentManifest`, `Envelope`, `ToolOp` |
-| `safe_agents.broker.api` | what a consumer **runs**: `build_runtime(manifest)`, `load_agent_manifest`, and the `BrokerRuntime` / `AgentRequest` / `BrokerResponse` call surface, plus `GatewayClient` / `GatewayClientError` / `result_text` for running the stdio MCP gateway as a child process and asking it |
+| `safe_agents.broker.api` | what a consumer **runs**: `build_runtime(manifest)`, `load_agent_manifest`, and the `BrokerRuntime` / `AgentRequest` / `BrokerResponse` call surface |
+| `safe_agents.broker.client` | what a consumer **asks with**: `GatewayClient` (starts the stdio MCP gateway as a child process and asks it), `NetworkGatewayClient` (asks a gateway's network MCP mouth over streamable HTTP, presenting the launch token), and `GatewayClientError` / `result_text`, which both share |
 | `safe_agents.connectors` | the shared connectors (github; telegram) + the `Connector` protocol re-export — see `safe_agents/connectors/README.md` for the shared-vs-agent-owned split |
 | `safe_agents.arms` | the substrate arms behind one runner contract (`ec2`, `ec2_woken`, `fargate`, `local`, `openshift`, `rhel_openshell`) |
 | `safe_agents.contract` | the runner-contract conformance harness |
 
-**The broker's surface is exactly those two rows** [ruling: maintainer, 2026-07-26]: *a consumer may
-import what it fills and what it runs, never what decides.* Everything else under
+**The broker's surface is exactly those three rows** [ruling: maintainer, 2026-07-26; amended
+2026-10-06]: *a consumer may import what it fills, what it runs and what it asks with, never what
+decides.* Everything else under
 `safe_agents.broker` is internal — including `broker.runtime` (which re-exports the `Doer`,
 `SecretsProvider` and the credential strategies) and the PDP. A consumer able to import the
 decision engine can route around the decision it is meant to be subject to, so you get the
 runtime, never the runtime's parts. `safe_agents/broker/tests/test_consumer_boundary.py` enforces this, and an
 earlier version of this table wrongly listed PDP/PEP/Doer/SecretsProvider as exposed.
+
+The clients are a row of their own because they cost something different. Importing
+`safe_agents.broker.api` loads the runtime. Importing `safe_agents.broker.client` loads the standard
+library and the clients, and nothing else from the base, so a process that only asks (an agent
+inside a sandbox, with the gateway outside it) carries none of what decides. Both clients are
+standard library only and need no extra installed. A refused or held call is not an exception: it
+comes back as a result with `isError` true and the broker's reason as its text, which `result_text`
+returns. A timeout or a dropped connection raises `GatewayClientError` and does not say whether the
+call was made; neither client retries.
+
+`GatewayClient`, `GatewayClientError` and `result_text` were first published from
+`safe_agents.broker.api` and are still importable from there, as the same objects. That import
+still loads the runtime. New code takes them from `safe_agents.broker.client`.
 
 ### Commands a consumer runs
 
@@ -118,7 +133,7 @@ no way to alter the decision. That is the same position `GatewayClient` puts it 
 
 | Command | What it does | Published forms |
 |---|---|---|
-| `python -m safe_agents.broker.gateway` | the stdio MCP gateway that a wrapped harness spawns | no arguments; configured from the environment (`broker/GATEWAY.md`) |
+| `python -m safe_agents.broker.gateway` | the MCP gateway: over stdio, which a wrapped harness spawns, or as the network MCP mouth when `BROKER_GATEWAY_TRANSPORT=streamable-http` | no arguments; configured from the environment (`broker/GATEWAY.md`) |
 | `python -m safe_agents.broker.mcp.commands` | the MCP tool-admission ceremony | `snapshot`, `show`, `diff`, `admit-propose`, `admit-ratify`, `admit-reject`, `bulk-propose`, `bulk-ratify` |
 | `python -m safe_agents.broker.grants.commands` | the grant ceremony | `seed`, `re-seed`, `propose`, `ratify`, `reject`, `acknowledge`, `tighten` |
 | `python -m safe_agents.broker.grants.audit_command` | a read-only integrity audit of a store | `--sqlite PATH` or `--table NAME`, with `--json` |

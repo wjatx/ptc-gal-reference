@@ -4,8 +4,9 @@ Broker-debaking P3 stands up fictional example consumers under ``examples/`` and
 the base/consumer boundary a gate, not a convention. Three things are asserted here:
 
 1. **No example reaches into broker INTERNALS.** A consumer stands on the base's public
-   surface — ``safe_agents.broker.schemas`` (what it FILLS) and ``safe_agents.broker.api``
-   (what it RUNS), the TWO allowed broker subpackages  — and supplies a manifest;
+   surface — ``safe_agents.broker.schemas`` (what it FILLS), ``safe_agents.broker.api``
+   (what it RUNS) and ``safe_agents.broker.client`` (what it ASKS WITH), the THREE
+   allowed broker subpackages — and supplies a manifest;
    ANY other ``safe_agents.broker.<X>`` import is a reach into internals. The check is an ALLOWLIST (not an enumerated
    denylist), so it catches both import forms and stays correct as internal modules are
    added — see the detector below. Any ``.py`` under ``examples/`` is scanned — the
@@ -39,9 +40,8 @@ _BROKER_SERVER_SRC = Path(broker_server.__file__)
 
 
 # ---------------------------------------------------------------------------
-# The detector — an AST walk with an ALLOWLIST. `safe_agents.broker.schemas` (the
-# typed AgentManifest / Envelope surface) is the ONE broker subpackage an example may
-# import; ANY other `safe_agents.broker.<X>` reference is a reach into internals.
+# The detector — an AST walk with an ALLOWLIST (`_PUBLIC_BROKER_SURFACES` below).
+# ANY other `safe_agents.broker.<X>` reference is a reach into internals.
 #
 # Walking the parsed AST (not scanning source lines) removes ALL text-parsing
 # fragility at once — multi-line parenthesized imports, `as` aliases, indented /
@@ -50,12 +50,13 @@ _BROKER_SERVER_SRC = Path(broker_server.__file__)
 # ---------------------------------------------------------------------------
 
 _BROKER_PKG = "safe_agents.broker"
-# The TWO broker subpackages that are the public consumer surface [ruling: maintainer,
-# 2026-07-26]: **a consumer may import what it FILLS and what it RUNS,
-# never what DECIDES.**
+# The THREE broker subpackages that are the public consumer surface [ruling:
+# maintainer, 2026-07-26; amended 2026-10-06]: **a consumer may import what it
+# FILLS, what it RUNS and what it ASKS WITH, never what DECIDES.**
 #
 #   schemas — what it FILLS: the seven contract types, AgentManifest, Envelope.
 #   api     — what it RUNS: build_runtime + the runtime objects it returns.
+#   client  — what it ASKS WITH: the two gateway clients, which carry frames.
 #
 # Everything else is internal, and two of those deserve naming because the docs
 # used to publish them. `runtime` re-exports Doer, SecretsProvider and the
@@ -70,8 +71,10 @@ _BROKER_PKG = "safe_agents.broker"
 # retired that pattern and the widening was reverted. The 2026-07-26 addition of `api`
 # is the opposite kind of change — not a mechanism a consumer composes by hand,
 # but the one entry point two published docs already promised while this guard
-# forbade it.
-_PUBLIC_BROKER_SURFACES = frozenset({"schemas", "api"})
+# forbade it. The 2026-10-06 addition of `client` opens no mechanism at all: the
+# package imports nothing from the rest of the base (`test_client_tier.py`), so
+# everything reachable through it is a way to ask and nothing else.
+_PUBLIC_BROKER_SURFACES = frozenset({"schemas", "api", "client"})
 
 
 def _first_segment_after_broker(dotted: str) -> str | None:
@@ -158,12 +161,19 @@ class TestBoundaryGuardHasTeeth:
         "from safe_agents.broker.mcp import stdio_host_factory",
         "from safe_agents.broker.mcp.factory import stdio_host_factory",
         "from safe_agents.broker.mcp.registry import DynamoToolRegistry",
-        # The gateway package stays internal even though its stdio client is
-        # published: a consumer takes `GatewayClient` from `broker.api`. Opening the
-        # package to reach one module would also open `gateway.surface`, which holds
-        # a `BrokerRuntime`.
+        # The gateway package stays internal even though the clients that talk to
+        # it are published: a consumer takes them from `broker.client`. Opening the
+        # package would also open `gateway.surface`, which holds a `BrokerRuntime`,
+        # and the mouth's own authenticator and guard.
         "from safe_agents.broker.gateway.stdio_client import GatewayClient",
         "from safe_agents.broker.gateway import GatewaySurface",
+        "from safe_agents.broker.gateway.authn import LaunchToken",
+        "from safe_agents.broker.gateway.network import ConnectionGuard",
+        "from safe_agents.broker.gateway.server import NetworkMouth",
+        "import safe_agents.broker.gateway.authn",
+        # A name that merely starts like a public tier is not that tier.
+        "from safe_agents.broker.clients import GatewayClient",
+        "from safe_agents.broker import client_internals",
     ]
 
     @pytest.mark.parametrize("probe", INTERNAL_PROBES)
@@ -173,7 +183,7 @@ class TestBoundaryGuardHasTeeth:
             "flagged; the detector would let a real example reach into internals"
         )
 
-    # Both public tiers — in every import shape — must NOT trip the gate.
+    # All three public tiers — in every import shape — must NOT trip the gate.
     PUBLIC_IMPORTS = [
         # Tier 1: what a consumer FILLS.
         "from safe_agents.broker.schemas import AgentManifest",
@@ -186,6 +196,12 @@ class TestBoundaryGuardHasTeeth:
         "from safe_agents.broker import api",
         "import safe_agents.broker.api",
         "from safe_agents.broker.api import GatewayClient, GatewayClientError, result_text",
+        # Tier 3: what a consumer ASKS WITH.
+        "from safe_agents.broker.client import GatewayClient, NetworkGatewayClient",
+        "from safe_agents.broker.client import GatewayClientError, result_text",
+        "from safe_agents.broker import client",
+        "import safe_agents.broker.client",
+        "from safe_agents.broker.client.stdio import env_without_broker_config",
     ]
 
     @pytest.mark.parametrize("ok", PUBLIC_IMPORTS)
@@ -217,29 +233,29 @@ class TestPublicSurfaceIsExactlyTheRuling:
             assert hasattr(api, name), f"api.py no longer exports {name!r}"
             assert name in api.__all__, f"{name!r} is importable but not in api.__all__"
 
-    def test_the_published_gateway_client_decides_nothing(self) -> None:
-        """`GatewayClient` is published because it only carries frames.
+    def test_the_compatibility_names_are_the_client_tiers_own(self) -> None:
+        """The three names `api` still carries are re-exports, not second copies.
 
-        Checked on the module's imports rather than taken from its docstring: the
-        client must not import anything from the broker, so a later edit that gave
-        it a runtime, a store or a connector to consult would fail here before it
-        became something a consumer could reach through the façade.
+        A consumer that catches `api.GatewayClientError` must catch what a client
+        imported from `broker.client` raises.
         """
-        from safe_agents.broker.gateway import stdio_client
+        from safe_agents.broker import api, client
 
-        tree = ast.parse(Path(stdio_client.__file__).read_text(encoding="utf-8"))
-        imported: list[str] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imported.extend(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                imported.append(("." * node.level) + (node.module or ""))
-        reaches = [name for name in imported if name.startswith((".", "safe_agents"))]
-        assert reaches == [], (
-            "the published gateway client imports from the base "
-            f"({', '.join(reaches)}); it is published on the ground that it carries "
-            "frames and consults nothing"
-        )
+        for name in ("GatewayClient", "GatewayClientError", "result_text"):
+            assert getattr(api, name) is getattr(client, name)
+        # The network client belongs to the third tier alone.
+        assert "NetworkGatewayClient" not in api.__all__
+        assert not hasattr(api, "NetworkGatewayClient")
+
+    def test_the_client_tier_publishes_exactly_the_ruled_names(self) -> None:
+        from safe_agents.broker import client
+
+        assert sorted(client.__all__) == [
+            "GatewayClient",
+            "GatewayClientError",
+            "NetworkGatewayClient",
+            "result_text",
+        ]
 
     def test_what_decides_and_executes_stays_unpublished(self) -> None:
         from safe_agents.broker import api
@@ -272,7 +288,7 @@ class TestExamplesDoNotImportInternals:
                 offenders.append(f"{py.relative_to(_REPO_ROOT)}:\n" + "\n".join(hits))
         assert not offenders, (
             "an example reached into broker internals (consumers may only use the "
-            "public `safe_agents.broker.{schemas, api}` surfaces [#266]):\n"
+            "public `safe_agents.broker.{schemas, api, client}` surfaces [#266]):\n"
             + "\n\n".join(offenders)
         )
 
