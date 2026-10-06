@@ -31,11 +31,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Protocol, TextIO
 
-from safe_agents.broker.gateway.stdio_client import (
-    GatewayClient,
-    GatewayClientError,
-    result_text,
-)
+from safe_agents.broker.client import GatewayClient, GatewayClientError, result_text
 
 # A search reply is a JSON document of results. Enough lines to show it worked,
 # few enough that the next step stays on screen.

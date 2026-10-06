@@ -9,7 +9,7 @@ suite runs on. Windows is the reason it exists. Its pipes, its event loop and it
 default text encoding all differ from the platforms this code is written on, and
 this is the check that runs there.
 
-The client is `gateway/stdio_client.py`, raw JSON-RPC lines rather than an SDK
+The client is `broker/client/stdio.py`, raw JSON-RPC lines rather than an SDK
 client, and the same one the laptop demo drives, so the frames checked here are the
 frames a tester's run sends.
 """
@@ -21,11 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from safe_agents.broker.gateway.stdio_client import (
-    GatewayClient,
-    env_without_broker_config,
-    result_text,
-)
+from safe_agents.broker.client import GatewayClient, result_text
+from safe_agents.broker.client.stdio import env_without_broker_config
 
 pytest.importorskip("mcp", reason="the gateway's stdio server needs the optional 'mcp' extra")
 

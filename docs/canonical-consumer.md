@@ -68,7 +68,8 @@ Seam 5 is the deployment: the image the broker runs and the grants it reads.
 [ruling: maintainer, 2026-07-26] — the one entry point this document had named as the pattern's
 centerpiece for months while the consumer-boundary guard forbade importing it. The rule the ruling
 settled: *a consumer may import what it fills (`broker.schemas`) and what it runs (`broker.api`),
-never what decides.* See `docs/consuming-the-sdk.md` §2, and `examples/embedded_agent/` for the
+never what decides*, to which a 2026-10-06 amendment added what it asks with (`broker.client`, the
+gateway clients). See `docs/consuming-the-sdk.md` §2, and `examples/embedded_agent/` for the
 smallest consumer that exercises seams 1–4 without seam 5 — no image, no deployment, one process.
 
 ## 4. Capability vs provider — the distinction the epic sharpened
