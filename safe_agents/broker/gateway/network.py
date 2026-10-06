@@ -337,7 +337,7 @@ def resolve_transport(env: Mapping[str, str] | None = None) -> str:
     value = source.get(TRANSPORT_ENV, "") or TRANSPORT_STDIO
     if value not in _TRANSPORTS:
         raise GatewayConfigError(
-            f"{TRANSPORT_ENV}={value!r} is not a recognized gateway transport — "
+            f"{TRANSPORT_ENV}={value!r} is not a recognized gateway transport; "
             "refusing to start: an unrecognized value must not fall back to a mouth "
             f"the launcher did not ask for. Valid values: unset (= {TRANSPORT_STDIO!r}), "
             + ", ".join(repr(t) for t in _TRANSPORTS) + "."
@@ -376,7 +376,7 @@ def resolve_network_mouth(env: Mapping[str, str] | None = None) -> NetworkMouthS
     raw_port = source.get(PORT_ENV, "")
     if not raw_port:
         raise GatewayConfigError(
-            f"{PORT_ENV} is unset — refusing to start the network MCP mouth: the "
+            f"{PORT_ENV} is unset; refusing to start the network MCP mouth: the "
             "launcher has to tell the agent where the gateway listens, so it names "
             "the port. 0 asks the operating system for a free one, which is "
             "reported on stderr once bound."
