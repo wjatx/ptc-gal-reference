@@ -158,7 +158,73 @@ server. Claude Code's own built-in tools (its shell, file edits and web fetch) a
 and nothing here gates them. `docs/posture-ladder.md` calls this out as the defining limit of
 posture 1, and the fix it names is a sandbox around the agent, which is posture 2.
 
-### 6. Embed the broker as a library
+### 6. Serve the gateway over the network
+
+Steps 1 to 5 run the gateway as a child of whatever is calling it. An agent on the other side of
+a boundary (inside a sandbox, with the gateway outside it) cannot be the gateway's parent, so the
+gateway also serves the same tools over streamable HTTP. This transport authenticates every
+request and refuses to start until it is told how (`broker/GATEWAY.md` G11 to G20).
+
+Generate a token, keep it readable by you alone, and start the gateway on a free loopback port:
+
+```bash
+mkdir -p "$HOME/.ptc-gal"
+python -c 'import secrets; print(secrets.token_urlsafe(32))' > "$HOME/.ptc-gal/gateway-token"
+chmod 600 "$HOME/.ptc-gal/gateway-token"
+
+BROKER_GATEWAY_TRANSPORT=streamable-http \
+BROKER_GATEWAY_AUTH=launch_token \
+BROKER_GATEWAY_TOKEN_FILE="$HOME/.ptc-gal/gateway-token" \
+BROKER_GATEWAY_PORT=8765 \
+python -m safe_agents.broker.gateway
+```
+
+It prints where it is listening on stderr and then waits:
+
+```
+[broker] network MCP mouth on http://127.0.0.1:8765/mcp (authenticator: launch_token)
+```
+
+From a second terminal, a request without the token is refused before any MCP frame is served:
+
+```bash
+curl -s -i -X POST http://127.0.0.1:8765/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+The reply is `HTTP/1.1 401 Unauthorized` with the body `{"error": "unauthorized"}`. An MCP client
+that speaks streamable HTTP connects with two facts: the URL above, and the header
+`Authorization: Bearer <the token>`.
+
+The published client for this transport takes the same two facts. It is standard library only, and
+importing it does not load the broker (`docs/consuming-the-sdk.md` §2). Save this as `ask.py` and
+run it with `python ask.py`:
+
+```python
+from pathlib import Path
+
+from safe_agents.broker.client import NetworkGatewayClient, result_text
+
+token = (Path.home() / ".ptc-gal" / "gateway-token").read_text().strip()
+
+with NetworkGatewayClient("http://127.0.0.1:8765/mcp", token=token) as gateway:
+    gateway.initialize()
+    print([tool["name"] for tool in gateway.list_tools()])
+    refused = gateway.call_tool("payments__transfer", {"amount": "1000"})
+    print(refused["isError"], result_text(refused))
+```
+
+It prints the tools this principal is served, then `True` and the broker's own reason for refusing
+a tool the manifest never declared. Stop the gateway with Ctrl-C.
+
+Leave out `BROKER_GATEWAY_AUTH` and the gateway refuses to start. There is no unauthenticated
+mode, on loopback or anywhere else. The token is a bearer secret: anything that can read the file,
+or the agent's copy of it, can ask as the manifest's principal, and the broker still decides every
+call it is asked for. This step was run as written on macOS; it has not been run on Windows, where
+the file's mode is not checked.
+
+### 7. Embed the broker as a library
 
 ```
 python -m examples.embedded_agent.agent
@@ -435,7 +501,9 @@ not exercise the grant ceremony: the single grant here is the sanctioned bootstr
 you with your own credentials. The ceremony roles (maker, checker, auditor) are created only when
 you pass their `<x>TrustedPrincipals` contexts, and `docs/operator-identities.md` covers them.
 The broker's `/call` endpoint does not authenticate its caller; the security group is the only
-gate, and every caller inside it is the manifest's one principal.
+gate, and every caller inside it is the manifest's one principal. That is `/call` alone. The
+gateway's network MCP mouth (step 6 of the laptop tour) authenticates every request, and it is not
+what this tour deploys.
 
 The other runbooks: `docs/broker-service-bringup.md` for the broker service with the model-driven
 smoke agents, `docs/operator-identities.md` for the ceremony roles (read it before any Identity

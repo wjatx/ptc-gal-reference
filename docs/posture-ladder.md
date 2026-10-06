@@ -86,9 +86,19 @@ per-harness containment profile), never to implement a sandbox. The composition 
 gateway being reachable over HTTP as well as stdio, which is why that transport is first-class
 rather than an extra.
 
-> **Implementation status:** NOT YET IMPLEMENTED in the reference implementation (tracking: #161).
-> The gateway serves stdio only (`broker/GATEWAY.md`), so this composition cannot be stood up from
-> this repository as it is.
+The transport exists: the gateway serves MCP over streamable HTTP as well as stdio
+(`broker/GATEWAY.md` G11 to G20). Crossing the boundary means a stdio child's implicit answer to
+"who is calling" is gone, so that mouth authenticates every request before it serves anything and
+refuses to start with no authenticator named. One authenticator is built, a token the launcher
+binds at launch and hands to the one agent it starts. That token is a bearer secret the agent
+holds: anything inside the sandbox that can read it can ask as the agent's principal, and the
+broker still decides every call. The sandbox bounds its exposure, and nothing else does.
+
+What this repository does not contain is the other half. It ships no sandbox and no wrapper that
+orchestrates one, and the composed posture has not been stood up from it: the network mouth is
+exercised over loopback by its own test suite, with no boundary between the two ends. The two
+authenticators for a gateway reached from another machine are reserved names
+(`broker/GATEWAY.md` G15) and are not implemented.
 
 ### Posture 3 — the cloud floor
 

@@ -9,7 +9,8 @@ and `client.py` (the one SDK importer) already use on the client side.
 ## What a mouth is, and what it is not
 
 The broker already has one mouth: the JSON-over-HTTP `/call` handler in
-`prototype/broker_server.py`. This is a second one, speaking MCP over stdio, so a
+`prototype/broker_server.py`. This is a second one, speaking MCP (over stdio, or
+over the network: `network.py`), so a
 wrapped agent sees exactly ONE MCP server whose tools are the ops the broker will
 serve it. A mouth **carries** calls to `handle_request`; it never decides one. Every
 call goes through the full per-call path — PDP decision, taint, budgets, audit —
