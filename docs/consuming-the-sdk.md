@@ -24,8 +24,8 @@ Each release publishes a requirements file that pins `safe-agents` and every pac
 and `mcp` extras depend on, each at an exact version and the sha256 of its published files:
 
 ```bash
-curl -fsSLO https://github.com/wjatx/ptc-gal-reference/releases/download/v0.73.1/safe-agents-0.73.1-requirements.txt
-python -m pip install --require-hashes -r safe-agents-0.73.1-requirements.txt
+curl -fsSLO https://github.com/wjatx/ptc-gal-reference/releases/download/v0.74.0/safe-agents-0.74.0-requirements.txt
+python -m pip install --require-hashes -r safe-agents-0.74.0-requirements.txt
 ```
 
 With `--require-hashes`, pip refuses any file whose hash is not in the list and any requirement
@@ -42,7 +42,7 @@ reproducible), and name the extras you use:
 ```toml
 # pyproject.toml
 dependencies = [
-  "safe-agents[mcp]==0.73.1",
+  "safe-agents[mcp]==0.74.0",
 ]
 ```
 
@@ -68,7 +68,7 @@ The extras:
 ### Without a lock
 
 ```bash
-pip install "safe-agents==0.73.1"
+pip install "safe-agents==0.74.0"
 ```
 
 This works, and it pins `safe-agents` alone. Its dependencies resolve to whatever is newest
