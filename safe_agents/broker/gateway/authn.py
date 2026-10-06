@@ -244,7 +244,7 @@ def read_launch_token(path: str) -> str:
         raise GatewayAuthConfigError(f"{TOKEN_FILE_ENV}={path} is not a regular file")
     if sys.platform != "win32" and info.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
         raise GatewayAuthConfigError(
-            f"{TOKEN_FILE_ENV}={path} is mode {stat.S_IMODE(info.st_mode):04o} — "
+            f"{TOKEN_FILE_ENV}={path} is mode {stat.S_IMODE(info.st_mode):04o}; "
             "refusing a launch token readable beyond its owner (anything that can "
             f"read it can ask as this gateway's principal). Run: chmod 600 {path}"
         )
@@ -282,7 +282,7 @@ def _launch_token_from_env(env: Mapping[str, str]) -> Authenticator:
     if not path:
         raise GatewayAuthConfigError(
             f"{AUTH_ENV}={MouthAuthenticator.LAUNCH_TOKEN.value} but {TOKEN_FILE_ENV} "
-            "is unset — refusing to start: the launch-token arm needs the file its "
+            "is unset; refusing to start: the launch-token arm needs the file its "
             "launcher wrote the token to. The token is never read from an "
             "environment value, a manifest or a store."
         )
@@ -311,7 +311,7 @@ def resolve_authenticator(env: Mapping[str, str] | None = None) -> Authenticator
     valid = ", ".join(repr(member.value) for member in _AUTHENTICATOR_FACTORIES)
     if not named:
         raise GatewayAuthConfigError(
-            f"{AUTH_ENV} is unset — refusing to start the network MCP mouth: it "
+            f"{AUTH_ENV} is unset; refusing to start the network MCP mouth: it "
             "serves no connection it has not authenticated, and there is no "
             f"unauthenticated default, on loopback or anywhere else. Set {AUTH_ENV} "
             f"to one of: {valid}."
@@ -320,7 +320,7 @@ def resolve_authenticator(env: Mapping[str, str] | None = None) -> Authenticator
         selected = MouthAuthenticator(named)
     except ValueError:
         raise GatewayAuthConfigError(
-            f"{AUTH_ENV}={named!r} is not a recognized authenticator — refusing to "
+            f"{AUTH_ENV}={named!r} is not a recognized authenticator; refusing to "
             "start. The catalog is closed and base-owned; a name selects from it "
             f"and nothing can add to it. Implemented: {valid}."
         ) from None
@@ -328,7 +328,7 @@ def resolve_authenticator(env: Mapping[str, str] | None = None) -> Authenticator
     if factory is None:
         raise GatewayAuthConfigError(
             f"{AUTH_ENV}={selected.value!r} is a reserved name and is NOT YET "
-            "IMPLEMENTED in the reference implementation — refusing to start. "
+            "IMPLEMENTED in the reference implementation; refusing to start. "
             f"Implemented: {valid}."
         )
     return factory(source)

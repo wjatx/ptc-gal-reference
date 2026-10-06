@@ -720,6 +720,11 @@ class TestTheLauncher:
         assert "[broker] refusing to start the MCP gateway:" in stderr
         assert words in stderr
         assert "Traceback" not in stderr
+        # A launcher reads this line as bytes in whatever encoding it expects, and a
+        # child's stderr is written in the platform's own. Plain ASCII is the one
+        # spelling both agree on: a dash outside it reached a Windows launcher as a
+        # byte that is not UTF-8, and the refusal could not be read at all.
+        assert stderr.isascii(), stderr
         assert "store backend" not in stderr, "the runtime was built before the refusal"
 
     @pytest.mark.parametrize("taken", ["a port already in use", "an address this machine does not have"])
