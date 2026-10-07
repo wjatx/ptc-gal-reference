@@ -144,6 +144,7 @@ from .rung import (
     PromotionEligibilityCounters,
     RungStateMachine,
     TransitionError,
+    dwell_start_ts,
     is_eligible_for_promotion,
     validate_demotion_transition,
     validate_promotion_transition,
@@ -272,6 +273,7 @@ __all__ = [
     "validate_promotion_transition",
     "validate_demotion_transition",
     "is_eligible_for_promotion",
+    "dwell_start_ts",
     "RungStateMachine",
     # demotion runner
     "DemotionLedgerStore",
