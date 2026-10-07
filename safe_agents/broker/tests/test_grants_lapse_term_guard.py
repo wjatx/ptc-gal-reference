@@ -308,7 +308,7 @@ class TestL8NobodyMisreadsIt:
         one that splits evidence some other way."""
         package = Path(safe_agents.__file__).parent
         naming = sorted(
-            str(path.relative_to(package))
+            path.relative_to(package).as_posix()
             for path in package.rglob("*.py")
             if "tests" not in path.parts
             and "certification term expired:" in path.read_text(encoding="utf-8")
