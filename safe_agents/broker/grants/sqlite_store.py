@@ -50,6 +50,7 @@ from safe_agents.broker.grants.store import (
     _read_result_from_item,
     _require_prev_raw_data,
     canonical_grant_payload,
+    refuse_reattestation_drift,
     refuse_term_extension,
     validate_record_ts,
 )
@@ -235,6 +236,9 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
         validate_record_ts(record.ts)
 
         creating = expected is None or expected.grant is None
+        # Before the transaction opens, like the ts check: a reattestation
+        # write that is not a re-attestation is refused whatever is stored.
+        refuse_reattestation_drift(None if creating else expected.raw_data, record, grant)
         grant_pk, grant_sk = self._item_key(grant.principal, grant.actionClass)
         record_pk, record_sk = SqlitePromotionRecordStore._item_key(record)
         record_attrs = SqlitePromotionRecordStore._record_attrs(record, signature)
