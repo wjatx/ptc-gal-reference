@@ -34,7 +34,6 @@ import datetime
 import hashlib
 import json
 import logging
-import re
 import threading
 import uuid
 from dataclasses import dataclass
@@ -94,6 +93,7 @@ from safe_agents.broker.schemas.evidence import (
 from safe_agents.broker.taint import InputTrustMap, TurnContext
 
 from .doer import ConnectorExecutionError, Doer
+from .observed import SHORT_CODE, validate_observed_event
 
 logger = logging.getLogger(__name__)
 
@@ -147,10 +147,17 @@ _EVIDENCE_LABEL_WRITE_FAILED = "evidence label write failed"
 # intent-quarantine record carries the seam that hit it.
 MOUTH_REFUSAL_TOOL = "broker-mouth"
 
+# The reserved `tool` on the audit record of a call a harness ran with its own
+# tool and reported afterwards (`record_observed_event`). Not a manifest
+# coordinate: the broker made no call, so the reported tool class rides as the
+# `op`, the way a mouth's code does on a refusal record.
+OBSERVED_TOOL = "harness-tool"
+
 # The shape of a mouth code and of a refusal-cause code. Deliberately narrow: these
 # are the only mouth-supplied strings that reach the tape, and a caller-authored
-# value cannot be spelled in this alphabet at this length by accident.
-_MOUTH_CODE = re.compile(r"[a-z][a-z0-9_-]{0,39}")
+# value cannot be spelled in this alphabet at this length by accident. Shared with
+# the tool-event vocabulary (`observed.py`), which spells a harness code the same way.
+_MOUTH_CODE = SHORT_CODE
 
 
 def _actor_digest(identity: str) -> str:
@@ -450,6 +457,82 @@ class BrokerRuntime:
                 f"was served: {detail}"
             ),
         )
+
+    def record_observed_event(
+        self,
+        *,
+        mouth: str,
+        harness: str,
+        tool_class: str,
+        locality: str,
+        subject_digest: str,
+        result_digest: str | None = None,
+    ) -> str | None:
+        """Record a call a harness ran with its own tool, and taint the turn if it read.
+
+        The seam the tool-event mouth enters through (`broker/GATEWAY.md` G21 on).
+        A harness's built-in tools (its shell, its file reads, its web fetch) never
+        become broker calls, so nothing here decides one: the call has already run,
+        and this OBSERVES it. Like `record_refused_connections`, it is the mouth's
+        only way to the tape: the record is written here, under this runtime's own
+        principal and envelope hash, in one fixed shape the mouth cannot vary.
+
+        Every field is re-checked against the closed vocabularies in `observed.py`,
+        whatever the mouth checked. A report carries codes, enum members and
+        digests; no path, URL or content is accepted in any field.
+
+        Order, and why. When the tool class brings content into the agent's context
+        (`TAINTING_CLASSES`), the source `harness:<harness>/<class>/<locality>` is
+        ingested into the broker-held session turn FIRST, and the record written
+        second. Every write order here fails toward less authority: a sink that
+        raises leaves the turn tainted and the record missing, never the record
+        written and the turn clean. A source the consumer's envelope lists in
+        `trusted_read_sources` is not ingested, mirroring the connector self-ingest
+        in `_executor`; the base trust map treats every `harness:` source as
+        untrusted, so that list is the only way a class is trusted.
+
+        This can only add taint. It never rolls the turn: `new_turn` stays off
+        every mouth.
+
+        Returns the source id ingested into the turn, or None when the tool class
+        does not taint or the consumer trusts the source. Raises ValueError on a
+        malformed field, with nothing ingested and nothing written, and whatever
+        the sink raises on a failed write, with the turn already tainted.
+        """
+        event = validate_observed_event(
+            mouth=mouth,
+            harness=harness,
+            tool_class=tool_class,
+            locality=locality,
+            subject_digest=subject_digest,
+            result_digest=result_digest,
+        )
+        ingested: str | None = None
+        if event.taints and event.source_id not in self._trusted_read_sources:
+            self._session_turn().ingest_source(event.source_id, self._trust_map)
+            ingested = event.source_id
+        emit(
+            self._audit_sink,
+            principal=self._principal,
+            tool=OBSERVED_TOOL,
+            op=event.tool_class.value,
+            # A reader holding the subject recomputes this digest: see
+            # `observed.digest_subject` and GATEWAY.md for the canonical form.
+            args={
+                "harness": event.harness,
+                "locality": event.locality.value,
+                "subject": event.subject_digest,
+            },
+            decision="abstain",
+            outcome="observed",
+            envelope_hash=self._envelope_hash,
+            result_digest=event.result_digest,
+            reason=(
+                f"observed, not decided: {event.harness} {event.tool_class.value} "
+                f"({event.locality.value}) reported by mouth {event.mouth}"
+            ),
+        )
+        return ingested
 
     def new_turn(self) -> None:
         """Roll the broker-held turn boundary — discard accumulated taint so the

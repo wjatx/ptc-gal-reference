@@ -312,14 +312,22 @@ def test_confinement_runtime_public_api_has_no_connector_or_doer():
     # nothing, and no sink, connector, Doer or secret crosses out. It is wired to no
     # agent-facing route: a caller on the far side of a mouth cannot invoke it, and
     # the party it records is by definition one the mouth refused.
+    # record_observed_event (GATEWAY.md G21 on) is the seam the tool-event mouth
+    # records a harness's own tool calls through, after they ran. It takes codes,
+    # members of two closed enums and digests, re-checks every one, writes ONE
+    # abstain/observed record in a fixed shape under the runtime's own principal,
+    # and returns the source id it ingested or None. It decides nothing and executes
+    # nothing; the only state it touches is the session turn, and only to ADD taint
+    # (it never calls new_turn). No sink, connector, Doer or secret crosses out, and
+    # the caller it serves is the mouth, never the agent's MCP surface.
     assert set(public_methods) == {
         "served_registry", "handle_request", "new_turn", "session_turn",
         "approve_intent", "reject_intent", "flag_intent", "describe_intent", "close",
-        "record_refused_connections",
+        "record_refused_connections", "record_observed_event",
     }, (
         "BrokerRuntime must expose only served_registry/handle_request/new_turn/"
         "session_turn/approve_intent/reject_intent/flag_intent/describe_intent/close/"
-        f"record_refused_connections; found: {public_methods}"
+        f"record_refused_connections/record_observed_event; found: {public_methods}"
     )
 
 
