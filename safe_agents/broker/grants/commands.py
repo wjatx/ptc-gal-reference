@@ -9,9 +9,11 @@ seed      the sanctioned bootstrap: manifest-driven floor grants, each paired wi
 re-seed   the re-attestation ceremony after a far-jump envelope-hash change:
           re-stamps HMAC-clean grants under the NEW in-force hash at the SAME
           level, under human ratification, each paired with a
-          reattestation-typed PromotionRecord in the same atomic write
-          (ISSUER-signed when a signing key is configured). An HMAC-tamper
-          quarantine is NEVER re-attestable (an incident, not a ceremony).
+          reattestation-typed PromotionRecord in the same atomic write.
+          The record is ALWAYS ISSUER-signed: with no issuer signing key
+          configured re-seed REFUSES and writes nothing, and there is no
+          --allow-unsigned for it. An HMAC-tamper quarantine is NEVER
+          re-attestable (an incident, not a ceremony).
 propose   the maker: builds a PromotionProposal from declared config + durable
           evidence counters, runs the predicate for early feedback, and stores
           it (an ineligible proposal is refused, never stored).
@@ -369,7 +371,7 @@ def reseed_command(
     principal: Principal,
     granted_classes: list[str],
     envelope_hash: str,
-    signer: RecordSigner | None = None,
+    signer: RecordSigner | None,
     session: object = None,
     now: datetime.datetime | None = None,
 ) -> int:
@@ -398,9 +400,30 @@ def reseed_command(
 
     ``signer`` is the ISSUER's RecordSigner: re-attestation re-licenses a
     grant on a human's authority, so it takes the ceremony key, never the
-    evaluator's (GAL §6.10). Unset, the record is written unsigned, as seed
-    and tighten do on a floor with no key material.
+    evaluator's (GAL §6.10). It is required. None (no issuer signing key
+    configured) refuses the whole run before any grant is read and writes
+    nothing; unlike ratify, re-seed has no unsigned opt-in.
     """
+    # Re-attestation returns a quarantined grant to acting authority on a
+    # human's word, and GAL §6.6 requires the record of it to be signed under
+    # the issuer role. An unsigned one would be that word with nothing to hold
+    # anyone to it. §6.10's operator override is for bootstrap, and a grant
+    # that already exists and has already acted is past bootstrap, so there is
+    # no flag to pass here. Refuse up front, before the caller is resolved or
+    # a grant is read, so a refusal provably writes nothing.
+    if signer is None:
+        print(
+            "REFUSED: issuer signing key not configured. A reattestation "
+            "record returns a quarantined grant to acting authority, so it "
+            "must be issuer-signed (GAL §6.6). Configure "
+            "ISSUER_SIGNING_KEY_SECRET_ARN or ISSUER_SIGNING_KEY_FILE, "
+            "ISSUER_SIGNING_KEY_ID and a zone (--zone or ISSUER_SIGNING_ZONE), "
+            "then run re-seed again. re-seed has no unsigned mode. Nothing "
+            "was written.",
+            file=sys.stderr,
+        )
+        return 1
+
     caller = _caller_identity(session)
     wall = _utc_now(now)
     reattested = skipped = failures = 0
@@ -443,7 +466,7 @@ def reseed_command(
                 updated,
                 record_store,
                 session,
-                signature=signer.sign_record(record) if signer is not None else None,
+                signature=signer.sign_record(record),
                 expected=read,
             )
         except (
@@ -469,7 +492,7 @@ def reseed_command(
     print(
         f"[re-seed] ratifiedBy={caller}: {reattested} re-attested, "
         f"{skipped} skipped, {failures} failed; reattestation records "
-        f"{'signed (issuer DSSE)' if signer is not None else 'UNSIGNED (no issuer signing key configured)'}"
+        "signed (issuer DSSE)"
     )
     return 1 if failures else 0
 
