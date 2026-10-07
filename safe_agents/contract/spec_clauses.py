@@ -183,9 +183,17 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     "GAL-20": (MARKER_FORM_INLINE, "#21"),
     # Added by GAL 0.5.0-draft, which makes the ledger journal every grant write.
     # GAL-15 is reversed: re-attestation appends a `reattestation` record, and no
-    # other path rewrites a grant at an unchanged level. `re-seed` writes no
-    # record and `RungStateMachine.re_ratify` still exists, so the clause moved
-    # from implemented to marked. GAL-40 states what a record's ts denotes, which
+    # other path rewrites a grant at an unchanged level. The clause moved from
+    # implemented to marked because `re-seed` wrote no record and
+    # `RungStateMachine.re_ratify` existed. #164 has since built both halves:
+    # `re-seed` writes the record in one atomic unit with the grant, and
+    # `re_ratify` is gone, with the stores' record-less conditional update. The
+    # row stays because this set is extracted from the specification's own
+    # markers, and GAL-15 carries its marker until a revision takes it off; the
+    # row leaves with the marker, in the commit that adopts that revision. It is
+    # not an EXPECTED_EXCEEDED row: the code meets the clause as written and
+    # does not outgrow it.
+    # GAL-40 states what a record's ts denotes, which
     # the ledger clock already provides, and the audit rule tying a grant's ts to
     # its latest record, which nothing checks yet; the marker names that half.
     # #165 (`certifiedUntil` on a lapse record) is a field-row marker in §5.2
