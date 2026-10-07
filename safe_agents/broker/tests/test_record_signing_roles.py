@@ -963,12 +963,13 @@ def test_an_entry_with_no_stored_bytes_is_a_finding_no_acknowledgment_excuses(si
         ("tightening", False),
         ("demotion", False),
         ("lapse", False),
-        ("reattestation", False),
+        ("reattestation", True),
     ],
 )
 def test_with_no_epoch_the_narrower_scope_holds_and_says_so(record_type, expect_finding, roles):
-    """Unset keeps the narrower scope: an unsigned promotion is a finding and
-    the other unsigned types are not. The report must SAY the all-types
+    """Unset keeps the narrower scope: an unsigned promotion or reattestation
+    is a finding (re-seed never writes one unsigned, so no ceremony wrote it)
+    and the other unsigned types are not. The report must SAY the all-types
     requirement is unenforced. Silence here is the failure mode: a green audit
     that never checked."""
     _issuer, _evaluator, resolvers = roles

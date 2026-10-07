@@ -223,8 +223,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     reseed = sub.add_parser(
         "re-seed",
         help="re-attest HMAC-clean grants under the NEW in-force envelope hash, "
-        "each with a reattestation ledger record (same level; HMAC-tamper "
-        "quarantine is refused)",
+        "each with an issuer-signed reattestation ledger record (same level; "
+        "refuses with no issuer signing key; HMAC-tamper quarantine is refused)",
     )
     _add_table_arg(reseed)
     reseed.add_argument(

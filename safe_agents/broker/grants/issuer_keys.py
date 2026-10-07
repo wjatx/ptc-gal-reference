@@ -47,8 +47,8 @@ verifies with exactly this, a map of public keys handed over as a file.
 Ships OFF, per role: with NO signing env configured for a role,
 ``resolve_record_signer`` / ``resolve_evaluator_signer`` return None and that
 role's writers keep today's unsigned behaviour (ratify is the exception — it
-REFUSES unless the operator passes ``--allow-unsigned``, and acknowledge
-refuses outright). Half-configured — a key_id without the key source, or a key
+REFUSES unless the operator passes ``--allow-unsigned``, and acknowledge and
+re-seed refuse outright). Half-configured — a key_id without the key source, or a key
 source without a key_id/zone — REFUSES: the operator intended to sign,
 so degrading to an unsigned record is minting a weaker artifact than asked for.
 With no verify-key source configured, the verify resolver is None and the audit
@@ -80,7 +80,7 @@ from safe_agents.channels.signing import KeyResolver
 # key), the key_id a ledger verifier resolves it by, and the zone the record is
 # attributed to (overridable per-invocation via a command's --zone).
 # All optional; absence of the ARN = OFF (ratify refuses unless
-# --allow-unsigned; acknowledge refuses outright).
+# --allow-unsigned; acknowledge and re-seed refuse outright).
 ISSUER_SIGNING_KEY_SECRET_ARN_ENV = "ISSUER_SIGNING_KEY_SECRET_ARN"
 ISSUER_SIGNING_KEY_ID_ENV = "ISSUER_SIGNING_KEY_ID"
 ISSUER_SIGNING_ZONE_ENV = "ISSUER_SIGNING_ZONE"

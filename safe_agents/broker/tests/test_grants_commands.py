@@ -12,8 +12,8 @@ proven end-to-end):
   existing grants cleanly on re-run (create-only, no duplicate records).
 - re-seed refuses an HMAC-tamper (store-layer) quarantine loudly and re-attests
   an envelope-hash-mismatched grant at the SAME level with a reattestation
-  ledger record (the invariants are pinned per backend in
-  test_grants_reattestation.py).
+  ledger record, issuer-signed (the invariants, with the refusal to run
+  unsigned, are pinned per backend in the test_grants_reattestation_* modules).
 - ratify DSSE-signs the record when an issuer signer is injected (generated
   Ed25519 key) and the stored envelope verifies via verify_record; the unsigned
   path warns LOUDLY.
@@ -786,6 +786,7 @@ def test_reseed_reattests_envelope_mismatch_at_same_level(
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash="sha256:new",
+        signer=_issuer_signer(),
         now=NOW,
     )
     assert rc == 0
@@ -822,6 +823,7 @@ def test_reseed_refuses_hmac_tamper_quarantine(monkeypatch, grant_store, record_
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash="sha256:new",
+        signer=_issuer_signer(),
         now=NOW,
     )
     assert rc == 1
@@ -843,6 +845,7 @@ def test_reseed_skips_grant_already_in_force(monkeypatch, grant_store, record_st
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash="sha256:new",
+        signer=_issuer_signer(),
         now=NOW,
     )
     assert rc == 0
@@ -858,6 +861,7 @@ def test_reseed_fails_on_absent_grant(monkeypatch, grant_store, record_store, ca
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash="sha256:new",
+        signer=_issuer_signer(),
         now=NOW,
     )
     assert rc == 1
@@ -946,6 +950,13 @@ def _generate_issuer_key():
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode()
     return private_pem, public_pem
+
+
+def _issuer_signer():
+    """A real issuer signer over a fresh key. re-seed refuses to run without
+    one, so every re-seed test above hands it this."""
+    private_pem, _public_pem = _generate_issuer_key()
+    return signer_from_pem("issuer-key-1", "development", private_pem)
 
 
 def test_ratify_signs_record_when_issuer_key_injected(
@@ -1521,6 +1532,7 @@ def test_reseed_carries_the_term_forward_unchanged(monkeypatch, grant_store, rec
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash=ENVELOPE_HASH,
+        signer=_issuer_signer(),
         now=NOW,
     ) == 0
     assert grant_store.get_grant(PRINCIPAL, ACTION_CLASS).grant.certifiedUntil == _TERM

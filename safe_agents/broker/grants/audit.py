@@ -86,8 +86,8 @@ unsigned demotion/tightening/bootstrap rows that cannot be re-minted.
     whoever wrote the row, so an exemption keyed on it could be claimed by a
     planted row. Honest unsigned history is excused one record at a time by
     the acknowledgment ceremony above, which is signed.
-  * ``signing_epoch`` unset — scope stays what it was (promotion required,
-    lapse- and reattestation-if-present), and the report carries a NAMED annotation saying the
+  * ``signing_epoch`` unset — scope stays what it was (promotion and
+    reattestation required, lapse-if-present), and the report carries a NAMED annotation saying the
     all-types requirement is not being enforced. Never a silent skip.
 
 A RECORD_SIGNATURE_VERIFIES finding names the sha256 of the record's STORED
@@ -171,9 +171,16 @@ _VALID_PROPOSAL_STATUSES: frozenset[str] = frozenset(get_args(ProposalStatus))
 # earns nothing unless it is named here.
 _EARNING_RECORD_TYPES = ("bootstrap", "promotion")
 
+# With no signing epoch declared, the types that must carry a signature
+# anyway. A promotion mints authority. A reattestation returns a quarantined
+# grant to acting authority, and its one sanctioned writer refuses to run
+# without the issuer's key, so an unsigned one is a row no ceremony wrote.
+_ALWAYS_SIGNED_TYPES = ("promotion", REATTESTATION_RECORD_TYPE)
+
 # With no signing epoch declared, the types whose signature is verified when
-# one is present and not demanded when it is absent.
-_SIGNED_IF_PRESENT_TYPES = ("lapse", REATTESTATION_RECORD_TYPE)
+# one is present and not demanded when it is absent: honest unsigned history
+# of these exists from before signing was adopted.
+_SIGNED_IF_PRESENT_TYPES = ("lapse",)
 
 # Annotation names — stable identifiers for the green-with-annotations half of
 # the report. An annotation is never a pass and never a violation: it names a
@@ -935,15 +942,15 @@ def run_audit(
         for entry in dataset.records:
             record_type = entry.record.recordType
             if not all_types_required:
-                # No-epoch scope: a promotion must be signed; a lapse or a
-                # reattestation that carries a signature must verify; the
-                # other types are out of scope. An unsigned reattestation is
-                # left to the epoch because no rule reads a level from one, so
-                # it can raise nothing; a signed one is held to its role
-                # because the evaluator's key must never re-license a grant.
+                # No-epoch scope: a promotion or a reattestation must be
+                # signed; a lapse that carries a signature must verify; the
+                # other types are out of scope until an epoch is declared.
                 if record_type in _SIGNED_IF_PRESENT_TYPES and entry.signature is None:
                     continue
-                if record_type != "promotion" and record_type not in _SIGNED_IF_PRESENT_TYPES:
+                if (
+                    record_type not in _ALWAYS_SIGNED_TYPES
+                    and record_type not in _SIGNED_IF_PRESENT_TYPES
+                ):
                     continue
             coordinate = _record_coordinate(entry.record)
             role = signing_role_for_record_type(record_type)
