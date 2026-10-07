@@ -154,6 +154,8 @@ grant had no path down. A grant may now carry a term, `certifiedUntil`, set only
 ceremony and never extended in place. Once the term passes, the broker PIP enforces the grant at
 `lastSafeLevel` immediately, as a pure function of an explicit evaluation instant (never a record's
 timestamp), and the demotion runner records a `lapse`-typed ledger entry under the same identity.
+The entry carries the expired term as its own `certifiedUntil` field, so the ledger says when
+enforcement fell beside when the lapse was recorded (`ts`).
 A lapse lands on `lastSafeLevel` and never revokes. `broker/grant-lifecycle.md` §Lapse is the
 detail.
 

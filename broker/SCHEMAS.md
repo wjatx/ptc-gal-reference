@@ -470,7 +470,7 @@ interface PromotionRecord {
   triggeredBy: string[]            // demotion-typed only: the DemotionTrigger values that fired
   demotionReason: "failing" | "pending-evidence" | null      // demotion-typed; "pending-evidence" on lapse
   ts:          string
-  certifiedUntil?: string | null   // promotion-typed only: the certification term the checker RATIFIED
+  certifiedUntil?: string | null   // promotion: the certification term the checker RATIFIED; lapse: the term that expired; null on every other type
 }
 ```
 
@@ -483,7 +483,7 @@ one-rung-up, level ordering — is the state machine's job, `grant-lifecycle.md`
 | `demotion` | automatic deterministic demotion | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` non-empty; `demotionReason` set; `predicate` null |
 | `bootstrap` | the sanctioned seed record — first creation of a grant outside the ceremony (`seed_grants` retires to bootstrap-only, Phase 4) | `fromLevel` null; maker ≠ checker NOT enforced (single-operator seed is sanctioned); `predicate` null; `triggeredBy` empty; `demotionReason` null |
 | `tightening` | voluntary any-level → in-loop move (always permitted, no ceremony, no trigger — `docs/GAL.md` §4) | `toLevel` = `"in-loop"`; maker ≠ checker NOT enforced; `predicate` null; `triggeredBy` empty; `demotionReason` null |
-| `lapse` | a certification term expired (GAL §6.7.6; `grant-lifecycle.md` §Lapse) | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` EMPTY (a lapse is an absence, not a fired condition); `demotionReason` = `"pending-evidence"`; `predicate` null; `fromLevel` non-null; `toLevel` = the grant's `lastSafeLevel` (never `"out-of-loop"`); `evidence` names the expired term |
+| `lapse` | a certification term expired (GAL §6.7.6; `grant-lifecycle.md` §Lapse) | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` EMPTY (a lapse is an absence, not a fired condition); `demotionReason` = `"pending-evidence"`; `predicate` null; `fromLevel` non-null; `toLevel` = the grant's `lastSafeLevel` (never `"out-of-loop"`); `certifiedUntil` is the term that expired, where present (absent on records written before the field was allowed here); `evidence` names the expired term for a human reader and is never parsed |
 | `reattestation` | a grant re-issued at its level under a changed envelope (`re-seed`; GAL §6.6) | `fromLevel` = `toLevel` = the grant's level (non-null); `ratifiedBy` is the identity that re-attested; maker ≠ checker NOT enforced; `predicate` null; `triggeredBy` empty; `demotionReason` null; `certifiedUntil` null; `envelopeHash` is the hash the grant was re-issued under |
 
 A `reattestation` record neither earns a level nor lowers one. Every reader that derives a
@@ -511,16 +511,33 @@ Per-field notes:
 - **proposedBy / ratifiedBy** — maker ≠ checker on the promotion path. Widening autonomy requires
   recorded human approval; narrowing (demotion) requires none — it is ratified by
   `system:demotion-evaluator` and recorded, not approved.
-- **certifiedUntil** — promotion-typed only (GAL §6.7.6): the term the checker ratified,
-  written by the ceremony onto both this record and the raised `Grant.certifiedUntil`. Same format
-  and parser as the Grant field (explicit UTC instant, stored verbatim). Every other record type
-  refuses a non-null value. **Omitted from the canonical, stored and signed bytes when null**, so
-  every record written before the field existed keeps byte-identical bytes and a still-valid DSSE
-  signature (pinned in `test_grant_term_lapse.py`); when set it is inside the signed subject digest.
-  The audit rule `GRANT_TERM_RATIFIED` holds each grant to it: a grant's `certifiedUntil` must
-  equal the term on the chronologically-latest promotion record at its coordinate (a later
-  demotion, tightening or lapse moves the level, never the term), and a grant whose ledger holds
-  no promotion must carry no term. Un-waivable.
+- **certifiedUntil** — promotion- and lapse-typed only (GAL §5.2, §6.7.6), and the two types
+  carry different things. On a `promotion` record it is the term the checker ratified,
+  written by the ceremony onto both this record and the raised `Grant.certifiedUntil`. On a
+  `lapse` record it is the term that expired, copied by the lapse writer from the grant that
+  lapsed as the exact stored string. That is the instant enforcement fell, and it sits beside `ts`,
+  the instant the record was written, which is never set to the term. The interval between the two
+  is how long the grant sat lapsed and unrecorded. The field is optional on a lapse record: one
+  written before it was allowed there carries none, still parses and verifies, and is not an audit
+  finding for lacking it. Same format and parser as the Grant field (explicit UTC instant, stored
+  verbatim). Every other record type refuses a non-null value, at construction, so the writer and
+  every reader that parses a record hold the same rule. **Omitted from the canonical, stored and
+  signed bytes when null**, so every record written without it keeps byte-identical bytes and a
+  still-valid DSSE signature (pinned in `test_grant_term_lapse.py` for a promotion record and
+  `test_grants_lapse_term_bytes.py` for a lapse record); when set it is inside the signed subject
+  digest, under the issuer's key on a promotion and the evaluator's on a lapse.
+  A lapse record carrying the field sets nothing. The stores refuse a lapse write whose record
+  names a term other than the grant's, or that moves the grant's `certifiedUntil` or
+  `lastSafeLevel` (`refuse_lapse_drift`, all three backends), and `refuse_term_extension` still
+  exempts a `promotion` record only. That guard sits on the paired grant-and-record write, and it
+  is the only thing that holds a lapse record's term to the grant's: no audit rule re-derives it
+  from the ledger, so a lapse record appended outside that write is checked for its signature and
+  its shape and not for the term it names.
+  The audit rule `GRANT_TERM_RATIFIED` holds each grant to the ratified term: a grant's
+  `certifiedUntil` must equal the term on the chronologically-latest **promotion** record at its
+  coordinate (a later demotion, tightening or lapse moves the level, never the term), and a grant
+  whose ledger holds no promotion must carry no term. The rule reads promotion records only and
+  never takes a lapse record's `certifiedUntil` as the ratified term. Un-waivable.
 - **triggeredBy / demotionReason** — demotion-typed only. `stale_confidence` maps to
   `"pending-evidence"` (label-free drift voids the certification — gather labels/recalibrate);
   `corroboration_failure` and `budget_breach` map to `"failing"` (fix the model/policy). Never
