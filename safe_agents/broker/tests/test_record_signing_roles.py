@@ -82,7 +82,7 @@ ENVELOPE_HASH = "sha256:env-roles"
 
 TS = "2026-07-01T00:00:00+00:00"
 
-ALL_RECORD_TYPES = ("promotion", "bootstrap", "tightening", "demotion", "lapse")
+ALL_RECORD_TYPES = ("promotion", "bootstrap", "tightening", "demotion", "lapse", "reattestation")
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +171,13 @@ def _record(record_type: str, *, ts: str = TS, **overrides) -> PromotionRecord:
             ratifiedBy=DEMOTION_RATIFIER,
             triggeredBy=[],
             demotionReason="pending-evidence",
+        ),
+        "reattestation": dict(
+            fromLevel="on-loop",
+            toLevel="on-loop",
+            predicate=None,
+            proposedBy="operator",
+            ratifiedBy="operator",
         ),
     }[record_type]
     return PromotionRecord(**{**common, **per_type, **overrides})

@@ -1,6 +1,7 @@
-"""PromotionRecord schema — the append-only ceremony-ledger record for grant level changes.
+"""PromotionRecord schema — the append-only ceremony-ledger record of every grant write.
 
-Five record types share one ledger (see SCHEMAS.md §7):
+Six record types share one ledger (see SCHEMAS.md §7). Five record a level
+change; the sixth, ``reattestation``, records a write that changes none:
 
 - ``promotion``  — the maker-checker ceremony that raises a Grant's level.
 - ``demotion``   — automatic deterministic demotion, ratified by the system
@@ -15,6 +16,10 @@ Five record types share one ledger (see SCHEMAS.md §7):
                    by the same system evaluator identity as demotion, but it is
                    NOT a demotion: triggeredBy stays empty, because a lapse is
                    the absence of renewal, never a fired condition.
+- ``reattestation`` — a grant re-issued at its level under a changed envelope
+                   (GAL §6.6). It neither earns a level nor lowers one, so a
+                   reader deriving a level, or looking for the record that
+                   earned it, passes over the type (``bears_level``).
 
 This schema enforces field-SHAPE rules per record type, plus one direction rule:
 a demotion or lapse never raises the level (see the class docstring for why
@@ -33,9 +38,13 @@ from .grant import parse_certified_until
 # System identity that ratifies all automatic demotions (no human, no model).
 DEMOTION_RATIFIER = "system:demotion-evaluator"
 
+# The one record type that changes no level (GAL §4.3). Named once so every
+# reader that passes over it tests the same value.
+REATTESTATION_RECORD_TYPE = "reattestation"
+
 
 class PromotionRecord(BaseModel):
-    """One append-only ledger record of a grant level change.
+    """One append-only ledger record of a write to a grant.
 
     Invariants enforced here (field shape only, per recordType):
     - certifiedUntil is non-null ONLY on a promotion record: the
@@ -62,6 +71,11 @@ class PromotionRecord(BaseModel):
                   broken); predicate absent; fromLevel non-None; toLevel is never
                   out-of-loop (it is the grant's lastSafeLevel, which never is)
                   and never above fromLevel.
+    - reattestation: fromLevel equals toLevel and is non-None (the grant keeps
+                  its level; no grant exists at Recommend to re-attest);
+                  ratifiedBy is the identity that re-attested; maker ≠ checker
+                  NOT enforced; predicate absent; no demotion fields;
+                  certifiedUntil absent (the first rule).
 
     The demotion and lapse direction rule is the one level-ordering rule that
     lives here. These two types are signed by the evaluator's key, and a
@@ -75,10 +89,10 @@ class PromotionRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # which lifecycle act this record captures
-    recordType: Literal["promotion", "demotion", "bootstrap", "tightening", "lapse"] = (
-        "promotion"
-    )
-    # the action class whose level changed
+    recordType: Literal[
+        "promotion", "demotion", "bootstrap", "tightening", "lapse", "reattestation"
+    ] = "promotion"
+    # the action class of the grant the record accounts for
     actionClass: str
     # for whom
     principal: Principal
@@ -227,6 +241,22 @@ class PromotionRecord(BaseModel):
             self._require_no_raise()
             self._forbid_predicate()
 
+        elif self.recordType == REATTESTATION_RECORD_TYPE:
+            # The issuer's key signs this type, and a verifier picks the key
+            # from the type alone, so "this type moves no level" has to be a
+            # property of the record. Otherwise a record that passes for a
+            # same-level rewrite could carry a raise.
+            if self.fromLevel is None or self.fromLevel is not self.toLevel:
+                from_label = self.fromLevel.value if self.fromLevel is not None else None
+                raise ValueError(
+                    "fromLevel and toLevel must be the same level for a reattestation "
+                    "record: a re-attestation re-issues the grant at its level and "
+                    f"changes none (GAL §4.3), got fromLevel={from_label!r}, "
+                    f"toLevel='{self.toLevel.value}'."
+                )
+            self._forbid_predicate()
+            self._forbid_demotion_fields()
+
         else:  # tightening
             if self.toLevel is not AutonomyLevel.in_loop:
                 raise ValueError(
@@ -242,6 +272,16 @@ class PromotionRecord(BaseModel):
             self._forbid_demotion_fields()
 
         return self
+
+    @property
+    def bears_level(self) -> bool:
+        """False for the one type a level-deriving reader passes over.
+
+        GAL §4.3: the level, and the record that earned it, are the ones the
+        ledger held immediately before a reattestation record. Reading the
+        level off one would let a same-level record stand in for a raise.
+        """
+        return self.recordType != REATTESTATION_RECORD_TYPE
 
     def _require_no_raise(self) -> None:
         """A demotion or lapse may lower the level or leave it; it never raises it."""

@@ -278,11 +278,12 @@ export class IdentityStack extends Stack {
     // enforcement: promotion reads */issuer/*, broker reads */connectors/*, and neither can read
     // the other's (the onlyBrokerReadsConnectorSecrets conformance row pins this).
     //
-    // Deliberately NO */evaluator/* either. The issuer key signs the records that RAISE authority
-    // (promotion, bootstrap, tightening); the evaluator key signs the records that LOWER it
-    // (demotion, lapse). Verification binds record type to signing role, so an identity holding
-    // only this key cannot mint a record asserting that a demotion trigger fired — the mirror of
-    // the demotion role being unable to mint a promotion. See DemotionRole below.
+    // Deliberately NO */evaluator/* either. The issuer key signs the records that RAISE or
+    // re-license authority (promotion, bootstrap, tightening, reattestation); the evaluator key
+    // signs the records that LOWER it (demotion, lapse). Verification binds record type to
+    // signing role, so an identity holding only this key cannot mint a record asserting that a
+    // demotion trigger fired — the mirror of the demotion role being unable to mint a promotion.
+    // See DemotionRole below.
     promotionRole.addToPolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
