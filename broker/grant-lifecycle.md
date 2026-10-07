@@ -182,8 +182,8 @@ one is a `RECORD_SIGNATURE_VERIFIES` finding until the acknowledgment ceremony b
 it, one record at a time. The finding's detail carries the sha256 of the record's stored bytes, so
 an acknowledgment excuses those bytes and no others: a different record written at the same
 coordinate, type and `ts` is a new finding. With the epoch unset the scope stays what it was
-(promotion required, lapse-if-present) and the report says so in an annotation: the all-types
-requirement is not being enforced. The instant the epoch's own validity is judged at is an explicit
+(promotion and reattestation required, lapse-if-present) and the report says so in an annotation:
+the all-types requirement is not being enforced. The instant the epoch's own validity is judged at is an explicit
 input, never derived from the records. An epoch dated after that instant is a violation
 (`RECORD_SIGNING_EPOCH_VALID`), and the audit still checks every record as if the epoch were in
 force.
@@ -201,6 +201,27 @@ force.
   on every call: operationally dead, HMAC-clean, invisible to every other rule. The remedy is
   `re-seed`. The rule fires expectedly after any far-jump redeploy — that is it working, and it is
   why the acknowledgment ceremony ships beside it.
+- **Re-attestation is recorded, and readers pass over the record.** `re-seed` re-issues each
+  HMAC-clean grant at its level under the new envelope hash and appends one `reattestation`-typed
+  record in the same atomic write (`write_record_and_grant`), signed by the issuer key, so no
+  failure leaves a re-attested grant without the record that says who rewrote it, when, and under
+  which envelope (GAL §6.6, GAL-15). With no issuer signing key configured `re-seed` refuses up
+  front and writes nothing, and it has no `--allow-unsigned`: the record returns a quarantined grant
+  to acting authority on a human's word, and an unsigned one holds nobody to it. Grant and record
+  carry one `ts` from the ledger clock. The write changes the grant's `envelopeHash`, `promotedBy`
+  and `ts` and nothing else, and the stores refuse a `reattestation` write that moves anything more.
+  The record moves no level, so every rule here that derives a level from the ledger or looks for
+  the record that earned it (`LEDGER_COUNTERPART`, `LEVEL_LEDGER_CONSISTENT`, `LEVEL_DROP_RECORDED`,
+  `GRANT_TERM_RATIFIED`, `EVALUATOR_RECORD_CONTINUOUS`) reads the ledger as it stood immediately
+  before it. That matters for a planted row: a same-level record restating `out-of-loop` on a ledger
+  that stood at `in-loop` is not taken as the ledger's level. Dwell is measured from the ledger's
+  level-bearing records (`rung.dwell_start_ts`), so an envelope change does not restart it. No other
+  write restates a level, and none leaves a level where it was without a record: the old
+  `RungStateMachine.re_ratify`, which rewrote a grant's evidence with no record, is removed, and
+  fresh evidence enters a grant through the promotion ceremony. (A demotion whose trigger fires on a
+  grant already at its floor also leaves the level unchanged; it appends a `demotion` record for the
+  breach.) The stores no longer carry a record-less conditional update either: the only way to
+  update an existing grant is `write_record_and_grant`, with its record.
 - **The acknowledgment ceremony.** A TRUE finding whose remediation is deferred (honest
   history, a coordinated-window fix) is dispositioned by `acknowledge` — a **ceremony artifact,
   never a config toggle**: a signed record appended to the same append-only table, NEVER a mutation
@@ -224,8 +245,9 @@ both resolve through one parameterized code path (`grants/issuer_keys.py`), so n
 into a weaker rule than the other. Fully-unconfigured signing gets the same polarity:
 `ratify` **refuses** to store an unsigned PromotionRecord — writing nothing (no record, no grant
 mutation; the proposal stays pending) — unless the operator passes an explicit `--allow-unsigned`,
-which stores the record UNSIGNED with a loud warning. `acknowledge` refuses unsigned outright, with
-no override. The other writers (`seed`, `tighten`, and the runner's demotion/lapse passes) sign
+which stores the record UNSIGNED with a loud warning. `acknowledge` and `re-seed` refuse unsigned
+outright, with no override. The other writers (`seed`, `tighten`, and the runner's demotion/lapse
+passes) sign
 whenever their role's key is configured and write unsigned when none is, so a local floor with no
 key material still works.
 
@@ -241,12 +263,15 @@ could set, and the authority split would then be a value rather than a boundary
 
 | role | signs | env |
 |---|---|---|
-| `issuer` | `promotion`, `bootstrap`, `tightening` (plus acknowledgment waivers and the MCP admission ledger) | `ISSUER_SIGNING_KEY_SECRET_ARN` / `ISSUER_SIGNING_KEY_FILE`, `ISSUER_SIGNING_KEY_ID`, `ISSUER_SIGNING_ZONE`, `ISSUER_VERIFY_KEYS_PARAM` / `ISSUER_VERIFY_KEYS_FILE` |
+| `issuer` | `promotion`, `bootstrap`, `tightening`, `reattestation` (plus acknowledgment waivers and the MCP admission ledger) | `ISSUER_SIGNING_KEY_SECRET_ARN` / `ISSUER_SIGNING_KEY_FILE`, `ISSUER_SIGNING_KEY_ID`, `ISSUER_SIGNING_ZONE`, `ISSUER_VERIFY_KEYS_PARAM` / `ISSUER_VERIFY_KEYS_FILE` |
 | `evaluator` | `demotion`, `lapse` — the automatic, no-model side, which only ever lowers authority | `EVALUATOR_SIGNING_KEY_SECRET_ARN` / `EVALUATOR_SIGNING_KEY_FILE`, `EVALUATOR_SIGNING_KEY_ID`, `EVALUATOR_SIGNING_ZONE`, `EVALUATOR_VERIFY_KEYS_PARAM` / `EVALUATOR_VERIFY_KEYS_FILE` |
 
 **Verification binds record type to role**, or the second identity is decorative: an
 evaluator-signed `promotion` fails (`record_signer_wrong_role`), and so does an issuer-signed
-`demotion`. A key_id appearing in BOTH verify maps is a configuration error that refuses at cold
+`demotion`. A `reattestation` is the issuer's for the same reason a promotion is: it re-licenses a
+grant on a human's authority, and under the evaluator's key the side with no human in it could
+re-issue a grant the broker had quarantined. A key_id appearing in BOTH verify maps is a
+configuration error that refuses at cold
 start — one key with two roles is no split at all. A role whose verify keys are not configured
 never passes: a record needing it is `record_role_unresolved`, not an exemption.
 
@@ -336,7 +361,7 @@ that authority to be re-justified.
   proposal's integrity basis); `ratify` shows it to the checker, rejects a term that is not after
   the ratification instant, and writes the same value onto the raised grant and onto the signed
   promotion record (`PromotionRecord.certifiedUntil`, promotion-typed only). Every other write
-  path (re-seed, re-ratify, tightening, demotion,
+  path (re-seed, tightening, demotion,
   lapse) carries the stored term forward unchanged: the stores' `refuse_term_extension` refuses any
   non-promotion write that would lengthen or drop a term, on all three backends, before anything is
   written. Nothing auto-renews. Re-promotion sets a new term, or none.
@@ -361,7 +386,8 @@ that authority to be re-justified.
   the lapsed level.
 - **Audit.** Lapse records are legitimate ledger transitions. A lapse record must verify under the
   EVALUATOR role (`RECORD_SIGNATURE_VERIFIES`). That is required whenever `RECORD_SIGNING_EPOCH`
-  is set, and checked-if-present while it is unset; one naming a trigger cannot parse and is an
+  is set, and checked-if-present while it is unset (a `reattestation` record's issuer signature
+  is required either way, since `re-seed` never writes one unsigned); one naming a trigger cannot parse and is an
   `UNPARSEABLE_ITEM` finding; a grant that sits below its ledger-derived level with no record for
   the drop is `LEVEL_DROP_RECORDED` (waivable, for pre-atomic-write history where demotion wrote the grant
   first). `GRANT_TERM_RATIFIED` (un-waivable) holds the grant's term to the one on its latest

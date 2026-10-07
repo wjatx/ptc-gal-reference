@@ -27,7 +27,8 @@ Notes:
   maker/checker/promotion flows the operator fetches `BROKER_HMAC_KEY` under ambient credentials
   BEFORE assuming (the one residual admin touch).
 - **There are TWO ledger-signing identities, and the split is the control.** The issuer key signs
-  the records that RAISE authority (`promotion`, `bootstrap`, `tightening`); the evaluator key
+  the records that RAISE or re-license authority (`promotion`, `bootstrap`, `tightening`,
+  `reattestation`); the evaluator key
   signs the records that LOWER it (`demotion`, `lapse`). Verification binds record type to signing
   role, so disjoint IAM namespaces mean the deterministic demotion runner — which has no human and
   no model in its loop — cannot mint a record that promotes, and the human-ratified path cannot
@@ -271,8 +272,10 @@ acknowledged again.
 
 **Re-mint the ledger.** Where a coordinate's history can be restarted, the archive, delete and
 `seed` procedure in `docs/grant-canonicalization-runbook.md` (Option B) replaces it with a new
-`bootstrap` record, which `seed` signs when the issuer key is configured. `re-seed` re-stamps a
-grant's envelope hash and writes no ledger record, so it signs nothing.
+`bootstrap` record, which `seed` signs when the issuer key is configured. `re-seed` is not a
+way to re-mint history: it re-stamps a grant's envelope hash and appends one new `reattestation`
+record, which it signs with the issuer key (`--zone` / `ISSUER_SIGNING_ZONE`), and it leaves every
+earlier record as it was. With no issuer key configured it refuses and writes nothing.
 
 ## Deploying the Identity stack
 

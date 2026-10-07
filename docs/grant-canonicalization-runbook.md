@@ -59,8 +59,8 @@ edit a stored proposal, which is the exact thing the input-integrity corollary e
 
 ## Option A — do nothing, let it normalize on the next write (recommended if nothing is filed yet)
 
-Every write path serializes fresh: `update_grant` writes `canonical_grant_payload(grant)`, so the
-next demotion, tighten, re-ratification, or envelope-hash re-seed normalizes that row for free. The
+Every write path serializes fresh: each store write stores `canonical_grant_payload(grant)`, so the
+next demotion, tighten, promotion, or envelope-hash re-seed normalizes that row for free. The
 cost is that the table holds mixed-form rows until each is touched, and a conformance checker run
 before then will report them.
 

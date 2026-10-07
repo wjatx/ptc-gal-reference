@@ -445,9 +445,11 @@ Per-field notes:
 
 ## 7. PromotionRecord
 
-The append-only ceremony-ledger record of every grant level change. The accountable record (Part 11
-of the philosophy doc). Five record types share one ledger; the maker-checker act that raises a
-Grant's level is the `promotion` type. **Demotions append a `demotion`-typed record on the same
+The append-only ceremony-ledger record of every write to a grant. The accountable record (Part 11
+of the philosophy doc). Six record types share one ledger. Five record a level change, and the
+maker-checker act that raises a Grant's level is the `promotion` type. The sixth,
+`reattestation`, records a write that changes none (GAL §4.3, §6.6). **Demotions append a
+`demotion`-typed record on the same
 ledger** — this supersedes the earlier "demotion needs no such record" exemption (Phase 3,
 `docs/GAL.md` §3); demotion itself stays automatic and deterministic (`grant-lifecycle.md`).
 **Pillar 7.**
@@ -455,16 +457,16 @@ ledger** — this supersedes the earlier "demotion needs no such record" exempti
 ```ts
 // STUB — illustrative, not an implementation
 interface PromotionRecord {
-  recordType:  "promotion" | "demotion" | "bootstrap" | "tightening" | "lapse"   // default "promotion"
-  actionClass: string              // the class whose level changed
+  recordType:  "promotion" | "demotion" | "bootstrap" | "tightening" | "lapse" | "reattestation"   // default "promotion"
+  actionClass: string              // the class of the grant the record accounts for
   principal:   Principal           // for whom
   fromLevel:   "in-loop" | "on-loop" | "out-of-loop" | null   // null = the Recommend rung (no-grant baseline; the record creates the grant)
-  toLevel:     "in-loop" | "on-loop" | "out-of-loop"
+  toLevel:     "in-loop" | "on-loop" | "out-of-loop"   // equal to fromLevel on a reattestation record
   evidence:    string              // ref to covered-distribution evidence (delayed-label recalibration result)
   predicate:   string | null       // the signed promotion PREDICATE authored in advance; promotion-typed only
   proposedBy:  string              // maker
   ratifiedBy:  string              // checker (promotion: must differ from maker)
-  envelopeHash: string             // the envelope hash in force when the record was written
+  envelopeHash: string             // the envelope hash in force when the record was written; on a reattestation, the NEW hash
   triggeredBy: string[]            // demotion-typed only: the DemotionTrigger values that fired
   demotionReason: "failing" | "pending-evidence" | null      // demotion-typed; "pending-evidence" on lapse
   ts:          string
@@ -482,6 +484,17 @@ one-rung-up, level ordering — is the state machine's job, `grant-lifecycle.md`
 | `bootstrap` | the sanctioned seed record — first creation of a grant outside the ceremony (`seed_grants` retires to bootstrap-only, Phase 4) | `fromLevel` null; maker ≠ checker NOT enforced (single-operator seed is sanctioned); `predicate` null; `triggeredBy` empty; `demotionReason` null |
 | `tightening` | voluntary any-level → in-loop move (always permitted, no ceremony, no trigger — `docs/GAL.md` §4) | `toLevel` = `"in-loop"`; maker ≠ checker NOT enforced; `predicate` null; `triggeredBy` empty; `demotionReason` null |
 | `lapse` | a certification term expired (GAL §6.7.6; `grant-lifecycle.md` §Lapse) | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` EMPTY (a lapse is an absence, not a fired condition); `demotionReason` = `"pending-evidence"`; `predicate` null; `fromLevel` non-null; `toLevel` = the grant's `lastSafeLevel` (never `"out-of-loop"`); `evidence` names the expired term |
+| `reattestation` | a grant re-issued at its level under a changed envelope (`re-seed`; GAL §6.6) | `fromLevel` = `toLevel` = the grant's level (non-null); `ratifiedBy` is the identity that re-attested; maker ≠ checker NOT enforced; `predicate` null; `triggeredBy` empty; `demotionReason` null; `certifiedUntil` null; `envelopeHash` is the hash the grant was re-issued under |
+
+A `reattestation` record neither earns a level nor lowers one. Every reader that derives a
+coordinate's level from its ledger, or looks for the record that raised a grant to its current
+level, passes over it (`PromotionRecord.bears_level`): the level and the earning record are the ones
+the ledger held immediately before it. The schema refuses one whose `fromLevel` and `toLevel`
+differ, at construction, so the writer and every reader that parses one hold the same rule. The
+stores hold the other half (`refuse_reattestation_drift`, all three backends): a write under this
+record type may change the grant's `envelopeHash`, `promotedBy` and `ts` and nothing else, cannot
+create a grant, and its record must carry the grant's level, new hash, re-attesting identity and
+`ts`.
 
 Per-field notes:
 
@@ -518,7 +531,8 @@ Per-field notes:
   recalibration evidence, never just "the alarm stopped").
 
 **Signing.** Every record type is signed (GAL-SPEC §6.10), by the identity that wrote it: the
-**issuer** key signs `promotion`, `bootstrap` and `tightening` (the ceremony/operator side); the
+**issuer** key signs `promotion`, `bootstrap`, `tightening` and `reattestation` (the
+ceremony/operator side); the
 **evaluator** key — GAL §6.7.2's separate system identity — signs `demotion` and `lapse`. The two
 are distinct keys with distinct env contracts, because an evaluator holding the issuer key could
 mint promotion records. Verification selects the key map by `recordType`, so a signature from the

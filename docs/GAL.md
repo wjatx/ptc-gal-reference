@@ -52,12 +52,14 @@ Every ingredient has prior art; the assembled lifecycle does not:
   the proposal references the in-force envelope hash, which is stamped onto the record
   (`envelopeHash`) and onto the Grant. Demotions append a demotion-typed record on the same
   ledger — landed in Phase 3's batched schema pass, superseding §7's earlier demotion exemption
-  (previously demotion emitted only an `AuditRecord`). The record ships five types
-  (`promotion` / `demotion` / `bootstrap` / `tightening` / `lapse`); `stale_confidence` demotions
+  (previously demotion emitted only an `AuditRecord`). The record ships six types
+  (`promotion` / `demotion` / `bootstrap` / `tightening` / `lapse` / `reattestation`);
+  `stale_confidence` demotions
   carry `demotionReason="pending-evidence"` (label-free drift voids the certification), the other
   triggers `"failing"`. A `lapse` records an expired certification term: also
   `"pending-evidence"`, but with an empty `triggeredBy`, because it records that nothing renewed
-  the term rather than that something fired.
+  the term rather than that something fired. A `reattestation` records a grant re-issued at
+  its level under a changed envelope: it moves no level, so a reader deriving one passes over it.
 - **The evidence artifact** — the typed constructed-confidence + counters input the
   promotion predicate and demotion triggers consume (§7).
 - **`actionClass` derives from the manifest ToolOp model** — a grant's action class is computed
@@ -114,6 +116,14 @@ The only upward path. Three locked properties (2026-07-11):
    under human ratification** (decided 2026-07-12 — formalizing live re-seed practice; a hard
    restart at `lastSafeLevel` was rejected because it turns every far-jump redeploy into an
    autonomy event, and the high-blast always-human rule already backstops the dangerous classes).
+   Re-attestation **appends a `reattestation`-typed PromotionRecord** in the same atomic write as
+   the grant, issuer-signed: a grant rewritten with no record is one the signed ledger cannot
+   explain. `re-seed` refuses to run with no issuer signing key, and has no unsigned override.
+   (Until GAL 0.5.0-draft this section's rule was the opposite, that a write changing no level had
+   no place on the ledger; the record's type is what answers that.) It is the only write whose
+   purpose is to restate a level. One other write can leave the level where it was: a demotion
+   whose trigger fires on a grant already at its floor, which appends a `demotion` record for the
+   breach. No write leaves the level where it was and appends nothing.
    `seed` itself emits a **bootstrap-typed PromotionRecord**, so every grant has a ledger
    counterpart from birth and the grant-integrity audit's no-orphan row holds with no exemption.
 
