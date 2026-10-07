@@ -38,9 +38,13 @@ built, so a mouth that would refuse to start (a typo, a missing token, a port
 already taken) has touched no store. Diagnostics stay on stderr on this
 transport too, so one launcher reads both mouths the same way.
 
-A stop signal is honoured from the moment the address is announced: a launcher
-that reads the listening line and stops the gateway at once stops it with that
-one signal.
+## Stopping
+
+Every mouth this process opens runs on one event loop on this thread, and one
+signal handler, in place from the moment an address is announced until the
+loop has finished, stops all of them: one `SIGTERM` or `SIGINT`, and each mouth
+returns, writes its last refusal counts, and the process leaves by returning,
+so connector children are reaped (MCP-HOST.md M20). That holds over stdio too.
 """
 
 from __future__ import annotations
@@ -58,7 +62,7 @@ from safe_agents.broker.gateway.authn import GatewayConfigError
 from safe_agents.broker.gateway.network import (
     MOUTH_CODE,
     TRANSPORT_STDIO,
-    NetworkMouthSettings,
+    SerializedSurface,
     bind_listener,
     is_loopback,
     listener_url,
@@ -66,37 +70,44 @@ from safe_agents.broker.gateway.network import (
     resolve_transport,
 )
 from safe_agents.broker.gateway.surface import GatewaySurface
-from safe_agents.broker.gateway.server import NetworkMouth, serve_stdio
+from safe_agents.broker.gateway.server import (
+    NetworkMouth,
+    StdioMouth,
+    serve_until_any_stops,
+)
 from safe_agents.broker.prototype.boot_config import load_named_manifest
 
 
-def _record_refusals(runtime, causes) -> None:
-    runtime.record_refused_connections(mouth=MOUTH_CODE, causes=causes)
+def _record_refusals(runtime, mouth: str, causes) -> None:
+    runtime.record_refused_connections(mouth=mouth, causes=causes)
 
 
 @contextlib.contextmanager
-def _stop_signals_reach(mouth: NetworkMouth) -> Iterator[None]:
-    """Route SIGINT and SIGTERM to `mouth.request_stop()` for the block.
+def _stop_signals_reach(*mouths) -> Iterator[None]:
+    """Route SIGINT and SIGTERM to every mouth's `request_stop()` for the block.
 
-    The server loop takes both signals for itself once it is serving, so this
-    handler is the one in place at two other moments, and it is right for both.
+    No server underneath takes the signals for itself (`server.py`,
+    `_server_without_signal_capture`), so this handler is the one in place from
+    before the first address is announced until every mouth has returned. That
+    is what lets one signal stop every mouth that shares the loop.
 
-    BEFORE the server has taken them. Importing the server and starting it takes
+    BEFORE a mouth has begun serving. Importing the server and starting it takes
     a moment, and the listening address has been announced by then. A stop that
     lands in that gap must not be lost: `request_stop` remembers it, and the
     mouth starts, sees it, and shuts down. A handler that only absorbed the
     signal would leave a gateway serving after its launcher had stopped it.
 
-    AFTER the server has shut down. It puts this handler back and raises the
-    signal again. Were the default handler in place, SIGTERM would end the
-    process on the spot: after the graceful stop and BEFORE the `finally` blocks
-    that write out the last refusal counts and reap connector children
-    (MCP-HOST.md M20). Here the re-raised signal asks an already-stopped mouth to
-    stop, which does nothing, and the process leaves by returning.
+    WHILE serving, and AFTER. The default handler would end the process on the
+    spot, BEFORE the `finally` blocks that write out the last refusal counts and
+    reap connector children (MCP-HOST.md M20). Here a stop asks each mouth to
+    return, which a mouth already stopped ignores, and the process leaves by
+    returning. Over stdio there was no handler at all before this, and `SIGTERM`
+    ended the gateway that way.
     """
 
     def stop(_signum, _frame) -> None:
-        mouth.request_stop()
+        for mouth in mouths:
+            mouth.request_stop()
 
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
@@ -106,16 +117,20 @@ def _stop_signals_reach(mouth: NetworkMouth) -> Iterator[None]:
             signal.signal(sig, handler)
 
 
-def _announce(settings: NetworkMouthSettings, url: str) -> None:
-    """Tell the launcher, on stderr, where the mouth listens and what that exposes."""
+def _announce(settings, url: str, *, mouth_name: str = "network MCP mouth") -> None:
+    """Tell the launcher, on stderr, where a mouth listens and what that exposes."""
     print(
-        f"[broker] network MCP mouth on {url} "
+        f"[broker] {mouth_name} on {url} "
         f"(authenticator: {settings.authenticator.name.value})",
         file=sys.stderr,
     )
-    if not is_loopback(settings.host):
+    _warn_unless_loopback(settings.host)
+
+
+def _warn_unless_loopback(host: str) -> None:
+    if not is_loopback(host):
         print(
-            f"[broker] WARNING: bound to {settings.host}, which is not loopback. "
+            f"[broker] WARNING: bound to {host}, which is not loopback. "
             "This mouth speaks plain HTTP, so the bearer token crosses that "
             "network in the clear; it is only as private as that network is.",
             file=sys.stderr,
@@ -123,19 +138,20 @@ def _announce(settings: NetworkMouthSettings, url: str) -> None:
 
 
 def main() -> None:
-    try:
-        transport = resolve_transport(os.environ)
-        settings = None if transport == TRANSPORT_STDIO else resolve_network_mouth(os.environ)
-        # Bound here, with the other launch settings and before the runtime
-        # exists: an address this machine cannot bind, or a port already taken,
-        # is a refusal to start like any other and must not have opened a store.
-        listener = None if settings is None else bind_listener(settings.host, settings.port)
-    except GatewayConfigError as exc:
-        sys.exit(f"[broker] refusing to start the MCP gateway: {exc}")
-
     with contextlib.ExitStack() as held:
-        if listener is not None:
-            held.callback(listener.close)
+        try:
+            transport = resolve_transport(os.environ)
+            settings = None if transport == TRANSPORT_STDIO else resolve_network_mouth(os.environ)
+            # Bound here, with the other launch settings and before the runtime
+            # exists: an address this machine cannot bind, or a port already taken,
+            # is a refusal to start like any other and must not have opened a store.
+            listener = None
+            if settings is not None:
+                listener = bind_listener(settings.host, settings.port)
+                held.callback(listener.close)
+        except GatewayConfigError as exc:
+            sys.exit(f"[broker] refusing to start the MCP gateway: {exc}")
+
         manifest = load_named_manifest()
 
         # Compose with stdout redirected to stderr: the banner is diagnostics, and the
@@ -151,24 +167,28 @@ def main() -> None:
                 file=sys.stderr,
             )
 
-        if settings is None or listener is None:
-            asyncio.run(serve_stdio(surface))
-            return
         # The runtime was built on this thread and is called on this thread: the
         # event loop runs here, and the handlers enter the runtime synchronously.
-        mouth = NetworkMouth(
-            surface,
-            authenticator=settings.authenticator,
-            # The mouth is handed a way to say "this many were refused, for
-            # these causes" and nothing else. It never holds the sink.
-            record_refusals=partial(_record_refusals, runtime),
-            listener=listener,
-        )
-        # The stop handler goes in BEFORE the address is announced, so there is no
-        # moment at which a launcher knows the address and cannot stop the mouth.
-        with _stop_signals_reach(mouth):
-            _announce(settings, listener_url(listener))
-            asyncio.run(mouth.serve())
+        # ONE serialized surface for every mouth, so its rules hold across them.
+        serialized = SerializedSurface(surface)
+        mouths: list = []
+        if settings is not None and listener is not None:
+            mouths.append(NetworkMouth(
+                serialized,
+                authenticator=settings.authenticator,
+                # The mouth is handed a way to say "this many were refused, for
+                # these causes" and nothing else. It never holds the sink.
+                record_refusals=partial(_record_refusals, runtime, MOUTH_CODE),
+                listener=listener,
+            ))
+        else:
+            mouths.append(StdioMouth(serialized))
+        # The stop handler goes in BEFORE any address is announced, so there is no
+        # moment at which a launcher knows an address and cannot stop the gateway.
+        with _stop_signals_reach(*mouths):
+            if settings is not None and listener is not None:
+                _announce(settings, listener_url(listener))
+            asyncio.run(serve_until_any_stops(mouths))
 
 
 if __name__ == "__main__":
