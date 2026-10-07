@@ -15,7 +15,8 @@ change; the sixth, ``reattestation``, records a write that changes none:
                    fell to its lastSafeLevel because nothing renewed it. Written
                    by the same system evaluator identity as demotion, but it is
                    NOT a demotion: triggeredBy stays empty, because a lapse is
-                   the absence of renewal, never a fired condition.
+                   the absence of renewal, never a fired condition. It MAY
+                   carry the term that expired as ``certifiedUntil``.
 - ``reattestation`` — a grant re-issued at its level under a changed envelope
                    (GAL §6.6). It neither earns a level nor lowers one, so a
                    reader deriving a level, or looking for the record that
@@ -42,14 +43,23 @@ DEMOTION_RATIFIER = "system:demotion-evaluator"
 # reader that passes over it tests the same value.
 REATTESTATION_RECORD_TYPE = "reattestation"
 
+# The record types that may carry certifiedUntil (GAL §5.2). They do not carry
+# the same thing: a promotion's is the term the checker ratified, a lapse's is
+# the term that expired. A reader looking for the ratified term reads promotion
+# records only.
+TERM_BEARING_RECORD_TYPES = frozenset({"promotion", "lapse"})
+
 
 class PromotionRecord(BaseModel):
     """One append-only ledger record of a write to a grant.
 
     Invariants enforced here (field shape only, per recordType):
-    - certifiedUntil is non-null ONLY on a promotion record: the
-                  ratified certification term is set by the ceremony and by
-                  nothing else, so no other record type may carry one.
+    - certifiedUntil is non-null ONLY on a promotion or a lapse record
+                  (TERM_BEARING_RECORD_TYPES). On a promotion it is the term
+                  the checker ratified, and it is what sets the grant's term.
+                  On a lapse it is the term that expired, which is the instant
+                  enforcement fell; it sets nothing. No other record type may
+                  carry one.
     - promotion:  proposedBy must differ from ratifiedBy (maker ≠ checker);
                   predicate required non-empty; no demotion fields;
                   fromLevel=None only with toLevel=in-loop (the grant-creating
@@ -70,7 +80,8 @@ class PromotionRecord(BaseModel):
                   demotionReason is "pending-evidence" (nothing is proven
                   broken); predicate absent; fromLevel non-None; toLevel is never
                   out-of-loop (it is the grant's lastSafeLevel, which never is)
-                  and never above fromLevel.
+                  and never above fromLevel; certifiedUntil optional (absent on
+                  every lapse record written before the field was allowed).
     - reattestation: fromLevel equals toLevel and is non-None (the grant keeps
                   its level; no grant exists at Recommend to re-attest);
                   ratifiedBy is the identity that re-attested; maker ≠ checker
@@ -126,12 +137,16 @@ class PromotionRecord(BaseModel):
     # demotion-typed only
     demotionReason: Literal["failing", "pending-evidence"] | None = None
     ts: str
-    # promotion-typed only (GAL §6.7.6): the certification term the checker
-    # RATIFIED, the same value written onto the raised Grant.certifiedUntil. An
-    # explicit UTC instant (the Grant's parser), stored verbatim. None = the
-    # promotion set no term. OMITTED from the canonical (stored and signed) bytes
-    # when None (record_signing.canonical_record_payload), so every record written
-    # before the field existed keeps its bytes and its signature.
+    # promotion- and lapse-typed only (GAL §5.2, §6.7.6). On a promotion: the
+    # certification term the checker RATIFIED, the same value written onto the
+    # raised Grant.certifiedUntil; None = the promotion set no term. On a lapse:
+    # the term that expired, copied verbatim from the grant that lapsed, so the
+    # instant enforcement fell is a field beside ts (the instant the record was
+    # written) and no reader has to parse evidence for it; None on every lapse
+    # record written before the field was allowed there. An explicit UTC instant
+    # (the Grant's parser), stored verbatim. OMITTED from the canonical (stored
+    # and signed) bytes when None (record_signing.canonical_record_payload), so
+    # every record written without it keeps its bytes and its signature.
     certifiedUntil: str | None = None
 
     @field_validator("certifiedUntil")
@@ -144,11 +159,15 @@ class PromotionRecord(BaseModel):
     @model_validator(mode="after")
     def shape_rules_per_record_type(self) -> "PromotionRecord":
         """Enforce the per-recordType field-shape rules (see class docstring)."""
-        if self.certifiedUntil is not None and self.recordType != "promotion":
+        if (
+            self.certifiedUntil is not None
+            and self.recordType not in TERM_BEARING_RECORD_TYPES
+        ):
             raise ValueError(
                 f"certifiedUntil must be absent for a {self.recordType!r} record: a "
-                "certification term is set only by a ratified promotion (GAL §6.7.6); "
-                "no other record type may carry one."
+                "certification term is set only by a ratified promotion, and only a "
+                "lapse record restates one, as the term that expired (GAL §5.2, "
+                "§6.7.6); no other record type may carry one."
             )
         if self.recordType == "promotion":
             if self.proposedBy == self.ratifiedBy:

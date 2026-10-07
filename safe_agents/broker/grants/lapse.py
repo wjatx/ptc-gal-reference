@@ -33,6 +33,12 @@ Also by design:
   * The stored term is carried forward unchanged. It stays as the record of
     which term lapsed; only a ratified re-promotion sets a new one (the store's
     ``refuse_term_extension`` refuses every other path).
+  * The record carries that term as its own ``certifiedUntil`` (§5.2), the
+    grant's stored string verbatim. The term is the instant enforcement fell;
+    the record's ``ts`` is the instant it was written, and is never set to the
+    term. The gap between the two is how long the grant sat lapsed and
+    unrecorded. The store refuses a lapse write whose record names any other
+    term (``refuse_lapse_drift``).
   * The evaluation instant ``now`` is an explicit input (see ``grants.term``);
     only ``main`` in ``grants.runner`` reads the wall clock.
 
@@ -122,7 +128,8 @@ def build_lapse(
 
     ``ts`` is the record's stamp. apply_lapse passes the ledger clock's value
     (grants/ledger_clock.py, #37); a pure caller with no ledger to read may
-    omit it, and ``now`` is used as-is.
+    omit it, and ``now`` is used as-is. Either way it is a write instant, never
+    the term: the term goes on the record as ``certifiedUntil`` (#165).
     """
     if not lapse_pending(grant, now):
         raise LapseNotDueError(
@@ -148,7 +155,9 @@ def build_lapse(
         fromLevel=grant.level,
         toLevel=grant.lastSafeLevel,
         # §5.2: a lapse record's evidence names the expired term — it cites the
-        # absence of renewal, not an artifact.
+        # absence of renewal, not an artifact. The string is for a person
+        # reading the ledger and is opaque to every reader in code, which takes
+        # the term from certifiedUntil below.
         evidence=f"certification term expired: certifiedUntil={grant.certifiedUntil}",
         predicate=None,
         proposedBy=LAPSE_RATIFIER,
@@ -157,6 +166,9 @@ def build_lapse(
         triggeredBy=[],
         demotionReason="pending-evidence",
         ts=ts,
+        # The term that expired, as the grant stores it (#165). lapse_pending
+        # held, so it is never None here.
+        certifiedUntil=grant.certifiedUntil,
     )
     return updated, record
 
@@ -178,7 +190,9 @@ def apply_lapse(
     the record when supplied; the signature rides the same atomic write.
 
     Raises LapseNotDueError, QuarantinedGrantError, LapseConflictError, or
-    RecordAlreadyExistsError. Every raise writes nothing.
+    RecordAlreadyExistsError. Every raise writes nothing. (LapseRefusedError,
+    the store's backstop, is unreachable from here: build_lapse copies the
+    term onto the record and moves neither the term nor lastSafeLevel.)
     """
     ts = next_ledger_ts(
         record_store, grant.principal, grant.actionClass, now=now, session=session
