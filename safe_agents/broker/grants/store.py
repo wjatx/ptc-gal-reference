@@ -38,6 +38,7 @@ from typing import Protocol, runtime_checkable
 from safe_agents.broker.grants.term import extends_term
 from safe_agents.broker.schemas import Grant, PromotionRecord
 from safe_agents.broker.schemas.common import Principal
+from safe_agents.broker.schemas.promotion_record import REATTESTATION_RECORD_TYPE
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +92,18 @@ class TermExtensionRefusedError(Exception):
     demotion and lapse all carry the stored term forward unchanged or shorter.
     A term the holder could stretch would be self-certifying, and therefore
     vacuous. Raised before anything is written.
+    """
+
+
+class ReattestationRefusedError(Exception):
+    """A reattestation-typed write would change more than a re-attestation may.
+
+    GAL §6.6 / GAL-15: a re-attestation changes the grant's envelopeHash,
+    promotedBy and ts and nothing else, and its record carries the grant's
+    level, the new hash, the re-attesting identity and the same ts. A write
+    that moved anything else under this record type would be a level, term or
+    evidence change the ledger files as "no level changed". Raised before
+    anything is written.
     """
 
 
@@ -219,6 +232,83 @@ def refuse_term_extension(
             "ceremony. A term is set only by a ratified promotion and is never "
             "extended in place (GAL §6.7.6); re-promote with fresh evidence to "
             "carry a new term. Nothing was written."
+        )
+
+
+# The only Grant fields a re-attestation may change (GAL §6.6, GAL-15).
+REATTESTATION_GRANT_FIELDS: frozenset[str] = frozenset({"envelopeHash", "promotedBy", "ts"})
+
+
+def refuse_reattestation_drift(
+    prev_raw_data: str | None,
+    record: PromotionRecord,
+    grant: Grant,
+) -> None:
+    """Refuse a reattestation-typed write that is not a re-attestation.
+
+    Called by every backend's write_record_and_grant, for the same reason
+    refuse_term_extension is: the rule then holds for every caller, and not
+    only for the command that remembered it. A no-op for every other record
+    type.
+
+    Readers pass over a ``reattestation`` record when deriving a level, so the
+    type is only safe to pass over if the write beside it really moved no
+    level. Three things are held here:
+    - the write updates an existing grant (a re-attestation cannot create one);
+    - against the stored bytes it replaces, the grant differs in nothing but
+      REATTESTATION_GRANT_FIELDS: not level, lastSafeLevel, demotionReason,
+      the term, or anything else;
+    - the record describes that write: the grant's level, its new
+      envelopeHash, its promotedBy as ratifiedBy, and the same ts.
+
+    ``prev_raw_data`` is the guarded re-read's stored bytes, judged for the
+    reason refuse_term_extension gives: the write is conditioned on the stored
+    item still being exactly those bytes.
+    """
+    if record.recordType != REATTESTATION_RECORD_TYPE:
+        return
+    coordinate = f"{grant.principal.agentId}/{grant.actionClass}"
+    if prev_raw_data is None:
+        raise ReattestationRefusedError(
+            f"grant {coordinate}: a reattestation record cannot create a grant; "
+            "re-attestation re-issues an existing grant at its level (GAL §6.6). "
+            "Nothing was written."
+        )
+    try:
+        previous = Grant.model_validate_json(prev_raw_data)
+    except ValueError:
+        # Not a grant's bytes, so not what is stored: leave the refusal to the
+        # write's own condition, as refuse_term_extension does.
+        return
+    drifted = sorted(
+        name
+        for name in Grant.model_fields
+        if name not in REATTESTATION_GRANT_FIELDS
+        and getattr(previous, name) != getattr(grant, name)
+    )
+    if drifted:
+        raise ReattestationRefusedError(
+            f"grant {coordinate}: a re-attestation may change only "
+            f"{sorted(REATTESTATION_GRANT_FIELDS)}, and this write would also change "
+            f"{drifted}. A level, term or evidence change is not a re-attestation "
+            "(GAL §6.6). Nothing was written."
+        )
+    mismatched = [
+        name
+        for name, on_record, on_grant in (
+            ("toLevel/level", record.toLevel, grant.level),
+            ("envelopeHash", record.envelopeHash, grant.envelopeHash),
+            ("ratifiedBy/promotedBy", record.ratifiedBy, grant.promotedBy),
+            ("ts", record.ts, grant.ts),
+        )
+        if on_record != on_grant
+    ]
+    if mismatched:
+        raise ReattestationRefusedError(
+            f"grant {coordinate}: the reattestation record does not describe the "
+            f"grant written beside it (differs in {mismatched}). The record carries "
+            "the grant's level, its new envelopeHash, the re-attesting identity and "
+            "the same ts (GAL §6.6). Nothing was written."
         )
 
 
@@ -510,7 +600,9 @@ class InMemoryGrantStore:
             )
         # Grant leg — validate without mutating.
         key = self._record_key(grant.principal, grant.actionClass)
-        if expected is None or expected.grant is None:
+        creating = expected is None or expected.grant is None
+        refuse_reattestation_drift(None if creating else expected.raw_data, record, grant)
+        if creating:
             if key in self._store:
                 raise GrantAlreadyExistsError(
                     f"grant {grant.principal.agentId}/{grant.actionClass} already "
@@ -738,6 +830,7 @@ class DynamoDBGrantStore:
         validate_record_ts(record.ts)
 
         creating = expected is None or expected.grant is None
+        refuse_reattestation_drift(None if creating else expected.raw_data, record, grant)
         if not creating:
             refuse_term_extension(expected.raw_data, grant, record_type=record.recordType)
         grant_condition, grant_names, grant_values = self._prepare_grant_write(
