@@ -360,11 +360,13 @@ that authority to be re-justified.
 - **Only the ceremony sets it.** `propose --certified-until` carries it on the proposal (inside the
   proposal's integrity basis); `ratify` shows it to the checker, rejects a term that is not after
   the ratification instant, and writes the same value onto the raised grant and onto the signed
-  promotion record (`PromotionRecord.certifiedUntil`, promotion-typed only). Every other write
+  promotion record (`PromotionRecord.certifiedUntil`). Every other write
   path (re-seed, tightening, demotion,
   lapse) carries the stored term forward unchanged: the stores' `refuse_term_extension` refuses any
   non-promotion write that would lengthen or drop a term, on all three backends, before anything is
-  written. Nothing auto-renews. Re-promotion sets a new term, or none.
+  written. Nothing auto-renews. Re-promotion sets a new term, or none. A lapse record restates the
+  term that expired (below) and sets nothing: the rule is keyed on the record's type, so a lapse
+  record carrying the field is no more able to move a term than one without it.
 - **Read side: enforcement does not wait for a writer.** The broker PIP hands the PDP
   `grants.term.effective_level(grant, now)`: once `now >= certifiedUntil` the grant acts at the
   lower of its stored level and `lastSafeLevel`. This is pure (no write, and the broker gains no
@@ -381,6 +383,15 @@ that authority to be re-justified.
   the term, and naming a trigger would record a condition that never fired. It is idempotent (a
   grant already at or below `lastSafeLevel` has nothing to lapse), and it never revokes: revoking on
   a timer is a self-inflicted forced abstention.
+- **The record carries the expired term as a field.** The lapse record's `certifiedUntil` is the
+  grant's stored term, copied verbatim, inside the bytes the evaluator signs. So the ledger holds
+  two instants for a lapse: `certifiedUntil`, when enforcement fell, and `ts`, when the record was
+  written, read from the ledger clock and never set to the term. No reader takes the term from the
+  record's `evidence` string, which names it for a person and is opaque to code. The field is
+  optional: lapse records written before it was allowed carry none and are read as they are. The
+  stores hold the write to it (`refuse_lapse_drift`, all three backends): under a `lapse` record
+  the grant's `certifiedUntil` and `lastSafeLevel` do not move, and a term on the record is the
+  grant's own.
 - **A pending lapse blocks promotion.** While a grant's term has passed but its lapse is unwritten,
   `propose` and `ratify` refuse to anchor on its stored level. Run the runner, then re-propose from
   the lapsed level.

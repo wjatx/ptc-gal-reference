@@ -193,7 +193,9 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # the ledger clock already provides, and the audit rule tying a grant's ts to
     # its latest record, which nothing checks yet; the marker names that half.
     # #165 (`certifiedUntil` on a lapse record) is a field-row marker in §5.2
-    # and §6.7.6 and has no conformance row of its own.
+    # and §6.7.6 and has no conformance row of its own. The lapse writer now
+    # carries the field; the specification keeps both markers until a revision
+    # takes them off, and nothing in this set changes when it does.
     "GAL-40": (MARKER_FORM_INLINE, "#166"),
     # PTC 0.5.0-draft. Three existing clauses gain markers the 2026-10-03
     # re-audit found they needed: PTC-11 shares the unstamped publish path with
