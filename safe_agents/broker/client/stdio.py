@@ -69,6 +69,11 @@ BROKER_ENV_VARS = (
     "BROKER_GATEWAY_TOKEN_FILE",
     "BROKER_GATEWAY_HOST",
     "BROKER_GATEWAY_PORT",
+    # The tool-event mouth's (`gateway/events.py`). An inherited port would have
+    # this client's child open a listener nobody asked it for.
+    "BROKER_EVENT_MOUTH_PORT",
+    "BROKER_EVENT_MOUTH_HOST",
+    "BROKER_EVENT_MOUTH_ADDR_FILE",
 )
 
 _EOF = object()

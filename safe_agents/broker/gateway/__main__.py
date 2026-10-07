@@ -38,6 +38,19 @@ built, so a mouth that would refuse to start (a typo, a missing token, a port
 already taken) has touched no store. Diagnostics stay on stderr on this
 transport too, so one launcher reads both mouths the same way.
 
+## The tool-event mouth
+
+On either transport, the gateway can also open the tool-event mouth: a second
+listener where a harness's hooks report the calls its own tools made
+(`broker/GATEWAY.md` G21 on). It opens when its port is named, and takes the
+same authenticator and launch token as the network MCP mouth:
+
+    BROKER_EVENT_MOUTH_PORT       the port. Named = open. 0 = any free port.
+    BROKER_EVENT_MOUTH_HOST       the bind address. Default 127.0.0.1.
+    BROKER_EVENT_MOUTH_ADDR_FILE  optional: where to write `host:port` once bound.
+
+It is checked and bound before the runtime is built, like the rest.
+
 ## Stopping
 
 Every mouth this process opens runs on one event loop on this thread, and one
@@ -59,18 +72,28 @@ from typing import Iterator
 
 from safe_agents.broker.api import build_runtime
 from safe_agents.broker.gateway.authn import GatewayConfigError
+from safe_agents.broker.gateway.events import (
+    EVENT_HOST_ENV,
+    EVENT_MOUTH_CODE,
+    EVENT_PORT_ENV,
+    EVENTS_PATH,
+    resolve_event_mouth,
+    write_address_file,
+)
 from safe_agents.broker.gateway.network import (
     MOUTH_CODE,
     TRANSPORT_STDIO,
     SerializedSurface,
     bind_listener,
     is_loopback,
+    listener_address,
     listener_url,
     resolve_network_mouth,
     resolve_transport,
 )
 from safe_agents.broker.gateway.surface import GatewaySurface
 from safe_agents.broker.gateway.server import (
+    EventMouth,
     NetworkMouth,
     StdioMouth,
     serve_until_any_stops,
@@ -89,7 +112,7 @@ def _stop_signals_reach(*mouths) -> Iterator[None]:
     No server underneath takes the signals for itself (`server.py`,
     `_server_without_signal_capture`), so this handler is the one in place from
     before the first address is announced until every mouth has returned. That
-    is what lets one signal stop every mouth that shares the loop.
+    is what lets one signal stop two mouths that share a loop.
 
     BEFORE a mouth has begun serving. Importing the server and starting it takes
     a moment, and the listening address has been announced by then. A stop that
@@ -101,8 +124,8 @@ def _stop_signals_reach(*mouths) -> Iterator[None]:
     spot, BEFORE the `finally` blocks that write out the last refusal counts and
     reap connector children (MCP-HOST.md M20). Here a stop asks each mouth to
     return, which a mouth already stopped ignores, and the process leaves by
-    returning. Over stdio there was no handler at all before this, and `SIGTERM`
-    ended the gateway that way.
+    returning. Over stdio there was no handler at all before the tool-event mouth
+    existed, and `SIGTERM` ended the gateway that way.
     """
 
     def stop(_signum, _frame) -> None:
@@ -142,6 +165,7 @@ def main() -> None:
         try:
             transport = resolve_transport(os.environ)
             settings = None if transport == TRANSPORT_STDIO else resolve_network_mouth(os.environ)
+            events = resolve_event_mouth(os.environ)
             # Bound here, with the other launch settings and before the runtime
             # exists: an address this machine cannot bind, or a port already taken,
             # is a refusal to start like any other and must not have opened a store.
@@ -149,6 +173,12 @@ def main() -> None:
             if settings is not None:
                 listener = bind_listener(settings.host, settings.port)
                 held.callback(listener.close)
+            event_listener = None
+            if events is not None:
+                event_listener = bind_listener(
+                    events.host, events.port, host_env=EVENT_HOST_ENV, port_env=EVENT_PORT_ENV
+                )
+                held.callback(event_listener.close)
         except GatewayConfigError as exc:
             sys.exit(f"[broker] refusing to start the MCP gateway: {exc}")
 
@@ -183,11 +213,26 @@ def main() -> None:
             ))
         else:
             mouths.append(StdioMouth(serialized))
+        if events is not None and event_listener is not None:
+            mouths.append(EventMouth(
+                serialized,
+                authenticator=events.authenticator,
+                record_refusals=partial(_record_refusals, runtime, EVENT_MOUTH_CODE),
+                listener=event_listener,
+            ))
         # The stop handler goes in BEFORE any address is announced, so there is no
         # moment at which a launcher knows an address and cannot stop the gateway.
         with _stop_signals_reach(*mouths):
             if settings is not None and listener is not None:
                 _announce(settings, listener_url(listener))
+            if events is not None and event_listener is not None:
+                _announce(events, listener_url(event_listener, EVENTS_PATH),
+                          mouth_name="tool-event mouth")
+                if events.addr_file is not None:
+                    try:
+                        write_address_file(events.addr_file, *listener_address(event_listener))
+                    except GatewayConfigError as exc:
+                        sys.exit(f"[broker] stopping the MCP gateway before it served: {exc}")
             asyncio.run(serve_until_any_stops(mouths))
 
 

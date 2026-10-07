@@ -18,10 +18,12 @@ Split the way the client side is already split:
     MCP mouth (the closed authenticator catalog) and how refusals are recorded.
   - `network.py` — pure, SDK-free: the guard in front of every network request,
     the serialization of calls into the runtime, and the launch settings.
-  - `server.py`  — the thin `mcp` SDK binding, imported lazily.
+  - `events.py`  — pure, SDK-free: the tool-event mouth, where a harness's hooks
+    report the calls its own tools made. It observes and never decides.
+  - `server.py`  — the thin `mcp` SDK and HTTP server binding, imported lazily.
 
 `safe_agents.broker.gateway` therefore imports with the optional `mcp` extra
-absent; only `build_server` / `serve_stdio` / `NetworkMouth.serve` require it.
+absent; only `build_server` / `serve_stdio` and the mouths' `serve()` require it.
 """
 
 from safe_agents.broker.gateway.surface import (

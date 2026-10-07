@@ -206,6 +206,32 @@ class GatewaySurface:
             )
         return index
 
+    def observe(
+        self,
+        *,
+        mouth: str,
+        harness: str,
+        tool_class: str,
+        locality: str,
+        subject_digest: str,
+        result_digest: str | None = None,
+    ) -> str | None:
+        """Carry one tool-event report to the runtime (`broker/GATEWAY.md` G21 on).
+
+        Not a call: the harness ran its own tool and is reporting it afterwards,
+        so there is nothing to decide and nothing here decides anything. The
+        runtime re-checks every field, records the report, and taints the session
+        turn when the tool read. Returns the source id ingested, or None.
+        """
+        return self._runtime.record_observed_event(
+            mouth=mouth,
+            harness=harness,
+            tool_class=tool_class,
+            locality=locality,
+            subject_digest=subject_digest,
+            result_digest=result_digest,
+        )
+
     def tools(self) -> list[GatewayTool]:
         """What this principal is granted, in wire-name order."""
         return [self._index()[name] for name in sorted(self._index())]

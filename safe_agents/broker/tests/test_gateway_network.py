@@ -62,6 +62,7 @@ _BROKER_ENV = (
     "BROKER_SECRETS_FILE", "BROKER_AUDIT_PATH", "BROKER_AUDIT_BUCKET",
     "BROKER_ENVELOPE_LOAD", "BROKER_GRANT_LOAD", "BROKER_SQLITE_PATH",
     TRANSPORT_ENV, AUTH_ENV, TOKEN_FILE_ENV, HOST_ENV, PORT_ENV,
+    "BROKER_EVENT_MOUTH_PORT", "BROKER_EVENT_MOUTH_HOST", "BROKER_EVENT_MOUTH_ADDR_FILE",
 )
 
 
@@ -774,6 +775,8 @@ for name in ("mcp", "uvicorn", "starlette", "anyio"):
 import safe_agents.broker.gateway
 import safe_agents.broker.gateway.authn
 import safe_agents.broker.gateway.network
+import safe_agents.broker.gateway.events
+import safe_agents.broker.runtime.observed
 import safe_agents.broker.gateway.server
 import safe_agents.broker.gateway.__main__
 print("imported")
