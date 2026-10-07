@@ -85,6 +85,10 @@ def detect_orphaned_grants(
     demotion record. The matching key is unchanged; ledger-level checks (e.g.
     every demotion has a record) are Phase 5 work, not done here.
 
+    A reattestation record covers nothing (GAL §4.3): it re-issues a grant at
+    a level some earlier record accounts for, so a grant whose only record is
+    one is still an orphan.
+
     Args:
         grants: the grants to audit.
         records: all known PromotionRecords (e.g. from InMemoryPromotionRecordStore.records).
@@ -93,7 +97,7 @@ def detect_orphaned_grants(
         List of OrphanedGrant for each grant with no matching record.
     """
     covered: set[tuple[str, str]] = {
-        (_principal_key(r.principal), r.actionClass) for r in records
+        (_principal_key(r.principal), r.actionClass) for r in records if r.bears_level
     }
     return [
         OrphanedGrant(grant=g)

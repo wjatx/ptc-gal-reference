@@ -12,6 +12,7 @@ PromotionEligibilityCounters — input type for hysteresis checks
 validate_promotion_transition(from_level, to_level)     — pure; raises on illegal
 validate_demotion_transition(from_level, to_level)      — pure; raises on illegal
 is_eligible_for_promotion(grant, counters, *, min_clean_runs, min_dwell, now=None) -> bool
+dwell_start_ts(records)      — pure; the ledger instant dwell is measured from
 RungStateMachine             — ties ceremony + demotion into one coordinator
 
 Legal transitions
@@ -51,7 +52,7 @@ from __future__ import annotations
 
 import datetime
 from dataclasses import dataclass
-from typing import Literal
+from typing import Iterable, Literal
 
 from safe_agents.broker.grants.ceremony import (
     CeremonyResult,
@@ -201,9 +202,11 @@ class PromotionEligibilityCounters:
         clean_runs_since_promotion: consecutive clean runs recorded since the
             grant reached its current level. A run is "clean" when it produced
             no false action and no human override.
-        last_transition_ts: ISO-8601 timestamp of the last level transition
-            (callers have this from grant.ts — every transition path updates
-            it). A naive timestamp is interpreted as UTC.
+        last_transition_ts: ISO-8601 timestamp of the last level transition.
+            Callers take it from the ledger with ``dwell_start_ts``, never
+            from grant.ts: a re-attestation rewrites grant.ts without moving
+            the level, and dwell read from it would restart on every envelope
+            change (GAL §6.8). A naive timestamp is interpreted as UTC.
     """
 
     clean_runs_since_promotion: int
@@ -216,6 +219,25 @@ def _parse_ts(ts: str) -> datetime.datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=datetime.timezone.utc)
     return parsed
+
+
+def dwell_start_ts(records: Iterable[PromotionRecord]) -> str | None:
+    """The instant dwell is measured from: the latest level-bearing record's ts.
+
+    GAL §6.8: dwell is measured from the ledger's records and not from the
+    grant's ts, and a reattestation record does not restart it, because an
+    envelope change is not time spent at a new level. So the type is passed
+    over, and the instant is the one the ledger held immediately before it.
+
+    The latest record is found by parsing every ts, the way the ledger clock
+    does, and not by trusting the order the records arrive in. Returns None
+    for a coordinate with no level-bearing record: there is nothing to have
+    dwelt at.
+    """
+    stamps = [record.ts for record in records if record.bears_level]
+    if not stamps:
+        return None
+    return max(stamps, key=_parse_ts)
 
 
 def is_eligible_for_promotion(

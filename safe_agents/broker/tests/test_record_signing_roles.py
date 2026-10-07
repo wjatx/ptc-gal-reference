@@ -963,6 +963,7 @@ def test_an_entry_with_no_stored_bytes_is_a_finding_no_acknowledgment_excuses(si
         ("tightening", False),
         ("demotion", False),
         ("lapse", False),
+        ("reattestation", False),
     ],
 )
 def test_with_no_epoch_the_narrower_scope_holds_and_says_so(record_type, expect_finding, roles):
@@ -980,16 +981,24 @@ def test_with_no_epoch_the_narrower_scope_holds_and_says_so(record_type, expect_
     assert annotation.startswith(ANNOTATION_SIGNING_EPOCH_UNSET)
 
 
-def test_with_no_epoch_a_lapse_that_carries_a_signature_must_still_verify(roles):
+@pytest.mark.parametrize("record_type", ["lapse", "reattestation"])
+def test_with_no_epoch_a_signature_that_is_carried_must_still_verify(record_type, roles):
     """Checked-if-present: the narrower scope never meant a wrong-role
-    signature on a lapse passes."""
-    issuer_signer, _evaluator, resolvers = roles
+    signature passes. For a reattestation that is the evaluator's key on a
+    record that re-licenses a grant."""
+    issuer_signer, evaluator_signer, resolvers = roles
+    wrong = issuer_signer if record_type == "lapse" else evaluator_signer
     report = _audit(
-        _dataset([_record("lapse")], signed_by=lambda _r: issuer_signer), resolvers, epoch=None
+        _dataset([_record(record_type)], signed_by=lambda _r: wrong), resolvers, epoch=None
     )
 
-    (finding,) = _signature_findings(report)
-    assert RECORD_SIGNER_WRONG_ROLE in finding.detail
+    findings = _signature_findings(report)
+    assert len(findings) == 1, (
+        f"with no signing epoch, a {record_type} record that carries a signature must "
+        f"still be verified under its type's role; got {len(findings)} finding(s) for "
+        "one signed by the other role's key"
+    )
+    assert RECORD_SIGNER_WRONG_ROLE in findings[0].detail
 
 
 FUTURE_EPOCH = "2027-01-01T00:00:00+00:00"

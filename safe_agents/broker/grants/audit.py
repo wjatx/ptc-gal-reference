@@ -35,8 +35,9 @@ Rules (each documented at its check site in run_audit):
                             promotion record that last set it
   RECORD_SIGNATURE_VERIFIES every record in scope carries a DSSE envelope that
                             verifies under ITS RECORD TYPE'S signing role
-                            (issuer: promotion/bootstrap/tightening;
-                            evaluator: demotion/lapse). Scope is set by
+                            (issuer: promotion/bootstrap/tightening/
+                            reattestation; evaluator: demotion/lapse). Scope
+                            is set by
                             RECORD_SIGNING_EPOCH — see below
   EVALUATOR_RECORD_CONTINUOUS a demotion or lapse record starts from the level
                             the ledger held immediately before it: the
@@ -56,6 +57,12 @@ Rules (each documented at its check site in run_audit):
                             envelope for its principal
   UNPARSEABLE_ITEM          a lifecycle item that cannot be parsed is itself
                             a finding, never a crash
+
+A ``reattestation`` record changes no level (GAL §4.3), so every rule that
+derives a coordinate's level from its ledger, or looks for the record that
+earned it, passes over the type: the level and the earning record are the ones
+the ledger held immediately before it (``_level_bearing``). Its signature is
+checked like any other issuer-signed record's.
 
 Acknowledgments: a TRUE finding can be dispositioned by a signed ACK#
 ceremony record (grants/acknowledgments.py) — the matched finding moves to
@@ -80,7 +87,7 @@ unsigned demotion/tightening/bootstrap rows that cannot be re-minted.
     planted row. Honest unsigned history is excused one record at a time by
     the acknowledgment ceremony above, which is signed.
   * ``signing_epoch`` unset — scope stays what it was (promotion required,
-    lapse-if-present), and the report carries a NAMED annotation saying the
+    lapse- and reattestation-if-present), and the report carries a NAMED annotation saying the
     all-types requirement is not being enforced. Never a silent skip.
 
 A RECORD_SIGNATURE_VERIFIES finding names the sha256 of the record's STORED
@@ -128,6 +135,7 @@ from safe_agents.broker.grants.record_signing import (
 from safe_agents.broker.grants.store import _hmac_payload, _principal_key
 from safe_agents.broker.schemas import Envelope, Grant, PromotionRecord
 from safe_agents.broker.schemas.envelope import compute_envelope_hash
+from safe_agents.broker.schemas.promotion_record import REATTESTATION_RECORD_TYPE
 from safe_agents.channels.signing import KeyResolver
 
 # ---------------------------------------------------------------------------
@@ -158,7 +166,14 @@ HMAC_RULES: tuple[str, ...] = (GRANT_TAMPER, PROPOSAL_TAMPER, QUARANTINED_NO_RAI
 # the auditor and proposals.py can never disagree about what a valid status is.
 _VALID_PROPOSAL_STATUSES: frozenset[str] = frozenset(get_args(ProposalStatus))
 
+# The record types that can account for a grant existing at a level. Listed,
+# not derived by exclusion: a reattestation record (and any type added later)
+# earns nothing unless it is named here.
 _EARNING_RECORD_TYPES = ("bootstrap", "promotion")
+
+# With no signing epoch declared, the types whose signature is verified when
+# one is present and not demanded when it is absent.
+_SIGNED_IF_PRESENT_TYPES = ("lapse", REATTESTATION_RECORD_TYPE)
 
 # Annotation names — stable identifiers for the green-with-annotations half of
 # the report. An annotation is never a pass and never a violation: it names a
@@ -575,6 +590,17 @@ def _records_by_coordinate(
     return grouped
 
 
+def _level_bearing(entries: list[AuditedRecord]) -> list[AuditedRecord]:
+    """The coordinate's records a level may be read from, order kept.
+
+    Drops ``reattestation`` records (GAL §4.3). An honest one restates the
+    level the ledger already held, so dropping it changes nothing. A planted
+    one could restate any level it liked, and a reader that took the ledger's
+    level from the last record would then take it from that.
+    """
+    return [entry for entry in entries if entry.record.bears_level]
+
+
 def _as_role_resolvers(
     record_key_resolver: KeyResolver | RoleKeyResolvers | None,
 ) -> RoleKeyResolvers | None:
@@ -663,7 +689,10 @@ def run_audit(
         # grant BELOW its ledger is the separate, waivable LEVEL_DROP_RECORDED
         # below: it fails toward less authority, but it is still a drop the
         # ledger cannot explain.
-        derived = coordinate_records[-1].record.toLevel if coordinate_records else None
+        # A reattestation record is passed over: the derived level is the one
+        # the ledger held immediately before it.
+        level_records = _level_bearing(coordinate_records)
+        derived = level_records[-1].record.toLevel if level_records else None
         if derived is not None and _rank(grant.level) > _rank(derived):
             violations.append(
                 AuditViolation(
@@ -703,8 +732,8 @@ def run_audit(
         # GRANT_TERM_RATIFIED (GAL §6.7.6) — the term enforced is the
         # term the checker ratified. Only a promotion sets a term: the ceremony
         # writes the same value onto the grant and onto the signed promotion
-        # record, and every later write (demotion, tightening, lapse, re-seed,
-        # re-ratify) carries it forward unchanged — the stores refuse any
+        # record, and every later write (demotion, tightening, lapse,
+        # re-attestation) carries it forward unchanged — the stores refuse any
         # non-promotion lengthening (store.refuse_term_extension). So the
         # grant's term must equal the one on the chronologically-latest
         # promotion record, however the level moved since: a later lapse or
@@ -810,9 +839,11 @@ def run_audit(
     # evaluator record is honest only as a step down from where the ledger
     # actually was. Judged over every coordinate with records, grant or no
     # grant. Un-waivable: a finding is a raise the issuer never signed.
+    # "The level the ledger held" passes over reattestation records, which
+    # hold none: a demotion that follows one starts from the level before it.
     for coordinate, coordinate_records in ledger.items():
         level_before = None
-        for entry in coordinate_records:
+        for entry in _level_bearing(coordinate_records):
             record = entry.record
             if (
                 signing_role_for_record_type(record.recordType) == EVALUATOR_ROLE
@@ -835,8 +866,8 @@ def run_audit(
 
     # RECORD_SIGNATURE_VERIFIES — a record in scope must carry a DSSE envelope
     # that verifies under ITS RECORD TYPE'S signing role (fails closed):
-    # issuer for promotion/bootstrap/tightening, evaluator for demotion/lapse
-    # (record_signing.RECORD_TYPE_SIGNING_ROLE). Binding the type to the role
+    # issuer for promotion/bootstrap/tightening/reattestation, evaluator for
+    # demotion/lapse (record_signing.RECORD_TYPE_SIGNING_ROLE). Binding the type to the role
     # is what makes the second identity mean anything — an evaluator-signed
     # promotion is an attempt to mint authority from the no-model side, and an
     # auditor that accepted any known key would wave it through.
@@ -847,7 +878,8 @@ def run_audit(
     #                ts. A record's own timestamp excuses nothing, because on
     #                an unsigned record that field is the writer's own claim.
     #                Honest unsigned history is excused by acknowledgment.
-    #   epoch unset: the narrower scope (promotion required, lapse-if-signed)
+    #   epoch unset: the narrower scope (promotion required, lapse- and
+    #                reattestation-if-signed)
     #                plus a LOUD annotation that the rest is unenforced.
     # Read-side limit: predicate fields inside the record (covered, provenance
     # maturity) are proposer ASSERTIONS at N=1 owner — #21 tracks deriving
@@ -870,9 +902,9 @@ def run_audit(
             annotations.append(
                 f"{ANNOTATION_SIGNING_EPOCH_UNSET}: no RECORD_SIGNING_EPOCH is "
                 "configured, so the all-types signing requirement (bootstrap, "
-                "demotion, tightening) is NOT enforced; only promotion records "
-                "are required to be signed, and lapse records only if they "
-                "carry a signature. Set RECORD_SIGNING_EPOCH to the ISO-8601 UTC "
+                "demotion, tightening, reattestation) is NOT enforced; only promotion "
+                "records are required to be signed, and lapse and reattestation "
+                "records only if they carry a signature. Set RECORD_SIGNING_EPOCH to the ISO-8601 UTC "
                 "instant record signing was adopted at to enforce GAL-SPEC §6.10 "
                 "on every record"
             )
@@ -903,12 +935,15 @@ def run_audit(
         for entry in dataset.records:
             record_type = entry.record.recordType
             if not all_types_required:
-                # No-epoch scope, unchanged: a promotion must be signed; a
-                # lapse that carries a signature must verify; the other types
-                # only ever lower authority and are out of scope.
-                if record_type == "lapse" and entry.signature is None:
+                # No-epoch scope: a promotion must be signed; a lapse or a
+                # reattestation that carries a signature must verify; the
+                # other types are out of scope. An unsigned reattestation is
+                # left to the epoch because no rule reads a level from one, so
+                # it can raise nothing; a signed one is held to its role
+                # because the evaluator's key must never re-license a grant.
+                if record_type in _SIGNED_IF_PRESENT_TYPES and entry.signature is None:
                     continue
-                if record_type not in ("promotion", "lapse"):
+                if record_type != "promotion" and record_type not in _SIGNED_IF_PRESENT_TYPES:
                     continue
             coordinate = _record_coordinate(entry.record)
             role = signing_role_for_record_type(record_type)
