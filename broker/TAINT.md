@@ -29,6 +29,12 @@ going around it in time. The standard closes the laundering path by making taint
 - **Non-strippable.** Once a `TurnContext` is tainted it cannot be un-tainted within its lifetime
   (`TurnContext._mark_tainted`; the flag has no setter, and the PEP derives every `BrokeredCall.taint`
   from `context.to_taint()`, ignoring any value the model supplies).
+- **Two source families reach the turn from outside the agent.** `connector:{tool}.{op}` is a
+  read the broker made itself, through a connector (§2). `harness:{harness}/{tool_class}/{locality}`
+  is a read a harness made with a tool of its own (a file read, a web fetch, a web search) and
+  reported to the gateway's tool-event mouth after it ran (`broker/GATEWAY.md` G21 to G29). Neither
+  is an `internal:` prefix, so the base trust map treats both as untrusted, and only the consumer's
+  `trusted_read_sources` can trust either.
 - **Path-recorded.** The tainting sources ride on the live call (`BrokeredCall.taint.sources` /
   `session.ingestedSources`); every decision lands on the hash-chained, append-only `AuditRecord`,
   whose `argsDigest` keeps the tape PII-safe. Both fields are defined in `broker/SCHEMAS.md` (§2, §5)
@@ -50,7 +56,8 @@ SYSTEM  >  USER(owner)  >  AGENT(peer)  >  TOOL_OUTPUT  >  UNTRUSTED_WEB
 These are the same tiers the rest of the platform already speaks: the channels sender classes map
 onto them (`owner` → `USER`, `peer-agent` → `AGENT`, `external` → `UNTRUSTED_WEB`;
 `channels/TRUST-MAPPING.md`), and a `connector:{tool}.{op}` read enters at `TOOL_OUTPUT` (untrusted
-unless the consumer endorses it — below).
+unless the consumer endorses it — below). A `harness:` read enters at the same level: it is tool
+output, which the harness's own tool fetched instead of a connector.
 
 **The rule — no write-up.** Data at integrity level *L* must not flow into an action that requires a
 level *> L* without an explicit, **audited endorsement** (a logged declassification). This *is* the
@@ -93,6 +100,16 @@ the PEP skips the self-ingest (`if source_id not in self._trusted_read_sources`)
 consumer-declared in the envelope — never model- or agent-declared**, and one list drives both halves
 (no second source of truth).
 
+**A harness's own read, reported.** A coding harness's built-in tools never become broker calls,
+so the self-ingest above never sees them. When a harness's hook reports a completed `file-read`,
+`web-fetch` or `web-search` to the gateway's tool-event mouth, the runtime ingests
+`harness:{harness}/{tool_class}/{locality}` into the same broker-held turn
+(`runtime/pep.py::record_observed_event`), BEFORE it writes the report's record, so a failed write
+leaves the turn tainted rather than clean. The same `trusted_read_sources` skip applies, by the
+same exact-match lookup. The report is a claim made by a process running as the agent's user; it
+can only add taint, so a forged one costs approvals and nothing else, and a report never sent
+leaves the turn as it was (`broker/GATEWAY.md` G22, and its Known limits).
+
 ## 3. How taint propagates — the agent cannot launder it
 
 Taint accumulates within **one broker-held `TurnContext` per principal**, threaded across every
@@ -103,6 +120,12 @@ supplies **neither the turn id nor the rollover signal** — `new_turn()` is wir
 (the prototype serves only `/registry` and `/call`; `broker_server.py::do_POST` passes no
 `turn_context`), so an agent cannot declare a fresh turn to shed taint before a write. Full rationale:
 `docs/turn-identity.md`.
+
+`connector:` and `harness:` taint land on that one turn alike, so a read the harness made with its
+own tool escalates the next external write the agent asks for through the gateway exactly as a
+connector read does. The tool-event mouth reaches only the add half: `record_observed_event`
+ingests and never calls `new_turn()`. The turn lives in the gateway process, so a report taints
+the turn of the process it reaches and no other.
 
 ## 4. What clears taint — and what cannot
 
@@ -157,6 +180,11 @@ The broker-side half of the memory-taint acceptance exists as tests today (`safe
   `test_new_turn_clears_taint_and_only_the_broker_can_roll_it`,
   `test_multiple_reads_then_write_matches_automated_run`, control
   `test_control_untainted_cross_call_write_is_allowed`.
+- **A harness's own read, reported** — `test_runtime_observed.py`:
+  `test_a_read_from_outside_taints_the_turn_and_the_next_external_write_escalates`, the trusted
+  pair `test_a_source_the_consumer_trusts_records_and_does_not_taint`, ingest-before-record
+  `test_taint_lands_even_when_the_record_cannot_be_written`; and through a launched gateway,
+  `test_gateway_events_e2e.py::test_a_reported_read_holds_the_next_external_write_over_stdio`.
 - **Trusted-read relief + regression pair** — `test_read_gating.py`:
   `test_untrusted_read_taints_and_escalates_next_write` vs
   `test_trusted_read_does_not_taint_and_next_write_is_not_escalated` (the only difference is
