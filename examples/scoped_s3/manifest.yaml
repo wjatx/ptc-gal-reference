@@ -74,6 +74,3 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 50
-  allowlists:
-    tools:
-      - s3.get_object

@@ -77,7 +77,4 @@ envelope:
   polarity: abstain
   caps:
     actions_per_utc_day: 80
-  allowlists:
-    tools:
-      - ledger.append
   high_stakes: false

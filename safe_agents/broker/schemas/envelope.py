@@ -7,8 +7,8 @@ yet load or consume this type at decision time — that is follow-on work, which
 `compute_envelope_hash` below to verify a Grant/AuditRecord's `envelopeHash`
 against the envelope actually in force.
 
-Schema fidelity: the four fields every real `agents/*.yaml` manifest exercises
-today (`polarity`, `caps`, `allowlists`, `high_stakes`) are modeled with strict
+Schema fidelity: the three fields every real `agents/*.yaml` manifest exercises
+today (`polarity`, `caps`, `high_stakes`) are modeled with strict
 types. The five remaining fields documented in `core/manifest-schema.md` but not
 yet exercised by any real manifest (`reversibility_classes`, `fallback_budgets`,
 `input_trust_map`, `promotion_predicates`, `autonomy_rungs`) are modeled as
@@ -147,16 +147,20 @@ class Caps(BaseModel):
         return data
 
 
-class Allowlists(BaseModel):
-    """Capability-scoped tool/destination set this agent may even see (default-deny).
-
-    Extra keys (e.g. a future `destinations` allowlist) pass through so they still
-    carry into the hash without a schema change.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    tools: list[str] = []
+# The retired `allowlists` block (#135). It was declared as a default-deny scope
+# of the tools an agent may see, and no decision ever read it: a deployment that
+# narrowed it believed an agent could not reach a tool its grant still served.
+# The key is refused by name rather than left to `extra="forbid"`, so the
+# operator is told what happened to it and where tool scope actually lives.
+RETIRED_ALLOWLISTS_KEY = "allowlists"
+RETIRED_ALLOWLISTS_MESSAGE = (
+    "envelope.allowlists was retired (#135) and is refused, not ignored. No "
+    "decision ever read it, so it never scoped anything. What an agent may call "
+    "comes from its grants: remove the block, and narrow the grants if the list "
+    "was meant to narrow what the agent can reach. A stored envelope written "
+    "before the retirement carries the key too (as null when it was never set) "
+    "and must be seeded again."
+)
 
 
 class ApprovalQueue(BaseModel):
@@ -278,8 +282,20 @@ class Envelope(BaseModel):
     # -- Exercised by every real agents/*.yaml manifest today, strict --------
     polarity: Literal["abstain", "act"]
     caps: Optional[Caps] = None
-    allowlists: Optional[Allowlists] = None
     high_stakes: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_retired_allowlists(cls, data: object) -> object:
+        """Refuse the retired `allowlists` key by name, whatever its value.
+
+        Presence is the test, not truthiness. A null or an empty list is still
+        an author (or an older serializer) stating a scope that nothing
+        enforces, and dropping it quietly would leave that belief standing.
+        """
+        if isinstance(data, dict) and RETIRED_ALLOWLISTS_KEY in data:
+            raise ValueError(RETIRED_ALLOWLISTS_MESSAGE)
+        return data
 
     # -- Read gating + query-exfil bound, consumer-configurable ------
     # trusted_read_sources: source ids (e.g. "connector:market.bars") whose
@@ -331,6 +347,13 @@ def compute_envelope_hash(envelope: Envelope) -> str:
     anyone holding the same envelope can independently recompute it. Decision-time checks use
     this to verify a Grant/AuditRecord's `envelopeHash` matches the envelope that was
     actually in force at decision time.
+
+    The basis is the whole dump, and a field left unset is dumped as null. So
+    adding or removing a field on `Envelope` changes the hash of EVERY envelope,
+    including one that never set that field, and every grant stamped under the
+    old hash is quarantined until `re-seed` re-attests it with the issuer
+    signing key. Retiring `allowlists` did exactly that (#135); the value for
+    the smallest envelope is pinned in `test_envelope_allowlists_retired.py`.
     """
     serialized = json.dumps(
         envelope.model_dump(mode="json"),

@@ -82,6 +82,3 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 50
-  allowlists:
-    tools:
-      - api.query

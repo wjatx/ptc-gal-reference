@@ -333,7 +333,6 @@ def _envelope(high_blast=None, actions_per_run=1) -> Envelope:
     block = {
         "polarity": "abstain",
         "caps": {"actions_per_run": actions_per_run},
-        "allowlists": {"tools": []},
         "high_stakes": False,
     }
     if high_blast is not None:

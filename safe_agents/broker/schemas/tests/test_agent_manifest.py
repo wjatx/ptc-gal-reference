@@ -26,7 +26,6 @@ def _full_manifest_dict() -> dict:
         "envelope": {
             "polarity": "act",
             "caps": {"actions_per_run": 5},
-            "allowlists": {"tools": ["example.read", "notify.send"]},
             "high_stakes": True,
         },
         "principal": {
@@ -54,7 +53,6 @@ def test_round_trip_all_blocks() -> None:
 
     assert dumped["envelope"]["polarity"] == "act"
     assert dumped["envelope"]["caps"]["actions_per_utc_day"] == 5
-    assert dumped["envelope"]["allowlists"]["tools"] == ["example.read", "notify.send"]
     assert dumped["envelope"]["high_stakes"] is True
     assert dumped["principal"] == data["principal"]
     assert dumped["grant_classes"] == ["example.read", "notify.send"]

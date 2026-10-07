@@ -58,7 +58,4 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 100
-  allowlists:
-    tools:
-      - peer.publish
   high_stakes: false

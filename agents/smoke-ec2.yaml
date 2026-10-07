@@ -36,6 +36,4 @@ envelope:
   polarity: abstain             # silence is safe for this smoke stub
   caps:
     actions_per_run: 0          # no actions — smoke only
-  allowlists:
-    tools: []                   # no tools registered; smoke only
   high_stakes: false

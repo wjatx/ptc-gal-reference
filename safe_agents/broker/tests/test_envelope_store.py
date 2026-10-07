@@ -52,7 +52,7 @@ def _fixture_envelope() -> Envelope:
         {
             "polarity": "abstain",
             "caps": {"actions_per_run": 1},
-            "allowlists": {"tools": ["snapshot.read"]},
+            "trusted_read_sources": ["connector:snapshot.read"],
             "high_stakes": False,
         }
     )
@@ -68,7 +68,7 @@ def test_in_memory_round_trip_preserves_fields():
     assert got is not None
     assert got.polarity == "abstain"
     assert got.caps.actions_per_utc_day == 1
-    assert got.allowlists.tools == ["snapshot.read"]
+    assert got.trusted_read_sources == ["connector:snapshot.read"]
     assert got.high_stakes is False
 
 
@@ -103,8 +103,6 @@ def test_seed_from_fixture_yaml_matches_expected_fields():
     assert envelope.polarity == "abstain"
     assert envelope.caps is not None
     assert envelope.caps.actions_per_utc_day == 0
-    assert envelope.allowlists is not None
-    assert envelope.allowlists.tools == []
     assert envelope.high_stakes is False
 
 
@@ -227,7 +225,7 @@ def test_dynamo_round_trip_via_mock_uses_envelope_prefix():
 
     assert result is not None
     assert result.polarity == "abstain"
-    assert result.allowlists.tools == ["snapshot.read"]
+    assert result.trusted_read_sources == ["connector:snapshot.read"]
 
 
 def test_dynamo_put_propagates_access_denied():
@@ -260,8 +258,6 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 1
-  allowlists:
-    tools: []
   high_stakes: false
 """
 

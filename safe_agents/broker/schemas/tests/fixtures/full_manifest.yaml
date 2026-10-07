@@ -5,10 +5,6 @@ envelope:
   polarity: act
   caps:
     actions_per_run: 5
-  allowlists:
-    tools:
-      - example.read
-      - notify.send
   high_stakes: true
 principal:
   agentId: full-fixture-agent

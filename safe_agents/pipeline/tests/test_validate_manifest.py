@@ -5,8 +5,10 @@ Covers:
   1. Valid manifest (with polarity, broker_connector_keys) passes
   2. Missing polarity fails with "envelope.polarity" in error
   3. Invalid polarity fails with the value named
-  4. tools non-empty + missing broker_connector_keys fails
-  5. tools empty + no broker_connector_keys passes
+  4. connectors declared + missing broker_connector_keys fails (A3)
+  5. no connectors + no broker_connector_keys passes
+  5b. the retired envelope.allowlists block is refused by name, and neither
+      shadows nor stands in for check 4
   6. Valid policy file (no IPs) passes
   7. Policy file with connector IP in agent_egress fails
   8. Missing policy file fails
@@ -136,34 +138,142 @@ def test_valid_polarity_act(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. tools non-empty + missing broker_connector_keys fails
+# 4. connectors declared + missing broker_connector_keys fails
 # ---------------------------------------------------------------------------
 
-def test_tools_nonempty_missing_broker_keys_fails(tmp_path: Path) -> None:
-    """Non-empty allowlists.tools requires secrets.broker_connector_keys."""
+A3 = "A3 (the connector-key preflight is not weakened)"
+
+
+@pytest.mark.parametrize(
+    "connectors",
+    [["ledger"], ["ledger", "notify"]],
+    ids=["one-connector", "two-connectors"],
+)
+def test_declared_connectors_missing_broker_keys_fails(tmp_path: Path, connectors) -> None:
+    """A declared connector requires secrets.broker_connector_keys.
+
+    The check keys on `connectors`, the connectors the broker constructs, and
+    not on the retired tool allowlist. The envelope here is minimal, so the
+    refusal of the retired block cannot be what fails this manifest.
+    """
     data = _base_manifest()
     del data["secrets"]["broker_connector_keys"]
+    data["connectors"] = connectors
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+
+    errors = validate_manifest_extended(manifest)
+
+    assert len(errors) == 1, f"{A3}: expected exactly the connector-key error; got {errors}"
+    assert "broker_connector_keys" in errors[0], (
+        f"{A3}: a manifest declaring {connectors} with no connector bundle passed preflight"
+    )
+    for name in connectors:
+        assert name in errors[0], f"{A3}: the error does not name connector {name!r}"
+
+    phase = validate_phase(manifest)
+    assert not phase.success and "broker_connector_keys" in (phase.error or ""), (
+        f"{A3}: validate_phase did not surface the missing connector bundle"
+    )
+
+
+@pytest.mark.parametrize("bundle", ["", None], ids=["empty-string", "null"])
+def test_declared_connectors_with_an_empty_bundle_name_fails(tmp_path: Path, bundle) -> None:
+    """A bundle key that is present and names nothing is no bundle. The check
+    tests for a usable name, not for the key being set."""
+    data = _base_manifest()
+    data["secrets"]["broker_connector_keys"] = bundle
+    data["connectors"] = ["ledger"]
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+
+    errors = validate_manifest_extended(manifest)
+
+    assert any("broker_connector_keys" in e for e in errors), (
+        f"{A3}: a manifest declaring a connector with broker_connector_keys={bundle!r} "
+        f"passed preflight; got {errors}"
+    )
+
+
+def test_the_preflight_step_text_names_what_the_check_keys_on(tmp_path: Path) -> None:
+    """validate_phase prints its steps to the operator. The step must describe
+    the check that runs, which keys on declared connectors, and must not go
+    back to naming the retired tool allowlist (#135)."""
+    manifest = load_manifest(_write_manifest(tmp_path, _base_manifest()))
+
+    steps = validate_phase(manifest).steps
+
+    key_steps = [s for s in steps if "broker_connector_keys" in s]
+    assert len(key_steps) == 1, f"{A3}: expected one connector-key step; got {steps}"
+    assert "connectors" in key_steps[0], (
+        f"{A3}: the step does not say the check keys on declared connectors: {key_steps[0]!r}"
+    )
+    assert not any("allowlist" in s for s in steps), (
+        f"{A3}: a preflight step still names the retired allowlist: {steps}"
+    )
+
+
+def test_declared_connectors_with_broker_keys_passes(tmp_path: Path) -> None:
+    data = _base_manifest()
+    data["connectors"] = ["ledger"]
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+    errors = validate_manifest_extended(manifest)
+    assert errors == [], f"{A3}: the check fires with the bundle present; got {errors}"
+
+
+# ---------------------------------------------------------------------------
+# 5. no connectors + no broker_connector_keys passes
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("connectors", [None, []], ids=["absent", "empty"])
+def test_no_connectors_no_broker_keys_passes(tmp_path: Path, connectors) -> None:
+    """An agent that declares no connector needs no connector bundle."""
+    data = _base_manifest()
+    del data["secrets"]["broker_connector_keys"]
+    if connectors is not None:
+        data["connectors"] = connectors
+    manifest = load_manifest(_write_manifest(tmp_path, data))
+    errors = validate_manifest_extended(manifest)
+    assert errors == [], f"Expected no errors; got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# 5b. the retired allowlists block
+# ---------------------------------------------------------------------------
+
+def test_retired_allowlists_block_is_refused_by_name(tmp_path: Path) -> None:
+    """The preflight used to read envelope.allowlists.tools. The block is now
+    refused at load, and the refusal says where tool scope lives (#135)."""
+    data = _base_manifest()
     data["envelope"]["allowlists"] = {"tools": ["some_tool"]}
     manifest = load_manifest(_write_manifest(tmp_path, data))
+
     errors = validate_manifest_extended(manifest)
-    assert errors, "Expected an error when tools non-empty and broker_connector_keys missing"
+
     combined = " ".join(errors)
-    assert "broker_connector_keys" in combined
+    for fragment in ("envelope", "retired", "comes from its grants", "#135"):
+        assert fragment in combined, (
+            f"A1 (the allowlists field is gone and refused by name): the pipeline "
+            f"error is missing {fragment!r}: {combined}"
+        )
+    assert not validate_phase(manifest).success
 
 
-# ---------------------------------------------------------------------------
-# 5. tools empty + no broker_connector_keys passes
-# ---------------------------------------------------------------------------
+def test_shipped_manifests_pass_preflight_with_the_rekeyed_check() -> None:
+    """Every shipped deployment manifest passes the preflight offline.
 
-def test_tools_empty_no_broker_keys_passes(tmp_path: Path) -> None:
-    """Empty tools allowlist does not require broker_connector_keys."""
-    data = _base_manifest()
-    del data["secrets"]["broker_connector_keys"]
-    data["envelope"]["allowlists"] = {"tools": []}
-    manifest = load_manifest(_write_manifest(tmp_path, data))
-    errors = validate_manifest_extended(manifest)
-    # Polarity is set, tools empty — no connector needed
-    assert errors == [], f"Expected no errors; got: {errors}"
+    When the check was re-keyed, none of them set a non-empty tool allowlist,
+    so the old trigger fired for none. The new trigger must not start failing
+    them, and each one that declares a connector must carry the bundle.
+    """
+    manifests = sorted(AGENTS_DIR.glob("*.yaml"))
+    assert len(manifests) >= 5, f"{A3}: expected the shipped manifests; found {manifests}"
+    for path in manifests:
+        manifest = load_manifest(path)
+        errors = validate_manifest_extended(manifest)
+        assert errors == [], f"{A3}: {path.name} fails preflight: {errors}"
+        if manifest.raw.get("connectors"):
+            assert manifest.secrets.broker_connector_keys, (
+                f"{A3}: {path.name} declares connectors with no connector bundle"
+            )
 
 
 # ---------------------------------------------------------------------------

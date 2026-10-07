@@ -174,6 +174,12 @@ def main() -> int:
     except EnvelopeSeedError as exc:
         print(f"[seed] FAIL {exc}", file=sys.stderr)
         return 1
+    except ValidationError as exc:
+        # The block is there and the schema refuses it (a missing polarity, or
+        # a retired key such as `allowlists`, #135). Nothing was written. Same
+        # voice as the other seed failures, never a traceback.
+        print(f"[seed] FAIL the envelope: block is refused, nothing written: {exc}", file=sys.stderr)
+        return 1
 
     readback = store.get_envelope(principal)
     if readback is None:

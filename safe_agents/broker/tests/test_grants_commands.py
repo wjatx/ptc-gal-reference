@@ -1364,7 +1364,6 @@ def _fake_manifest(principal: Principal | None):
         "envelope": {
             "polarity": "abstain",
             "caps": {"actions_per_run": 1},
-            "allowlists": {"tools": []},
             "high_stakes": False,
         }
     }
@@ -1436,7 +1435,6 @@ def test_resolve_envelope_hash_store_mode_unchanged(monkeypatch):
         {
             "polarity": "abstain",
             "caps": {"actions_per_run": 7},
-            "allowlists": {"tools": ["ledger.append"]},
             "high_stakes": False,
         }
     )

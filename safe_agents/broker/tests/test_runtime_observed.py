@@ -82,9 +82,6 @@ def write_manifest(path: Path, *, trusted: tuple[str, ...] = ()) -> Path:
               polarity: abstain
               caps:
                 actions_per_run: 25
-              allowlists:
-                tools:
-                  - crm.post
               high_stakes: false
             """
         )

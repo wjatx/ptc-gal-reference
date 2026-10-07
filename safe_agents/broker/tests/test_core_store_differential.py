@@ -134,7 +134,7 @@ def make_envelope(polarity: str = "abstain") -> Envelope:
         {
             "polarity": polarity,
             "caps": {"actions_per_run": 1},
-            "allowlists": {"tools": ["snapshot.read"]},
+            "trusted_read_sources": ["connector:snapshot.read"],
             "high_stakes": False,
         }
     )
@@ -885,7 +885,7 @@ class TestEnvelopeConformance:
         got = store.get_envelope(PRINCIPAL)
         assert got is not None
         assert got.polarity == "abstain"
-        assert got.allowlists.tools == ["snapshot.read"]
+        assert got.trusted_read_sources == ["connector:snapshot.read"]
         assert got.high_stakes is False
 
     def test_get_absent_returns_none(self, envelope_backend):

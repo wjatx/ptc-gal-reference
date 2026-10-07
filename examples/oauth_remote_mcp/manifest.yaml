@@ -112,7 +112,3 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 100
-  allowlists:
-    tools:
-      - vendor_mcp.search_docs
-      - vendor_mcp.get_doc

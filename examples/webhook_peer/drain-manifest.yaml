@@ -65,7 +65,4 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 100
-  allowlists:
-    tools:
-      - ledger.append
   high_stakes: false
