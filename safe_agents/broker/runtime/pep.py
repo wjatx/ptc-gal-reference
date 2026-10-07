@@ -1499,8 +1499,8 @@ class BrokerRuntime:
             # handle_request entry (this call's decision is already made — no re-order). Scoped
             # to successful external reads; blanket-untrusted via the base trust_map (connector:
             # is not an internal: prefix, so it always taints). Fail-safe: over-tainting only
-            # adds approvals. Cross-/call propagation is inert until broker-owned turn identity
-            # — each HTTP /call still gets a fresh ctx.
+            # adds approvals. The ctx is the broker-held session turn (_session_turn) unless a
+            # caller drove an explicit one, so the taint rides into every later /call.
             if brokered_call.manifest.external and brokered_call.manifest.effect == "read":
                 source_id = f"connector:{brokered_call.tool}.{brokered_call.op}"
                 # A read from a consumer-declared trusted source does NOT taint
