@@ -36,7 +36,7 @@ is the weakest.
 
 ## Conformance status
 
-**58 of 88 conformance clauses are supported. 30 are not.**
+**59 of 88 conformance clauses are supported. 29 are not.**
 
 That statement is generated, never written by hand:
 
