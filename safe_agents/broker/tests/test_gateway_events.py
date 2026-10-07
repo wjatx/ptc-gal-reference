@@ -202,10 +202,18 @@ class TestTheRoute:
         at the first chunk past the bound, whatever the caller still has to send."""
         app, _, sink, _ = mouth
         reads = 0
+        # Twice the bound and then some: a mouth still reading by now has no
+        # streamed bound, and this fails naming that instead of reading forever.
+        give_up_after = 2 * (MAX_EVENT_BODY_BYTES // 1024) + 4
 
         async def receive() -> dict:
             nonlocal reads
             reads += 1
+            if reads > give_up_after:
+                raise AssertionError(
+                    f"the mouth read {reads} KiB of a streamed body bounded at "
+                    f"{MAX_EVENT_BODY_BYTES} bytes and was still reading"
+                )
             return {"type": "http.request", "body": b" " * 1024, "more_body": True}
 
         sent: list[dict] = []
@@ -229,6 +237,32 @@ class TestTheRoute:
         sent, _ = _drive(app, _scope("POST", headers=[AUTH], path=EVENTS_PATH), _body())
         assert (_status(sent), _payload(sent)) == (500, {"error": "not recorded"})
         assert runtime.session_turn().tainted is True
+
+
+class TestReportsNeverRollTheTurn:
+    """G22 through the mouth, not just the runtime method: no layer between the
+    route and the runtime may roll the turn, so taint from one report survives
+    every report after it."""
+
+    def test_taint_from_one_report_survives_the_reports_after_it(self, mouth, monkeypatch) -> None:
+        app, runtime, _, _ = mouth
+        turn_id = runtime.session_turn().turn_id
+        rolled: list[None] = []
+        real_new_turn = runtime.new_turn
+
+        def spy() -> None:
+            rolled.append(None)
+            real_new_turn()
+
+        monkeypatch.setattr(runtime, "new_turn", spy)
+        for changes in ({}, {"tool_class": "shell"}, {"tool_class": "file-write", "locality": "project"}):
+            sent, _ = _drive(app, _scope("POST", headers=[AUTH], path=EVENTS_PATH), _body(**changes))
+            assert _status(sent) == 200
+        assert rolled == [], "a report rolled the broker-held turn"
+        turn = runtime.session_turn()
+        assert turn.turn_id == turn_id
+        assert turn.tainted is True
+        assert runtime.handle_request(WRITE).decision_kind == "require_approval"
 
 
 class TestOneSerializedEntry:
@@ -349,8 +383,20 @@ class _FakeMouth:
     async def serve(self) -> None:
         if self.signal_while_serving and self is type(self).made[0]:
             os.kill(os.getpid(), signal.SIGTERM)
-        while not self.stops:
-            await asyncio.sleep(0.01)
+        await _until_stopped(self, "a launcher mouth")
+
+
+#: How long a stand-in mouth waits to be stopped before it fails the test. A
+#: stop that never arrives is a named failure in seconds, never a hung run.
+_STOP_WAIT_S = 5.0
+
+
+async def _until_stopped(mouth, what: str) -> None:
+    deadline = asyncio.get_running_loop().time() + _STOP_WAIT_S
+    while not mouth.stops:
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"{what} was never asked to stop within {_STOP_WAIT_S}s")
+        await asyncio.sleep(0.01)
 
 
 class TestTheLauncherInProcess:
@@ -468,8 +514,7 @@ class _Stub:
                 if self.fails:
                     raise RuntimeError("this mouth broke")
                 return
-            while not self.stops:
-                await asyncio.sleep(0.01)
+            await _until_stopped(self, "a mouth still serving beside the one that returned")
         finally:
             self.finished = True
 
@@ -478,12 +523,12 @@ class TestServeUntilAnyStops:
     def test_when_one_mouth_returns_the_others_are_stopped_and_finish(self) -> None:
         """A stdio client that closes its pipe ends the gateway, event mouth too."""
         first, second = _Stub(returns_after=0.0), _Stub()
-        asyncio.run(serve_until_any_stops([first, second]))
+        asyncio.run(asyncio.wait_for(serve_until_any_stops([first, second]), _STOP_WAIT_S * 2))
         assert (first.stops, second.stops) == (0, 1)
         assert first.finished and second.finished
 
     def test_a_failing_mouth_stops_the_rest_then_raises(self) -> None:
         broken, other = _Stub(returns_after=0.0, fails=True), _Stub()
         with pytest.raises(RuntimeError, match="this mouth broke"):
-            asyncio.run(serve_until_any_stops([broken, other]))
+            asyncio.run(asyncio.wait_for(serve_until_any_stops([broken, other]), _STOP_WAIT_S * 2))
         assert other.stops == 1 and other.finished

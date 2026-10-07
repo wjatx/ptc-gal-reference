@@ -46,7 +46,7 @@ from safe_agents.broker.tests.test_gateway_network_e2e import (  # noqa: E402 â€
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _LAUNCH_S = 60
-_EXIT_S = 30
+_EXIT_S = 15
 
 _SIGNALS = pytest.mark.skipif(os.name == "nt", reason="a graceful stop needs a signal the child can catch")
 
@@ -90,6 +90,24 @@ def _post(url: str, body: bytes, token: str | None = TOKEN) -> tuple[int, dict]:
         return exc.code, json.loads(exc.read() or b"{}")
 
 
+def _close_stdio_and_wait(client: GatewayClient) -> None:
+    """Close the stdio client's pipe, as a harness does on exit, and require the
+    gateway to leave on its own within a bound (G29: when the stdio mouth returns,
+    the tool-event mouth beside it is stopped too)."""
+    assert client.proc.stdin is not None
+    client.proc.stdin.close()
+    try:
+        client.proc.wait(timeout=_EXIT_S)
+    except subprocess.TimeoutExpired:
+        client.proc.kill()
+        client.proc.wait()
+        pytest.fail(
+            f"the gateway was still running {_EXIT_S}s after its stdio client closed: "
+            "a mouth beside the stdio session kept it alive"
+        )
+    assert client.proc.returncode == 0, client.stderr_text
+
+
 def _tape(tmp_path: Path) -> list[AuditRecord]:
     path = tmp_path / "audit.jsonl"
     if not path.exists():
@@ -122,8 +140,13 @@ def test_a_reported_read_holds_the_next_external_write_over_stdio(tmp_path: Path
     if reported:
         status, answer = _post(url, json.dumps(REPORT).encode())
         assert (status, answer) == (200, {"source": "harness:example-harness/file-read/outside"})
+        # A second report that does not taint must not undo the first: nothing
+        # between the socket and the runtime may roll the turn (G22).
+        shell = {**REPORT, "tool_class": "shell", "locality": "project"}
+        assert _post(url, json.dumps(shell).encode()) == (200, {"source": None})
 
     result = client.call_tool("crm__post", {"note": "hello"})
+    _close_stdio_and_wait(client)
     client.close()
 
     tape = _tape(tmp_path)
@@ -134,11 +157,18 @@ def test_a_reported_read_holds_the_next_external_write_over_stdio(tmp_path: Path
     assert result["isError"] is True
     assert "crm.post is held for approval" in result_text(result)
     assert "it has NOT executed" in result_text(result)
-    assert [(r.tool, r.outcome) for r in tape] == [(OBSERVED_TOOL, "observed"), ("crm", "held")]
-    observed, held = tape
-    assert (observed.decision, observed.op) == ("abstain", "file-read")
+    assert [(r.tool, r.op, r.outcome) for r in tape] == [
+        (OBSERVED_TOOL, "file-read", "observed"),
+        (OBSERVED_TOOL, "shell", "observed"),
+        ("crm", "post", "held"),
+    ]
+    observed, _shell, held = tape
+    assert observed.decision == "abstain"
+    # The launched mouth names itself, and no other mouth, on what it records.
+    assert observed.reason == (
+        "observed, not decided: example-harness file-read (outside) reported by mouth tool-event"
+    )
     assert held.reason == "tainted external write"
-    assert client.proc.returncode == 0, client.stderr_text
     assert "[broker] tool-event mouth on http://127.0.0.1:" in client.stderr_text
 
 
