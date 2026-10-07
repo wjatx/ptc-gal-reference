@@ -355,7 +355,7 @@ interface AuditRecord {
   reason?: string
   envelopeHash: string             // the exact envelope in force when this was decided
   approvedBy?: string              // the human identity, for approved intents
-  outcome: "executed" | "denied" | "held" | "refused" | "failed" | "rejected" | "flagged"
+  outcome: "executed" | "denied" | "held" | "refused" | "failed" | "rejected" | "flagged" | "observed"
   error?: string
   seed?: string                    // committed randomization seed, where allocation was randomized (auditable randomness)
   intentId?: string                // approval receipt — held + release records: joins a hold to its release across the intent TTL
@@ -381,6 +381,12 @@ Per-field notes:
   reviewing an executed intent as wrong, which writes the `false_action` evidence counter. Both
   records carry the stored call's coordinates, `decision: "require_approval"` (the verb the intent
   was held under), `intentId`, `storedCallDigest` and `actorDigest`.
+  `observed` means the broker made no decision on the call at all: a harness ran it with a tool of
+  its own and reported it after it ran (`broker/GATEWAY.md` G21 to G29). Its record carries
+  `decision: "abstain"`, the reserved coordinate `tool: "harness-tool"` with the reported tool
+  class as `op`, a digest of the reported subject inside `argsDigest`, and the result digest, when
+  one was reported, as `resultDigest`. It is terminal, and nothing was decided or attempted by the
+  broker.
 - **seed** — when scarcity allocation was randomized (high-stakes tier), the committed seed is logged
   (commit-reveal / VRF): unpredictable in advance, fully reconstructable after. "Why not engage that
   one?" has an answer in the log.

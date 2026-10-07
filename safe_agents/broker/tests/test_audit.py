@@ -228,6 +228,7 @@ def test_args_digest_hides_raw_args():
     ("require_approval", "held"),
     ("abstain", "denied"),
     ("allow", "failed"),  # failure mid-execution still writes outcome=failed
+    ("abstain", "observed"),  # a harness's own tool call, reported after it ran
 ])
 def test_all_decision_outcome_pairs_emit(decision, outcome):
     sink = InMemorySink()

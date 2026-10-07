@@ -52,8 +52,14 @@ class AuditRecord(BaseModel):
     # (#34, #134): an owner said no to a held intent (nothing ran), or reviewed an
     # executed one as wrong. Both records carry the stored call's coordinates, the
     # intent's receipts, and actorDigest.
+    #
+    # `observed` means the broker made no decision on this call: a harness ran it
+    # with a tool of its own and reported it after it ran (GATEWAY.md, the
+    # tool-event mouth). Its record carries `decision="abstain"` and the reserved
+    # coordinate `harness-tool`, so it cannot be read as a call the broker allowed.
     outcome: Literal[
-        "executed", "denied", "held", "refused", "failed", "rejected", "flagged"
+        "executed", "denied", "held", "refused", "failed", "rejected", "flagged",
+        "observed",
     ]
     error: str | None = None
     # committed randomization seed, where allocation was randomized (auditable randomness);
