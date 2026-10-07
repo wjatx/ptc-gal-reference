@@ -85,6 +85,13 @@ WAIVABLE_RULES: frozenset[str] = frozenset(
         # that failed toward less authority. Never a raise; that stays
         # un-waivable under LEVEL_LEDGER_CONSISTENT.
         "LEVEL_DROP_RECORDED",
+        # A grant whose ts is not the ts of the latest ledger record at its
+        # coordinate. Before re-attestation appended a record, re-seed
+        # rewrote the grant's ts and wrote nothing beside it, so a ledger
+        # from then holds exactly this for every grant it re-attested:
+        # honest history. The finding binds the grant's stored bytes, so the
+        # waiver covers the grant as it stood and no later rewrite of it.
+        "GRANT_TS_RECORDED",
     }
 )
 

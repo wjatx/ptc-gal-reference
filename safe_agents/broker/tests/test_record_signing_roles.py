@@ -42,6 +42,7 @@ from safe_agents.broker.grants.acknowledgments import (
 )
 from safe_agents.broker.grants.audit import (
     ACKNOWLEDGMENT_SIGNATURE_VERIFIES,
+    GRANT_TS_RECORDED,
     LEDGER_COUNTERPART,
     LEVEL_LEDGER_CONSISTENT,
     RECORD_SIGNATURE_VERIFIES,
@@ -805,7 +806,12 @@ def test_a_planted_unsigned_pre_epoch_bootstrap_cannot_launder_a_grant(
     became the ledger-derived level, and a grant at out-of-loop audited clean.
     """
     issuer_signer, _evaluator, resolvers = roles
-    grant = AuditedGrant(grant=_grant(level="out-of-loop", lastSafeLevel="in-loop"))
+    # The planter writes the record's ts as well, so it gives the plant the
+    # grant's own. A plant dated anywhere else would leave GRANT_TS_RECORDED
+    # standing beside the signature finding.
+    grant = AuditedGrant(
+        grant=_grant(level="out-of-loop", lastSafeLevel="in-loop", ts=BEFORE_EPOCH)
+    )
     honest = (
         [_entry(_record("bootstrap", ts="2026-05-01T00:00:00+00:00"), issuer_signer)]
         if honest_ledger
@@ -814,14 +820,19 @@ def test_a_planted_unsigned_pre_epoch_bootstrap_cannot_launder_a_grant(
     planted = _record("bootstrap", ts=BEFORE_EPOCH, toLevel="out-of-loop")
 
     without_plant = _audit(AuditDataset(grants=(grant,), records=tuple(honest)), resolvers)
-    assert {v.rule for v in without_plant.violations} == {hidden_rule}
+    # Against the honest record the over-level grant is also a grant whose ts
+    # no record carries. The orphan has no record to be held to.
+    assert {v.rule for v in without_plant.violations} == {hidden_rule} | (
+        {GRANT_TS_RECORDED} if honest_ledger else set()
+    )
 
     report = _audit(
         AuditDataset(grants=(grant,), records=(*honest, _entry(planted))), resolvers
     )
 
-    # The plant still hides the grant-level finding, since the derived level is
-    # read off the ledger as it stands. What it can no longer do is pass.
+    # The plant still hides the grant-level findings, since the derived level
+    # and the latest ts are read off the ledger as it stands. What it can no
+    # longer do is pass.
     assert [(v.rule, v.detail) for v in report.violations] == [
         (RECORD_SIGNATURE_VERIFIES, _unsigned_detail(planted))
     ]

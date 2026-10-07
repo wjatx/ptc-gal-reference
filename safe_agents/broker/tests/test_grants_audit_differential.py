@@ -48,6 +48,7 @@ from safe_agents.broker.tests import test_grants_audit as _audit_suite
 from safe_agents.broker.tests.test_grants_audit import (
     _GRANT_PK,
     ACTION_CLASS,
+    CLEAN_STATE_TS,
     HMAC_KEY,
     _grant_item,
     _issuer_signer_and_resolver,
@@ -107,12 +108,12 @@ def _seed_sqlite_clean_state(db_path, signer) -> None:
     rather than fixture to fixture."""
     # on-loop, matching its ledger — see _seed_clean_state.
     SqliteGrantStore(hmac_key=HMAC_KEY, db_path=db_path).put_grant(
-        _make_grant(level="on-loop")
+        _make_grant(level="on-loop", ts=CLEAN_STATE_TS)
     )
 
     record_store = SqlitePromotionRecordStore(db_path)
     record_store.put_record(_make_record())
-    promotion = _make_record("promotion", ts="2026-07-02T00:00:00+00:00")
+    promotion = _make_record("promotion", ts=CLEAN_STATE_TS)
     record_store.put_record(promotion, signature=signer.sign_record(promotion))
 
     # The auditor never parses the proposal payload, so an opaque data string

@@ -242,8 +242,11 @@ _RECORD_TS = "2026-07-01T00:00:00+00:00"
 
 def _hashed_grant(**overrides) -> Grant:
     """A Grant as stored (integrity lives at item level under the stored-bytes basis — the grant
-    itself carries no hash; _audit_dataset supplies the stored bytes + HMAC)."""
-    return _make_grant(**overrides)
+    itself carries no hash; _audit_dataset supplies the stored bytes + HMAC).
+
+    Its ts defaults to the ledger fixture's (_RECORD_TS): a grant carries the
+    ts of the latest record at its coordinate (GRANT_TS_RECORDED)."""
+    return _make_grant(**{"ts": _RECORD_TS, **overrides})
 
 
 def _ledger_record(
@@ -810,8 +813,10 @@ def _row_level_ledger_consistent() -> IntegrityRow:
     def positive():
         # Grant AT the ledger-derived level is clean; grant BELOW it is never
         # this rule's finding (it is LEVEL_DROP_RECORDED's)
+        # The clean grant carries its promotion's ts (GRANT_TS_RECORDED).
         dataset = _audit_dataset(
-            grants=[_hashed_grant(level=AutonomyLevel.on_loop)], records=_LEDGER
+            grants=[_hashed_grant(level=AutonomyLevel.on_loop, ts=_LEDGER[-1].ts)],
+            records=_LEDGER,
         )
         report = run_audit(dataset, hmac_key=HMAC_KEY)
         assert report.violations == (), (
@@ -855,7 +860,7 @@ def _row_record_signature_verifies() -> IntegrityRow:
     def positive():
         signer, resolver = _issuer_signer_and_resolver()
         dataset = _audit_dataset(
-            grants=[_hashed_grant(level=AutonomyLevel.on_loop)],
+            grants=[_hashed_grant(level=AutonomyLevel.on_loop, ts=_PROMOTION.ts)],
             # no epoch: the unsigned bootstrap is out of scope; the promotion
             # is issuer-signed
             records=[_ledger_record(), (_PROMOTION, signer.sign_record(_PROMOTION))],

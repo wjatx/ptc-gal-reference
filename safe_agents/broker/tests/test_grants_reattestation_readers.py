@@ -141,8 +141,11 @@ class TestR6ReadersPassOver:
             _promotion(certifiedUntil=TERM),
             _planted("2026-07-03T00:00:00+00:00", ON),
         ]
-        assert _audit(make_grant(level=ON, envelopeHash=NEW_HASH, certifiedUntil=TERM), ledger) == set()
-        assert GRANT_TERM_RATIFIED in _audit(make_grant(level=ON, envelopeHash=NEW_HASH), ledger)
+        # The grant carries the ts of the latest record, which is the
+        # re-attestation: the one rule that does not pass over the type.
+        stamped = dict(level=ON, envelopeHash=NEW_HASH, ts=ledger[-1].ts)
+        assert _audit(make_grant(certifiedUntil=TERM, **stamped), ledger) == set()
+        assert GRANT_TERM_RATIFIED in _audit(make_grant(**stamped), ledger)
 
     def test_a_reseeded_coordinate_audits_as_it_did_before(self, backend, monkeypatch):
         """End to end on each backend: the level and the earning record are

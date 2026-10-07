@@ -34,7 +34,8 @@ class Grant(BaseModel):
     promotedBy: str
     # ref to the covered-distribution evidence the promotion cited
     evidence: str
-    # when this level took effect
+    # the instant of the last write to this grant, equal to the ts of the
+    # ledger record that write appended (GAL §5.1; audit rule GRANT_TS_RECORDED)
     ts: str
     # demotion target — NEVER out-of-loop (validated below)
     lastSafeLevel: AutonomyLevel

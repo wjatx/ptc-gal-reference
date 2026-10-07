@@ -71,7 +71,9 @@ def _make_grant(**overrides) -> Grant:
         envelopeHash="sha256:env-001",
         promotedBy="alice",
         evidence="evidence-ref-001",
-        ts="2026-06-28T00:00:00Z",
+        # The default bootstrap record's ts (_make_record): a grant carries the
+        # ts of the latest record at its coordinate (GRANT_TS_RECORDED).
+        ts="2026-07-01T00:00:00+00:00",
         lastSafeLevel="in-loop",
         demotionTriggers=["budget_breach"],
         demotionReason=None,
@@ -645,6 +647,10 @@ def _table(table_name):
     return boto3.resource("dynamodb", region_name=REGION).Table(table_name)
 
 
+# The ts of the clean state's latest record, and so of its grant.
+CLEAN_STATE_TS = "2026-07-02T00:00:00+00:00"
+
+
 def _seed_clean_state(table_name, signer) -> None:
     """One grant + its earning ledger + a valid pending proposal, via the REAL
     store write paths, so load_dataset parses production item shapes."""
@@ -652,11 +658,12 @@ def _seed_clean_state(table_name, signer) -> None:
     # At on-loop, where its ledger (bootstrap in-loop, then the on-loop
     # promotion below) leaves it: a grant BELOW its ledger is itself a finding
     # since the certification-term work (LEVEL_DROP_RECORDED), so a coherent clean state needs it.
-    grant_store.put_grant(_make_grant(level="on-loop"), session=boto3.Session())
+    # It carries the promotion's ts for the same reason (GRANT_TS_RECORDED).
+    grant_store.put_grant(_make_grant(level="on-loop", ts=CLEAN_STATE_TS), session=boto3.Session())
 
     record_store = DynamoDBPromotionRecordStore(table_name=table_name)
     record_store.put_record(_make_record(), session=boto3.Session())
-    promotion = _make_record("promotion", ts="2026-07-02T00:00:00+00:00")
+    promotion = _make_record("promotion", ts=CLEAN_STATE_TS)
     record_store.put_record(
         promotion, session=boto3.Session(), signature=signer.sign_record(promotion)
     )
