@@ -201,6 +201,31 @@ force.
   on every call: operationally dead, HMAC-clean, invisible to every other rule. The remedy is
   `re-seed`. The rule fires expectedly after any far-jump redeploy — that is it working, and it is
   why the acknowledgment ceremony ships beside it.
+- **`GRANT_TS_RECORDED`.** Every sanctioned write stamps the grant and the record it appends
+  with one `ts` (`write_record_and_grant`, `ts` from the ledger clock), so a grant's `ts` must be
+  the `ts` of the latest record at its coordinate (GAL §6.11, GAL-40). A grant `ts` later than
+  every record is a write the ledger does not explain. A grant `ts` earlier than the latest record
+  is a record whose grant write did not land. The level, term and envelope rules each catch a write
+  that moved the field they read. This rule catches a write that moved none of them. "Latest" is
+  the maximum instant over every record's parsed `ts`, of every type, and equality is on the stored
+  string. A `ts` that is not an instant, on the grant or on a record at its coordinate, is a
+  finding. A grant with no record at all is `LEDGER_COUNTERPART`'s finding and not also this one.
+  That boundary is "no record": a coordinate holding only records that earn nothing (a lone
+  demotion, a lone `reattestation`) has a latest record, so a grant whose `ts` is not that record's
+  is reported by both rules, as two facts.
+  Waivable, for a ledger whose grants were re-attested before re-attestation appended a record:
+  each such grant is one finding, dispositioned one at a time by the acknowledgment ceremony below
+  (`docs/operator-identities.md` has the steps). The finding's detail carries the sha256 of the
+  grant's stored bytes and both timestamps, so an acknowledgment excuses the grant as it stood, and
+  a grant rewritten afterwards is a new finding. A record appended afterwards moves the latest `ts`
+  and is a new finding too. Where a record's `ts` is not an instant there is no latest `ts` to
+  name, and the detail carries one sha256 over the stored bytes of every record at the coordinate
+  in its place, so that acknowledgment covers the ledger as it stood and no later state of it.
+  Nothing else takes a grant out of scope. The rule
+  has no adoption date, and no field on a grant or a record exempts it. Honest limit: the rule
+  holds the grant to the ledger as it stands, so a record planted at the grant's `ts` satisfies it.
+  Whether a ceremony wrote that record is `RECORD_SIGNATURE_VERIFIES`'s question, and that rule
+  asks it of every record type only when `RECORD_SIGNING_EPOCH` is set.
 - **Re-attestation is recorded, and readers pass over the record.** `re-seed` re-issues each
   HMAC-clean grant at its level under the new envelope hash and appends one `reattestation`-typed
   record in the same atomic write (`write_record_and_grant`), signed by the issuer key, so no
@@ -213,8 +238,10 @@ force.
   The record moves no level, so every rule here that derives a level from the ledger or looks for
   the record that earned it (`LEDGER_COUNTERPART`, `LEVEL_LEDGER_CONSISTENT`, `LEVEL_DROP_RECORDED`,
   `GRANT_TERM_RATIFIED`, `EVALUATOR_RECORD_CONTINUOUS`) reads the ledger as it stood immediately
-  before it. That matters for a planted row: a same-level record restating `out-of-loop` on a ledger
-  that stood at `in-loop` is not taken as the ledger's level. Dwell is measured from the ledger's
+  before it. `GRANT_TS_RECORDED` is the exception. It reads a timestamp and no level, and the
+  grant carries the `reattestation` record's `ts`, so that record is the latest one for it.
+  Passing over the type matters for a planted row: a same-level record restating `out-of-loop` on a
+  ledger that stood at `in-loop` is not taken as the ledger's level. Dwell is measured from the ledger's
   level-bearing records (`rung.dwell_start_ts`), so an envelope change does not restart it. No other
   write restates a level, and none leaves a level where it was without a record: the old
   `RungStateMachine.re_ratify`, which rewrote a grant's evidence with no record, is removed, and
@@ -231,7 +258,7 @@ force.
   **refuses to run unsigned** — a waiver mints "green", which is authority. The audit reports the
   matched finding as `acknowledged` (with the waiver ref): green-with-annotations, never silently
   green. Only a **closed waivable vocabulary** (`WAIVABLE_RULES`: LEDGER_COUNTERPART,
-  RECORD_SIGNATURE_VERIFIES, GRANT_ENVELOPE_IN_FORCE, LEVEL_DROP_RECORDED) can be acknowledged — HMAC-tamper
+  RECORD_SIGNATURE_VERIFIES, GRANT_ENVELOPE_IN_FORCE, LEVEL_DROP_RECORDED, GRANT_TS_RECORDED) can be acknowledged — HMAC-tamper
   quarantines, unaccounted raises, and parse failures stay un-waivable, or the waiver becomes a
   laundering seam. Waivers apply only when their signature VERIFIES; a keyless/no-verify-keys run
   skips acknowledgment verification loudly and applies none (fail toward RED). Two rules police the

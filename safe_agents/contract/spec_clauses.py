@@ -191,7 +191,9 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # without a record".
     # GAL-40 states what a record's ts denotes, which
     # the ledger clock already provides, and the audit rule tying a grant's ts to
-    # its latest record, which nothing checks yet; the marker names that half.
+    # its latest record. That rule is built (GRANT_TS_RECORDED, grants/audit.py).
+    # The row stays because the published text still carries the marker; it
+    # goes when a later revision takes the marker off.
     # #165 (`certifiedUntil` on a lapse record) is a field-row marker in §5.2
     # and §6.7.6 and has no conformance row of its own. The lapse writer now
     # carries the field; the specification keeps both markers until a revision

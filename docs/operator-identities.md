@@ -277,6 +277,34 @@ way to re-mint history: it re-stamps a grant's envelope hash and appends one new
 record, which it signs with the issuer key (`--zone` / `ISSUER_SIGNING_ZONE`), and it leaves every
 earlier record as it was. With no issuer key configured it refuses and writes nothing.
 
+### A grant re-attested before re-attestation was recorded: acknowledge each grant
+
+`re-seed` once rewrote a grant's `envelopeHash`, `promotedBy` and `ts` and appended nothing. A
+ledger that was re-attested then holds grants whose `ts` is later than every record at their
+coordinate. The audit reports each one as a `GRANT_TS_RECORDED` violation, with a detail of this
+form:
+
+```
+grant at level 'on-loop' (stored bytes sha256:<64 hex>) carries ts='2026-07-26T09:00:00+00:00', which is later than the latest ledger record at its coordinate (ts='2026-07-25T12:00:00+00:00'): a write to the grant that the ledger does not explain; every sanctioned write stamps the grant and its record with one ts
+```
+
+Read the grant before excusing it (`pk = GRANT#<principal>`, `sk = CLASS#<actionClass>`). The
+finding says that something wrote the grant and appended no record. It does not say what the write
+changed or who made it, and an old re-attestation reads the same in the report as any other write
+that bypassed the ledger. The acknowledgment is the step that decides which one it is. Then
+acknowledge that one finding, under CheckerRole with the issuer signing environment set, with the
+same command as above and `--rule GRANT_TS_RECORDED`.
+
+It is one command per grant. There is no date before which grants are exempt and no setting that
+turns the rule off. The acknowledgment binds the detail, and the detail carries the sha256 of the
+grant's stored bytes, so it excuses the grant as it stood. If the grant is written again with no
+record, the detail changes and the violation returns. The next sanctioned write to the grant
+(a promotion, a demotion, a tightening, a lapse, a `re-seed` after an envelope change) stamps the
+grant and its record with one `ts`, and from then on there is no finding and nothing to annotate.
+
+`re-seed` does not clear the finding on its own account. It skips a grant that already carries the
+in-force envelope hash, and writes no record for it.
+
 ## Deploying the Identity stack
 
 **Every Identity deploy must re-pass ALL FIVE trust contexts or CDK drops the gates**
