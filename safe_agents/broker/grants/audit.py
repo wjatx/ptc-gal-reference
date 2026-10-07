@@ -33,6 +33,11 @@ Rules (each documented at its check site in run_audit):
                             has its record
   GRANT_TERM_RATIFIED       grant.certifiedUntil equals the term on the
                             promotion record that last set it
+  GRANT_TS_RECORDED         grant.ts equals the ts of the latest ledger record
+                            at its coordinate, in both directions: a later
+                            grant ts is a write the ledger does not explain,
+                            an earlier one is a record whose grant write did
+                            not land
   RECORD_SIGNATURE_VERIFIES every record in scope carries a DSSE envelope that
                             verifies under ITS RECORD TYPE'S signing role
                             (issuer: promotion/bootstrap/tightening/
@@ -62,7 +67,10 @@ A ``reattestation`` record changes no level (GAL §4.3), so every rule that
 derives a coordinate's level from its ledger, or looks for the record that
 earned it, passes over the type: the level and the earning record are the ones
 the ledger held immediately before it (``_level_bearing``). Its signature is
-checked like any other issuer-signed record's.
+checked like any other issuer-signed record's. GRANT_TS_RECORDED is the one
+grant-against-ledger rule that does NOT pass over it: that rule reads a
+timestamp and no level, and a re-attestation is a write to the grant like any
+other, so its record is the latest one when it is the last thing written.
 
 Acknowledgments: a TRUE finding can be dispositioned by a signed ACK#
 ceremony record (grants/acknowledgments.py) — the matched finding moves to
@@ -97,6 +105,17 @@ coordinate, type and ``ts`` produces a different detail, and the earlier
 acknowledgment does not apply to it. An entry with no stored bytes has nothing
 to bind, so its finding is never waived.
 
+A GRANT_TS_RECORDED finding names the sha256 of the GRANT's stored bytes and
+both timestamps, on the same terms: an acknowledgment excuses the grant as it
+stood when it was signed, and a grant rewritten afterwards is a new finding.
+One variant has no second timestamp to name: where a record's ts is not an
+instant, the latest record is not established. That finding names the sha256
+of the stored bytes of EVERY record at the coordinate in its place, so an
+acknowledgment of it covers that ledger and no later state of it.
+Nothing but a verified acknowledgment excuses one. There is no adoption date
+for this rule and no field on a grant or a record that takes a coordinate out
+of its scope, because whoever wrote the row wrote that field too.
+
 ``now`` is the explicit evaluation instant the EPOCH itself is judged at,
 required whenever an epoch is supplied and never derived from a record's ts —
 the same discipline as the grant term (``grants.term``). That judgement is the
@@ -124,6 +143,9 @@ from safe_agents.broker.grants.acknowledgments import (
 from safe_agents.broker.grants.demotion import (
     _rank,  # the SAME rank ordering the lifecycle moves on — never duplicated
 )
+from safe_agents.broker.grants.ledger_clock import (
+    _recorded_instant,  # the SAME reading of a stored ts the ledger clock takes
+)
 from safe_agents.broker.grants.proposals import ProposalStatus, compute_proposal_hash
 from safe_agents.broker.grants.record_signing import (
     EVALUATOR_ROLE,
@@ -147,6 +169,7 @@ LEDGER_COUNTERPART = "LEDGER_COUNTERPART"
 LEVEL_LEDGER_CONSISTENT = "LEVEL_LEDGER_CONSISTENT"
 LEVEL_DROP_RECORDED = "LEVEL_DROP_RECORDED"
 GRANT_TERM_RATIFIED = "GRANT_TERM_RATIFIED"
+GRANT_TS_RECORDED = "GRANT_TS_RECORDED"
 RECORD_SIGNATURE_VERIFIES = "RECORD_SIGNATURE_VERIFIES"
 EVALUATOR_RECORD_CONTINUOUS = "EVALUATOR_RECORD_CONTINUOUS"
 RECORD_SIGNING_EPOCH_VALID = "RECORD_SIGNING_EPOCH_VALID"
@@ -608,6 +631,118 @@ def _level_bearing(entries: list[AuditedRecord]) -> list[AuditedRecord]:
     return [entry for entry in entries if entry.record.bears_level]
 
 
+def _ts_instant(ts: object) -> datetime.datetime | None:
+    """A stored ts as an instant, or None where it does not name one.
+
+    The reading is the ledger clock's (``_recorded_instant``), so the audit
+    and the writer agree on which record is latest, a naive value read as UTC
+    included. Neither ``Grant.ts`` nor a record's ``ts`` is checked as a
+    timestamp at parse, so a planted row can carry any string here: one that
+    does not parse, or one whose offset carries it outside the representable
+    range. Each is a finding at the call site, never a crash. The schema does
+    hold both to ``str``, so no loader hands over anything else. TypeError is
+    caught for a dataset entry built in memory without validation.
+    """
+    try:
+        return _recorded_instant(ts)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _coordinate_ledger_digest(coordinate_records: list[AuditedRecord]) -> str | None:
+    """One sha256 over the stored bytes of every record at a coordinate.
+
+    None when an entry carries no stored bytes: there is then nothing to bind.
+    The digest is over the sorted per-record digests, so it does not depend on
+    the order the records were listed in, and it moves when a record is
+    appended, removed or replaced.
+    """
+    if any(entry.raw_data is None for entry in coordinate_records):
+        return None
+    digests = sorted(stored_record_digest_hex(entry.raw_data) for entry in coordinate_records)
+    return stored_record_digest_hex("\n".join(digests))
+
+
+def _grant_ts_mismatch(
+    grant_ts: str, coordinate_records: list[AuditedRecord]
+) -> tuple[str, bool] | None:
+    """How ``grant_ts`` fails to be the ts of the coordinate's latest record.
+
+    None when it is that record's ts. Otherwise the clause a
+    GRANT_TS_RECORDED detail states, and whether that clause binds the ledger
+    state it was judged against. The clause names the latest record's ts, and
+    that binds it: a record appended later moves the latest ts and so the
+    detail. Where the latest record is not established there is no such ts, so
+    the clause carries a digest of every record at the coordinate instead, and
+    is unbound when one of them has no stored bytes.
+
+    "Latest" is the maximum INSTANT over every record at the coordinate,
+    whatever its type, a ``reattestation`` included. It is never the last
+    element of the list and never the greatest string: those agree with the
+    instant for canonical values, and a planted row need not be canonical.
+
+    Equality is on the stored string. A sanctioned write puts one value on
+    the record and on the grant, so a grant ts that names the latest record's
+    instant in a different spelling was still written by something else.
+    Where two records share the latest instant in two spellings, either
+    spelling is a latest record's ts.
+    """
+    instants = [_ts_instant(entry.record.ts) for entry in coordinate_records]
+    if None in instants:
+        # No ceremony writes such a record (validate_record_ts refuses it), and
+        # with one present the latest record is not established. Skipping it
+        # would let a row decide for itself whether it is counted.
+        unreadable = sorted(
+            repr(entry.record.ts)
+            for entry, instant in zip(coordinate_records, instants)
+            if instant is None
+        )
+        # Without the ledger digest this detail would read the same whatever
+        # was appended or removed beside the unreadable record, and one
+        # acknowledgment of it would excuse the coordinate from then on.
+        ledger_digest = _coordinate_ledger_digest(coordinate_records)
+        ledger_state = (
+            f"the {len(coordinate_records)} records there, stored bytes "
+            f"sha256:{ledger_digest}"
+            if ledger_digest is not None
+            else "a record there has no stored bytes on the dataset entry, so "
+            "nothing an acknowledgment can bind"
+        )
+        return (
+            f"cannot be held to the ledger: the record ts {', '.join(unreadable)} "
+            "at its coordinate is not an instant, so the latest record is not "
+            f"established ({ledger_state})",
+            ledger_digest is not None,
+        )
+    latest = max(instants)
+    latest_ts = sorted(
+        {
+            entry.record.ts
+            for entry, instant in zip(coordinate_records, instants)
+            if instant == latest
+        }
+    )
+    if grant_ts in latest_ts:
+        return None
+    against = (
+        "the latest ledger record at its coordinate "
+        f"(ts={', '.join(repr(ts) for ts in latest_ts)})"
+    )
+    grant_instant = _ts_instant(grant_ts)
+    if grant_instant is None:
+        clause = f"is not an instant and so is not the ts of {against}"
+    elif grant_instant > latest:
+        clause = f"is later than {against}: a write to the grant that the ledger does not explain"
+    elif grant_instant < latest:
+        clause = f"is earlier than {against}: a record whose grant write did not land"
+    else:
+        clause = (
+            f"names the instant of {against} in a different form: a sanctioned write "
+            "puts one value on both"
+        )
+    return clause, True
+
+
 def _as_role_resolvers(
     record_key_resolver: KeyResolver | RoleKeyResolvers | None,
 ) -> RoleKeyResolvers | None:
@@ -661,6 +796,9 @@ def run_audit(
     resolvers = _as_role_resolvers(record_key_resolver)
     ledger = _records_by_coordinate(dataset)
     in_force = {e.principal_key: e.envelope_hash for e in dataset.envelopes}
+    # Findings with nothing to bind an acknowledgment to. They are never
+    # waived, whatever the rule's place in WAIVABLE_RULES.
+    unbound_findings: set[AuditViolation] = set()
 
     for entry in dataset.grants:
         grant = entry.grant
@@ -770,6 +908,65 @@ def run_audit(
                     ),
                 )
             )
+
+        # GRANT_TS_RECORDED (GAL §6.11, GAL-40): the grant's ts is the
+        # ledger's. Every sanctioned write stamps the grant and the record it
+        # appends with one ts (write_record_and_grant, ts from next_ledger_ts),
+        # so a grant's ts must be the ts of the latest record at its
+        # coordinate. Later than every record: something wrote the grant and
+        # appended nothing. Earlier than the latest: a record was appended and
+        # its grant write did not land. The level, term and envelope rules
+        # above each catch a write that moved the field they read; this one
+        # catches a write that moved none of them.
+        # Every record type counts, reattestation included (no _level_bearing
+        # here): the rule reads a timestamp, and re-seed stamps its record and
+        # the grant like any other writer.
+        # A grant with NO record at all is LEDGER_COUNTERPART's finding and
+        # not also this one: there is no latest record to hold it to, and one
+        # orphan would otherwise need two acknowledgments for one fact.
+        # The boundary is "no record", which is narrower than that rule's "no
+        # bootstrap or promotion record". A coordinate holding only records
+        # that earn nothing (a lone demotion, a lone reattestation) still has
+        # a latest record, so a grant ts that is not that record's is this
+        # finding as well as that one: two facts, a grant nothing earned and
+        # a grant write nothing recorded.
+        # Waivable (acknowledgments.WAIVABLE_RULES), for a ledger whose grants
+        # were re-attested before re-attestation appended a record. The detail
+        # carries the sha256 of the grant's STORED bytes and both timestamps,
+        # so an acknowledgment excuses the grant as it stood and a later
+        # rewrite is a new finding. (Where a record's ts is not an instant
+        # there is no latest ts to name, and the detail carries a digest of
+        # every record at the coordinate in its place.) It is the digest of the bytes and not the
+        # item's grantHash, which is an attribute beside them that a keyless
+        # run cannot check and a rewrite can leave in place. Nothing else takes a grant out of scope:
+        # no date, no epoch, no field on the grant or on a record. Read-side
+        # limits: it compares timestamps and cannot say what the unexplained
+        # write changed. And it holds the grant to the ledger as it stands, so
+        # a record planted at the grant's ts satisfies it. Whether a ceremony
+        # wrote that record is RECORD_SIGNATURE_VERIFIES's question, which is
+        # asked of every record type only once RECORD_SIGNING_EPOCH is set.
+        mismatch = (
+            _grant_ts_mismatch(grant.ts, coordinate_records) if coordinate_records else None
+        )
+        if mismatch is not None:
+            clause, ledger_bound = mismatch
+            stored = (
+                f"stored bytes sha256:{stored_record_digest_hex(entry.raw_data)}"
+                if entry.raw_data is not None
+                else "no stored bytes on the dataset entry, so nothing an acknowledgment can bind"
+            )
+            finding = AuditViolation(
+                rule=GRANT_TS_RECORDED,
+                coordinate=coordinate,
+                detail=(
+                    f"grant at level {grant.level.value!r} ({stored}) carries "
+                    f"ts={grant.ts!r}, which {clause}; every sanctioned write "
+                    "stamps the grant and its record with one ts"
+                ),
+            )
+            violations.append(finding)
+            if entry.raw_data is None or not ledger_bound:
+                unbound_findings.add(finding)
 
         # GRANT_ENVELOPE_IN_FORCE — grant.envelopeHash must match the
         # stored in-force envelope for its principal. A mismatched grant is
@@ -897,9 +1094,6 @@ def run_audit(
     # and both closed without landing that measurement) — so this rule verifies
     # AUTHENTICITY (who signed what), never the truth of the asserted evidence.
 
-    # Findings with nothing to bind an acknowledgment to. They are never
-    # waived, whatever the rule's place in WAIVABLE_RULES.
-    unbound_findings: set[AuditViolation] = set()
     if resolvers is None:
         skipped.append(RECORD_SIGNATURE_VERIFIES)
         annotations.append(
