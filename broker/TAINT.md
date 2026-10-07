@@ -168,6 +168,36 @@ opts in per agent.
   the wire, the PIP only reads the counter. Read-path order: exfil-deny → rung-gate → cap →
   `read_allow`.
 
+### 6.1 What an attacker can still do through a read: request forgery
+
+The bounds above meter how many bytes an agent sends. None of them looks at where a request goes.
+No field names the argument that is an operation's destination, so on a tainted turn a read whose
+address came from planted text is allowed like any other read (§5). The attack is this: the agent
+reads text an attacker wrote, the text supplies an address, and a tool that holds network position
+the attacker lacks fetches it.
+
+**The broker does not stop request forgery inside a tool server.** A server that follows a
+redirect, or resolves a name to an internal address, does so after the broker has decided. An
+attacker who can steer one read can reach whatever that server can reach.
+
+**No list of approved destinations is offered at the broker.** The broker sees an argument and
+never the connection. A list checked against the argument passes the address the agent wrote and
+learns nothing about the redirect or the name resolution that follows, so it would read as a
+control and fail as one. The retired `Envelope.allowlists` block left room for such a list, and
+that room went with it (#135).
+
+**Containment at a boundary around the server closes the gap.** Only the component that opens the
+connection, or a network boundary around it, can check where a request lands. A deployment that
+needs this closed puts the tool server behind an egress boundary that names what it may reach. The
+broker cannot supply that from where it sits.
+
+**[deferred]** PTC §6.4 (PTC-52, tracked in #178) adds a hold at the broker: on a tainted turn, a
+call whose destination the agent composed is treated as an external write and routed through the
+§5 escalation, with the destination argument declared in the manifest beside `egress_arg`. It is a
+control a deployment may leave off. It is **not yet implemented**: `ToolOp` has no destination
+field and no rule reads one. When built it narrows the gap, because a planted address is held for
+a human. It does not close it, because a destination a human approved can still redirect.
+
 ## 7. Executable acceptance
 
 The broker-side half of the memory-taint acceptance exists as tests today (`safe_agents/broker/tests/`):

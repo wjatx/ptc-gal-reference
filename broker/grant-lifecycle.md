@@ -200,7 +200,10 @@ force.
   a plain content hash, so the keyless posture holds). A mismatch is a grant the broker quarantines
   on every call: operationally dead, HMAC-clean, invisible to every other rule. The remedy is
   `re-seed`. The rule fires expectedly after any far-jump redeploy — that is it working, and it is
-  why the acknowledgment ceremony ships beside it.
+  why the acknowledgment ceremony ships beside it. A release that adds or removes an `Envelope`
+  field is such a redeploy for every principal at once, whether or not the principal's envelope
+  ever set the field, because the hash covers the whole dump. Retiring `Envelope.allowlists` was
+  one (#135); `SCHEMAS.md` lists what that upgrade requires.
 - **`GRANT_TS_RECORDED`.** Every sanctioned write stamps the grant and the record it appends
   with one `ts` (`write_record_and_grant`, `ts` from the ledger clock), so a grant's `ts` must be
   the `ts` of the latest record at its coordinate (GAL §6.11, GAL-40). A grant `ts` later than

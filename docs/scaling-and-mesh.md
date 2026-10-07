@@ -15,7 +15,7 @@ is what makes people say "a full stack per agent" (an overstatement):
 | Class | Examples | Cost of one more agent |
 |---|---|---|
 | **Shared mechanism** | broker/airlock/drain *code*, the seven schemas, KMS keys, network, the audit + ledger *buckets* | zero |
-| **Config + isolation namespaces** | principal identity, Envelope (polarity/caps/allowlists), AgentManifest (grants/connectors), connector-credential leaves, the audit/ledger *prefix*, the grants/counters/intents *rows* (already principal-scoped — the scoped counters key on principal) | a row and a namespace |
+| **Config + isolation namespaces** | principal identity, Envelope (polarity/caps), AgentManifest (grants/connectors), connector-credential leaves, the audit/ledger *prefix*, the grants/counters/intents *rows* (already principal-scoped — the scoped counters key on principal) | a row and a namespace |
 | **Per-agent runtime AWS resources** | the inbound **queue** + the **drain** Lambda | one queue + one Lambda + one prefix |
 
 The honest one-liner is therefore **shared substrate + per-agent config + a small fixed set of

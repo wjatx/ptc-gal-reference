@@ -87,12 +87,17 @@ capability-scoped registry (`broker/README.md` §"Capability-scoped registry") e
 sub-agent's broker session is initialized with only the sub-granted tools; the rest do not exist
 in its world.
 
-**3. Envelope — caps, allowlists, and expiry are tighter.**
+**3. Envelope — caps and expiry are tighter.**
 
 The sub-grant's envelope is computed as the intersection (tightest bound) of the parent's envelope
 and any further constraints the spawning agent specifies. The spend caps in the sub-grant can only
 be ≤ the parent's remaining caps. The expiry is always shorter than the parent grant's remaining
 TTL. The sub-grant cannot carry a higher blast-radius limit than the parent.
+
+The envelope carries no list of tools, so there is none to intersect. Which calls a sub-agent may
+make is narrowed in the first two dimensions, and in the implemented `SubGrant` by `actionClasses`.
+An envelope tool allowlist once appeared here as a third thing to narrow. No decision ever read
+that list, and it was retired (#135).
 
 ---
 
@@ -146,7 +151,7 @@ interface SubGrant {
   actionClass:      string              // the action class this sub-grant covers (subset of parent's)
   level:            "in-loop" | "on-loop" | "out-of-loop"  // ≤ parent's level on the oversight rung
   toolSet:          string[]            // strict subset of parent's granted tools
-  envelope:         AttenuatedEnvelope  // caps and allowlists — all bounds tighter than or equal to parent's remaining
+  envelope:         AttenuatedEnvelope  // caps — all bounds tighter than or equal to parent's remaining
   expiry:           string              // ISO-8601 UTC; always < parent grant's remaining expiry
 
   // Broker bookkeeping
@@ -157,7 +162,6 @@ interface SubGrant {
 
 interface AttenuatedEnvelope {
   spendCaps:        Record<string, number>   // per-action-class spend cap; each ≤ parent's remaining cap
-  allowlists:       Record<string, string[]> // intersection of parent's allowlists with any additional narrowing
   maxBlastRadius:   number                   // ≤ parent's envelope blast-radius bound
 }
 ```

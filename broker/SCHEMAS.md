@@ -1,7 +1,7 @@
 # SCHEMAS — the seven base schemas
 
 The canonical contract other subdirs reference. These are the **base** schemas (encoded once);
-per-agent repos fill in *values* (caps, allowlists, thresholds), never the shapes. Field lists match
+per-agent repos fill in *values* (caps, thresholds), never the shapes. Field lists match
 `ARCHITECTURE.md` §"The seven base schemas" exactly, expanded here with per-field notes from
 `auto-agents/tool-broker-sketch.md`.
 
@@ -20,7 +20,7 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 | **PromotionRecord** | The maker-checker promotion act. |
 
 > **Per-agent Envelope (fills these, isn't one of them).** The *values* a per-agent repo supplies —
-> polarity, caps, allowlists, reversibility classes, thresholds — are themselves typed: the canonical
+> polarity, caps, reversibility classes, thresholds — are themselves typed: the canonical
 > `Envelope` schema lives at `safe_agents/broker/schemas/envelope.py`, with `compute_envelope_hash`
 > (a plain `sha256:` content hash) tying a Grant/AuditRecord to the exact envelope in force. The
 > Envelope is per-agent config that *fills* the seven base schemas above — not an eighth base contract.
@@ -157,7 +157,7 @@ Per-field notes:
   holds no acting grant for the class, the broker default-denies, and its advice is only text in
   its reply. Recommend is a rung but not a `level`; the enum is complete at three values. The rung
   is per `(principal, action-class)`, never per-agent (`grant-lifecycle.md`).
-- **envelopeHash** — the envelope is the deterministic bounded region (caps, allowlists,
+- **envelopeHash** — the envelope is the deterministic bounded region (caps,
   reversibility classes, fallback budgets). The agent **cannot widen its own envelope**; hashing it
   makes the in-force bundle verifiable and ties each AuditRecord to the exact envelope that decided.
 - **lastSafeLevel** — demotion target. Never `autonomous`. In abstention-kills domains the safe rung
@@ -285,7 +285,7 @@ Per-field notes:
 - **abstain.escalate** — escalation spends the **attention/escalation budget** (Budgets §5), so
   `abstain → escalate:true` is itself rationed; an adversary DoSes this channel. `abstain` is a
   first-class outcome, not a failure.
-- **Facts** — supplied by the PIP: counter balances, allowlist membership, human reachability, and
+- **Facts** — supplied by the PIP: grant presence and level, counter balances, human reachability, and
   *constructed* confidence (self-consistency / ensemble / conformal / stale — high-stakes tier
   only). Confidence is computed deterministically, never read off a raw model logprob. The
   constructed value is packaged as a typed `ConfidenceArtifact` and gated by the deterministic
@@ -647,3 +647,31 @@ looks enabled but gates nothing violates the friction doctrine.
 > envelope hash, and an older stored envelope dump (carrying `"abstention_thresholds": null`) fails
 > validation loudly at boot — the intended fail-closed path, cured by re-running
 > seed_envelope → seed_grants (the consumer's own broker-image cutover runbook). No compat shim.
+>
+> **The tool allowlist is retired, and retiring it changed every envelope hash (#135).**
+> `Envelope.allowlists` was declared as a default-deny scope of the tools an agent may see. No
+> decision read it. An agent was served, and could call, whatever its grants covered, so a
+> deployment that narrowed the list believed in a restriction that did not exist. The field and its
+> model are removed. What an agent may call comes from its grants and from nothing else in the
+> envelope. An envelope or manifest that still carries the key is refused at load with a message
+> naming the retirement. It is never dropped silently, whatever its value.
+>
+> The consequence reaches every deployment, including one that never set the block. The envelope
+> hash covers the whole dump, and the old dump wrote `"allowlists": null` for an envelope that left
+> the field unset. So the hash of every envelope is different after this change. An upgrade across
+> it requires three things, in this order:
+>
+> 1. Remove the `allowlists:` block from the authored manifest. If the list was meant to narrow what
+>    the agent can reach, narrow the grants instead.
+> 2. In store mode, seed the envelope again. Every envelope row written before the change carries
+>    the key, as null when it was never set, and the broker refuses the row at startup until it is
+>    replaced. A ceremony command refuses it too, and says the seeded row was refused. Until the
+>    row is replaced, the ledger audit reports it as an `UNPARSEABLE_ITEM`. That finding cannot be
+>    acknowledged: the remedy is the seed.
+> 3. Re-attest the grants with `re-seed`, once per principal. Every grant stamped under an old hash
+>    is quarantined on every call until then, and the audit reports each one as
+>    `GRANT_ENVELOPE_IN_FORCE`. `re-seed` needs the issuer signing key and has no unsigned
+>    override, so an operator without that key cannot complete the upgrade.
+>
+> No compat shim, for the same reason as the retirement above: a shim that kept old hashes valid
+> would have to keep hashing a field that means nothing.
