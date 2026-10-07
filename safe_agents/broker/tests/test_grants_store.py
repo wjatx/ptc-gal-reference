@@ -9,9 +9,9 @@ Coverage:
 - The DynamoDBGrantStore propagates AccessDenied without swallowing it
   (mock boto3 session; no live AWS required).
 - compute_grant_hash is deterministic and sensitive to field changes.
-- update_grant: conditional UpdateItem semantics — success, conflict on a stale
-  expected hash, conflict on a missing item (never creates), prev_raw_data
-  REQUIRED (the legacy fallback is retired).
+- The update leg of write_record_and_grant: the DynamoDB condition over the
+  guarded re-read's hash AND bytes, a canceled grant condition mapped to a
+  conflict, AccessDenied propagated.
 - DynamoDBPromotionRecordStore: RECORD# item layout, append-only condition,
   RecordAlreadyExistsError on a key collision.
 - Record ts canonical validation: both put_record implementations
@@ -33,6 +33,7 @@ from safe_agents.broker.grants.store import (
     InMemoryGrantStore,
     DynamoDBGrantStore,
     DynamoDBPromotionRecordStore,
+    GrantReadResult,
     GrantUpdateConflictError,
     RecordAlreadyExistsError,
     RecordTimestampFormatError,
@@ -335,168 +336,98 @@ def test_dynamo_get_quarantines_on_hash_mismatch():
 
 
 # ---------------------------------------------------------------------------
-# update_grant — conditional UpdateItem semantics (InMemory)
+# The update leg of write_record_and_grant — the only update the stores carry.
+# Its conditional semantics on every backend are the differential suite's
+# (test_grant_store_differential.py); here, the DynamoDB expression shape and
+# error mapping against a mock client.
 # ---------------------------------------------------------------------------
-
-
-def test_inmemory_update_grant_persists_and_rehashes():
-    store = InMemoryGrantStore(hmac_key=TEST_KEY)
-    store.put_grant(make_grant(), session=None)
-    current = store.get_grant(PRINCIPAL, "email.send")
-
-    updated = current.grant.model_copy(update={"level": AutonomyLevel.in_loop, "ownerId": "bob"})
-    store.update_grant(updated, current.stored_hash, session=None, prev_raw_data=current.raw_data)
-
-    after = store.get_grant(PRINCIPAL, "email.send")
-    assert not after.quarantined  # hash was recomputed on write
-    assert after.grant.ownerId == "bob"
-
-
-def test_inmemory_update_grant_conflict_on_stale_hash():
-    store = InMemoryGrantStore(hmac_key=TEST_KEY)
-    store.put_grant(make_grant(ownerId="alice"), session=None)
-    current = store.get_grant(PRINCIPAL, "email.send")
-
-    # Concurrent modification lands between read and write
-    store.put_grant(make_grant(ownerId="mallory"), session=None)
-
-    updated = current.grant.model_copy(update={"level": AutonomyLevel.in_loop})
-    with pytest.raises(GrantUpdateConflictError, match="concurrently"):
-        store.update_grant(
-            updated, current.stored_hash, session=None, prev_raw_data=current.raw_data
-        )
-
-
-def test_inmemory_update_grant_never_creates():
-    store = InMemoryGrantStore(hmac_key=TEST_KEY)  # empty
-    with pytest.raises(GrantUpdateConflictError, match="cannot create"):
-        store.update_grant(make_grant(), "any-hash", session=None, prev_raw_data="{}")
-    assert store.get_grant(PRINCIPAL, "email.send").grant is None
-
-
-def test_update_grant_requires_prev_raw_data():
-    """prev_raw_data=None refuses BEFORE any store access (the legacy
-    fallback is retired; failing toward writing nothing)."""
-    store = InMemoryGrantStore(hmac_key=TEST_KEY)
-    store.put_grant(make_grant(), session=None)
-    current = store.get_grant(PRINCIPAL, "email.send")
-    with pytest.raises(ValueError, match="prev_raw_data"):
-        store.update_grant(current.grant, current.stored_hash, session=None)
 
 
 def test_read_result_carries_raw_data():
     """GrantReadResult.raw_data is the exact stored serialization — the
-    integrity basis update_grant conditions on."""
+    integrity basis a conditional update conditions on."""
     store = InMemoryGrantStore(hmac_key=TEST_KEY)
     store.put_grant(make_grant(), session=None)
     result = store.get_grant(PRINCIPAL, "email.send")
     assert result.raw_data == canonical_grant_payload(result.grant)
 
 
-def test_inmemory_update_grant_rejects_data_tamper_with_intact_hash():
-    """A tamper of the data payload alone (hash attribute untouched) landing
-    between the guarded re-read and the write must fail the conditional write
-    — overwriting it would destroy the tamper evidence."""
-    store = InMemoryGrantStore(hmac_key=TEST_KEY)
-    store.put_grant(make_grant(), session=None)
-    current = store.get_grant(PRINCIPAL, "email.send")
-
-    # Tamper the stored data bytes WITHOUT touching the hash attribute.
-    key = (f"{PRINCIPAL.agentId}#{PRINCIPAL.skill}#{PRINCIPAL.user}#{PRINCIPAL.tier}", "email.send")
-    tampered = store._store[key]["data"].replace('"evidence-ref-001"', '"tampered"', 1)
-    store._store[key]["data"] = tampered
-
-    updated = current.grant.model_copy(update={"ownerId": "bob"})
-    with pytest.raises(GrantUpdateConflictError):
-        store.update_grant(
-            updated, current.stored_hash, session=None, prev_raw_data=current.raw_data
-        )
-    # The tampered state stands for audit — never silently overwritten.
-    assert store._store[key]["data"] == tampered
+def _update_pair(session, *, expected: GrantReadResult):
+    """Run the atomic update against a mock client under ``session``."""
+    store = _make_dynamo_store()
+    record = make_record(
+        recordType="tightening", fromLevel=AutonomyLevel.in_loop, evidence="tighten"
+    )
+    store.write_record_and_grant(
+        record,
+        make_grant(),
+        DynamoDBPromotionRecordStore(table_name="grants-test"),
+        session,
+        expected=expected,
+    )
 
 
-# ---------------------------------------------------------------------------
-# update_grant — DynamoDB expression shape + error mapping (mock boto3)
-# ---------------------------------------------------------------------------
+_EVALUATED = GrantReadResult(
+    grant=Grant(**GRANT_BASE), raw_data='{"old": 1}', stored_hash="expected-123"
+)
 
 
-def _capture_update(store: DynamoDBGrantStore, **update_kwargs) -> dict:
-    """Run update_grant against a MagicMock table; return the update_item kwargs."""
-    mock_session = MagicMock()
-    mock_table = MagicMock()
-    mock_session.resource.return_value.Table.return_value = mock_table
-
-    store.update_grant(session=mock_session, **update_kwargs)
-
-    assert mock_table.update_item.call_count == 1
-    return mock_table.update_item.call_args.kwargs
-
-
-def test_dynamo_update_grant_conditions_on_hash_and_bytes():
+def test_dynamo_update_leg_conditions_on_hash_and_bytes():
     """The condition requires BOTH halves from the guarded re-read: the
     item-level grantHash AND the exact stored data bytes — a tamper of either
     half alone fails the write."""
-    store = _make_dynamo_store()
-    kwargs = _capture_update(
-        store, updated=make_grant(), expected_hash="expected-123", prev_raw_data='{"old": 1}'
-    )
+    mock_session = MagicMock()
+    _update_pair(mock_session, expected=_EVALUATED)
 
-    assert kwargs["ConditionExpression"] == (
+    client = mock_session.client.return_value
+    assert client.transact_write_items.call_count == 1
+    record_leg, grant_leg = (
+        item["Update"] for item in client.transact_write_items.call_args.kwargs["TransactItems"]
+    )
+    assert record_leg["ConditionExpression"] == "attribute_not_exists(pk)"
+    assert grant_leg["ConditionExpression"] == (
         "attribute_exists(pk) AND grantHash = :expected AND #data = :prev_data"
     )
-    assert kwargs["ExpressionAttributeValues"][":expected"] == "expected-123"
-    assert kwargs["ExpressionAttributeValues"][":prev_data"] == '{"old": 1}'
+    values = grant_leg["ExpressionAttributeValues"]
+    assert values[":expected"] == {"S": "expected-123"}
+    assert values[":prev_data"] == {"S": '{"old": 1}'}
     # The write SETs both the data blob and the item-level hash, via #data
     # ('data' is a DynamoDB reserved word)
-    assert kwargs["UpdateExpression"] == "SET #data = :data, grantHash = :new_hash"
-    assert kwargs["ExpressionAttributeNames"] == {"#data": "data"}
-    written = kwargs["ExpressionAttributeValues"][":data"]
+    assert grant_leg["UpdateExpression"] == "SET #data = :data, grantHash = :new_hash"
+    assert grant_leg["ExpressionAttributeNames"] == {"#data": "data"}
+    written = values[":data"]["S"]
     assert written == canonical_grant_payload(make_grant())
-    assert kwargs["ExpressionAttributeValues"][":new_hash"] == _hmac_payload(written, TEST_KEY)
+    assert values[":new_hash"] == {"S": _hmac_payload(written, TEST_KEY)}
 
 
-def test_dynamo_update_grant_requires_prev_raw_data():
-    """prev_raw_data=None refuses BEFORE any AWS call."""
-    store = _make_dynamo_store()
-    mock_session = MagicMock()
-    mock_table = MagicMock()
-    mock_session.resource.return_value.Table.return_value = mock_table
-    with pytest.raises(ValueError, match="prev_raw_data"):
-        store.update_grant(make_grant(), "expected-123", session=mock_session)
-    mock_table.update_item.assert_not_called()
-
-
-def test_dynamo_update_grant_maps_conditional_failure_to_conflict():
+def test_dynamo_update_leg_maps_a_canceled_grant_condition_to_conflict():
     from botocore.exceptions import ClientError
 
-    store = _make_dynamo_store()
     mock_session = MagicMock()
-    mock_table = MagicMock()
-    mock_session.resource.return_value.Table.return_value = mock_table
-    mock_table.update_item.side_effect = ClientError(
-        {"Error": {"Code": "ConditionalCheckFailedException", "Message": "The conditional request failed"}},
-        "UpdateItem",
+    mock_session.client.return_value.transact_write_items.side_effect = ClientError(
+        {
+            "Error": {"Code": "TransactionCanceledException", "Message": "canceled"},
+            "CancellationReasons": [{"Code": "None"}, {"Code": "ConditionalCheckFailed"}],
+        },
+        "TransactWriteItems",
     )
 
     with pytest.raises(GrantUpdateConflictError):
-        store.update_grant(make_grant(), "stale-hash", session=mock_session, prev_raw_data="{}")
+        _update_pair(mock_session, expected=_EVALUATED)
 
 
-def test_dynamo_update_grant_propagates_access_denied():
+def test_dynamo_update_leg_propagates_access_denied():
     """AccessDenied is NOT mapped to a conflict — the caller must see it."""
     from botocore.exceptions import ClientError
 
-    store = _make_dynamo_store()
     mock_session = MagicMock()
-    mock_table = MagicMock()
-    mock_session.resource.return_value.Table.return_value = mock_table
-    mock_table.update_item.side_effect = ClientError(
+    mock_session.client.return_value.transact_write_items.side_effect = ClientError(
         {"Error": {"Code": "AccessDeniedException", "Message": "User is not authorized"}},
-        "UpdateItem",
+        "TransactWriteItems",
     )
 
     with pytest.raises(ClientError) as exc_info:
-        store.update_grant(make_grant(), "hash", session=mock_session, prev_raw_data="{}")
+        _update_pair(mock_session, expected=_EVALUATED)
     assert exc_info.value.response["Error"]["Code"] == "AccessDeniedException"
 
 

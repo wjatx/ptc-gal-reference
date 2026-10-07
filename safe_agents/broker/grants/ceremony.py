@@ -17,8 +17,8 @@ Flow:
      the predicate gate and the deterministic acceptance gate.
   3. On accept: consume the stored proposal (if any), append the
      PromotionRecord, then write the Grant via the promotion-role session —
-     create_grant for a Recommend-origin proposal, hash-conditioned
-     update_grant from a guarded re-read for an existing grant (never a
+     a create for a Recommend-origin proposal, a hash-conditioned
+     update from a guarded re-read for an existing grant (never a
      blind put).
   4. On reject: return CeremonyResult(status='rejected'); no write.
 
@@ -546,7 +546,7 @@ class PromotionCeremony:
         overwritten). An existing grant gets a guarded re-read — quarantine
         refused loudly; a stored level differing from proposal.from_level is a
         premise change (e.g. a demotion landed between propose and ratify) and
-        rejects the ceremony — then a hash-conditioned update_grant whose
+        rejects the ceremony — then a hash-conditioned update whose
         GrantUpdateConflictError propagates, never retried silently: that IS
         the demotion-race protection.
 

@@ -14,8 +14,8 @@ Coverage:
 - apply_demotion: concurrent modification → DemotionConflictError
 - apply_demotion: grant not in store → GrantNotFoundError (UpdateItem semantics)
 - apply_demotion: called with should_demote=False → ValueError
-- apply_demotion: session is passed through to store.update_grant and
-  record_store.put_record (IAM role assertion)
+- apply_demotion: session is passed through to the store write
+  (IAM role assertion)
 - Demotion record (demotion-typed PromotionRecord): ratifiedBy is always
   "system:demotion-evaluator"; triggeredBy, fromLevel, toLevel, envelopeHash set
 - Demotion record is appended to the ledger AFTER the grant write (safe order);

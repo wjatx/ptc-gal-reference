@@ -279,7 +279,7 @@ def test_admit_tool_first_admission_refuses_concurrent_create(store):
 # ---------------------------------------------------------------------------
 # The DynamoDB arm conditions identically (Finding A) — expression shape +
 # ConditionalCheckFailedException -> ToolRowConflictError, mirroring
-# test_grants_store's update_grant coverage
+# test_grants_store's coverage of the grant update leg
 # ---------------------------------------------------------------------------
 
 

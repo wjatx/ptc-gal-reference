@@ -617,53 +617,9 @@ class TestDynamoDBGrantStore:
         assert result.quarantined is True
         assert result.quarantine_reason is not None
 
-    # -- update_grant: the real ConditionExpression against real DynamoDB ----
-
-    def test_update_grant_succeeds_when_hash_matches(self, table_name):
-        store = DynamoDBGrantStore(hmac_key=_KEY_A, table_name=table_name)
-        store.put_grant(Grant(**_GRANT_BASE), session=boto3.Session())
-        current = store.get_grant(_GRANT_PRINCIPAL, "email.send")
-
-        updated = current.grant.model_copy(update={"ownerId": "bob"})
-        store.update_grant(
-            updated, current.stored_hash, boto3.Session(), prev_raw_data=current.raw_data
-        )
-
-        after = store.get_grant(_GRANT_PRINCIPAL, "email.send")
-        assert not after.quarantined  # hash recomputed on write
-        assert after.grant.ownerId == "bob"
-
-    def test_update_grant_conflict_on_stale_hash(self, table_name):
-        from safe_agents.broker.grants.store import GrantUpdateConflictError
-
-        store = DynamoDBGrantStore(hmac_key=_KEY_A, table_name=table_name)
-        store.put_grant(Grant(**_GRANT_BASE), session=boto3.Session())
-        current = store.get_grant(_GRANT_PRINCIPAL, "email.send")
-
-        # Concurrent modification lands between read and write
-        store.put_grant(
-            Grant(**{**_GRANT_BASE, "ownerId": "mallory"}), session=boto3.Session()
-        )
-
-        updated = current.grant.model_copy(update={"ownerId": "bob"})
-        with pytest.raises(GrantUpdateConflictError):
-            store.update_grant(
-                updated, current.stored_hash, boto3.Session(), prev_raw_data=current.raw_data
-            )
-
-        # The conditional write must not have landed
-        after = store.get_grant(_GRANT_PRINCIPAL, "email.send")
-        assert after.grant.ownerId == "mallory"
-
-    def test_update_grant_never_creates_item(self, table_name):
-        from safe_agents.broker.grants.store import GrantUpdateConflictError
-
-        store = DynamoDBGrantStore(hmac_key=_KEY_A, table_name=table_name)
-        with pytest.raises(GrantUpdateConflictError):
-            store.update_grant(
-                Grant(**_GRANT_BASE), "any-hash", boto3.Session(), prev_raw_data="{}"
-            )
-        assert store.get_grant(_GRANT_PRINCIPAL, "email.send").grant is None
+    # The update leg's real ConditionExpression (hash AND bytes, never
+    # creates, a data-only tamper refused) runs against moto in
+    # test_grant_store_differential.py's dynamo rows.
 
     def test_item_without_granthash_reads_quarantined(self, table_name):
         """The pre-stored-bytes legacy fallback is RETIRED: an item missing its
@@ -684,37 +640,6 @@ class TestDynamoDBGrantStore:
         assert current.quarantined is True
         assert current.grant is None
         assert current.raw_data is not None  # bytes ride for audit
-
-    def test_update_grant_refuses_data_tamper_with_intact_granthash(self, table_name):
-        """The quarantine race: a tamper of the 'data' payload alone (the
-        grantHash attribute untouched) landing between a guarded re-read and
-        the write must FAIL the conditional write — a hash-only condition
-        would pass and silently overwrite the tamper evidence."""
-        from safe_agents.broker.grants.store import GrantUpdateConflictError
-
-        store = DynamoDBGrantStore(hmac_key=_KEY_A, table_name=table_name)
-        store.put_grant(Grant(**_GRANT_BASE), session=boto3.Session())
-        current = store.get_grant(_GRANT_PRINCIPAL, "email.send")
-
-        # Tamper the data payload directly, leaving grantHash as-is.
-        table = boto3.resource("dynamodb", region_name=REGION).Table(table_name)
-        table.update_item(
-            Key={"pk": "GRANT#agent-1#email#alice#B", "sk": "CLASS#email.send"},
-            UpdateExpression="SET #data = :tampered",
-            ExpressionAttributeNames={"#data": "data"},
-            ExpressionAttributeValues={
-                ":tampered": current.raw_data.replace('"alice"', '"mallory"')
-            },
-        )
-
-        updated = current.grant.model_copy(update={"ownerId": "bob"})
-        with pytest.raises(GrantUpdateConflictError):
-            store.update_grant(
-                updated, current.stored_hash, boto3.Session(), prev_raw_data=current.raw_data
-            )
-        # The tampered item stands for audit (and reads back quarantined).
-        after = store.get_grant(_GRANT_PRINCIPAL, "email.send")
-        assert after.quarantined
 
     # -- create_grant: the real attribute_not_exists condition --------
 

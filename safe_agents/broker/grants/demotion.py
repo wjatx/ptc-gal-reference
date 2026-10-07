@@ -210,7 +210,8 @@ def apply_demotion(
     - Re-reads the grant before writing — a cheap check that distinguishes
       not-found (GrantNotFoundError) from concurrent modification
       (DemotionConflictError).
-    - The real atomicity guard is the conditional store.update_grant: the
+    - The real atomicity guard is the conditional update leg of
+      store.write_record_and_grant: the
       write succeeds only if the stored grant is still the one evaluated
       (no race window between the re-read and the write). A demotion-scoped
       IAM role needs only UpdateItem (no PutItem API) — but UpdateItem can
@@ -243,7 +244,7 @@ def apply_demotion(
         record_store: the PromotionRecord ledger the demotion record is
             appended to.
         session: boto3 Session carrying the demotion IAM role; passed through
-            to store.update_grant and record_store.put_record. The stores
+            to store.write_record_and_grant. The stores
             never assume roles themselves.
         ts: canonical ISO-8601 wall-clock reading; defaults to current UTC
             time. The record's ts is the ledger clock's advance from it

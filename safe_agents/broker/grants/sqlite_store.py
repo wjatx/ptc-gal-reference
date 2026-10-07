@@ -48,7 +48,6 @@ from safe_agents.broker.grants.store import (
     _hmac_payload,
     _principal_key,
     _read_result_from_item,
-    _require_prev_raw_data,
     canonical_grant_payload,
     refuse_reattestation_drift,
     refuse_term_extension,
@@ -140,29 +139,6 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
                 )
             substrate.put_new_item(conn, pk, sk, self._build_attrs(grant))
 
-    def update_grant(
-        self,
-        updated: Grant,
-        expected_hash: str,
-        session: object = None,
-        prev_raw_data: str | None = None,
-    ) -> None:
-        """Conditionally replace an existing grant; never creates one.
-
-        The in-transaction re-read is the ConditionExpression: the stored item
-        must still be the one the caller evaluated — grantHash equals
-        expected_hash AND the stored data bytes equal prev_raw_data (both from
-        the guarded re-read). prev_raw_data is REQUIRED (the legacy-item
-        fallback is retired) — supplying None is a ValueError, failing toward
-        writing nothing.
-        """
-        _require_prev_raw_data(prev_raw_data)
-        conn = self._connection()
-        with substrate.transaction(conn):
-            pk, sk = self._check_update_conditions(conn, updated, expected_hash, prev_raw_data)
-            refuse_term_extension(prev_raw_data, updated, record_type=None)
-            substrate.update_existing_item(conn, pk, sk, self._build_attrs(updated))
-
     def _check_update_conditions(
         self,
         conn: sqlite3.Connection,
@@ -172,8 +148,10 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
     ) -> tuple[str, str]:
         """Validate the conditional-update conditions WITHOUT mutating; return
         the item key. Evaluated INSIDE the caller's transaction so the read is
-        serialized against every other writer. Shared by update_grant and the
-        atomic op so the latter cannot drift from single-write semantics —
+        serialized against every other writer. The in-transaction re-read is
+        the ConditionExpression: the stored item must still be the one the
+        caller evaluated (grantHash AND data bytes, both from the guarded
+        re-read) —
         mirrors InMemoryGrantStore._check_update_conditions and the Dynamo
         ConditionExpression clause-for-clause."""
         pk, sk = self._item_key(updated.principal, updated.actionClass)
@@ -181,7 +159,7 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
         if item is None:
             raise GrantUpdateConflictError(
                 f"grant {updated.principal.agentId}/{updated.actionClass} does not "
-                "exist; update_grant cannot create items (UpdateItem semantics)"
+                "exist; an update cannot create items (UpdateItem semantics)"
             )
         if item.get("grantHash") != expected_hash or item.get("data") != prev_raw_data:
             # Either half failing means the stored item is not the one the
