@@ -222,10 +222,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     reseed = sub.add_parser(
         "re-seed",
-        help="re-attest HMAC-clean grants under the NEW in-force envelope hash "
-        "(same level; HMAC-tamper quarantine is refused)",
+        help="re-attest HMAC-clean grants under the NEW in-force envelope hash, "
+        "each with a reattestation ledger record (same level; HMAC-tamper "
+        "quarantine is refused)",
     )
     _add_table_arg(reseed)
+    reseed.add_argument(
+        "--zone", help="signer zone for the issuer DSSE signature (default: ISSUER_SIGNING_ZONE)"
+    )
 
     propose = sub.add_parser("propose", help="maker: build, predicate-check and store a proposal")
     _add_principal_args(propose)
