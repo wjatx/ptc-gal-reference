@@ -96,9 +96,12 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 # (verification key scope) and PTC-47 (wire form). 0.4.0-draft added PTC-48
 # (the custody record of a verification key). GAL grew from 39 to 40 with
 # 0.5.0-draft: GAL-40 (a record's ts is its write instant, and the grant's ts
-# equals its latest record's).
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 48, SPEC_GAL: 40}
-EXPECTED_TOTAL_ROWS = 88
+# equals its latest record's). PTC 0.5.0-draft added PTC-49 to PTC-53 (skew,
+# the age of a fetched input, taint across delegation, an agent-composed
+# destination on a tainted turn, an approval that expires undecided), and GAL
+# 0.6.0-draft added GAL-41 to GAL-43 (issuer standing, skew, input age).
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 53, SPEC_GAL: 43}
+EXPECTED_TOTAL_ROWS = 96
 
 # clause_id -> (marker_form, tracking issue)
 #
@@ -192,6 +195,32 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # #165 (`certifiedUntil` on a lapse record) is a field-row marker in §5.2
     # and §6.7.6 and has no conformance row of its own.
     "GAL-40": (MARKER_FORM_INLINE, "#166"),
+    # PTC 0.5.0-draft. Three existing clauses gain markers the 2026-10-03
+    # re-audit found they needed: PTC-11 shares the unstamped publish path with
+    # PTC-7/8/9, PTC-29's ordering shares the dedupe race with PTC-14, and
+    # PTC-43's coalescing can join a hold that has already expired. PTC-44 is
+    # rewritten: a sender the airlock authenticated and mapped learns whether a
+    # refusal of authority is permanent or transient, which nothing classifies
+    # today (the airlock answers 200 to everything). PTC-49 to PTC-53 are new
+    # and unbuilt.
+    "PTC-11": (MARKER_FORM_INLINE, "#15"),
+    "PTC-29": (MARKER_FORM_INLINE, "#20"),
+    "PTC-43": (MARKER_FORM_INLINE, "#41"),
+    "PTC-44": (MARKER_FORM_INLINE, "#174"),
+    "PTC-49": (MARKER_FORM_INLINE, "#175"),
+    "PTC-50": (MARKER_FORM_INLINE, "#176"),
+    "PTC-51": (MARKER_FORM_INLINE, "#177"),
+    "PTC-52": (MARKER_FORM_INLINE, "#178"),
+    "PTC-53": (MARKER_FORM_INLINE, "#163"),
+    # GAL 0.6.0-draft. GAL-18 gains the qualifier "where signing is configured"
+    # and is marked for the two things #162 records: not every writer refuses
+    # once a ledger has adopted signing, and the override leaves nothing
+    # durable. GAL-41 to GAL-43 are new and unbuilt; GAL-42 and GAL-43 share
+    # their tracking issues with PTC-49 and PTC-50, being the same two rules.
+    "GAL-18": (MARKER_FORM_INLINE, "#162"),
+    "GAL-41": (MARKER_FORM_INLINE, "#179"),
+    "GAL-42": (MARKER_FORM_INLINE, "#175"),
+    "GAL-43": (MARKER_FORM_INLINE, "#176"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from

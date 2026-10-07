@@ -132,7 +132,7 @@ def test_gal_appended_clauses_are_blockquote_marked(
     "clause_id",
     [
         "PTC-1", "PTC-4", "PTC-26", "PTC-34", "PTC-35", "PTC-48",
-        "GAL-3", "GAL-16", "GAL-18", "GAL-19", "GAL-21", "GAL-30", "GAL-34", "GAL-38",
+        "GAL-3", "GAL-15", "GAL-16", "GAL-19", "GAL-21", "GAL-30", "GAL-34", "GAL-38",
     ],
 )
 def test_neighbouring_clauses_are_unmarked(rows: list[ClauseRow], clause_id: str) -> None:
@@ -160,6 +160,10 @@ def test_neighbouring_clauses_are_unmarked(rows: list[ClauseRow], clause_id: str
     PTC-48 is the last PTC row and is built (channels/SIGNING.md S10), so a
     marker leaking onto it from a neighbour would show here. GAL-19 and GAL-21
     bracket GAL-20.
+
+    Re-picked for GAL 0.5.1-draft and 0.6.0-draft. GAL-15 lost its marker and
+    joins as a clause whose marker was removed; GAL-18 gained one and leaves.
+    PTC-48 now stands directly before the marked run PTC-49..53.
     """
     row = _by_id(rows, clause_id)
     assert row.marker_state == MARKER_STATE_UNMARKED
