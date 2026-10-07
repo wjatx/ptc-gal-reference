@@ -109,6 +109,11 @@ RECORD_TYPE_SIGNING_ROLE: Mapping[str, str] = {
     "promotion": ISSUER_ROLE,
     "bootstrap": ISSUER_ROLE,
     "tightening": ISSUER_ROLE,
+    # Re-attestation re-licenses a grant under a new envelope on a human's
+    # authority (GAL §6.6), so it is the ceremony side's to sign. Under the
+    # evaluator's key the no-human side could re-issue a grant the enforcer
+    # had quarantined.
+    "reattestation": ISSUER_ROLE,
     "demotion": EVALUATOR_ROLE,
     "lapse": EVALUATOR_ROLE,
 }

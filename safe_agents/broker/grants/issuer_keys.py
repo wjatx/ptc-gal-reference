@@ -402,8 +402,9 @@ def resolve_evaluator_verify_keys() -> KeyResolver | None:
 def resolve_record_signer(zone: str | None = None) -> RecordSigner | None:
     """Build the ISSUER's RecordSigner from the cold-start environment, or None.
 
-    The ceremony/operator side: promotion, bootstrap and tightening records,
-    plus the MCP admission ledger and acknowledgment waivers.
+    The ceremony/operator side: promotion, bootstrap, tightening and
+    reattestation records, plus the MCP admission ledger and acknowledgment
+    waivers.
     """
     return resolve_signer_for_role(ISSUER_ROLE_ENV, zone)
 
