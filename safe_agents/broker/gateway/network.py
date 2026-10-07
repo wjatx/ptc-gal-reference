@@ -8,7 +8,8 @@ serving MCP over a socket that does not need the `mcp` SDK to state or to test:
     ASGI, so the check runs before the SDK sees a byte.
   - `MouthApp` is the one route and the lifespan, also plain ASGI.
   - `SerializedSurface` holds the runtime's two concurrency rules where a
-    transport cannot quietly break them.
+    transport cannot quietly break them. Every mouth in the process enters
+    the runtime through the same one.
   - `DiagnosticBudget` bounds what the HTTP server underneath may write to the
     diagnostic stream, because a caller who has not authenticated can make it
     write.
@@ -381,37 +382,51 @@ def resolve_network_mouth(env: Mapping[str, str] | None = None) -> NetworkMouthS
             "the port. 0 asks the operating system for a free one, which is "
             "reported on stderr once bound."
         )
-    try:
-        port = int(raw_port)
-    except ValueError:
-        port = -1
-    if not 0 <= port <= 65535:
-        raise GatewayConfigError(
-            f"{PORT_ENV}={raw_port!r} is not a port number (0 to 65535)"
-        )
+    port = parse_port(raw_port, PORT_ENV)
     return NetworkMouthSettings(host=host, port=port, authenticator=authenticator)
 
 
-def bind_listener(host: str, port: int) -> socket.socket:
+def parse_port(raw: str, env_name: str) -> int:
+    """A port number from 0 to 65535, or a refusal naming the setting."""
+    try:
+        port = int(raw)
+    except ValueError:
+        port = -1
+    if not 0 <= port <= 65535:
+        raise GatewayConfigError(f"{env_name}={raw!r} is not a port number (0 to 65535)")
+    return port
+
+
+def bind_listener(
+    host: str, port: int, *, host_env: str = HOST_ENV, port_env: str = PORT_ENV
+) -> socket.socket:
     """Bind and listen, so a bad address refuses at startup and in words.
 
     Returns the listening socket; with `port=0` its `getsockname()` says which
     port the operating system chose. Binding here, before the server loop exists,
     is also what lets a launcher learn the address before the first request.
+    `host_env` and `port_env` name the settings the refusal tells the launcher to
+    change, since more than one mouth binds through here.
     """
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     try:
         return socket.create_server((host, port), family=family)
     except OSError as exc:
         raise GatewayConfigError(
-            f"could not listen on {host}:{port} ({exc}); set {HOST_ENV} / {PORT_ENV} "
+            f"could not listen on {host}:{port} ({exc}); set {host_env} / {port_env} "
             "to an address this machine can bind"
         ) from exc
 
 
-def listener_url(listener: socket.socket) -> str:
+def listener_url(listener: socket.socket, path: str = MCP_PATH) -> str:
     """The URL a client reaches the mouth at, from the bound socket."""
-    host, port = listener.getsockname()[:2]
+    host, port = listener_address(listener)
     if ":" in host:
         host = f"[{host}]"
-    return f"http://{host}:{port}{MCP_PATH}"
+    return f"http://{host}:{port}{path}"
+
+
+def listener_address(listener: socket.socket) -> tuple[str, int]:
+    """The host and port the socket is bound to."""
+    host, port = listener.getsockname()[:2]
+    return host, port

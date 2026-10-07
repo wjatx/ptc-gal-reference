@@ -1,4 +1,4 @@
-"""server.py — the SDK bindings for the broker's MCP mouth: stdio and the network.
+"""server.py — the SDK and server bindings for the gateway's mouths.
 
 The only module in the gateway that touches the `mcp` SDK, and it imports it
 lazily inside functions — so `safe_agents.broker.gateway` imports cleanly with the
@@ -10,6 +10,10 @@ Both transports serve the SAME SDK `Server`, built once by `build_server`. The
 network mouth has no handlers and no result conversion of its own, so there is
 one place a `GatewayResult` becomes a wire result and a change to it lands on
 both transports (`broker/GATEWAY.md` G9, G11).
+
+Every HTTP mouth runs on one serve loop (`_ServedMouth`), and every mouth the
+process opens runs on ONE event loop, on the thread that built the runtime
+(`serve_until_any_stops`).
 
 There is no policy in this file. It translates: SDK request in, `GatewaySurface`
 call, SDK result out. If a decision appears here, it is in the wrong place.
@@ -25,10 +29,14 @@ broker currently serves this principal, computed per request. That is the low-le
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
+import os
 import socket
 import sys
-from typing import Any, Callable, Mapping
+import threading
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from safe_agents.broker.gateway.authn import Authenticator, RefusalLedger
 from safe_agents.broker.gateway.network import (
@@ -95,34 +103,201 @@ def _to_call_tool_result(result: GatewayResult, types: Any) -> Any:
     return types.CallToolResult(content=content, isError=True)
 
 
-async def serve_stdio(surface: GatewaySurface) -> None:
+async def serve_stdio(surface: Any, *, stdin: Any = None) -> None:
     """Run the gateway over stdio until the client disconnects.
 
     This is the shape a wrapped harness launches: one process, one MCP server on
-    stdin/stdout, every tool call routed through the broker.
+    stdin/stdout, every tool call routed through the broker. `stdin` is where
+    lines are read from (the SDK's own reader when None); `StdioMouth` passes one
+    a stop can abandon.
     """
     from mcp.server.stdio import stdio_server  # noqa: PLC0415
 
     server = build_server(surface)
-    async with stdio_server() as (read_stream, write_stream):
+    async with stdio_server(stdin=stdin) as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
-class NetworkMouth:
-    """The network MCP mouth: the same surface, over streamable HTTP.
+class _StdinLines:
+    """This process's stdin as an async iterator of text lines, read on a daemon thread.
 
-    A sibling to `serve_stdio`. What differs is only what a socket forces:
+    Why not the SDK's own reader: it reads each line in a worker thread that a
+    cancellation waits for, so a gateway told to stop would sit until its client
+    sent another line or closed the pipe. A stop has to stop. This reader's
+    thread is a daemon and is never waited for: cancelling the iteration returns
+    at once, and the thread, still blocked in its read, ends with the process.
 
-      - every request is authenticated before the SDK sees it (`ConnectionGuard`
-        is the outermost ASGI layer, so no `initialize`, `tools/list` or
-        `tools/call` is served to a connection that has not passed);
+    `os.read` on the descriptor, not `sys.stdin.buffer`: a daemon thread blocked
+    inside a buffered read holds that buffer's lock, and the interpreter cannot
+    finish shutting down past it. At most `_AHEAD` lines are read ahead of the
+    session. Lines are decoded as UTF-8 with replacement, as the SDK's reader does.
+    """
+
+    _CHUNK = 65536
+    _AHEAD = 16
+
+    def __init__(self, fd: int = 0) -> None:
+        self._fd = fd
+        self._queue: asyncio.Queue[str | None] | None = None
+        self._room = threading.Semaphore(self._AHEAD)
+
+    def __aiter__(self) -> "_StdinLines":
+        return self
+
+    async def __anext__(self) -> str:
+        if self._queue is None:
+            self._queue = asyncio.Queue()
+            threading.Thread(
+                target=self._pump,
+                args=(asyncio.get_running_loop(), self._queue),
+                name="gateway-stdin",
+                daemon=True,
+            ).start()
+        line = await self._queue.get()
+        self._room.release()
+        if line is None:
+            raise StopAsyncIteration
+        return line
+
+    def _pump(self, loop: asyncio.AbstractEventLoop, lines: "asyncio.Queue[str | None]") -> None:
+        def put(item: str | None) -> bool:
+            self._room.acquire()
+            try:
+                loop.call_soon_threadsafe(lines.put_nowait, item)
+            except RuntimeError:  # the loop has closed: nobody is reading
+                return False
+            return True
+
+        pending = b""
+        try:
+            while chunk := os.read(self._fd, self._CHUNK):
+                pending += chunk
+                *complete, pending = pending.split(b"\n")
+                for line in complete:
+                    if not put((line + b"\n").decode("utf-8", "replace")):
+                        return
+        except OSError:
+            pass
+        if pending and not put(pending.decode("utf-8", "replace")):
+            return
+        put(None)
+
+
+class StdioMouth:
+    """`serve_stdio` as a mouth that can be stopped.
+
+    It serves until the client closes stdin, or until `request_stop()`, which
+    cancels the session at once rather than waiting for the client's next line.
+    Before this existed the stdio gateway had no stop of its own: a `SIGTERM` took
+    the default action and ended the process on the spot, before the launcher's
+    cleanup (MCP-HOST.md M20).
+    """
+
+    def __init__(self, surface: Any) -> None:
+        self._surface = surface
+        self._stop_requested = False
+        self._stopped: asyncio.Event | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    async def serve(self) -> None:
+        # The event before the loop: `request_stop` reads them in the other order.
+        self._stopped = asyncio.Event()
+        self._loop = asyncio.get_running_loop()
+        if self._stop_requested:
+            return
+        session = asyncio.ensure_future(serve_stdio(self._surface, stdin=_StdinLines()))
+        stop = asyncio.ensure_future(self._stopped.wait())
+        try:
+            await asyncio.wait({session, stop}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stop.cancel()
+            if not session.done():
+                session.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await session  # a session that failed raises here
+
+    def request_stop(self) -> None:
+        """Ask `serve()` to return. Safe from a signal handler, before or during serving."""
+        self._stop_requested = True
+        loop, stopped = self._loop, self._stopped
+        if loop is not None and stopped is not None:
+            with contextlib.suppress(RuntimeError):  # the loop has already closed
+                loop.call_soon_threadsafe(stopped.set)
+
+
+_budget_lock = threading.Lock()
+_budget: DiagnosticBudget | None = None
+_budget_holders = 0
+
+
+@contextlib.contextmanager
+def _server_diagnostics_bounded() -> Iterator[None]:
+    """Hold ONE `DiagnosticBudget` on the server's logger while any mouth serves.
+
+    Every HTTP mouth in the process logs through the same server logger, so the
+    bound G20 states is per process: two mouths serving at once share one budget
+    rather than stacking two. The last mouth to stop removes it and reports what
+    it held back.
+    """
+    global _budget, _budget_holders
+    with _budget_lock:
+        if _budget_holders == 0:
+            _budget = DiagnosticBudget()
+            logging.getLogger(SERVER_LOGGER).addFilter(_budget)
+        _budget_holders += 1
+    try:
+        yield
+    finally:
+        suppressed = 0
+        with _budget_lock:
+            _budget_holders -= 1
+            if _budget_holders == 0 and _budget is not None:
+                logging.getLogger(SERVER_LOGGER).removeFilter(_budget)
+                suppressed = _budget.drain()
+                _budget = None
+        if suppressed:
+            print(
+                f"[broker] {suppressed} server diagnostic(s) suppressed before shutdown",
+                file=sys.stderr,
+            )
+
+
+def _server_without_signal_capture(uvicorn: Any) -> type:
+    """The HTTP server class, minus its own signal handlers.
+
+    The server would take SIGINT and SIGTERM for itself while it serves. With two
+    mouths in one loop, two servers taking them in turn leave a signal reaching
+    one server and not the other. So no server takes them: the launcher's one
+    handler (`__main__._stop_signals_reach`) stays in place throughout and stops
+    every mouth the process opened.
+    """
+
+    class _Server(uvicorn.Server):  # type: ignore[misc, name-defined]
+        @contextlib.contextmanager
+        def capture_signals(self) -> Iterator[None]:
+            yield
+
+        def install_signal_handlers(self) -> None:  # releases before capture_signals
+            return None
+
+    return _Server
+
+
+class _ServedMouth:
+    """One authenticated HTTP mouth: the guard, an application, a server, a stop.
+
+    What every HTTP mouth shares, written once:
+
+      - every request is authenticated before the application sees it
+        (`ConnectionGuard` is the outermost ASGI layer, G12);
       - calls into the runtime are serialized on one thread, held by
-        `SerializedSurface` and not left to how a handler happens to be written;
+        `SerializedSurface` and not left to how a handler happens to be written
+        (G18);
       - refused connections are counted and recorded through `record_refusals`,
-        the one thing this object can do to the audit tape;
+        the one thing this object can do to the audit tape (G17);
       - what the HTTP server underneath writes to stderr is bounded by
         `DiagnosticBudget`, because some of it is written for requests the
-        guard never sees, and request lines are not logged at all.
+        guard never sees, and request lines are not logged at all (G20).
 
     BUILD AND SERVE ON THE THREAD THAT BUILT THE RUNTIME. The event loop runs on
     the thread that calls `serve()`, the handlers call the runtime synchronously
@@ -132,40 +307,32 @@ class NetworkMouth:
     gets from a single-threaded server, and is the point.
 
     `listener` is an already-bound, listening socket (`network.bind_listener`), so
-    a bad address has refused before this object exists.
+    a bad address has refused before this object exists. `surface` may already be
+    a `SerializedSurface`; mouths sharing one runtime must share that one object,
+    so that its rules cover all of them together.
     """
 
     def __init__(
         self,
-        surface: GatewaySurface,
+        surface: Any,
         *,
         authenticator: Authenticator,
         record_refusals: Callable[[Mapping[str, int]], None],
         listener: socket.socket,
     ) -> None:
-        self._surface = SerializedSurface(surface)
+        self._surface = surface if isinstance(surface, SerializedSurface) else SerializedSurface(surface)
         self._authenticator = authenticator
         self._ledger = RefusalLedger(record_refusals)
         self._listener = listener
         self._server: Any = None
         self._stop_requested = False
 
+    def _application(self) -> Any:
+        raise NotImplementedError
+
     def build_app(self) -> Any:
-        """The ASGI application: guard, then the one route, then the SDK.
-
-        Only the two arguments every SDK release in the supported range accepts
-        are passed to the session manager; the rest are the SDK's defaults.
-        """
-        from mcp.server.streamable_http_manager import (  # noqa: PLC0415 — optional extra
-            StreamableHTTPSessionManager,
-        )
-
-        manager = StreamableHTTPSessionManager(app=build_server(self._surface))
-        return ConnectionGuard(
-            MouthApp(manager.handle_request, manager.run),
-            self._authenticator,
-            self._ledger,
-        )
+        """The ASGI application: the guard, then this mouth's application."""
+        return ConnectionGuard(self._application(), self._authenticator, self._ledger)
 
     async def serve(self) -> None:
         """Serve until stopped, then write out any refusals still uncounted on the tape."""
@@ -181,7 +348,7 @@ class NetworkMouth:
             server_header=False,
             timeout_graceful_shutdown=_GRACEFUL_SHUTDOWN_S,
         )
-        self._server = uvicorn.Server(config)
+        self._server = _server_without_signal_capture(uvicorn)(config)
         # One-way, and never an assignment of the flag's value: `request_stop`
         # may run from a signal handler between any two of these lines, and a
         # stop it has already set on the server must not be written back to False.
@@ -189,20 +356,11 @@ class NetworkMouth:
             self._server.should_exit = True
         # The server logs a line for a request it cannot parse, before the guard
         # is asked anything. Bound it, so a stranger cannot grow a kept stderr.
-        budget = DiagnosticBudget()
-        server_log = logging.getLogger(SERVER_LOGGER)
-        server_log.addFilter(budget)
-        try:
-            await self._server.serve(sockets=[self._listener])
-        finally:
-            self._ledger.close()
-            server_log.removeFilter(budget)
-            suppressed = budget.drain()
-            if suppressed:
-                print(
-                    f"[broker] {suppressed} server diagnostic(s) suppressed before shutdown",
-                    file=sys.stderr,
-                )
+        with _server_diagnostics_bounded():
+            try:
+                await self._server.serve(sockets=[self._listener])
+            finally:
+                self._ledger.close()
 
     def request_stop(self) -> None:
         """Ask `serve()` to return, whether it is running or has yet to start.
@@ -214,3 +372,47 @@ class NetworkMouth:
         self._stop_requested = True
         if self._server is not None:
             self._server.should_exit = True
+
+
+class NetworkMouth(_ServedMouth):
+    """The network MCP mouth: the same surface, over streamable HTTP (G11 to G20).
+
+    A sibling to `serve_stdio`. What differs is only what a socket forces, and
+    that is `_ServedMouth`. The application is the one route in front of the SDK's
+    session manager.
+    """
+
+    def _application(self) -> Any:
+        """The one route, then the SDK.
+
+        Only the two arguments every SDK release in the supported range accepts
+        are passed to the session manager; the rest are the SDK's defaults.
+        """
+        from mcp.server.streamable_http_manager import (  # noqa: PLC0415 — optional extra
+            StreamableHTTPSessionManager,
+        )
+
+        manager = StreamableHTTPSessionManager(app=build_server(self._surface))
+        return MouthApp(manager.handle_request, manager.run)
+
+
+async def serve_until_any_stops(mouths: Sequence[Any]) -> None:
+    """Serve every mouth on this loop until one returns, then stop the others.
+
+    The mouths share this loop, and so the thread that built the runtime (G18).
+    When one returns, because it was stopped, because its client went away, or
+    because it failed, the rest are asked to stop. Every mouth
+    then finishes its own shutdown, ledger tail included, before this returns.
+    The first failure is raised once all of them have stopped.
+    """
+    tasks = [asyncio.ensure_future(mouth.serve()) for mouth in mouths]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for mouth, task in zip(mouths, tasks):
+            if not task.done():
+                mouth.request_stop()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
