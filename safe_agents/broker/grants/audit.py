@@ -744,7 +744,10 @@ def run_audit(
         # non-promotion lengthening (store.refuse_term_extension). So the
         # grant's term must equal the one on the chronologically-latest
         # promotion record, however the level moved since: a later lapse or
-        # demotion explains the LEVEL, never a different term. With no
+        # demotion explains the LEVEL, never a different term. A lapse record
+        # may carry certifiedUntil too (the term that expired, GAL §5.2), and
+        # this rule does not read it: what a lapse record says about a term
+        # is the evaluator's account, never what the checker ratified. With no
         # promotion on the ledger (bootstrap only) there is no ratified term,
         # so the grant must carry none. Un-waivable: a mismatch is a term the
         # checker never ratified — authority, in either direction.

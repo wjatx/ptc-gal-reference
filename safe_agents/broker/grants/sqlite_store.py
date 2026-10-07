@@ -49,6 +49,7 @@ from safe_agents.broker.grants.store import (
     _principal_key,
     _read_result_from_item,
     canonical_grant_payload,
+    refuse_lapse_drift,
     refuse_reattestation_drift,
     refuse_term_extension,
     validate_record_ts,
@@ -234,6 +235,7 @@ class SqliteGrantStore(substrate.SqliteStoreBase):
             else:
                 self._check_update_conditions(conn, grant, expected.stored_hash, expected.raw_data)
                 refuse_term_extension(expected.raw_data, grant, record_type=record.recordType)
+            refuse_lapse_drift(None if creating else expected.raw_data, record, grant)
             # Record leg — append-only.
             if substrate.get_item(conn, record_pk, record_sk) is not None:
                 raise RecordAlreadyExistsError(

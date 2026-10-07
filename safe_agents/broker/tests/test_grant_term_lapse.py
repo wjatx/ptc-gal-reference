@@ -1027,8 +1027,10 @@ def test_a_ratified_term_is_inside_the_signed_record_bytes():
     assert not verify_record(tampered, envelope, resolver).ok
 
 
-@pytest.mark.parametrize("record_type", ["bootstrap", "demotion", "tightening", "lapse"])
-def test_only_a_promotion_record_may_carry_a_term(record_type):
+@pytest.mark.parametrize("record_type", ["bootstrap", "demotion", "tightening"])
+def test_a_record_that_sets_or_restates_no_term_may_not_carry_one(record_type):
+    """A lapse record may carry the term that expired (#165), so it left this
+    list; the full matrix, with reattestation, is test_grants_lapse_term_field.py."""
     shapes = {
         "bootstrap": dict(fromLevel=None, toLevel=IN, ratifiedBy="operator"),
         "demotion": dict(
@@ -1036,10 +1038,6 @@ def test_only_a_promotion_record_may_carry_a_term(record_type):
             triggeredBy=["budget_breach"], demotionReason="failing",
         ),
         "tightening": dict(fromLevel=ON, toLevel=IN, ratifiedBy="operator"),
-        "lapse": dict(
-            fromLevel=ON, toLevel=IN, ratifiedBy=DEMOTION_RATIFIER,
-            demotionReason="pending-evidence",
-        ),
     }
     fields = dict(
         recordType=record_type,
@@ -1082,7 +1080,13 @@ def _term_audit(grant: Grant, records: list[PromotionRecord]) -> set[str]:
 
 _BOOT = _bootstrap_record(_grant())
 _PROMO = _promotion_record("2026-07-02T00:00:00+00:00")
-_LAPSE_REC = build_lapse(_grant(), AFTER)[1]
+
+
+def _lapse_rec() -> PromotionRecord:
+    """Built when a test runs, never at import: a schema that refused this
+    record would otherwise stop the module being collected, and every test in
+    it would be reported as a collection error instead of by name."""
+    return build_lapse(_grant(), AFTER)[1]
 
 
 @pytest.mark.parametrize(
@@ -1092,7 +1096,7 @@ _LAPSE_REC = build_lapse(_grant(), AFTER)[1]
         (_grant(certifiedUntil=None), [_BOOT, _promotion_record(
             "2026-07-02T00:00:00+00:00", certified_until=None)], False),
         # a later lapse explains the LEVEL; the term stays the ratified one
-        (_grant(level=IN, demotionReason="pending-evidence"), [_BOOT, _PROMO, _LAPSE_REC], False),
+        (_grant(level=IN, demotionReason="pending-evidence"), [_BOOT, _PROMO, _lapse_rec], False),
         (_grant(certifiedUntil=_LATER_TERM), [_BOOT, _PROMO], True),
         (_grant(certifiedUntil=None), [_BOOT, _PROMO], True),
         (_grant(), [_BOOT, _promotion_record(
@@ -1109,6 +1113,7 @@ _LAPSE_REC = build_lapse(_grant(), AFTER)[1]
 def test_grant_term_must_equal_the_ratified_term(grant, records, fires):
     from safe_agents.broker.grants.audit import GRANT_TERM_RATIFIED
 
+    records = [r() if callable(r) else r for r in records]
     assert (GRANT_TERM_RATIFIED in _term_audit(grant, records)) is fires
 
 

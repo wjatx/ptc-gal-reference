@@ -108,6 +108,17 @@ class ReattestationRefusedError(Exception):
     """
 
 
+class LapseRefusedError(Exception):
+    """A lapse-typed write would move the term, or its record misstates it.
+
+    GAL §6.7.6: a lapse leaves the grant's certifiedUntil and lastSafeLevel
+    unchanged, and the term a lapse record carries (§5.2) is the one that
+    expired. A lapse write that shortened the term, moved lastSafeLevel, or
+    recorded a term the grant never had would be the evaluator's key stating
+    something the ceremony did not ratify. Raised before anything is written.
+    """
+
+
 class QuarantinedGrantError(Exception):
     """Write refused: the stored grant is quarantined (failed hash verification).
 
@@ -209,6 +220,9 @@ def refuse_term_extension(
     tightening, demotion, lapse and anything added later — rather
     than for whichever command remembered to check. Only a ``promotion``
     record, i.e. the ratified ceremony, may set a new term (GAL §6.7.6).
+    A lapse record may carry certifiedUntil too, and that changes nothing
+    here: the exemption is keyed on the record's TYPE, never on whether the
+    record carries a term.
 
     ``prev_raw_data`` is the guarded re-read's stored bytes. Every update is
     conditioned on the stored item still being exactly those bytes, so judging
@@ -310,6 +324,67 @@ def refuse_reattestation_drift(
             f"grant written beside it (differs in {mismatched}). The record carries "
             "the grant's level, its new envelopeHash, the re-attesting identity and "
             "the same ts (GAL §6.6). Nothing was written."
+        )
+
+
+def refuse_lapse_drift(
+    prev_raw_data: str | None,
+    record: PromotionRecord,
+    grant: Grant,
+) -> None:
+    """Refuse a lapse-typed write that moves the term or misstates it.
+
+    Called by every backend's write_record_and_grant, after
+    refuse_term_extension, so the rule holds for every caller and a lengthened
+    term is still reported as the extension it is. A no-op for every other
+    record type.
+
+    A lapse record may carry certifiedUntil (GAL §5.2), which until then only a
+    promotion could. That must not become a second way to state a term, so
+    three things are held here, each compared as the exact stored string:
+    - where the record carries a term, it is the term on the grant written
+      beside it. An absent one is accepted: the field is optional;
+    - against the stored bytes the write replaces, the grant's certifiedUntil
+      is unchanged. refuse_term_extension already refuses a longer or dropped
+      term; a lapse may not shorten one either (§6.7.6);
+    - the grant's lastSafeLevel is unchanged (§6.7.6).
+
+    Together the first two make the record's term the one that was stored
+    when the grant lapsed. ``prev_raw_data`` is the guarded re-read's stored
+    bytes, judged for the reason refuse_term_extension gives.
+    """
+    if record.recordType != "lapse":
+        return
+    coordinate = f"{grant.principal.agentId}/{grant.actionClass}"
+    if record.certifiedUntil is not None and record.certifiedUntil != grant.certifiedUntil:
+        raise LapseRefusedError(
+            f"grant {coordinate}: the lapse record carries certifiedUntil "
+            f"{record.certifiedUntil!r} and the grant written beside it carries "
+            f"{grant.certifiedUntil!r}. A lapse record names the term that expired, "
+            "which is the grant's own (GAL §5.2). Nothing was written."
+        )
+    if prev_raw_data is None:
+        return
+    try:
+        previous = Grant.model_validate_json(prev_raw_data)
+    except ValueError:
+        # Not a grant's bytes, so not what is stored: leave the refusal to the
+        # write's own condition, as refuse_term_extension does.
+        return
+    moved = [
+        f"{name} {before!r} -> {after!r}"
+        for name, before, after in (
+            ("certifiedUntil", previous.certifiedUntil, grant.certifiedUntil),
+            ("lastSafeLevel", previous.lastSafeLevel.value, grant.lastSafeLevel.value),
+        )
+        if before != after
+    ]
+    if moved:
+        raise LapseRefusedError(
+            f"grant {coordinate}: a lapse leaves the grant's certifiedUntil and "
+            f"lastSafeLevel unchanged, and this write would move {'; '.join(moved)}. "
+            "The term is set only by a ratified promotion (GAL §6.7.6). Nothing "
+            "was written."
         )
 
 
@@ -569,6 +644,7 @@ class InMemoryGrantStore:
         else:
             self._check_update_conditions(grant, expected.stored_hash, expected.raw_data)
             refuse_term_extension(expected.raw_data, grant, record_type=record.recordType)
+        refuse_lapse_drift(None if creating else expected.raw_data, record, grant)
         # Record leg — put_record validates ts + append-only and raises before
         # the grant leg commits; a record failure therefore writes nothing.
         record_store.put_record(record, session, signature=signature)
@@ -745,6 +821,7 @@ class DynamoDBGrantStore:
         refuse_reattestation_drift(None if creating else expected.raw_data, record, grant)
         if not creating:
             refuse_term_extension(expected.raw_data, grant, record_type=record.recordType)
+        refuse_lapse_drift(None if creating else expected.raw_data, record, grant)
         grant_condition, grant_names, grant_values = self._prepare_grant_write(
             grant,
             expected_hash=None if creating else expected.stored_hash,
