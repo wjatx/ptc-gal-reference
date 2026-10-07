@@ -11,9 +11,11 @@ network mouth has no handlers and no result conversion of its own, so there is
 one place a `GatewayResult` becomes a wire result and a change to it lands on
 both transports (`broker/GATEWAY.md` G9, G11).
 
-Every HTTP mouth runs on one serve loop (`_ServedMouth`), and every mouth the
-process opens runs on ONE event loop, on the thread that built the runtime
-(`serve_until_any_stops`).
+The tool-event mouth (`events.py`, G21 on) is not MCP and does not touch the
+SDK. It is served from here because it shares the HTTP server, the guard, the
+diagnostic budget and the stop with the network MCP mouth: one serve loop
+(`_ServedMouth`), two applications. Every mouth the process opens runs on ONE
+event loop, on the thread that built the runtime (`serve_until_any_stops`).
 
 There is no policy in this file. It translates: SDK request in, `GatewaySurface`
 call, SDK result out. If a decision appears here, it is in the wrong place.
@@ -36,9 +38,11 @@ import os
 import socket
 import sys
 import threading
+from functools import partial
 from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from safe_agents.broker.gateway.authn import Authenticator, RefusalLedger
+from safe_agents.broker.gateway.events import EVENT_MOUTH_CODE, EventApp
 from safe_agents.broker.gateway.network import (
     SERVER_LOGGER,
     ConnectionGuard,
@@ -190,7 +194,8 @@ class StdioMouth:
     cancels the session at once rather than waiting for the client's next line.
     Before this existed the stdio gateway had no stop of its own: a `SIGTERM` took
     the default action and ended the process on the spot, before the launcher's
-    cleanup (MCP-HOST.md M20).
+    cleanup (MCP-HOST.md M20) and, with the tool-event mouth open, before its
+    last refusal counts were written.
     """
 
     def __init__(self, surface: Any) -> None:
@@ -396,12 +401,26 @@ class NetworkMouth(_ServedMouth):
         return MouthApp(manager.handle_request, manager.run)
 
 
+class EventMouth(_ServedMouth):
+    """The tool-event mouth (`events.py`, G21 on), on a socket of its own.
+
+    The same guard, authenticator, ledger, budget and stop as the network MCP
+    mouth, around `EventApp` instead of the SDK. It holds the serialized surface
+    and reaches the runtime only through its `observe`, with this mouth's code
+    bound, so a report cannot name another mouth.
+    """
+
+    def _application(self) -> Any:
+        return EventApp(partial(self._surface.observe, mouth=EVENT_MOUTH_CODE))
+
+
 async def serve_until_any_stops(mouths: Sequence[Any]) -> None:
     """Serve every mouth on this loop until one returns, then stop the others.
 
     The mouths share this loop, and so the thread that built the runtime (G18).
     When one returns, because it was stopped, because its client went away, or
-    because it failed, the rest are asked to stop. Every mouth
+    because it failed, the rest are asked to stop: a stdio gateway whose client
+    has closed its pipe is done, and so is the event mouth beside it. Every mouth
     then finishes its own shutdown, ledger tail included, before this returns.
     The first failure is raised once all of them have stopped.
     """

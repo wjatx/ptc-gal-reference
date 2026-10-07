@@ -9,7 +9,8 @@ serving MCP over a socket that does not need the `mcp` SDK to state or to test:
   - `MouthApp` is the one route and the lifespan, also plain ASGI.
   - `SerializedSurface` holds the runtime's two concurrency rules where a
     transport cannot quietly break them. Every mouth in the process enters
-    the runtime through the same one.
+    the runtime through the same one, the tool-event mouth included
+    (`events.py`).
   - `DiagnosticBudget` bounds what the HTTP server underneath may write to the
     diagnostic stream, because a caller who has not authenticated can make it
     write.
@@ -256,6 +257,14 @@ class SerializedSurface:
         self._enter()
         try:
             return self._surface.call(wire_name, arguments)
+        finally:
+            self._busy.release()
+
+    def observe(self, **report: Any) -> Any:
+        """A tool-event report, under the same two rules as a call (G18, G21 on)."""
+        self._enter()
+        try:
+            return self._surface.observe(**report)
         finally:
             self._busy.release()
 
