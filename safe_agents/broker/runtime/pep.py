@@ -477,7 +477,7 @@ class BrokerRuntime:
         only way to the tape: the record is written here, under this runtime's own
         principal and envelope hash, in one fixed shape the mouth cannot vary.
 
-        Every field is re-checked against the closed vocabularies in `observed.py`,
+        Every field is re-checked against the vocabulary in `observed.py`,
         whatever the mouth checked. A report carries codes, enum members and
         digests; no path, URL or content is accepted in any field.
 

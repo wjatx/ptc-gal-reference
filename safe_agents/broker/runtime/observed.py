@@ -1,4 +1,4 @@
-"""observed.py — the closed vocabularies of a tool event a harness reports.
+"""observed.py — the vocabulary of a tool event a harness reports.
 
 A coding harness has tools of its own (a shell, file reads and writes, a web
 fetch) whose calls never become broker calls. Its hooks can report each one
@@ -12,10 +12,13 @@ malformed report before it enters the runtime, and the runtime re-checks every
 field itself (`BrokerRuntime.record_observed_event`), because a mouth is not
 trusted to have checked.
 
-What a report may carry is deliberately narrow. Two short codes (which mouth,
-which harness), one member each of two closed enums (what kind of tool, where
-its subject was), and digests. A path, a URL, a command line or any content is
-not accepted in any field: the only free-form bytes are hex digits.
+What a report may carry is deliberately narrow: two short codes in a bounded
+alphabet (which mouth, which harness), one member each of two closed enums
+(what kind of tool, where its subject was), and digests. The harness code is
+NOT a closed set: any code so spelled is accepted, and only a consumer's
+`trusted_read_sources` gives one meaning. A path, a URL, a command line or any
+content is not accepted in any field: the only bytes a reporter chooses freely
+are a code's letters and digits and a digest's hex.
 """
 
 from __future__ import annotations

@@ -157,9 +157,10 @@ Keep in mind what this does not cover. The broker decides the calls the client m
 server. Claude Code's own built-in tools (its shell, file edits and web fetch) are not MCP servers,
 and nothing here gates them. `docs/posture-ladder.md` calls this out as the defining limit of
 posture 1, and the fix it names is a sandbox around the agent, which is posture 2. A harness's
-hooks can now report those calls to the gateway's tool-event mouth, so a read made with a built-in
-tool taints the turn and lands on the tape (`broker/GATEWAY.md` G21 to G29); they are observed
-that way, and still not gated.
+hooks can now report those calls to the gateway's tool-event mouth (`broker/GATEWAY.md` G21 to
+G29). Every report lands on the tape, and a report classed `file-read`, `web-fetch` or
+`web-search` taints the turn. A file read through the shell, such as `cat`, is reported as
+`shell` and does not taint. Reported calls are observed, and still not gated.
 
 ### 6. Serve the gateway over the network
 
