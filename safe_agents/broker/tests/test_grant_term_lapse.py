@@ -507,21 +507,36 @@ _EARLIER_TERM = "2026-07-20T00:00:00+00:00"
     [(_LATER_TERM, True), (None, True), (TERM, False), (_EARLIER_TERM, False)],
     ids=["lengthen", "drop", "unchanged", "shorten"],
 )
-def test_update_grant_refuses_term_extension(stores, new_term, refused):
-    """update_grant is every no-record path (re-seed, re-ratify): it may keep
-    or shorten a term, never lengthen or drop one."""
+def test_a_non_promotion_write_may_keep_or_shorten_a_term_never_extend_it(
+    stores, new_term, refused
+):
+    """Any write that is not a promotion may keep or shorten a term, never
+    lengthen or drop one. Judged here on a tightening, the plainest record a
+    non-ceremony write carries."""
     grant_store, record_store = stores
     grant = _grant()
     grant_store.write_record_and_grant(_bootstrap_record(grant), grant, record_store)
     read = grant_store.get_grant(PRINCIPAL, ACTION_CLASS)
-    updated = grant.model_copy(update={"certifiedUntil": new_term, "evidence": "refreshed"})
+    updated = grant.model_copy(update={"level": IN, "certifiedUntil": new_term})
+    record = PromotionRecord(
+        recordType="tightening",
+        actionClass=ACTION_CLASS,
+        principal=PRINCIPAL,
+        fromLevel=ON,
+        toLevel=IN,
+        evidence="x",
+        proposedBy="operator",
+        ratifiedBy="operator",
+        envelopeHash=ENV_HASH,
+        ts="2026-07-03T00:00:00+00:00",
+    )
 
     if refused:
         with pytest.raises(TermExtensionRefusedError, match="promotion ceremony"):
-            grant_store.update_grant(updated, read.stored_hash, None, prev_raw_data=read.raw_data)
+            grant_store.write_record_and_grant(record, updated, record_store, expected=read)
         assert grant_store.get_grant(PRINCIPAL, ACTION_CLASS).raw_data == read.raw_data
     else:
-        grant_store.update_grant(updated, read.stored_hash, None, prev_raw_data=read.raw_data)
+        grant_store.write_record_and_grant(record, updated, record_store, expected=read)
         assert grant_store.get_grant(PRINCIPAL, ACTION_CLASS).grant.certifiedUntil == new_term
 
 

@@ -18,6 +18,7 @@ it unimportable on an AWS-free box).
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -134,6 +135,9 @@ class MemoryBackend:
         item = self.grants._store[(_principal_key(PRINCIPAL), ACTION_CLASS)]
         item["grantHash"] = "0" * 64
 
+    def delete_grant(self) -> None:
+        del self.grants._store[(_principal_key(PRINCIPAL), ACTION_CLASS)]
+
     def raw_grant_data(self) -> str | None:
         item = self.grants._store.get((_principal_key(PRINCIPAL), ACTION_CLASS))
         return item["data"] if item is not None else None
@@ -210,6 +214,10 @@ class SqliteBackend:
 
         self._rewrite_item(GRANT_PK, GRANT_SK, mutate)
 
+    def delete_grant(self) -> None:
+        with self._raw_conn() as conn:
+            conn.execute("DELETE FROM items WHERE pk = ? AND sk = ?", (GRANT_PK, GRANT_SK))
+
     def raw_grant_data(self) -> str | None:
         row = self._raw_fetchone(
             "SELECT item FROM items WHERE pk = ? AND sk = ?", (GRANT_PK, GRANT_SK)
@@ -262,6 +270,9 @@ class DynamoBackend:
 
     def tamper_grant_hash(self) -> None:
         self._set_attr("grantHash", "0" * 64)
+
+    def delete_grant(self) -> None:
+        self._table().delete_item(Key={"pk": GRANT_PK, "sk": GRANT_SK})
 
     def raw_grant_data(self) -> str | None:
         response = self._table().get_item(Key={"pk": GRANT_PK, "sk": GRANT_SK})
@@ -348,62 +359,6 @@ class TestGrantConformance:
         with pytest.raises(GrantAlreadyExistsError):
             backend.grants.create_grant(make_grant(ownerId="bob"), None)
         assert backend.grants.get_grant(PRINCIPAL, ACTION_CLASS).grant.ownerId == "alice"
-
-    def test_update_happy_path(self, backend):
-        backend.grants.put_grant(make_grant(), None)
-        current = backend.grants.get_grant(PRINCIPAL, ACTION_CLASS)
-        backend.grants.update_grant(
-            make_grant(level=AutonomyLevel.on_loop),
-            current.stored_hash,
-            None,
-            current.raw_data,
-        )
-        read = backend.grants.get_grant(PRINCIPAL, ACTION_CLASS)
-        assert read.grant.level is AutonomyLevel.on_loop and not read.quarantined
-
-    def test_update_wrong_expected_hash_refused(self, backend):
-        backend.grants.put_grant(make_grant(), None)
-        current = backend.grants.get_grant(PRINCIPAL, ACTION_CLASS)
-        with pytest.raises(GrantUpdateConflictError):
-            backend.grants.update_grant(
-                make_grant(level=AutonomyLevel.on_loop), "0" * 64, None, current.raw_data
-            )
-        assert backend.grants.get_grant(PRINCIPAL, ACTION_CLASS).grant.level is AutonomyLevel.in_loop
-
-    def test_update_stale_prev_raw_data_refused(self, backend):
-        # correct hash, wrong bytes — the data half of the condition alone
-        backend.grants.put_grant(make_grant(), None)
-        current = backend.grants.get_grant(PRINCIPAL, ACTION_CLASS)
-        with pytest.raises(GrantUpdateConflictError):
-            backend.grants.update_grant(
-                make_grant(level=AutonomyLevel.on_loop),
-                current.stored_hash,
-                None,
-                current.raw_data + " ",
-            )
-
-    def test_update_stale_baseline_after_concurrent_write_refused(self, backend):
-        backend.grants.put_grant(make_grant(), None)
-        stale = backend.grants.get_grant(PRINCIPAL, ACTION_CLASS)
-        backend.grants.put_grant(make_grant(ownerId="mallory"), None)
-        with pytest.raises(GrantUpdateConflictError):
-            backend.grants.update_grant(
-                make_grant(level=AutonomyLevel.on_loop),
-                stale.stored_hash,
-                None,
-                stale.raw_data,
-            )
-        assert backend.grants.get_grant(PRINCIPAL, ACTION_CLASS).grant.ownerId == "mallory"
-
-    def test_update_requires_prev_raw_data(self, backend):
-        backend.grants.put_grant(make_grant(), None)
-        current = backend.grants.get_grant(PRINCIPAL, ACTION_CLASS)
-        with pytest.raises(ValueError, match="prev_raw_data"):
-            backend.grants.update_grant(make_grant(), current.stored_hash, None, None)
-
-    def test_update_absent_grant_refused(self, backend):
-        with pytest.raises(GrantUpdateConflictError):
-            backend.grants.update_grant(make_grant(), "0" * 64, None, "{}")
 
 
 class TestGrantTamper:
@@ -556,6 +511,70 @@ class TestAtomicWriteDifferential:
                 None,
                 expected=stale,
             )
+
+    # The update leg's condition, one half at a time. It is the only update
+    # the stores carry, so each half is pinned here on every backend.
+
+    @pytest.mark.parametrize(
+        "stale",
+        [dict(stored_hash="0" * 64), dict(raw_data_suffix=" ")],
+        ids=["wrong-hash-right-bytes", "right-hash-wrong-bytes"],
+    )
+    def test_either_half_of_the_update_condition_alone_refuses(self, backend, stale):
+        backend.grants.put_grant(make_grant(), None)
+        current = backend.grants.get_grant(PRINCIPAL, ACTION_CLASS)
+        expected = dataclasses.replace(
+            current,
+            stored_hash=stale.get("stored_hash", current.stored_hash),
+            raw_data=current.raw_data + stale.get("raw_data_suffix", ""),
+        )
+        with pytest.raises(GrantUpdateConflictError):
+            backend.grants.write_record_and_grant(
+                make_promotion_record(),
+                make_grant(level=AutonomyLevel.on_loop),
+                backend.records,
+                None,
+                expected=expected,
+            )
+        assert backend.raw_grant_data() == current.raw_data
+        assert not backend.raw_record_exists(make_promotion_record())
+
+    def test_an_update_never_creates_a_grant(self, backend):
+        # A caller holding a read of a grant that is no longer there: the
+        # update leg must refuse, never upsert (the no-mint clause).
+        backend.grants.put_grant(make_grant(), None)
+        gone = backend.grants.get_grant(PRINCIPAL, ACTION_CLASS)
+        backend.delete_grant()
+        with pytest.raises(GrantUpdateConflictError):
+            backend.grants.write_record_and_grant(
+                make_promotion_record(),
+                make_grant(level=AutonomyLevel.on_loop),
+                backend.records,
+                None,
+                expected=gone,
+            )
+        assert backend.raw_grant_data() is None
+        assert not backend.raw_record_exists(make_promotion_record())
+
+    def test_a_data_tamper_with_the_hash_intact_is_never_written_over(self, backend):
+        """The quarantine race: a tamper of the data payload alone, landing
+        between the guarded re-read and the write, would pass a hash-only
+        condition and be silently overwritten, destroying the evidence."""
+        backend.grants.put_grant(make_grant(), None)
+        current = backend.grants.get_grant(PRINCIPAL, ACTION_CLASS)
+        backend.tamper_grant_data()
+        tampered = backend.raw_grant_data()
+        with pytest.raises(GrantUpdateConflictError):
+            backend.grants.write_record_and_grant(
+                make_promotion_record(),
+                make_grant(level=AutonomyLevel.on_loop),
+                backend.records,
+                None,
+                expected=current,
+            )
+        assert backend.raw_grant_data() == tampered  # stands for audit
+        assert backend.grants.get_grant(PRINCIPAL, ACTION_CLASS).quarantined
+        assert not backend.raw_record_exists(make_promotion_record())
 
     def test_pairing_mismatch_refused_before_any_write(self, backend):
         with pytest.raises(TypeError, match=backend.pairing_error_match):

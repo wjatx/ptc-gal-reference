@@ -48,7 +48,8 @@ from safe_agents.broker.schemas.promotion_record import REATTESTATION_RECORD_TYP
 class GrantUpdateConflictError(Exception):
     """Conditional grant update failed: the stored grant is not the one evaluated.
 
-    Raised when update_grant's condition (stored grantHash == expected) fails —
+    Raised when the update leg of write_record_and_grant fails its condition
+    (stored grantHash and stored bytes == the guarded re-read's) —
     either the grant was concurrently modified or it no longer exists. Callers
     must re-read and re-evaluate before retrying; never retry the write blind.
     """
@@ -203,9 +204,9 @@ def refuse_term_extension(
 ) -> None:
     """Refuse any non-promotion write that would lengthen a grant's term.
 
-    Called by every backend's update paths (update_grant and the update leg of
+    Called by every backend's one update path (the update leg of
     write_record_and_grant), so the rule holds for every caller — re-seed,
-    re-ratify, tightening, demotion, lapse and anything added later — rather
+    tightening, demotion, lapse and anything added later — rather
     than for whichever command remembered to check. Only a ``promotion``
     record, i.e. the ratified ceremony, may set a new term (GAL §6.7.6).
 
@@ -383,16 +384,6 @@ def _read_result_from_item(
     )
 
 
-def _require_prev_raw_data(prev_raw_data: str | None) -> None:
-    """update_grant's prev_raw_data is required (the legacy fallback is retired)."""
-    if prev_raw_data is None:
-        raise ValueError(
-            "update_grant requires prev_raw_data (the stored bytes from the "
-            "guarded re-read, GrantReadResult.raw_data); the pre-#246 "
-            "legacy-item fallback is retired"
-        )
-
-
 # ---------------------------------------------------------------------------
 # Store interface
 # ---------------------------------------------------------------------------
@@ -409,9 +400,9 @@ class GrantStore(Protocol):
 
         WARNING: this is a blind upsert — it overwrites whatever is stored and
         can resurrect a deleted grant. It exists for the sanctioned bootstrap
-        path (seed_grants) only; ceremony paths must never call it. Level
-        changes go through create_grant (Recommend-origin) or the conditional
-        update_grant (broker/grant-lifecycle.md).
+        path (seed_grants) only; ceremony paths must never call it. Every
+        write to an existing grant goes through write_record_and_grant, which
+        appends the record that accounts for it (broker/grant-lifecycle.md).
         """
         ...
 
@@ -421,33 +412,6 @@ class GrantStore(Protocol):
         The write succeeds only if no item exists under the grant's key
         (attribute_not_exists(pk)). Raises GrantAlreadyExistsError on
         collision — the Recommend-origin ceremony path's race guard.
-        """
-        ...
-
-    def update_grant(
-        self,
-        updated: Grant,
-        expected_hash: str,
-        session: object,
-        prev_raw_data: str | None = None,
-    ) -> None:
-        """Conditionally update an EXISTING grant (UpdateItem semantics).
-
-        The write succeeds only if the stored grant is still the one the caller
-        evaluated: the item-level grantHash equals expected_hash AND the stored
-        data bytes equal prev_raw_data (both from the caller's guarded re-read,
-        GrantReadResult.stored_hash / .raw_data). prev_raw_data is REQUIRED —
-        supplying None is a ValueError, failing toward writing nothing (the
-        legacy-item fallback is retired; every item carries grantHash
-        after the re-shape B re-seed).
-
-        The attribute_exists(pk) ConditionExpression is what makes this
-        update-only: IAM UpdateItem-only means no PutItem API, but UpdateItem
-        can still create items — the no-mint guarantee is the store's
-        condition, with IAM limiting blast radius rather than proving it.
-
-        Raises GrantUpdateConflictError if the condition fails (concurrent
-        modification, or the item no longer exists).
         """
         ...
 
@@ -467,7 +431,7 @@ class GrantStore(Protocol):
         either BOTH legs commit or NOTHING is written, closing the
         record-without-grant (and grant-without-record) artifact structurally
         at every ceremony write-pair site — seed/bootstrap, promotion,
-        demotion, and tightening. The old per-site write orderings (record
+        demotion, tightening, lapse and re-attestation. The old per-site write orderings (record
         -before-grant on promotion, grant-before-record on demotion/tighten)
         are superseded: their failure-polarity trade-offs existed only because
         the pair could be interrupted between writes.
@@ -484,6 +448,11 @@ class GrantStore(Protocol):
         ``record_store`` must be the matching backend's record store (the two
         item kinds co-locate in one table); a mismatched pairing is a
         TypeError, refusing before any write.
+
+        This is the ONLY way to update an existing grant. The stores carry no
+        record-less conditional update: the grant is the balance and the
+        ledger is its journal, so a write to a grant with no record beside it
+        is one the ledger cannot explain (GAL §5.2, §6.6).
         """
         ...
 
@@ -532,19 +501,6 @@ class InMemoryGrantStore:
             )
         self.put_grant(grant, session)
 
-    def update_grant(
-        self,
-        updated: Grant,
-        expected_hash: str,
-        session: object = None,
-        prev_raw_data: str | None = None,
-    ) -> None:
-        """Conditionally replace an existing grant; never creates one."""
-        _require_prev_raw_data(prev_raw_data)
-        key = self._check_update_conditions(updated, expected_hash, prev_raw_data)
-        refuse_term_extension(prev_raw_data, updated, record_type=None)
-        self._store[key] = self._build_item(updated)
-
     def _build_item(self, grant: Grant) -> dict:
         payload = canonical_grant_payload(grant)
         return {"data": payload, "grantHash": _hmac_payload(payload, self._hmac_key)}
@@ -553,14 +509,15 @@ class InMemoryGrantStore:
         self, updated: Grant, expected_hash: str, prev_raw_data: str | None
     ) -> tuple[str, str]:
         """Validate the conditional-update conditions WITHOUT mutating; return
-        the storage key. Shared by update_grant and the atomic op so the
-        latter cannot drift from single-write semantics."""
+        the storage key. The stored item must still be the one the caller
+        evaluated: its grantHash equals expected_hash AND its data bytes equal
+        prev_raw_data, both from the guarded re-read."""
         key = self._record_key(updated.principal, updated.actionClass)
         item = self._store.get(key)
         if item is None:
             raise GrantUpdateConflictError(
                 f"grant {updated.principal.agentId}/{updated.actionClass} does not "
-                "exist; update_grant cannot create items (UpdateItem semantics)"
+                "exist; an update cannot create items (UpdateItem semantics)"
             )
         if item.get("grantHash") != expected_hash or item.get("data") != prev_raw_data:
             # Either half failing means the stored item is not the one the
@@ -709,59 +666,6 @@ class DynamoDBGrantStore:
                 ) from exc
             raise
 
-    def update_grant(
-        self,
-        updated: Grant,
-        expected_hash: str,
-        session,
-        prev_raw_data: str | None = None,
-    ) -> None:
-        """Conditionally update an existing grant via UpdateItem.
-
-        The condition asserts the stored item is still the one the caller
-        evaluated: its grantHash attribute equals expected_hash AND the stored
-        'data' string is byte-identical to prev_raw_data (both from the
-        guarded re-read). The data clause closes the quarantine race: a tamper
-        of the data payload alone (hash attribute untouched) landing between a
-        guarded re-read and this write would pass a hash-only condition and be
-        silently overwritten, destroying the tamper evidence. prev_raw_data is
-        REQUIRED — the legacy-item fallback (items written before
-        grantHash existed) is retired; every item carries grantHash after the
-        re-shape B re-seed.
-
-        Runs under UpdateItem permission only (no PutItem API) — but UpdateItem
-        authorizes upsert-creation, so the no-mint guarantee is the
-        attribute_exists(pk) clause of the ConditionExpression, with IAM
-        limiting blast radius rather than proving it. AccessDenied is NOT
-        caught here; a ConditionalCheckFailedException becomes
-        GrantUpdateConflictError.
-        """
-        from botocore.exceptions import ClientError  # lazy, like boto3
-
-        _require_prev_raw_data(prev_raw_data)
-        refuse_term_extension(prev_raw_data, updated, record_type=None)
-        table = self._get_table(session)
-        condition, _, values = self._prepare_grant_write(
-            updated, expected_hash=expected_hash, prev_raw_data=prev_raw_data
-        )
-
-        try:
-            table.update_item(
-                Key=self._item_key(updated.principal, updated.actionClass),
-                UpdateExpression="SET #data = :data, grantHash = :new_hash",
-                ConditionExpression=condition,
-                ExpressionAttributeNames={"#data": "data"},  # 'data' is DynamoDB-reserved
-                ExpressionAttributeValues=values,
-            )
-        except ClientError as exc:
-            if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
-                raise GrantUpdateConflictError(
-                    f"grant {updated.principal.agentId}/{updated.actionClass}: "
-                    "stored grant is not the one evaluated (concurrently modified "
-                    "or missing); re-read and re-evaluate before retrying"
-                ) from exc
-            raise
-
     _GRANT_UPDATE_EXPRESSION = "SET #data = :data, grantHash = :new_hash"
 
     def _prepare_grant_write(
@@ -775,8 +679,16 @@ class DynamoDBGrantStore:
 
         ``expected_hash is None`` ⇒ create (``attribute_not_exists``); else the
         conditional-update condition over the guarded re-read's item hash AND
-        stored bytes. Shared by update_grant and write_record_and_grant so the
-        transact path cannot drift from single-write semantics.
+        stored bytes. Each clause of that condition is load-bearing:
+
+        - ``#data = :prev_data`` closes the quarantine race. A tamper of the
+          data payload alone (hash attribute untouched) landing between a
+          guarded re-read and the write would pass a hash-only condition and
+          be silently overwritten, destroying the tamper evidence.
+        - ``attribute_exists(pk)`` is the no-mint guarantee. The ceremony and
+          demotion roles hold UpdateItem only (no PutItem API), but UpdateItem
+          authorizes upsert-creation, so IAM limits blast radius and this
+          clause is what refuses to create.
         """
         payload = canonical_grant_payload(grant)
         names = {"#data": "data"}  # 'data' is DynamoDB-reserved
@@ -810,8 +722,8 @@ class DynamoDBGrantStore:
         """Atomic record+grant write: ONE Update-only TransactWriteItems.
 
         Both legs' expressions come from the SAME builders the single-item
-        writes use, so this path cannot drift from put_record/create_grant/
-        update_grant semantics. Update-only means the ceremony and demotion
+        writes use, so this path cannot drift from put_record/create_grant
+        semantics. Update-only means the ceremony and demotion
         identities need only dynamodb:UpdateItem (the atomic record+grant feasibility claim,
         exercised live by the MCP twin 2026-07-24).
         """

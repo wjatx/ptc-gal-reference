@@ -484,7 +484,7 @@ class DynamoToolRegistry:
         # string (a tamper of data alone — rowHash untouched — landing between
         # the guarded re-read and this write would pass a rowHash-only condition
         # and be silently overwritten, destroying the tamper evidence, exactly
-        # the update_grant data clause), with values from the guarded re-read's
+        # the grant store's data clause), with values from the guarded re-read's
         # item-level stored_hash/raw_data. DynamoDB evaluates the
         # condition atomically against CURRENT state, so it also closes the
         # get_tool→write gap above. 'data' is a DynamoDB reserved word → #data.
