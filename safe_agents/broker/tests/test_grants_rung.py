@@ -6,10 +6,11 @@ test exercises its record-only semantics.
 
 Coverage — 6 transition types:
 
-  3 valid "upward" (promotion + lateral):
+  2 valid upward (promotion):
     1. in-loop  -> on-loop         legal; ceremony accepts
     2. on-loop  -> out-of-loop     legal; ceremony accepts
-    3. any      -> same level      lateral re-ratification; accepted
+    3. any      -> same level      no such transition: the machine has no
+                                   evidence refresh in place (GAL §6.6)
 
   2 valid downward (demotion):
     4. out-of-loop -> on-loop      1-rung demotion (lastSafeLevel=on-loop)
@@ -42,7 +43,7 @@ from safe_agents.broker.grants.ceremony import (
     InMemoryPromotionRecordStore,
     PromotionCeremony,
 )
-from safe_agents.broker.grants.demotion import DemotionMetrics, GrantNotFoundError
+from safe_agents.broker.grants.demotion import DemotionMetrics
 from safe_agents.broker.grants.predicate import ActionClassMetrics
 from safe_agents.broker.grants.rung import (
     PromotionEligibilityCounters,
@@ -55,7 +56,6 @@ from safe_agents.broker.grants.rung import (
 from safe_agents.broker.grants.store import (
     GrantUpdateConflictError,
     InMemoryGrantStore,
-    QuarantinedGrantError,
 )
 from safe_agents.broker.schemas import Grant
 from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger, Principal
@@ -476,84 +476,18 @@ class TestMachinePromote:
 
 
 # ---------------------------------------------------------------------------
-# RungStateMachine.re_ratify — lateral re-ratification (type 3)
+# No evidence refresh in place (GAL §6.6)
 # ---------------------------------------------------------------------------
 
 
-class TestMachineReRatify:
-    def test_re_ratify_updates_evidence_not_level(self):
-        """Transition type 3: lateral re-ratification refreshes evidence, same level."""
-        grant = make_grant(level=AutonomyLevel.on_loop, lastSafeLevel=AutonomyLevel.in_loop)
-        machine, store = make_machine(grant=grant)
-
-        updated = machine.re_ratify(
-            read_grant(store),  # hash-correct copy for the conditional write
-            evidence_bundle="evidence-ref-refreshed",
-            ratifier_id="new-ratifier",
-        )
-
-        assert updated.level is AutonomyLevel.on_loop  # level unchanged
-        assert updated.evidence == "evidence-ref-refreshed"
-        assert updated.promotedBy == "new-ratifier"
-
-    def test_re_ratify_persists_to_store(self):
-        grant = make_grant(level=AutonomyLevel.in_loop, lastSafeLevel=AutonomyLevel.in_loop)
-        machine, store = make_machine(grant=grant)
-
-        machine.re_ratify(read_grant(store), evidence_bundle="new-evidence", ratifier_id="bob")
-
-        stored = store.get_grant(PRINCIPAL, ACTION_CLASS)
-        assert stored.grant is not None
-        assert stored.grant.evidence == "new-evidence"
-        assert stored.grant.level is AutonomyLevel.in_loop
-
-    def test_re_ratify_empty_ratifier_raises(self):
-        grant = make_grant(level=AutonomyLevel.on_loop, lastSafeLevel=AutonomyLevel.in_loop)
-        machine, store = make_machine(grant=grant)
-
-        with pytest.raises(TransitionError, match="ratifier_id"):
-            machine.re_ratify(grant, evidence_bundle="evidence", ratifier_id="")
-
-    # --- Conditional-write retrofit: guarded re-read + hash-conditioned write (no blind put) ---
-
-    def test_re_ratify_not_found_raises(self):
-        """Re-ratification cannot create a grant (the blind put could)."""
-        machine, store = make_machine()  # empty store
-        with pytest.raises(GrantNotFoundError):
-            machine.re_ratify(make_grant(), evidence_bundle="ev", ratifier_id="bob")
-
-    def test_re_ratify_quarantined_grant_refused(self):
-        """A quarantined grant is never written over — the blind put would have
-        re-signed the tampered state under a fresh valid HMAC."""
-        grant = make_grant(level=AutonomyLevel.on_loop)
-        machine, store = make_machine(grant=grant)
-        stored = read_grant(store)
-        # Tamper WITHOUT touching the hash attribute — the laundering shape.
-        (key,) = store._store.keys()
-        store._store[key]["data"] = store._store[key]["data"].replace(
-            '"evidence":"', '"evidence":"tampered-', 1
-        )
-
-        with pytest.raises(QuarantinedGrantError):
-            machine.re_ratify(stored, evidence_bundle="fresh", ratifier_id="bob")
-
-    def test_re_ratify_concurrent_modification_raises_conflict(self):
-        """A demotion landing between the re-ratifier's read and write must
-        surface as a conflict — never be silently overwritten (which would RAISE
-        the level with no ceremony and no record)."""
-        grant = make_grant(level=AutonomyLevel.on_loop, lastSafeLevel=AutonomyLevel.in_loop)
-        machine, store = make_machine(grant=grant)
-        stale = read_grant(store)
-
-        # A demotion lands after the re-ratifier's read: on-loop -> in-loop.
-        store.put_grant(
-            make_grant(level=AutonomyLevel.in_loop, demotionReason="failing"), session=None
-        )
-
-        with pytest.raises(GrantUpdateConflictError):
-            machine.re_ratify(stale, evidence_bundle="fresh", ratifier_id="bob")
-        # The demoted level stands.
-        assert read_grant(store).level is AutonomyLevel.in_loop
+def test_the_machine_offers_no_same_level_write():
+    """re_ratify rewrote a grant's evidence, promotedBy and ts at an unchanged
+    level and appended no record. It is gone, and the promotion path refuses a
+    lateral target, so the machine has no path that refreshes a grant in
+    place."""
+    assert not hasattr(RungStateMachine, "re_ratify")
+    with pytest.raises(TransitionError, match="lateral"):
+        validate_promotion_transition(AutonomyLevel.on_loop, AutonomyLevel.on_loop)
 
 
 # ---------------------------------------------------------------------------
@@ -765,8 +699,8 @@ class TestMachineTighten:
         machine, store = make_machine(grant=grant, record_store=record_store)
         stale = read_grant(store)
 
-        # concurrent modification: someone re-ratifies, changing the stored hash
-        machine.re_ratify(stale, evidence_bundle="refreshed", ratifier_id="bob")
+        # concurrent modification: another write lands, changing the stored bytes
+        store.put_grant(stale.model_copy(update={"evidence": "refreshed"}), session=None)
 
         with pytest.raises(GrantUpdateConflictError):
             machine.tighten_to_in_loop(stale, "alice")

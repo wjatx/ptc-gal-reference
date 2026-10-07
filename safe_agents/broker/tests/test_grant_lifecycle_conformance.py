@@ -10,7 +10,7 @@ here is certified by its sharpest witness, not an exhaustive matrix.
 
 | Clause | Guarantee |
 |---|---|
-| **L1** | Transition unconstructibility: every structurally-invalid transition raises the typed `TransitionError` (level-skip up, non-+1 promotion, demotion never raises); the valid set (one-rung promotion, fall-to-lastSafeLevel, any-level→in-loop tightening, lateral re-ratification, repeat-breach record-only demotion) passes. |
+| **L1** | Transition unconstructibility: every structurally-invalid transition raises the typed `TransitionError` (level-skip up, non-+1 promotion, demotion never raises); the valid set (one-rung promotion, fall-to-lastSafeLevel, any-level→in-loop tightening, repeat-breach record-only demotion) passes; the machine offers no write that leaves a level where it was without a record. |
 | **L2** | The ledger records every level change: promotion/demotion/tightening each append their typed record; the four recordTypes' shape rules hold (maker≠checker for promotion only; `DEMOTION_RATIFIER`; bootstrap `fromLevel=None`; tightening `toLevel=in-loop`). |
 | **L3** | Demotion determinism: same grant+metrics → same outcome; no model import anywhere on the demotion path; the trigger vocabulary is closed and the evaluator ignores unconfigured/untripped triggers. |
 | **L4** | The two reasons never collapse: `stale_confidence`→`pending-evidence`; `budget_breach`/`corroboration_failure`/`false_action`→`failing`; multi-trigger — failing dominates. |
@@ -280,14 +280,18 @@ class TestL1TransitionUnconstructibility:
         )
         assert updated.level is IN
 
-    def test_lateral_re_ratification_is_valid_and_writes_no_record(self) -> None:
+    def test_a_lateral_move_is_not_a_transition_and_writes_nothing(self) -> None:
+        # GAL §6.6: no evidence refresh in place. A lateral promotion is
+        # refused before any store is touched, and the machine has no other
+        # path that would rewrite the grant where it stands.
         store, grant = _seeded_store(_grant(level=ON))
         records = InMemoryPromotionRecordStore()
-        updated = _machine(store, records).re_ratify(
-            grant, "fresh-evidence-ref", "human:checker", ts=_TS
-        )
-        assert updated.level is grant.level
+        stored = store.get_grant(_PRINCIPAL, _ACTION_CLASS).raw_data
+        with pytest.raises(TransitionError):
+            _machine(store, records).promote(_proposal(ON, ON), "human:checker")
+        assert not hasattr(RungStateMachine, "re_ratify")
         assert records.records == []
+        assert store.get_grant(_PRINCIPAL, _ACTION_CLASS).raw_data == stored
 
     def test_repeat_breach_is_record_only_never_a_raise(self) -> None:
         # After a demotion, lastSafeLevel holds the PRIOR level, which sits above
