@@ -100,10 +100,5 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 50
-  allowlists:
-    tools:
-      - ledger.get_entry
-      - ledger.list_entries
-      - peer.publish
   trusted_read_sources:
     - connector:ledger.get_entry

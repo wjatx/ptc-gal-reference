@@ -39,10 +39,6 @@ envelope:
   polarity: abstain
   caps:
     actions_per_utc_day: 20        # consumer policy: at most 20 writes/op/day
-  allowlists:
-    tools:
-      - report.publish
-      - draft.save
   confidence:
     min_confidence: 0.85           # consumer policy: the per-call bar
     methods: [self-consistency, conformal]   # consumer policy: accepted methods

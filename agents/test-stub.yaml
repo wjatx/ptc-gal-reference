@@ -24,6 +24,4 @@ envelope:
   polarity: abstain             # silence is safe for this stub
   caps:
     actions_per_run: 0          # no actions — stub only
-  allowlists:
-    tools: []                   # no tools registered; stub only
   high_stakes: false

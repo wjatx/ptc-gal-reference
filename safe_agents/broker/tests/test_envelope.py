@@ -26,7 +26,7 @@ def _fixture_envelope() -> Envelope:
         {
             "polarity": "abstain",
             "caps": {"actions_per_run": 1},
-            "allowlists": {"tools": ["snapshot.read"]},
+            "trusted_read_sources": ["connector:snapshot.read"],
             "high_stakes": False,
         }
     )
@@ -58,8 +58,8 @@ def test_hash_stable_across_serialize_load_rehash() -> None:
     [
         pytest.param(lambda d: d.__setitem__("high_stakes", True), id="flip_high_stakes"),
         pytest.param(
-            lambda d: d["allowlists"].__setitem__("tools", ["snapshot.read", "research.web"]),
-            id="add_tool",
+            lambda d: d["trusted_read_sources"].append("connector:research.web"),
+            id="add_trusted_read_source",
         ),
     ],
 )

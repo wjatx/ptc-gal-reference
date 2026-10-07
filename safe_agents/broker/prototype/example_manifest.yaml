@@ -57,8 +57,4 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 25
-  allowlists:
-    tools:
-      - search.query
-      - notify.send
   high_stakes: false

@@ -950,7 +950,7 @@ class TestDynamoDBEnvelopeStore:
             {
                 "polarity": "abstain",
                 "caps": {"actions_per_run": 1},
-                "allowlists": {"tools": ["snapshot.read"]},
+                "trusted_read_sources": ["connector:snapshot.read"],
                 "high_stakes": False,
             }
         )
@@ -960,7 +960,7 @@ class TestDynamoDBEnvelopeStore:
         assert got is not None
         assert got.polarity == "abstain"
         assert got.caps.actions_per_utc_day == 1
-        assert got.allowlists.tools == ["snapshot.read"]
+        assert got.trusted_read_sources == ["connector:snapshot.read"]
 
     def test_get_absent_returns_none(self, table_name):
         store = DynamoDBEnvelopeStore(table_name=table_name)

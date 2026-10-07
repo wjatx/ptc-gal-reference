@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 
+from pydantic import ValidationError
+
 from safe_agents.broker.grants.runner import (
     RunnerConfigError,
     _ceremony_hmac_key,
@@ -101,6 +103,16 @@ def _resolve_inforce_envelope(principal: Principal, table_name: str | None) -> E
             raise RunnerConfigError(
                 "BROKER_ENVELOPE_LOAD=store but no envelope is seeded — run "
                 f"seed_envelope against the table FIRST. ({exc})"
+            ) from exc
+        except ValidationError as exc:
+            # A row IS seeded and the schema refuses it, which is a different
+            # fault from an absent row and must not be reported as one: the
+            # operator has to learn why (a row stored before a field was
+            # retired names that field here, #135), not only that a seed is due.
+            raise RunnerConfigError(
+                "BROKER_ENVELOPE_LOAD=store and the seeded envelope is refused by "
+                "the envelope schema. Nothing is stamped under a row the broker "
+                f"would not start with. Seed the envelope again. ({exc})"
             ) from exc
     # Manifest mode: resolve the process-wide load-once manifest explicitly —
     # on the dynamo arm an unset BROKER_MANIFEST refuses here (BrokerConfigError,

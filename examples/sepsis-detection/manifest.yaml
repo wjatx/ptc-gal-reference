@@ -44,9 +44,4 @@ envelope:
   polarity: act
   caps:
     actions_per_run: 50
-  allowlists:
-    tools:
-      - search.query
-      - ledger.append
-      - notify.send
   high_stakes: false

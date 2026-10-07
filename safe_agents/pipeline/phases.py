@@ -858,7 +858,7 @@ def validate_phase(
 
     steps: list[str] = [
         "check envelope.polarity is present and explicit (abstain | act)",
-        "check secrets.broker_connector_keys present when allowlists.tools non-empty",
+        "check secrets.broker_connector_keys present when connectors are declared",
     ]
     if repo_root is not None:
         steps += [

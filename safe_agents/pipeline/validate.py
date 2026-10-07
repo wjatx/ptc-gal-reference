@@ -5,8 +5,8 @@ Structural checks implementable without the broker registry:
   - envelope parses against the typed Envelope schema (broker/schemas/envelope.py),
     which enforces envelope.polarity is present and exactly 'abstain' or 'act'.
     Missing polarity is a CI failure, never a silent default.
-  - secrets.broker_connector_keys is present whenever
-    envelope.allowlists.tools is non-empty.
+  - secrets.broker_connector_keys is present whenever the manifest declares
+    a connector (`connectors` is non-empty).
   - policy file exists at repo_root/policy_path (when repo_root given).
   - agent_egress section of the policy file contains no direct IPv4 addresses.
 
@@ -124,15 +124,23 @@ def validate_manifest_extended(
     except ValidationError as exc:
         errors.extend(_format_envelope_errors(exc))
 
-    # -- Broker connector keys vs tools allowlist ----------------------------
+    # -- Broker connector keys vs declared connectors ------------------------
+    # Keyed on `connectors`, the list of connectors the broker constructs for
+    # this agent. The broker resolves a connector's credential from its own
+    # store, so declaring one is what makes the bundle necessary. This check
+    # used to key on the envelope's tool allowlist, which was retired because
+    # no decision read it (#135). A connector that needs no credential still
+    # trips it: the pipeline cannot see inside a connector class, and asking
+    # for a bundle that goes unused is the safe direction. The trigger is not
+    # a superset of the old one: a manifest that listed tools in the retired
+    # block and declares no connector is no longer asked for a bundle, because
+    # the broker would construct no connector to use it.
     # Only checkable once the manifest itself parses cleanly.
     if am is not None:
-        env = am.envelope
-        tools = env.allowlists.tools if env.allowlists is not None else []
-        if tools and not manifest.secrets.broker_connector_keys:
+        if am.connectors and not manifest.secrets.broker_connector_keys:
             errors.append(
-                "secrets.broker_connector_keys is required when "
-                "envelope.allowlists.tools is non-empty — "
+                "secrets.broker_connector_keys is required when the manifest "
+                f"declares connectors ({', '.join(sorted(am.connectors))}); "
                 "connector credentials must be seeded into the broker's store"
             )
 

@@ -52,7 +52,4 @@ envelope:
     # canonical dump key unchanged, so the envelope hash never churns on the
     # spelling).
     actions_per_period: 100
-  allowlists:
-    tools:
-      - ledger.append
   high_stakes: false

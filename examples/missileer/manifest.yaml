@@ -70,9 +70,4 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 100
-  allowlists:
-    tools:
-      - search.query
-      - ledger.append
-      - notify.send
   high_stakes: true

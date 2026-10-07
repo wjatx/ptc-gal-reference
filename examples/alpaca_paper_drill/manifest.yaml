@@ -96,8 +96,3 @@ envelope:
   polarity: abstain
   caps:
     actions_per_run: 25
-  allowlists:
-    tools:
-      - alpaca.get_account_info
-      - alpaca.get_clock
-      - alpaca.get_stock_latest_quote
