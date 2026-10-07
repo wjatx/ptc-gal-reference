@@ -8,8 +8,10 @@ seed      the sanctioned bootstrap: manifest-driven floor grants, each paired wi
           Bootstrap records are ISSUER-signed when a signing key is configured.
 re-seed   the re-attestation ceremony after a far-jump envelope-hash change:
           re-stamps HMAC-clean grants under the NEW in-force hash at the SAME
-          level, under human ratification. An HMAC-tamper quarantine is NEVER
-          re-attestable (an incident, not a ceremony).
+          level, under human ratification, each paired with a
+          reattestation-typed PromotionRecord in the same atomic write
+          (ISSUER-signed when a signing key is configured). An HMAC-tamper
+          quarantine is NEVER re-attestable (an incident, not a ceremony).
 propose   the maker: builds a PromotionProposal from declared config + durable
           evidence counters, runs the predicate for early feedback, and stores
           it (an ineligible proposal is refused, never stored).
@@ -127,7 +129,9 @@ from safe_agents.broker.grants.store import (
     GrantStore,
     GrantUpdateConflictError,
     QuarantinedGrantError,
+    ReattestationRefusedError,
     RecordAlreadyExistsError,
+    TermExtensionRefusedError,
 )
 from safe_agents.broker.schemas import Grant, PromotionRecord
 from safe_agents.broker.schemas.brokered_call import ToolOp
@@ -323,15 +327,49 @@ def seed_command(
 
 
 # ---------------------------------------------------------------------------
-# re-seed — envelope-hash re-attestation (same level, human-ratified, no record)
+# re-seed — envelope-hash re-attestation (same level, human-ratified, recorded)
 # ---------------------------------------------------------------------------
+
+def build_reattestation(
+    grant: Grant, *, caller: str, envelope_hash: str, ts: str
+) -> tuple[Grant, PromotionRecord]:
+    """The re-attested grant and the record that accounts for it (GAL §6.6).
+
+    Pure, so the pair can be judged on its own and not only through the store
+    guard that refuses a wrong one (store.refuse_reattestation_drift): the
+    guard is the backstop for every caller, this is where the honest pair is
+    built. The grant changes in envelopeHash, promotedBy and ts and nothing
+    else. The record restates the grant's level on both sides, carries the NEW
+    hash and the re-attesting identity, and shares the grant's ts.
+    """
+    updated = grant.model_copy(
+        update={"envelopeHash": envelope_hash, "promotedBy": caller, "ts": ts}
+    )
+    record = PromotionRecord(
+        recordType="reattestation",
+        actionClass=grant.actionClass,
+        principal=grant.principal,
+        fromLevel=grant.level,
+        toLevel=grant.level,
+        evidence=f"envelope re-attestation (was {grant.envelopeHash})",
+        predicate=None,
+        proposedBy=caller,
+        ratifiedBy=caller,
+        envelopeHash=envelope_hash,
+        ts=ts,
+        attestation=attestation_for(caller),
+    )
+    return updated, record
+
 
 def reseed_command(
     *,
     grant_store: GrantStore,
+    record_store: PromotionRecordStore,
     principal: Principal,
     granted_classes: list[str],
     envelope_hash: str,
+    signer: RecordSigner | None = None,
     session: object = None,
     now: datetime.datetime | None = None,
 ) -> int:
@@ -346,12 +384,25 @@ def reseed_command(
         the hash now in force (a far-jump broker redeploy). That is the one
         re-attestable case: the grant is rebuilt with the new hash at the SAME
         level (re-attestation carries the prior level under human ratification
-        — the caller's STS identity stamps promotedBy/ts), written via the
-        hash-conditioned update_grant from this guarded read. No
-        PromotionRecord is appended: no level changed (the re_ratify rule).
+        — the caller's STS identity stamps promotedBy).
+
+    Each re-attested grant is written with a reattestation-typed
+    PromotionRecord as ONE atomic unit (write_record_and_grant, conditioned on
+    this guarded read), so no failure leaves a re-attested grant without the
+    record that says who rewrote it, when, and under which envelope (GAL §6.6).
+    The record moves no level: fromLevel and toLevel are both the grant's, and
+    readers pass over the type. Grant and record share one ts from the ledger
+    clock (#37), strictly after every record already at the coordinate. Only
+    envelopeHash, promotedBy and ts change on the grant; the stores refuse a
+    reattestation write that moves anything else.
+
+    ``signer`` is the ISSUER's RecordSigner: re-attestation re-licenses a
+    grant on a human's authority, so it takes the ceremony key, never the
+    evaluator's (GAL §6.10). Unset, the record is written unsigned, as seed
+    and tighten do on a floor with no key material.
     """
     caller = _caller_identity(session)
-    ts = _utc_now(now).isoformat()
+    wall = _utc_now(now)
     reattested = skipped = failures = 0
     for action_class in granted_classes:
         read = grant_store.get_grant(principal, action_class)
@@ -380,26 +431,45 @@ def reseed_command(
                 "envelope hash; nothing to re-attest"
             )
             continue
-        updated = read.grant.model_copy(
-            update={"envelopeHash": envelope_hash, "promotedBy": caller, "ts": ts}
+        # The ledger clock (#37), per coordinate and read AFTER the skips: a
+        # grant that is not re-attested appends nothing and needs no stamp.
+        ts = next_ledger_ts(record_store, principal, action_class, now=wall, session=session)
+        updated, record = build_reattestation(
+            read.grant, caller=caller, envelope_hash=envelope_hash, ts=ts
         )
         try:
-            grant_store.update_grant(
-                updated, read.stored_hash, session, prev_raw_data=read.raw_data
+            grant_store.write_record_and_grant(
+                record,
+                updated,
+                record_store,
+                session,
+                signature=signer.sign_record(record) if signer is not None else None,
+                expected=read,
             )
-        except GrantUpdateConflictError as exc:
+        except (
+            GrantUpdateConflictError,
+            RecordAlreadyExistsError,
+            ReattestationRefusedError,
+            TermExtensionRefusedError,
+        ) as exc:
+            # The unit is atomic: whichever leg refused, neither was written.
             failures += 1
-            print(f"[re-seed] FAIL {action_class}: {exc}", file=sys.stderr)
+            print(
+                f"[re-seed] FAIL {action_class}: {exc} — nothing written "
+                "(neither the grant nor its reattestation record)",
+                file=sys.stderr,
+            )
             continue
         reattested += 1
         print(
             f"[re-seed] OK   {action_class}: re-attested at level "
             f"{updated.level.value!r} under {envelope_hash} "
-            f"(was {read.grant.envelopeHash})"
+            f"(was {read.grant.envelopeHash}); reattestation record ts={ts}"
         )
     print(
         f"[re-seed] ratifiedBy={caller}: {reattested} re-attested, "
-        f"{skipped} skipped, {failures} failed"
+        f"{skipped} skipped, {failures} failed; reattestation records "
+        f"{'signed (issuer DSSE)' if signer is not None else 'UNSIGNED (no issuer signing key configured)'}"
     )
     return 1 if failures else 0
 
@@ -978,13 +1048,15 @@ def main(argv: list[str] | None = None) -> int:
                 signer=resolve_record_signer(zone=args.zone),
             )
         if args.command == "re-seed":
-            grant_store, _ = _build_stores(args.table_name)
+            grant_store, record_store = _build_stores(args.table_name)
             principal, classes, envelope_hash, _ = _manifest_context(args.table_name)
             return reseed_command(
                 grant_store=grant_store,
+                record_store=record_store,
                 principal=principal,
                 granted_classes=classes,
                 envelope_hash=envelope_hash,
+                signer=resolve_record_signer(zone=args.zone),
             )
         if args.command == "propose":
             grant_store, _ = _build_stores(args.table_name)

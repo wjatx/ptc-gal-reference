@@ -11,7 +11,9 @@ proven end-to-end):
 - seed emits grant + bootstrap record PAIRS, stamps the STS identity, and skips
   existing grants cleanly on re-run (create-only, no duplicate records).
 - re-seed refuses an HMAC-tamper (store-layer) quarantine loudly and re-attests
-  an envelope-hash-mismatched grant at the SAME level with no ledger record.
+  an envelope-hash-mismatched grant at the SAME level with a reattestation
+  ledger record (the invariants are pinned per backend in
+  test_grants_reattestation.py).
 - ratify DSSE-signs the record when an issuer signer is injected (generated
   Ed25519 key) and the stored envelope verifies via verify_record; the unsigned
   path warns LOUDLY.
@@ -780,6 +782,7 @@ def test_reseed_reattests_envelope_mismatch_at_same_level(
 
     rc = reseed_command(
         grant_store=grant_store,
+        record_store=record_store,
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash="sha256:new",
@@ -792,10 +795,17 @@ def test_reseed_reattests_envelope_mismatch_at_same_level(
     assert read.grant.envelopeHash == "sha256:new"
     assert read.grant.level is AutonomyLevel.on_loop  # SAME level carried
     assert read.grant.promotedBy == CHECKER_ARN  # the ratifying STS identity stamped
-    assert record_store.records == []  # no level change -> no PromotionRecord
+    # No level changed, and the write is still recorded: one reattestation
+    # record, at the grant's level, carrying the grant's ts (GAL §6.6).
+    (record,) = record_store.records
+    assert record.recordType == "reattestation"
+    assert record.fromLevel is record.toLevel is AutonomyLevel.on_loop
+    assert record.envelopeHash == "sha256:new"
+    assert record.ratifiedBy == CHECKER_ARN
+    assert record.ts == read.grant.ts
 
 
-def test_reseed_refuses_hmac_tamper_quarantine(monkeypatch, grant_store, capsys):
+def test_reseed_refuses_hmac_tamper_quarantine(monkeypatch, grant_store, record_store, capsys):
     grant_store.put_grant(make_grant(envelope_hash="sha256:old"))
     # Tamper the stored payload without recomputing the HMAC — the store-layer
     # quarantine (grants/store.py), the kind that is NEVER re-attestable.
@@ -808,6 +818,7 @@ def test_reseed_refuses_hmac_tamper_quarantine(monkeypatch, grant_store, capsys)
 
     rc = reseed_command(
         grant_store=grant_store,
+        record_store=record_store,
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash="sha256:new",
@@ -819,14 +830,16 @@ def test_reseed_refuses_hmac_tamper_quarantine(monkeypatch, grant_store, capsys)
     assert "incident" in err
     # The tampered grant was not written over (the tamper evidence survives).
     assert grant_store.get_grant(PRINCIPAL, ACTION_CLASS).quarantined
+    assert record_store.records == []
 
 
-def test_reseed_skips_grant_already_in_force(monkeypatch, grant_store, capsys):
+def test_reseed_skips_grant_already_in_force(monkeypatch, grant_store, record_store, capsys):
     grant_store.put_grant(make_grant(envelope_hash="sha256:new"))
     set_caller(monkeypatch, CHECKER_ARN)
 
     rc = reseed_command(
         grant_store=grant_store,
+        record_store=record_store,
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash="sha256:new",
@@ -834,12 +847,14 @@ def test_reseed_skips_grant_already_in_force(monkeypatch, grant_store, capsys):
     )
     assert rc == 0
     assert "nothing to re-attest" in capsys.readouterr().out
+    assert record_store.records == []  # a skip re-attests nothing and records nothing
 
 
-def test_reseed_fails_on_absent_grant(monkeypatch, grant_store, capsys):
+def test_reseed_fails_on_absent_grant(monkeypatch, grant_store, record_store, capsys):
     set_caller(monkeypatch, CHECKER_ARN)
     rc = reseed_command(
         grant_store=grant_store,
+        record_store=record_store,
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash="sha256:new",
@@ -847,6 +862,7 @@ def test_reseed_fails_on_absent_grant(monkeypatch, grant_store, capsys):
     )
     assert rc == 1
     assert "bootstrap it with `seed`" in capsys.readouterr().err
+    assert record_store.records == []
 
 
 # ---------------------------------------------------------------------------
@@ -1495,12 +1511,13 @@ def test_propose_refuses_to_anchor_on_an_unrecorded_lapse(
     assert proposal_store.list_pending(PRINCIPAL, ACTION_CLASS) == []
 
 
-def test_reseed_carries_the_term_forward_unchanged(monkeypatch, grant_store):
+def test_reseed_carries_the_term_forward_unchanged(monkeypatch, grant_store, record_store):
     termed = make_grant(envelope_hash="sha256:old").model_copy(update={"certifiedUntil": _TERM})
     grant_store.put_grant(termed)
     set_caller(monkeypatch, CHECKER_ARN)
     assert reseed_command(
         grant_store=grant_store,
+        record_store=record_store,
         principal=PRINCIPAL,
         granted_classes=[ACTION_CLASS],
         envelope_hash=ENVELOPE_HASH,
