@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "safe-agents"
-version = "0.74.0"
+version = "0.75.0"
 description = "safe-agents — the trusted-autonomy base platform SDK (deterministic tool broker, agent pipeline, cloud arms, runner-contract harness)."
 readme = "README.md"
 # Declared as an SPDX expression rather than a file reference. The LICENSE file is at the repo
