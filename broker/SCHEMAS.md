@@ -107,7 +107,7 @@ interface Grant {
   envelopeHash: string             // hash of the signed envelope in force (caps, thresholds, quorum, fallback budgets)
   promotedBy:  string              // accountable identity that ratified the current level (maker-checker)
   evidence:    string              // ref to the covered-distribution evidence the promotion cited
-  ts:          string              // when this level took effect
+  ts:          string              // instant of the last write to this grant; equal to the ts of the record that write appended
   lastSafeLevel: "in-loop" | "on-loop"          // the rung automatic demotion falls back to (never "out-of-loop")
   demotionTriggers: DemotionTrigger[]           // the deterministic conditions that trip demotion (see below)
   demotionReason: null | "failing" | "pending-evidence"  // why currently demoted; null if at full level
@@ -561,6 +561,8 @@ conditioned UpdateItem so an existing record is never overwritten (`grants/store
 `ts` comes from a hybrid logical clock per coordinate (`grants/ledger_clock.py`, #37): the wall
 clock, or one microsecond past the coordinate's last recorded `ts` when that is later, so `ts`
 stays near wall time and the sk order is the write order even for two records in one clock tick.
+The same value is written to the grant in the same write, and the audit rule `GRANT_TS_RECORDED`
+holds each grant to it: a grant's `ts` must be the `ts` of the latest record at its coordinate.
 The stored
 `data` string is the canonical serialization from §1 (sorted keys, no whitespace, ASCII) — the exact
 bytes the DSSE signature's subject digest binds, verified verbatim on read.
