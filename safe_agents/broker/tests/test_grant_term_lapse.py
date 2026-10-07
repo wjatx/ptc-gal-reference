@@ -49,7 +49,6 @@ from safe_agents.broker.grants.record_signing import (
     canonical_record_payload,
     signer_from_pem,
 )
-from safe_agents.broker.grants.rung import RungStateMachine
 from safe_agents.broker.grants.sqlite_store import SqliteGrantStore, SqlitePromotionRecordStore
 from safe_agents.broker.grants.store import (
     InMemoryGrantStore,
@@ -559,19 +558,6 @@ def test_record_paired_writes_refuse_term_extension(stores, record_type):
         grant_store.write_record_and_grant(record, extended, record_store, expected=read)
     assert grant_store.get_grant(PRINCIPAL, ACTION_CLASS).raw_data == read.raw_data
     assert record_type not in {r.recordType for r in record_store.list_records(PRINCIPAL, ACTION_CLASS)}
-
-
-def test_re_ratify_cannot_extend_a_term():
-    """The lateral evidence-refresh path carries the term forward; a caller
-    that tries to smuggle a longer one through it is refused by the store."""
-    grant_store, record_store = _stores_with(_grant())
-    machine = RungStateMachine(
-        ceremony=PromotionCeremony(grant_store=grant_store, promotion_record_store=record_store),
-        grant_store=grant_store,
-        record_store=record_store,
-    )
-    refreshed = machine.re_ratify(_grant(), "fresh-evidence", "checker-bob")
-    assert refreshed.certifiedUntil == TERM
 
 
 def test_re_promotion_sets_a_new_term_and_clears_the_lapse():

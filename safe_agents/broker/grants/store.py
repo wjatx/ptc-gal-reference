@@ -88,7 +88,7 @@ class TermExtensionRefusedError(Exception):
     """A non-ceremony write would lengthen (or drop) a grant's certification term.
 
     GAL §6.7.6 / GAL-34: a term is set only by the promotion ceremony, and no
-    other path may extend it in place — re-seed, re-ratify, tightening,
+    other path may extend it in place — re-seed, tightening,
     demotion and lapse all carry the stored term forward unchanged or shorter.
     A term the holder could stretch would be self-certifying, and therefore
     vacuous. Raised before anything is written.

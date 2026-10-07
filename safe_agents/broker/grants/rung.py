@@ -32,8 +32,13 @@ Legal transitions
     (always permitted — tightening is safety-monotone; writes a
      tightening-typed PromotionRecord to the ledger)
 
-  Lateral (same level, re-ratification for evidence refresh):
-    any -> same   (allowed; does not write a PromotionRecord)
+  Same level:
+    There is no same-level transition here. The write that restates a level
+    is envelope re-attestation (the `re-seed` ceremony command), which
+    appends a reattestation-typed record. Fresh evidence enters a grant
+    through the promotion ceremony (GAL §6.6). A demotion whose trigger fires
+    on a grant already at its floor leaves the level too, and appends a
+    demotion-typed record for the breach.
 
   Illegal (raises TransitionError):
     in-loop -> out-of-loop   (level-skipping)
@@ -150,8 +155,8 @@ def validate_promotion_transition(
         raise TransitionError(
             f"Promotion must move upward: {from_level.value!r} -> {to_level.value!r} "
             f"is {direction}. "
-            "Use demote() for downward transitions; "
-            "re_ratify() for same-level evidence refresh."
+            "Use demote() for downward transitions. There is no same-level "
+            "transition: fresh evidence enters a grant through a promotion."
         )
 
     if to_rank - from_rank != 1:
@@ -306,8 +311,9 @@ class RungStateMachine:
         path (TransitionError on misconfigured lastSafeLevel).
       - lastSafeLevel is never out-of-loop (Grant schema invariant; asserted
         here as a defence-in-depth guard before any write).
-      - Lateral re-ratification (evidence refresh at the same level) is a
-        named, explicit path separate from the promotion path.
+      - No write here leaves a grant's level where it was without a
+        record: there is no path that refreshes evidence, promotedBy or ts
+        in place (GAL §6.6). A repeat-breach demotion appends its record.
       - Voluntary tightening (any level -> in-loop) is always permitted — no
         ceremony, no trigger — and appends a tightening-typed record.
 
@@ -366,88 +372,6 @@ class RungStateMachine:
             now=now,
             ratifier_kind=ratifier_kind,
         )
-
-    # ------------------------------------------------------------------
-    # Lateral path — evidence refresh at the same level
-    # ------------------------------------------------------------------
-
-    def re_ratify(
-        self,
-        grant: Grant,
-        evidence_bundle: str,
-        ratifier_id: str,
-        *,
-        session: object = None,
-        ts: str | None = None,
-    ) -> Grant:
-        """Refresh evidence at the current level without changing the rung.
-
-        Lateral re-ratification is permitted when covered-distribution evidence
-        needs renewal (e.g., after a distribution shift that resolved without
-        triggering demotion). The level is not changed; no PromotionRecord is
-        written (no level change occurred).
-
-        Write discipline mirrors tighten_to_in_loop (the old blind put
-        let a re-ratifier silently overwrite a demotion that raced in between
-        its read and write, RAISING the level with no ceremony and no record):
-        guarded re-read (not-found, quarantined, and concurrently-modified each
-        surface as their typed error; a quarantined grant is NEVER written
-        over), then the hash-conditioned store.update_grant — the real
-        atomicity guard.
-
-        Raises:
-            TransitionError: if ratifier_id is empty — accountability requires
-                a named ratifier even for lateral moves.
-            GrantNotFoundError: if the grant does not exist in the store
-                (re-ratification cannot create a grant).
-            QuarantinedGrantError: if the re-read found the stored grant
-                quarantined; it must not be written until resolved.
-            GrantUpdateConflictError: if the grant changed since it was read
-                (from the re-read, or from the conditional write losing the
-                race); re-read and retry.
-        """
-        if not ratifier_id:
-            raise TransitionError(
-                "ratifier_id is required for re-ratification; "
-                "accountability requires a named ratifier even for lateral moves."
-            )
-
-        # Guarded re-read, mirroring tighten_to_in_loop. Quarantine is checked
-        # FIRST: a quarantined read carries grant=None (tampered bytes
-        # are never parsed), so the not-found check would otherwise mislabel a
-        # tamper as absence.
-        current = self._grant_store.get_grant(grant.principal, grant.actionClass)
-        if current.quarantined:
-            raise QuarantinedGrantError(
-                f"grant {grant.principal.agentId}/{grant.actionClass} is "
-                f"quarantined ({current.quarantine_reason}); it must not be "
-                "written until the quarantine is resolved"
-            )
-        if current.grant is None:
-            raise GrantNotFoundError(
-                f"grant {grant.principal.agentId}/{grant.actionClass} not found "
-                "in store; re-ratification cannot create a grant"
-            )
-        if current.grant != grant:
-            # Content equality is the staleness check under the stored-bytes
-            # basis: identical fields ⇒ identical canonical bytes.
-            raise GrantUpdateConflictError(
-                f"grant {grant.principal.agentId}/{grant.actionClass} was "
-                "modified since it was read; re-read and retry"
-            )
-
-        effective_ts = ts or datetime.datetime.now(datetime.timezone.utc).isoformat()
-        updated = grant.model_copy(
-            update={
-                "evidence": evidence_bundle,
-                "promotedBy": ratifier_id,
-                "ts": effective_ts,
-            }
-        )
-        self._grant_store.update_grant(
-            updated, current.stored_hash, session, prev_raw_data=current.raw_data
-        )
-        return updated
 
     # ------------------------------------------------------------------
     # Downward path — deterministic demotion evaluator
