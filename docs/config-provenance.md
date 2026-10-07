@@ -166,7 +166,7 @@ would add, in the same core CI stage:
    generalization: every selector field in *any* store schema must be a closed enum or registry
    key, checked structurally rather than by known-bad names.
 2. **Store schemas provably closed-vocabulary** — every store field an enum, bounded numeric, or
-   typed reference — with a named exception to encode: `Caps`/`Allowlists` are deliberately
+   typed reference — with a named exception to encode: `Caps` is deliberately
    `extra="allow"` (future caps ride into the hash without a schema change) and the Envelope
    carries typed-dict placeholder fields. Those extras cannot name code and are inert until base
    code consumes them, but a conformance check must either encode that exception explicitly or

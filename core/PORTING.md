@@ -41,7 +41,7 @@ are referenced below and re-derived clean here — stubbed only where a small il
 1. **Broker co-placement per arm** — the sidecar process/task, its separate IAM identity, and the
    network-layer route that makes the broker the agent's *only* egress. This is the substrate's
    reason to exist; the reference pipeline patterns assume direct-connector access.
-2. **The envelope half of the manifest** — caps/allowlists/reversibility/abstention/fallback/
+2. **The envelope half of the manifest** — caps/reversibility/abstention/fallback/
    input-trust/promotion/polarity, consumed by `broker/`. (Schema designed in `manifest-schema.md`;
    broker-side consumption is `broker/`'s job, not core's.)
 3. **`validate-manifest`** — CI + pipeline pre-flight asserting `arm` known, `polarity` explicit,

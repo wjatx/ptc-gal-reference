@@ -80,7 +80,7 @@ sub-agent gets a computed, short-lived sub-grant that can only narrow authority,
 attribute up the chain to the human; the computation and the ancestor budget pool are built and
 tested, the issuance path is not, #11) · the shared vocabulary + pillar contract.
 
-**Per-agent repo (configured — re-derived per domain):** the envelope (caps, allowlists,
+**Per-agent repo (configured — re-derived per domain):** the envelope (caps,
 reversibility classes, abstention thresholds, fallback budgets, corroboration config) · the
 input-trust map · the policy ruleset + its CI test-table · the promotion predicates + the autonomy
 rungs the agent may occupy · whether the high-stakes/adversarial machinery is enabled.

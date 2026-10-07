@@ -64,7 +64,7 @@ This is policy enforcement; it uses the standard PEP/PDP/PIP/PAP terms. (`tool-b
   Enforcement**.
 - **PIP — Policy Information Point:** supplies facts the decision needs that aren't in the request —
   is this customer restricted, how much spent against today's cap, is a human reachable. Determinist
-  lookups (DynamoDB counters, allowlists).
+  lookups (DynamoDB counters, the grant for the call's action class).
 - **PAP — Policy Administration Point:** where policy is authored. **Policy is code/config in git,
   reviewed like any other code.** "Write authority is a ceremony" becomes a pull request, literally.
 
@@ -75,8 +75,8 @@ This is policy enforcement; it uses the standard PEP/PDP/PIP/PAP terms. (`tool-b
    `reversible` come from the agent's **`ToolOpTable`** — classified once in the consumer's
    `AgentManifest.tool_ops`, *never* from anything the model says: the model doesn't get to
    assert its `send` is really a `draft`.
-2. The PEP gathers `facts` from the PIP (counters, allowlists, reachability, constructed
-   confidence).
+2. The PEP gathers `facts` from the PIP (the grant and its level, counters, reachability,
+   constructed confidence).
 3. The **PDP decides** — one of five verbs, default-deny (below).
 4. The PEP **executes** the decision: runs the connector with broker-held credentials, or
    transforms, or persists an `Intent` for approval, or denies/abstains.

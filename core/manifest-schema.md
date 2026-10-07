@@ -6,7 +6,7 @@ provision, deploy, smoke, and *bound* an agent. It has two halves:
 - **Manifest** (shape informed by a proven pattern; owned here): `repo`, `policy`, `secrets`, `smoke`, plus the
   new `arm`. The pipeline scripts read these; they hold no per-agent knowledge.
 - **Envelope** (net-new, from `../ARCHITECTURE.md`): the domain-specific risk configuration the
-  base floor is bent into for this agent — caps, allowlists, reversibility classes, confidence
+  base floor is bent into for this agent — caps, reversibility classes, confidence
   bars/error budgets, fallback budgets, the input-trust map, promotion predicates, and the
   re-derived **safe-default polarity**.
 
@@ -50,13 +50,24 @@ The canonical, authoritative definition of the envelope's fields — exact names
 and which are strict vs. permissive — is the typed `Envelope` model in
 `safe_agents/broker/schemas/envelope.py`. In brief: it is the domain-specific
 risk configuration the base floor is bent into for a given agent — polarity, caps,
-allowlists, reversibility classes, the typed `confidence` bar/error-budget knob (
+reversibility classes, the typed `confidence` bar/error-budget knob (
 superseding the former `abstention_thresholds` placeholder), fallback budgets, the
 input-trust map, promotion predicates, and which autonomy rungs the agent may occupy.
-`polarity`, `caps`, `allowlists`, `high_stakes`, and `confidence` are modeled strictly;
+`polarity`, `caps`, `high_stakes`, and `confidence` are modeled strictly;
 the remaining fields are modeled permissively pending later phases (see the module
 docstring). The pipeline validates every manifest's
 `envelope:` block against this schema (`safe_agents/pipeline/validate.py`).
+
+**The envelope does not list tools.** What an agent is served and may call comes from its
+grants (`grant_classes`, and the grant store behind them). An earlier `allowlists:` block claimed
+to scope the tools an agent could see, and no decision read it, so it was retired (#135). A
+manifest that still carries the block is refused at load, and removing the field changed the hash
+of every envelope: see the deployment consequence in `broker/SCHEMAS.md`. The pipeline preflight
+that asks for `secrets.broker_connector_keys` now keys on the `connectors` block. That is a
+different trigger and not a superset of the old one: a manifest that listed tools in the retired
+block and declares no `connectors` used to be asked for the bundle and no longer is. The broker
+constructs connectors only from `connectors`, so such a manifest has none for a bundle to serve.
+The preflight does not see `connector_providers` or `connector_secrets`.
 
 The `envelope:` block is one of five **broker-facing** blocks, together typed as the
 `AgentManifest` model in `safe_agents/broker/schemas/manifest.py`: `envelope`
@@ -105,9 +116,8 @@ envelope:
     actions_per_utc_day: 1    # at most one actionable signal per UTC day (caps rename;
                               # the legacy `actions_per_run` spelling still loads)
     position_usd:    0        # no order surface exists at all today
-  allowlists:
-    tools: [snapshot.read, research.web, ledger.append, notify.telegram]
-    # NOTE: no order-placing tool is in the registry — "signals only" is structural
+  # NOTE: there is no tool list here. What this agent may call comes from its grants,
+  # and no order-placing tool is granted: "signals only" is structural.
   reversibility_classes:
     order.place:  { tier: irreversible, handling: blocked }
     ledger.append:{ tier: recoverable,  handling: autonomous }   # append-only, never delete

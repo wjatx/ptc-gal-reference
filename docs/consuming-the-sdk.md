@@ -84,6 +84,12 @@ file (PEP 740), which names this repository and that workflow; PyPI shows it on 
 Bump the pin to a newer version deliberately, when you want a platform upgrade. That pin *is* the
 version of the trusted floor your agent stands on.
 
+An upgrade can change the envelope hash, and when it does every stored grant is quarantined until
+`re-seed` re-attests it with the issuer signing key. A release that adds or removes an `Envelope`
+field does this for every principal, whether or not its envelope ever set the field. The release
+that retired `envelope.allowlists` (#135) is one, and it also refuses any manifest or stored
+envelope that still carries the block. `broker/SCHEMAS.md` lists the steps that upgrade requires.
+
 To stand on a commit that has not been released, pin the commit SHA by git URL instead:
 `safe-agents @ git+https://github.com/wjatx/ptc-gal-reference.git@<40-hex SHA>`. A package with a
 dependency of that form cannot itself be published to PyPI, which refuses direct-URL dependencies.

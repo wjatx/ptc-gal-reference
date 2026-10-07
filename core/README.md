@@ -17,7 +17,7 @@ Four things live here:
    agent name.
 4. **The per-agent manifest/envelope schema** (`manifest-schema.md`) — one declarative file per
    agent: its repo, secrets, policy, smoke test, **the cloud arm it runs on**, and its risk
-   **envelope** (caps, allowlists, reversibility classes, abstention thresholds, fallback budgets,
+   **envelope** (caps, reversibility classes, abstention thresholds, fallback budgets,
    input-trust map, promotion predicates, and the re-derived safe-default polarity).
 
 `PORTING.md` is the reference-and-re-derivation plan: the proven development-harness and

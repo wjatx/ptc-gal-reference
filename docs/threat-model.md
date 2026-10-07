@@ -184,6 +184,16 @@ reviewer.
   write; reads taint but proceed (bounded only by opt-in envelope knobs), internal writes are not
   taint-gated, and enforcement today is the two-level projection of the Biba lattice, not
   multi-level (`broker/TAINT.md` §1.1, §5).
+- **The broker does not stop request forgery inside a tool server.** An attacker who plants an
+  address in text the agent reads can have a tool fetch it from network position the attacker
+  lacks, and a tainted read is allowed like any other read. A server that follows a redirect, or
+  resolves a name to an internal address, does so after the broker has decided. No list of
+  approved destinations is offered at the broker, because the broker sees an argument and not the
+  connection, and a list checked against the argument is defeated by the redirect. Containment at
+  a boundary around the server closes the gap: only the component that opens the connection, or a
+  network boundary around it, can check where a request lands. PTC §6.4 (PTC-52, tracked in #178)
+  adds a hold on an agent-composed destination on a tainted turn. That narrows the gap, it does
+  not close it, and it is not yet implemented (`broker/TAINT.md` §6.1).
 - **The screen is additive and statistical.** It ships OFF, may only refuse, and an injection that
   fools it gains nothing it did not already have; nothing in the deterministic floor depends on it
   (`channels/SCREENING.md`).

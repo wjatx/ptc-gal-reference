@@ -251,7 +251,8 @@ failure). Everything defaults to deny unless a rule says otherwise.
 
 ### Envelope
 An agent's **risk boundaries, written as configuration rather than prose**: its spending caps,
-its allow-lists, which actions count as reversible, how much it may read. This is where one
+which actions count as reversible, how much it may read. Which tools it may call is not here: that
+comes from its grants. This is where one
 agent differs from another — a trading agent's envelope is tight and paranoid, a read-only
 dashboard agent's is loose. The load-bearing rule: **an agent can never widen its own
 envelope.** It can only ever operate inside the box it was handed.
