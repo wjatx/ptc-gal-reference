@@ -99,9 +99,10 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 # equals its latest record's). PTC 0.5.0-draft added PTC-49 to PTC-53 (skew,
 # the age of a fetched input, taint across delegation, an agent-composed
 # destination on a tainted turn, an approval that expires undecided), and GAL
-# 0.6.0-draft added GAL-41 to GAL-43 (issuer standing, skew, input age).
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 53, SPEC_GAL: 43}
-EXPECTED_TOTAL_ROWS = 96
+# 0.6.0-draft added GAL-41 to GAL-43 (issuer standing, skew, input age), and
+# 0.6.1-draft added GAL-44 (a lapse record's term is the ratified one).
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 53, SPEC_GAL: 44}
+EXPECTED_TOTAL_ROWS = 97
 
 # clause_id -> (marker_form, tracking issue)
 #
@@ -189,16 +190,10 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # that draft and is no longer: #164 built it, and GAL 0.5.1-draft took the
     # marker off and restated the clause's last rule as "no write to a grant
     # without a record".
-    # GAL-40 states what a record's ts denotes, which
-    # the ledger clock already provides, and the audit rule tying a grant's ts to
-    # its latest record. That rule is built (GRANT_TS_RECORDED, grants/audit.py).
-    # The row stays because the published text still carries the marker; it
-    # goes when a later revision takes the marker off.
-    # #165 (`certifiedUntil` on a lapse record) is a field-row marker in §5.2
-    # and §6.7.6 and has no conformance row of its own. The lapse writer now
-    # carries the field; the specification keeps both markers until a revision
-    # takes them off, and nothing in this set changes when it does.
-    "GAL-40": (MARKER_FORM_INLINE, "#166"),
+    # GAL-40 (a record's ts, and the audit rule tying a grant's ts to its
+    # latest record) and the lapse record's `certifiedUntil` were marked by the
+    # same draft. Both are built (#166, #165) and GAL 0.6.1-draft took their
+    # markers off.
     # PTC 0.5.0-draft. Three existing clauses gain markers the 2026-10-03
     # re-audit found they needed: PTC-11 shares the unstamped publish path with
     # PTC-7/8/9, PTC-29's ordering shares the dedupe race with PTC-14, and
@@ -225,6 +220,10 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     "GAL-41": (MARKER_FORM_INLINE, "#179"),
     "GAL-42": (MARKER_FORM_INLINE, "#175"),
     "GAL-43": (MARKER_FORM_INLINE, "#176"),
+    # GAL 0.6.1-draft. GAL-44 holds a lapse record's term to the latest
+    # promotion before it. The lapse writer and the stores' paired write hold
+    # it; no audit rule re-derives it from the ledger, which is what is marked.
+    "GAL-44": (MARKER_FORM_INLINE, "#183"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from
