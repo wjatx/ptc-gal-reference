@@ -205,7 +205,9 @@ class TestL7ALapseCannotMoveTheTerm:
 _BOOT = _bootstrap_record(_grant())
 _PROMO = _promotion_record(PROMOTED_AT)
 _BARE_PROMO = _promotion_record(PROMOTED_AT, certified_until=None)
-_LAPSED = dict(level=IN, demotionReason="pending-evidence")
+# A lapsed grant carries its lapse record's ts: the writer stamps both with one
+# value, and the audit reports a grant whose ts its latest record does not match.
+_LAPSED = dict(level=IN, demotionReason="pending-evidence", ts=AFTER.isoformat())
 # A term a second ceremony ratifies, after the first one lapsed.
 RENEWED_AT = "2026-09-02T00:00:00+00:00"
 RENEWED_TERM = "2027-01-01T00:00:00+00:00"
