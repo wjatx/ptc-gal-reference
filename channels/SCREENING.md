@@ -110,7 +110,9 @@ An exception escaping the screen callable is resolved by the dispatcher as
 `refusing("screen_error")` — recorded like any refusal, dedupe-marked like any handled message (a
 replay of the message that crashed the screen does not re-run it). The backstop exists because the
 alternative polarity is the worst one: a screen that silently passes during its own outage looks
-enabled and isn't.
+enabled and isn't. Toward the sender, a `screen_error` refusal reads exactly as an acceptance does,
+like every screen refusal (`channels/ADAPTERS.md` §"What the sender is told"). It is not a transient
+refusal: the screen is not one of the inputs whose outage the airlock reports.
 
 Fail-*open* remains available — as a choice, made inside the screen: an implementation that prefers
 availability catches its own errors and returns a pass. What the contract forbids is the *silent*

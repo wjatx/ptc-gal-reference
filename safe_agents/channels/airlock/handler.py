@@ -4,13 +4,28 @@ Thin by design: the whole point of the reference dispatcher
 (channels/dispatch.py) is that it stays unchanged and transport-free, so this
 handler only binds seams. It builds the airlock once per container from the
 in-image manifest and the Secrets-Manager webhook token, then per request:
-lowercases headers, decodes the body, calls `dispatch`, and — on an accepted
-envelope — SendMessages it to the accepted queue.
+lowercases headers, decodes the body, calls `dispatch_outcome`, and — on an
+accepted envelope — SendMessages it to the accepted queue.
 
-Response discipline is 200-always: drops are silent to the sender by design, and
-an unexpected exception is logged (structured JSON) and still answered 200. A 5xx
-would make the provider retry, the retry would dedupe, and the record would
-strand — so the airlock never signals failure back over the wire.
+Response discipline (channels/ADAPTERS.md §"What the sender is told"): the status
+is 200 on every path, an unexpected exception included, which is logged
+(structured JSON). A 5xx would make the provider retry, the retry would dedupe,
+and the record would strand, and a status that varied would tell a prober which
+gate it reached. The body is `{"ok": true}` toward everyone, with one exception:
+a sender that passed gate 1 and whose identity is in the trust map is told
+`{"ok": false, "refusal": "permanent"}` when the airlock evaluated its envelope
+and refused it before the screen, and `{"ok": false, "refusal": "transient"}`
+when the airlock could not evaluate because its verification keys or its dedupe
+store were unavailable. A screen refusal, a replay, and a failure of the airlock
+while handling the request read as an acceptance.
+
+The verification keys are fetched at cold start. When that fetch fails the
+handler still serves: the keys are fetched again by the next request that
+reaches gate 3.5, and cached once the fetch succeeds. Every other cold-start
+failure still fails the whole cold start, as before: a failed webhook-token fetch
+leaves no way to authenticate anyone, and a manifest that does not load leaves
+no trust map. Each request is then answered `{"ok": true}`, the failure is
+logged as `handler_error`, and nothing is cached.
 
 Env contract (fixed; the infra side binds these):
   CHANNELS_MANIFEST            in-image manifest path (unset ⇒ no trust map, so
@@ -37,7 +52,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from safe_agents.channels.dispatch import dispatch
+from safe_agents.channels.dispatch import KeySourceUnavailable, RefusalClass, dispatch_outcome
 from safe_agents.channels.manifest import (
     UNCONFIGURED_ZONE,
     AirlockRuntime,
@@ -45,9 +60,14 @@ from safe_agents.channels.manifest import (
     build_airlock,
     load_channels_manifest,
 )
-from safe_agents.channels.keys import resolve_verification_keys
+from safe_agents.channels.keys import (
+    VERIFY_KEYS_SECRET_ARN_ENV,
+    SigningConfigError,
+    resolve_verification_keys,
+)
+from safe_agents.channels.schemas import EventTrigger
 from safe_agents.channels.schemas.event_trigger import MAX_FORWARD_BYTES
-from safe_agents.channels.signing import make_gate
+from safe_agents.channels.signing import ChainVerifyResult, make_gate
 from safe_agents.channels.stores import DynamoDbDedupeStore, S3DropSink, S3VerdictSink
 from safe_agents.channels.trust_map import digest_identity, make_drop_record
 from safe_agents.channels.webhook import WebhookRequest
@@ -117,6 +137,46 @@ class _LoggingDropSink:
 
 
 # ---------------------------------------------------------------------------
+# Gate 3.5's seam when verification keys are configured.
+# ---------------------------------------------------------------------------
+
+class _KeyedVerifyGate:
+    """The chain-verification seam, fetching its keys until a fetch succeeds.
+
+    Constructed only when a keys ARN is configured. A fetch that fails (the
+    secret unreachable or malformed: `SigningConfigError`) caches nothing, and
+    the call raises `KeySourceUnavailable`, which the dispatcher records
+    `not_evaluated`/`key_source`. The fetch is attempted only for a request
+    that reaches gate 3.5, so a request that fails gate 1 never drives one.
+    """
+
+    def __init__(self) -> None:
+        self._gate: Any = None
+
+    def resolve(self) -> bool:
+        """Fetch the keys if they are not cached yet; True once they are."""
+        if self._gate is not None:
+            return True
+        try:
+            self._gate = make_gate(resolve_verification_keys())
+        except SigningConfigError as exc:
+            # The message names the setting and the fault, never key material
+            # (keys.py builds every SigningConfigError that way).
+            logger.error(
+                json.dumps(
+                    {"event": "verify_keys_unavailable", "error": f"{type(exc).__name__}: {exc}"}
+                )
+            )
+            return False
+        return self._gate is not None
+
+    def __call__(self, envelope: EventTrigger) -> ChainVerifyResult:
+        if not self.resolve():
+            raise KeySourceUnavailable
+        return self._gate(envelope)
+
+
+# ---------------------------------------------------------------------------
 # The per-container runtime, built once and cached.
 # ---------------------------------------------------------------------------
 
@@ -126,7 +186,7 @@ class _HandlerState:
     dedupe: DynamoDbDedupeStore
     drops: _LoggingDropSink
     verdicts: S3VerdictSink | None
-    verify_chain: Any
+    verify_chain: _KeyedVerifyGate | None
     sqs: Any
     queue_url: str
 
@@ -169,11 +229,16 @@ def _build_state() -> _HandlerState:
     )
 
     # Chain-signature verification (channels/SIGNING.md). Ships OFF: with no
-    # BROKER_VERIFY_KEYS_SECRET_ARN configured the resolver is None, make_gate
-    # returns None, and dispatch skips the gate — unsigned peers pass. A
-    # set-but-unfetchable/malformed keys secret fails the cold start closed,
-    # and so does an entry with no custody record (SIGNING.md S10).
-    verify_chain = make_gate(resolve_verification_keys())
+    # BROKER_VERIFY_KEYS_SECRET_ARN configured the seam is None and dispatch
+    # skips the gate, so unsigned peers pass. When it is configured the keys
+    # are fetched now; a set-but-unfetchable or malformed keys secret (an entry
+    # with no custody record included, SIGNING.md S10) does not fail the cold
+    # start. Every envelope that reaches gate 3.5 meanwhile is refused
+    # `not_evaluated`, never passed unverified, and the next one fetches again.
+    verify_chain: _KeyedVerifyGate | None = None
+    if os.environ.get(VERIFY_KEYS_SECRET_ARN_ENV):
+        verify_chain = _KeyedVerifyGate()
+        verify_chain.resolve()
 
     return _HandlerState(
         airlock=airlock,
@@ -197,11 +262,21 @@ def _get_state() -> _HandlerState:
 # Request handling
 # ---------------------------------------------------------------------------
 
-def _ok() -> dict:
+# The three bodies, serialized once so the uniform one is the same bytes on
+# every path that sends it.
+_UNIFORM_BODY = json.dumps({"ok": True})
+_REFUSAL_BODIES: dict[RefusalClass, str] = {
+    "permanent": json.dumps({"ok": False, "refusal": "permanent"}),
+    "transient": json.dumps({"ok": False, "refusal": "transient"}),
+}
+
+
+def _respond(refusal: RefusalClass | None = None) -> dict:
+    """Status 200 always; the body carries the refusal class and nothing else."""
     return {
         "statusCode": 200,
         "headers": {"content-type": "application/json"},
-        "body": json.dumps({"ok": True}),
+        "body": _UNIFORM_BODY if refusal is None else _REFUSAL_BODIES[refusal],
     }
 
 
@@ -217,7 +292,7 @@ def _handle(event: dict) -> dict:
     method = event.get("requestContext", {}).get("http", {}).get("method")
     if method is not None and method != "POST":
         # Only POST carries an inbound signal; anything else is a silent no-op.
-        return _ok()
+        return _respond()
 
     state = _get_state()
     try:
@@ -238,9 +313,9 @@ def _handle(event: dict) -> dict:
         logger.info(
             json.dumps({"event": "channel_drop_undecodable", "error": type(exc).__name__})
         )
-        return _ok()
+        return _respond()
 
-    accepted = dispatch(
+    outcome = dispatch_outcome(
         request,
         adapter=state.airlock.adapter,
         trust_map=state.airlock.trust_map,
@@ -253,6 +328,7 @@ def _handle(event: dict) -> dict:
         zone=state.airlock.zone,
     )
 
+    accepted = outcome.envelope
     if accepted is not None:
         state.sqs.send_message(
             QueueUrl=state.queue_url, MessageBody=accepted.to_wire(max_bytes=MAX_FORWARD_BYTES)
@@ -267,15 +343,15 @@ def _handle(event: dict) -> dict:
             )
         )
 
-    return _ok()
+    return _respond(outcome.refusal)
 
 
 def handler(event: dict, context: Any = None) -> dict:
-    """Lambda entrypoint. Always answers 200; never raises to the provider."""
+    """Lambda entrypoint. Always answers status 200; never raises to the provider."""
     try:
         return _handle(event)
-    except Exception as exc:  # noqa: BLE001 — 200-always: a 5xx would retry, dedupe, and strand
+    except Exception as exc:  # noqa: BLE001 — status 200 always: a 5xx would retry, dedupe, and strand
         logger.error(
             json.dumps({"event": "handler_error", "error": f"{type(exc).__name__}: {exc}"})
         )
-        return _ok()
+        return _respond()

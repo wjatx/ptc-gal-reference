@@ -3,7 +3,10 @@
 Proves the connector is PURE TRANSPORT (channels/PUBLISH.md): it POSTs the
 broker-stamped envelope to the peer descriptor's URL with the shared-secret
 header the receiver's `verify_token` checks, refuses a non-'publish' op, refuses
-a malformed credential, and never authors provenance. Network is faked.
+a malformed credential, and never authors provenance. It reports the airlock's
+answer from the body (channels/ADAPTERS.md §"What the sender is told") and
+never reports `published` for a body that is not the acceptance body. Network
+is faked.
 """
 
 from __future__ import annotations
@@ -39,8 +42,16 @@ def _stamped_envelope():
     )
 
 
+_ACCEPTED_BODY = b'{"ok": true}'
+
+
 class _FakeResponse:
-    status = 202
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._body = body
+
+    def read(self, amt=None):
+        return self._body if amt is None else self._body[:amt]
 
     def __enter__(self):
         return self
@@ -52,10 +63,12 @@ class _FakeResponse:
 class _FakeUrlopen:
     def __init__(self):
         self.requests = []
+        self.status = 202
+        self.body = _ACCEPTED_BODY
 
     def __call__(self, request, timeout=None):
         self.requests.append(request)
-        return _FakeResponse()
+        return _FakeResponse(self.status, self.body)
 
 
 @pytest.fixture
@@ -120,3 +133,60 @@ def test_an_envelope_the_wire_cannot_carry_is_not_posted(fake_urlopen):
     with pytest.raises(ValueError):
         PeerConnector().execute("peer", "publish", {"envelope": env.model_dump()}, _CREDENTIAL)
     assert fake_urlopen.requests == []
+
+
+# What the connector reports for each body the peer answers with. Every body the
+# airlock does not send, including near misses, is `unknown`, never `published`.
+_PUBLISHED = {"status": "published"}
+_UNKNOWN = {"status": "unknown"}
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        pytest.param(b'{"ok": true}', _PUBLISHED, id="accepted"),
+        pytest.param(
+            b'{"ok": false, "refusal": "permanent"}',
+            {"status": "refused", "refusal": "permanent"},
+            id="permanent",
+        ),
+        pytest.param(
+            b'{"ok": false, "refusal": "transient"}',
+            {"status": "refused", "refusal": "transient"},
+            id="transient",
+        ),
+        pytest.param(b"", _UNKNOWN, id="empty"),
+        pytest.param(b"not json", _UNKNOWN, id="not-json"),
+        pytest.param(b"\xff\xfe", _UNKNOWN, id="not-utf8"),
+        pytest.param(b"[true]", _UNKNOWN, id="not-an-object"),
+        pytest.param(b'{"ok": 1}', _UNKNOWN, id="ok-is-one-not-true"),
+        pytest.param(b'{"ok": true, "extra": 1}', _UNKNOWN, id="accepted-plus-a-key"),
+        pytest.param(b'{"ok": false}', _UNKNOWN, id="refused-without-a-class"),
+        pytest.param(b'{"ok": false, "refusal": "later"}', _UNKNOWN, id="unknown-class"),
+        pytest.param(b'{"ok": 0, "refusal": "permanent"}', _UNKNOWN, id="ok-is-zero-not-false"),
+        pytest.param(
+            b'{"ok": true, "refusal": "transient"}', _UNKNOWN, id="ok-true-with-a-class"
+        ),
+        pytest.param(
+            b'{"ok": false, "refusal": "transient", "gate": "x"}',
+            _UNKNOWN,
+            id="refusal-plus-a-key",
+        ),
+        pytest.param(
+            b'{"ok": true}' + b" " * 2048, _UNKNOWN, id="longer-than-any-answer"
+        ),
+        pytest.param(b'{"status": "accepted"}', _UNKNOWN, id="some-other-receiver"),
+    ],
+)
+def test_the_result_reports_the_airlock_answer_read_from_the_body(fake_urlopen, body, expected):
+    fake_urlopen.status = 200
+    fake_urlopen.body = body
+    env = _stamped_envelope()
+    result = PeerConnector().execute("peer", "publish", {"envelope": env.model_dump()}, _CREDENTIAL)
+
+    assert result == {
+        **expected,
+        "event_id": "conf-1234",
+        "principal": "example-agent",
+        "http_status": 200,
+    }

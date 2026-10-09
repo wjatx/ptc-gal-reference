@@ -37,7 +37,10 @@ per-entry config knob: `owner`/`peer-agent` → `trusted`, `external` → `untru
 consumer is *membership* (which identities map to which class), never the label semantics.
 
 "Drop silently" means silent **toward the sender** — no acknowledgement, no error detail an
-adversary could probe. It never means unrecorded: every drop emits a `DropRecord` (below).
+adversary could probe. It never means unrecorded: every drop emits a `DropRecord` (below). One
+thing is said to a sender the airlock authenticated and whose identity is in this map: whether a
+refusal before the screen is permanent or transient, and nothing more (`channels/ADAPTERS.md`
+§"What the sender is told"). An unmapped sender is told nothing.
 
 ## The one-way rule
 
@@ -158,8 +161,9 @@ interface DropRecord {
   reason: "authenticity_failed" | "malformed" | "audience_mismatch"
         | "chain_signature_missing" | "chain_signature_invalid" | "chain_signer_unknown"
         | "expired" | "unmapped" | "principal_mismatch" | "screen_refused"
+        | "not_evaluated"
   detail: string | null            // gate-specific machine code, ^[a-z][a-z0-9_]{0,63}$ — never free
-                                   // text (channels/SCREENING.md; today only the screen gate sets it)
+                                   // text (channels/SCREENING.md); `not_evaluated` always sets it
   ts: string
 }
 ```
@@ -171,6 +175,13 @@ addition: a validator-enforced closed-vocabulary code so the drop log can say *w
 refused without ever carrying content-derived prose. A deduplicated replay is a silent no-op, not a drop: replays
 are expected transport behavior, and recording each one would let a replaying adversary flood the
 drop log.
+
+`not_evaluated` records a refusal the airlock could not evaluate, because a fetched input it needed
+was unavailable; `detail` names the input, `key_source` (gate 3.5) or `dedupe_store` (gate 6). It
+is the record of a transient refusal (`channels/ADAPTERS.md` §"What the sender is told"), and it
+lets the receiver's own record tell a refusal it evaluated from one it could not. The
+specification's closed vocabulary (PTC §3.5) gains `not_evaluated` in the revision that removes
+PTC-44's not-yet-implemented marker (#174).
 
 ## Conformance
 

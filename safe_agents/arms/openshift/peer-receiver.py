@@ -79,7 +79,9 @@ class _Handler(BaseHTTPRequestHandler):
         # Said every time, not once in a README: this chain arrived from the agent.
         log("  NB the chain above is AGENT-AUTHORED — the /call path does not call")
         log("     stamp_outbound (#315), so it is echoed, never trusted.")
-        self._json(200, {"status": "accepted", "event_id": envelope.event_id})
+        # The airlock's acceptance body, so the reference `PeerConnector`, which reads
+        # the body, reports this delivery `published` (channels/ADAPTERS.md).
+        self._json(200, {"ok": True})
 
     def log_message(self, fmt, *args) -> None:
         log(f"{self.address_string()} {fmt % args}")

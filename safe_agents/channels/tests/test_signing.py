@@ -530,12 +530,12 @@ class _RecordingAdapter:
 
 
 class _RecordingTrustMap(ChannelTrustMap):
-    """A trust map that records whether resolve() was consulted."""
+    """A trust map that counts how many times resolve() was consulted."""
 
-    resolved: bool = False
+    resolves: int = 0
 
     def resolve(self, channel_type: str, channel_identity: str):
-        object.__setattr__(self, "resolved", True)
+        object.__setattr__(self, "resolves", self.resolves + 1)
         return super().resolve(channel_type, channel_identity)
 
 
@@ -593,7 +593,10 @@ def test_forged_chain_drops_before_trust_map(signer_and_resolver):
     out, drops, _ = _run(forged, gate=gate, trust_map=tm)
     assert out is None
     assert [d.reason for d in drops] == [SIGNATURE_INVALID]
-    assert tm.resolved is False  # quarantined before spending trust-map budget
+    # Quarantined before gate 5 runs. The one lookup is the side-effect-free one
+    # after gate 2 that decides whether the sender is told a refusal class
+    # (channels/ADAPTERS.md §"What the sender is told"); gate 5 would be a second.
+    assert tm.resolves == 1
 
 
 def test_verification_ships_off_unsigned_passes():

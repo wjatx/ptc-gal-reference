@@ -1,7 +1,7 @@
 """channels — inbound airlock and outbound notifier contracts; see channels/SCHEMAS.md."""
 
 from .adapters import InboundAdapter, OutboundAdapter
-from .dispatch import dispatch
+from .dispatch import DispatchOutcome, KeySourceUnavailable, dispatch, dispatch_outcome
 from .manifest import (
     SCREEN_REGISTRY,
     AirlockRuntime,
@@ -57,6 +57,9 @@ __all__ = [
     "InboundAdapter",
     "OutboundAdapter",
     "dispatch",
+    "dispatch_outcome",
+    "DispatchOutcome",
+    "KeySourceUnavailable",
     "AirlockRuntime",
     "ChannelsManifest",
     "ScreenConfig",

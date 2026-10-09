@@ -94,11 +94,21 @@ FORGERY_REASONS = frozenset({
     "chain_signer_unknown",
 })
 
-# The identity claim itself was never authenticated. Any reason string this
-# table doesn't otherwise recognize also lands here — a conservative default.
+# No sender identity can be held to these records. For `authenticity_failed`
+# and `malformed` the identity claim itself was never authenticated. Any reason
+# string this table doesn't otherwise recognize also lands here, as a
+# conservative default.
+#
+# `not_evaluated` is here for a different reason: the sender may well be
+# authenticated, but the record says the RECEIVER could not evaluate (its key
+# source or dedupe store was unavailable), which is evidence about the
+# receiver and none about the sender. Counting it against the transport
+# identity would turn one outage into a throttle recommendation against every
+# mapped peer that sent during it.
 UNATTRIBUTABLE_REASONS = frozenset({
     "authenticity_failed",
     "malformed",
+    "not_evaluated",
 })
 
 # Bases eligible for a throttle recommendation. "unattributable" (no
@@ -265,8 +275,8 @@ def _classify_observed_event(event: ObservedEvent) -> tuple[AttributionBasis, st
         return "transport-token", f"{event.channel_type}#{event.identity_digest}"
 
     # UNATTRIBUTABLE_REASONS, or any reason string this table doesn't
-    # recognize: the identity claim itself was never authenticated.
-    # Conservative default.
+    # recognize: no sender identity can be held to the record (see
+    # UNATTRIBUTABLE_REASONS above for why, per reason). Conservative default.
     return "unattributable", f"{event.channel_type}#{event.identity_digest}"
 
 

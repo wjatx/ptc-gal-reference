@@ -315,11 +315,13 @@ export class ChannelsStack extends Stack {
         });
 
     // ── Silent-failure alarms ────────────────────────────────────────────────────────────
-    // The airlock answers 200-always by design, so its two failure modes are invisible to callers:
-    // `handler_error` (an unexpected exception — the message dropped hard) and `screen_error` (the
-    // classifier screen failing closed — 100% drop when persistent). Metric filters lift both
-    // structured-log events into SafeAgents/Channels and alarm on the FIRST occurrence in any
-    // 5-minute window. The Lambda log formatter prefixes level/timestamp before the JSON payload,
+    // The airlock answers status 200 on every path by design, so its failure modes are invisible
+    // to callers: `handler_error` (an unexpected exception, the message dropped hard),
+    // `screen_error` (the classifier screen failing closed, 100% drop when persistent) and
+    // `verify_keys_unavailable` (the verification-keys secret unreachable or malformed: the
+    // handler keeps serving and drops every chain-verified envelope `not_evaluated` until a fetch
+    // succeeds). Metric filters lift the three structured-log events into SafeAgents/Channels and
+    // alarm on the FIRST occurrence in any 5-minute window. The Lambda log formatter prefixes level/timestamp before the JSON payload,
     // so these are TEXT term patterns on the quoted substring, not JSON ($.event) patterns.
     // Subscribing the alert topic (email, chat bridge, ...) is a per-environment ops step.
     const alertTopic = new sns.Topic(this, 'AirlockAlerts', {
@@ -330,6 +332,11 @@ export class ChannelsStack extends Stack {
     const silentFailureEvents: [string, string, string][] = [
       ['HandlerError', 'handler_error', 'airlock handler threw — inbound message dropped hard'],
       ['ScreenError', 'screen_error', 'classifier screen failing closed — persistent means 100% drop'],
+      [
+        'VerifyKeysUnavailable',
+        'verify_keys_unavailable',
+        'verification keys unreachable or malformed — chain-verified envelopes dropped not_evaluated',
+      ],
     ];
     for (const [name, event, description] of silentFailureEvents) {
       const metric = new MetricFilter(this, `Airlock${name}Filter`, {

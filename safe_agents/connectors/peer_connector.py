@@ -19,6 +19,16 @@ only that the payload parses as a well-formed EventTrigger — it refuses to POS
 garbage — and never edits it. The peer endpoint URL and shared secret are the
 broker-fetched credential facts the agent never holds (PUBLISH.md P1); the agent
 supplied only the envelope's intent.
+
+It reads the airlock's answer from the response BODY, never the status: the
+airlock answers status 200 on every path (channels/ADAPTERS.md §"What the
+sender is told"). `{"ok": true}` is reported `published`, which is all an
+acceptance, a screen refusal, a replay, any refusal toward a sender the airlock
+has not mapped, and a failure inside the airlock while it handled the request
+can look like from here. `{"ok": false, "refusal": X}` is reported `refused`
+with that `refusal` (`permanent` or `transient`). Any other body is reported
+`unknown`, never `published`. The connector does not retry: whether to send
+again after a `transient` refusal is the sending consumer's decision.
 """
 
 from __future__ import annotations
@@ -37,6 +47,35 @@ from safe_agents.connectors import Connector
 # closed (the broker records the failure; the abstain-safe emitter treats a
 # non-delivery as the safe outcome).
 _TIMEOUT_SECONDS = 10
+
+# The airlock's answer is one of three short JSON bodies, so a read is capped
+# well above the longest of them and anything larger is an unreadable answer.
+_MAX_ANSWER_BYTES = 1024
+
+_PUBLISHED = "published"
+_REFUSED = "refused"
+_UNKNOWN = "unknown"
+_REFUSAL_CLASSES = ("permanent", "transient")
+
+
+def _read_answer(raw: bytes) -> tuple[str, str | None]:
+    """Map the airlock's response body to (status, refusal class)."""
+    try:
+        answer = json.loads(raw)
+    except ValueError:
+        return _UNKNOWN, None
+    if not isinstance(answer, dict):
+        return _UNKNOWN, None
+    # `is True` / `is False`, not `==`: 1 == True, and `{"ok": 1}` is not an answer.
+    if set(answer) == {"ok"} and answer["ok"] is True:
+        return _PUBLISHED, None
+    if (
+        set(answer) == {"ok", "refusal"}
+        and answer["ok"] is False
+        and answer["refusal"] in _REFUSAL_CLASSES
+    ):
+        return _REFUSED, answer["refusal"]
+    return _UNKNOWN, None
 
 
 class PeerConnector:
@@ -75,13 +114,20 @@ class PeerConnector:
         )
         with urllib.request.urlopen(request, timeout=_TIMEOUT_SECONDS) as response:
             http_status = response.status
+            raw = response.read(_MAX_ANSWER_BYTES + 1)
 
-        return {
-            "status": "published",
+        status, refusal = (
+            (_UNKNOWN, None) if len(raw) > _MAX_ANSWER_BYTES else _read_answer(raw)
+        )
+        result = {
+            "status": status,
             "event_id": envelope.event_id,
             "principal": envelope.principal,
             "http_status": http_status,
         }
+        if status == _REFUSED:
+            result["refusal"] = refusal
+        return result
 
 
 # Structural conformance, checked at import time so a drift from the protocol

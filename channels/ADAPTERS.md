@@ -142,10 +142,10 @@ reasons.
 | 2 | `extract_identity` | drop: `malformed` | the identity keys every later gate |
 | 3 | **schema check** (`normalize`), then discard any wire `sender_class` and refuse an envelope that is not forwardable (`EventTrigger.to_wire`: within the size ceiling and reading back unchanged from the wire form the worker parses) | drop: `malformed` (`detail` `not_forwardable` for the last) | nothing downstream handles untyped bytes, reads a class the sender asserted, or claims a dedupe key for a message it cannot forward |
 | 3 (audience) | audience check: `envelope.audience` must equal this airlock's zone id exactly, with no trimming and no case folding (`channels/SIGNING.md` S9) | drop: `audience_mismatch` | an envelope addressed to another receiver is refused before its signature is verified, so the drop record names no signer, and before dedupe, so it claims no key |
-| 3.5 | chain verification (`channels/SIGNING.md`), when the airlock is configured with verification keys; not run for an adapter that builds the envelope itself (`originates_envelope`, the owner adapter), which has no sending broker and no signature | drop: `chain_signature_missing` / `chain_signature_invalid` / `chain_signer_unknown` | a forged chain is refused before any budget is spent, and before dedupe, so it cannot shadow the genuine message |
+| 3.5 | chain verification (`channels/SIGNING.md`), when the airlock is configured with verification keys; not run for an adapter that builds the envelope itself (`originates_envelope`, the owner adapter), which has no sending broker and no signature | drop: `chain_signature_missing` / `chain_signature_invalid` / `chain_signer_unknown`; keys configured but unavailable: `not_evaluated` (`detail` `key_source`) | a forged chain is refused before any budget is spent, and before dedupe, so it cannot shadow the genuine message |
 | 4 | expiry check (`is_expired`, caller-supplied time) | drop: `expired` | expired replays must not spend any budget |
 | 5 | **trust-map** (`resolve`; principal match) | drop: `unmapped` / `principal_mismatch` | unmapped senders get no further processing at all |
-| 6 | dedupe on `(sender.channel_identity, event_id)` | silent no-op | after trust-map so only mapped senders can write the dedupe store; before the screen so replays cannot drain the screening budget |
+| 6 | dedupe on `(sender.channel_identity, event_id)` | silent no-op; store unavailable: drop `not_evaluated` (`detail` `dedupe_store`) | after trust-map so only mapped senders can write the dedupe store; before the screen so replays cannot drain the screening budget |
 | 7 | **injection screen** (`channels/SCREENING.md`, injected) | drop: `screen_refused` | the one model-judged gate — it may refuse or pass, never bless (one-way rule 3) |
 | 8 | **taint stamp** (`stamp_inbound`) | — (cannot fail) | appends the receiver's provenance entry, sets `sender_class` overwriting any wire value |
 | 9 | emit — exactly one stamped EventTrigger per dedupe key | — | SCHEMAS C1 |
@@ -162,6 +162,54 @@ Two clauses ride the ordering:
   (`TurnContext.ingest_source`, combined with the label floor per `channels/TRUST-MAPPING.md`
   §"The one-way rule") before the worker's first call is decided. The bridging mechanism is
   reference-tier; any mechanism may only **add** taint.
+
+## What the sender is told
+
+The gate order decides what is refused. This section decides what the sender learns about it
+(PTC §6.1, clause PTC-44). The answer is carried in the response body, and the transport status is
+the same on every path: the reference binding answers 200 to every request, an unexpected
+exception included. The status never carries the class, for two reasons. A provider that retries
+on any non-2xx status would re-deliver a message the airlock has already handled. And a party
+probing the ingress sees one status whatever it sends.
+
+The body is one of three, and carries exactly these keys:
+
+| Body | Told to | When |
+|---|---|---|
+| `{"ok": true}` | every sender | an accepted envelope; a screen refusal, `screen_error` included; a deduplicated replay; every refusal toward a sender that is not both authenticated and mapped; or the airlock failed while handling the request |
+| `{"ok": false, "refusal": "permanent"}` | an authenticated, mapped sender | a refusal before the screen that the airlock evaluated: `malformed` (any gate-3 variant), `audience_mismatch`, the three chain failures, `expired`, `principal_mismatch` |
+| `{"ok": false, "refusal": "transient"}` | an authenticated, mapped sender | the airlock could not evaluate because a fetched input was unavailable: its verification keys (gate 3.5) or its dedupe store (gate 6) |
+
+A sender is **authenticated and mapped** when it passed gate 1 and its gate-2 identity resolves in
+the trust map for `(adapter.channel_type, identity)`. The dispatcher makes that lookup right after
+gate 2. It moves no gate and writes no record, and gate 5 still decides admission. A sender that
+fails gate 1 or gate 2, or whose identity is not in the trust map, gets `{"ok": true}` for
+everything. A party that fails gate 1 learns nothing from the answers. A holder of the transport
+token, which every declared peer holds, can learn whether an identity it claims is in the trust
+map, with signing on or off, because the lookup comes before gate 3.5; beyond that it is told only
+what a mapped sender is told. That is what authenticated means for a transport with one shared
+token per airlock and the identity taken from the body, such as the webhook adapter; an adapter
+whose gate-1 credential is per sender does not have this property. A screen refusal reads as an
+acceptance to everyone, so a compromised peer gets no feedback on content.
+
+A permanent refusal is recorded with the drop reason the gate always wrote. A transient refusal is
+recorded as a `not_evaluated` drop whose `detail` names the input, `key_source` or `dedupe_store`.
+Both inputs are consulted before the dedupe key is claimed, so a sender that retries after a
+transient answer is evaluated afresh and no record strands. One edge remains: a write to the dedupe
+store that succeeded but whose response was lost leaves the key claimed behind a transient answer,
+and the retry dedupes silently. The `not_evaluated` record is what lets an operator see it; the
+reference build does not undo the claim. While the keys are unavailable, every envelope that
+reaches gate 3.5 is recorded `not_evaluated`, an unmapped sender's included, because gate 3.5 runs
+before gate 5; that sender is still told nothing. An adapter that builds its envelope itself
+(`originates_envelope`) never consults the keys and is unaffected.
+
+The reference airlock fetches its verification keys at cold start and, when the fetch fails, keeps
+serving: the next request that reaches gate 3.5 fetches again, and the keys are cached once a fetch
+succeeds. A request that fails gate 1 never triggers a fetch.
+
+A sending transport must read the body to act on the class. Whether to send again after a
+transient answer is the sender's decision; the reference peer connector reports the class and does
+not retry (`channels/PUBLISH.md`).
 
 ## Addressing — a `normalize` responsibility, not a router
 
@@ -258,6 +306,9 @@ clauses:
 | sender-transport binding: mismatch drops `malformed`/`sender_identity_mismatch` before gate 3.5, no evidence; match unaffected | `test_sender_identity_mismatch_drops_malformed_before_verify_chain` · `test_sender_identity_match_is_unaffected` |
 | an envelope addressed to another zone drops `audience_mismatch` before gate 3.5: verification, the screen and dedupe never run, the record carries no evidence, and zone ids are compared exactly | `test_an_envelope_addressed_to_another_zone_drops_before_verification` · `test_audience_is_checked_ahead_of_expiry_and_the_trust_map` · `test_signing.py::test_audience_is_checked_with_verification_off` · `test_airlock_handler.py::test_a_request_addressed_to_another_airlock_enqueues_nothing` |
 | both reference adapters satisfy sender-transport binding by construction, across identity spellings | `test_webhook_adapter.py::test_normalize_sender_identity_matches_extract_identity` · `test_owner_adapter.py::test_normalize_sender_identity_matches_extract_identity` |
+| toward an authenticated, mapped sender each pre-screen refusal is classed permanent; toward any other sender the same refusal is classed nothing; a screen refusal, `screen_error` and a replay are classed nothing (`dispatch_outcome`) | `test_dispatch_outcome.py::test_a_mapped_sender_is_told_a_pre_screen_refusal_is_permanent` · `::test_an_unmapped_sender_is_told_nothing_about_the_same_refusal` · `::test_a_sender_that_never_reached_the_trust_map_lookup_is_told_nothing` · `::test_a_screen_refusal_reads_as_an_acceptance_and_is_dedupe_marked` · `::test_a_replay_is_told_nothing` |
+| an unavailable key source or dedupe store is classed transient toward a mapped sender, recorded `not_evaluated`, and claims no dedupe key | `test_dispatch_outcome.py::test_keys_unavailable_is_transient_toward_a_mapped_sender_and_claims_nothing` · `::test_keys_unavailable_tells_an_unmapped_sender_nothing_and_records_what_happened` · `::test_a_dedupe_store_failure_is_transient_and_claims_nothing` |
+| the response body: status 200 on every path; the uniform body is the same bytes for every path that tells nothing; a retry after a transient answer is evaluated afresh; the keys are fetched again until a fetch succeeds | `test_airlock_handler.py::test_every_path_that_tells_nothing_answers_the_same_bytes` · `::test_a_pre_screen_refusal_is_permanent_toward_a_mapped_sender_only` · `::test_an_unavailable_key_source_is_transient_and_retried_until_it_answers` · `::test_an_unavailable_dedupe_store_is_transient_and_claims_nothing` |
 | a mutated-sender replay never accrues an attributed record, whichever gate sees it first: a divergent sender claim (an adapter whose gate-2/gate-3 identities diverge) drops at gate 3 before gate 3.5 runs, carrying no verification evidence; an internally-consistent mutation of a still-validly-signed envelope — which gate 3 cannot see — is caught at gate 3.5 as a forgery, with no second attributed record and no second screen spend | `test_adapters.py::test_sender_identity_mismatch_drops_malformed_before_verify_chain` · `test_signing.py::test_mutated_sender_replay_fails_verification_no_second_attributed_record` |
 
 <!-- assumption-tested 2026-08-06 — gate-3-before-3.5 ordering HOLDS (reorder mutation red, no masking); by-construction binding HOLDS for the two reference adapters (normalize mutation red); both dead citations in this table re-pointed same run -->

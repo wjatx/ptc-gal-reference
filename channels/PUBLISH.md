@@ -123,6 +123,11 @@ an external write on a tainted turn, so the broker gates it to `require_approval
   undeclared sender — however well it authenticates — is dropped silently toward the sender
   (`channels/TRUST-MAPPING.md`). Authentic delivery is not content trust: a `peer-agent` hop is a
   `trusted` *hop* over a chain whose derived taint persists untouched.
+- What the sending side receives is the airlock's response body, never a verdict in the status: a
+  declared peer is told whether a refusal before the screen is `permanent` or `transient`, and
+  every other outcome reads `{"ok": true}` (`channels/ADAPTERS.md` §"What the sender is told"). A
+  consumer's own transport must read the body to act on the class; the reference `peer` connector
+  reports it as `refused` with the class, and does not retry.
 
 ## Contract clauses
 

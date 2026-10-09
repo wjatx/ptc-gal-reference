@@ -1756,19 +1756,19 @@ function airlockEnvHasAlwaysOnAndNoManifest(): boolean {
 }
 
 function airlockErrorAlarmsWired(): boolean {
-  // The two silent-failure log events (handler_error / screen_error) each carry a metric
-  // filter and an alarm; the alarms notify the one SNS alert topic and treat missing data as
-  // notBreaching (no data = no failures, not an alarm).
+  // The three silent-failure log events (handler_error / screen_error /
+  // verify_keys_unavailable) each carry a metric filter and an alarm; the alarms notify the one
+  // SNS alert topic and treat missing data as notBreaching (no data = no failures, not an alarm).
   const filters = channelsResourcesOfType('AWS::Logs::MetricFilter');
   const alarms = channelsResourcesOfType('AWS::CloudWatch::Alarm');
   const topics = channelsResourcesOfType('AWS::SNS::Topic');
-  if (filters.length !== 2 || alarms.length !== 2 || topics.length !== 1) return false;
+  if (filters.length !== 3 || alarms.length !== 3 || topics.length !== 1) return false;
   const patterns = filters.map(([, r]) => r.Properties?.FilterPattern as string);
-  const bothEvents = ['handler_error', 'screen_error'].every((e) =>
+  const allEvents = ['handler_error', 'screen_error', 'verify_keys_unavailable'].every((e) =>
     patterns.some((p) => typeof p === 'string' && p.includes(e)),
   );
   return (
-    bothEvents &&
+    allEvents &&
     alarms.every(([, r]) => {
       const p = r.Properties ?? {};
       const actions = (p.AlarmActions ?? []) as { Ref?: string }[];
@@ -2862,7 +2862,7 @@ const ROWS: Row[] = [
   {
     id: 'channels/airlock-error-alarms',
     group: 'Channels',
-    desc: 'handler_error + screen_error metric filters/alarms wired to the alert topic (sa#153)',
+    desc: 'handler_error + screen_error + verify_keys_unavailable metric filters/alarms wired to the alert topic (sa#153)',
     check: airlockErrorAlarmsWired,
   },
   {

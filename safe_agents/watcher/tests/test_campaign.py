@@ -269,6 +269,19 @@ def test_unattributable_reason_not_throttle_eligible(reason):
     assert report.suggested_remediation == ["review_screen_config"]
 
 
+def test_a_receiver_that_could_not_evaluate_is_never_counted_against_a_sender():
+    """A `not_evaluated` record is the receiver's own outage. Past gate 3.5 it
+    carries the verified signer, and it still attributes to nobody."""
+    events = [
+        _event(reason="not_evaluated", chain_verified=True, signer_key_id="key-a")
+        for _ in range(3)
+    ]
+    (report,) = analyze(events, [], THRESHOLDS, NOW)
+    assert report.basis == "unattributable"
+    assert report.throttle_eligible is False
+    assert "key-a" not in report.model_dump_json()
+
+
 def test_unknown_reason_defaults_to_unattributable():
     events = [_event(reason="some_future_reason_not_in_any_table") for _ in range(3)]
     reports = analyze(events, [], THRESHOLDS, NOW)

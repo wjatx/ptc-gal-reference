@@ -8,6 +8,7 @@ replay dedupe, and that the handler never raises.
 
 import base64
 import json
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -422,3 +423,360 @@ def test_an_envelope_at_the_inbound_ceiling_is_forwarded_and_one_past_it_is_drop
     h.handler(_event(over.to_wire(max_bytes=None)), None)
     assert wired.sqs.messages == [] and wired.dynamo.items == {}
     assert _drop_reasons(wired)[-1] == ("malformed", "not_forwardable")
+
+
+# ---------------------------------------------------------------------------
+# What the sender is told (channels/ADAPTERS.md §"What the sender is told")
+# ---------------------------------------------------------------------------
+
+# The three bodies, as the exact bytes a sender reads.
+_UNIFORM = '{"ok": true}'
+_PERMANENT = '{"ok": false, "refusal": "permanent"}'
+_TRANSIENT = '{"ok": false, "refusal": "transient"}'
+
+
+def _install_screen(screen) -> None:
+    """Give the cached airlock a screen; the manifest-built one ships OFF."""
+    from dataclasses import replace
+
+    state = h._get_state()
+    h._STATE = replace(state, airlock=replace(state.airlock, screen=screen))
+
+
+def _stranger_json(event_id: str = "evt-1", **fields) -> str:
+    body = json.loads(_envelope_json(event_id))
+    body["sender"]["channel_identity"] = "peer:stranger"
+    body.update(fields)
+    return json.dumps(body)
+
+
+def _mapped_json(event_id: str = "evt-1", **fields) -> str:
+    body = json.loads(_envelope_json(event_id))
+    body.update(fields)
+    return json.dumps(body)
+
+
+def _drops(wired) -> list[tuple[str, str | None]]:
+    records = [
+        json.loads(put["Body"]) for put in wired.s3.puts if put["Key"].startswith("channels/drops/")
+    ]
+    return [(r["reason"], r.get("detail")) for r in records]
+
+
+def test_every_path_that_tells_nothing_answers_the_same_bytes(wired):
+    """Acceptance, screen refusal, screen_error, replay, a gate-1 failure, a
+    gate-2 failure, an unmapped identity, an undecodable body, a non-POST and an
+    unexpected exception: one status, one body, byte for byte."""
+    responses = {}
+
+    responses["accepted"] = h.handler(_event(_envelope_json("evt-ok")), None)
+    responses["replay"] = h.handler(_event(_envelope_json("evt-ok")), None)
+    responses["authenticity failed"] = h.handler(
+        _event(_envelope_json("evt-tok"), token="wrong-token"), None
+    )
+    responses["no identity"] = h.handler(_event("not json"), None)
+    responses["unmapped"] = h.handler(_event(_stranger_json("evt-stranger")), None)
+    undecodable = _event("")
+    undecodable["body"] = base64.b64encode(b"\xff\xfe").decode()
+    undecodable["isBase64Encoded"] = True
+    responses["undecodable"] = h.handler(undecodable, None)
+    get = _event(_envelope_json("evt-get"))
+    get["requestContext"]["http"]["method"] = "GET"
+    responses["not a POST"] = h.handler(get, None)
+
+    _install_screen(lambda envelope: False)
+    responses["screen refused"] = h.handler(_event(_envelope_json("evt-refused")), None)
+
+    def crashing_screen(envelope):
+        raise RuntimeError("classifier down")
+
+    _install_screen(crashing_screen)
+    responses["screen error"] = h.handler(_event(_envelope_json("evt-crash")), None)
+
+    _install_screen(None)
+    wired.sqs.send_message = lambda **kwargs: (_ for _ in ()).throw(RuntimeError("sqs down"))
+    responses["handler error"] = h.handler(_event(_envelope_json("evt-sqs")), None)
+
+    assert {name: (r["statusCode"], r["body"]) for name, r in responses.items()} == {
+        name: (200, _UNIFORM) for name in responses
+    }
+    # The screen refusals were dedupe-marked like any handled message.
+    assert ("screen_refused", None) in _drops(wired)
+    assert ("screen_refused", "screen_error") in _drops(wired)
+    assert len(wired.dynamo.items) == 4  # evt-ok, evt-refused, evt-crash, evt-sqs
+
+
+_EXPIRED_TS = "2000-01-01T00:00:00+00:00"
+
+
+@pytest.mark.parametrize(
+    "body,reason",
+    [
+        pytest.param(
+            lambda make: json.dumps({**json.loads(make()), "payload": "not an object"}),
+            ("malformed", None),
+            id="malformed",
+        ),
+        pytest.param(
+            lambda make: make(audience="another-airlock"),
+            ("audience_mismatch", None),
+            id="audience-mismatch",
+        ),
+        pytest.param(
+            lambda make: make(ts=_EXPIRED_TS, expiry=_EXPIRED_TS),
+            ("expired", None),
+            id="expired",
+        ),
+        pytest.param(
+            lambda make: make(principal="another-agent"),
+            ("principal_mismatch", None),
+            id="principal-mismatch",
+        ),
+    ],
+)
+def test_a_pre_screen_refusal_is_permanent_toward_a_mapped_sender_only(wired, body, reason):
+    mapped = h.handler(_event(body(_mapped_json)), None)
+    assert (mapped["statusCode"], mapped["body"]) == (200, _PERMANENT)
+
+    stranger = h.handler(_event(body(_stranger_json)), None)
+    assert (stranger["statusCode"], stranger["body"]) == (200, _UNIFORM)
+
+    expected_stranger = ("unmapped", None) if reason[0] == "principal_mismatch" else reason
+    assert _drops(wired) == [reason, expected_stranger]
+    assert wired.sqs.messages == [] and wired.dynamo.items == {}
+
+
+def test_a_chain_refusal_is_permanent_toward_a_mapped_sender(verifying):
+    wired, signer = verifying
+    genuine = _outbound(signer)
+    forged = json.loads(genuine.to_wire())
+    forged["payload"] = {"msg": "something else"}
+    unknown = ChainSigner(key_id="broker:Z", zone="zone-a", _private_key=signer._private_key)
+
+    bodies = [
+        h.handler(_event(_outbound().to_wire()), None)["body"],
+        h.handler(_event(json.dumps(forged)), None)["body"],
+        h.handler(_event(_outbound(unknown).to_wire()), None)["body"],
+    ]
+
+    assert bodies == [_PERMANENT] * 3
+    assert [reason for reason, _ in _drops(wired)] == [
+        "chain_signature_missing",
+        "chain_signature_invalid",
+        "chain_signer_unknown",
+    ]
+
+
+# --- the verification-key source ------------------------------------------------
+
+
+@pytest.fixture
+def keys_down(verifying, monkeypatch):
+    """Verification configured, and the keys secret unreachable until `up` is set."""
+    wired, signer = verifying
+    entry_json = keys_mod._fetch_secret("arn:verify")
+    source = SimpleNamespace(up=False, fetches=0)
+
+    def fetch(arn):
+        source.fetches += 1
+        if not source.up:
+            raise ConnectionError("secrets manager unreachable")
+        return entry_json
+
+    monkeypatch.setattr(keys_mod, "_fetch_secret", fetch)
+    monkeypatch.setattr(h, "_STATE", None)
+    return wired, signer, source
+
+
+def test_an_unavailable_key_source_is_transient_and_retried_until_it_answers(keys_down):
+    wired, signer, source = keys_down
+    message = _event(_outbound(signer).to_wire())
+
+    first = h.handler(message, None)
+    assert (first["statusCode"], first["body"]) == (200, _TRANSIENT)
+    assert source.fetches == 2  # the cold start, then this request
+    assert _drops(wired) == [("not_evaluated", "key_source")]
+    assert wired.dynamo.items == {} and wired.sqs.messages == []
+
+    assert h.handler(message, None)["body"] == _TRANSIENT
+    assert source.fetches == 3  # fetched again: a failure is never cached
+
+    source.up = True
+    retried = h.handler(message, None)
+    # The same message, evaluated afresh: the transient answer claimed nothing.
+    assert (retried["statusCode"], retried["body"]) == (200, _UNIFORM)
+    assert len(wired.sqs.messages) == 1
+    assert source.fetches == 4
+
+    h.handler(_event(_outbound(signer, event_id="evt-2").to_wire()), None)
+    assert len(wired.sqs.messages) == 2
+    assert source.fetches == 4  # cached once it succeeded
+
+
+def test_an_unavailable_key_source_tells_an_unmapped_sender_nothing(keys_down):
+    wired, _, source = keys_down
+
+    resp = h.handler(_event(_stranger_json()), None)
+
+    assert (resp["statusCode"], resp["body"]) == (200, _UNIFORM)
+    assert _drops(wired) == [("not_evaluated", "key_source")]
+    assert wired.dynamo.items == {}
+
+
+def test_a_request_that_fails_gate_1_does_not_fetch_the_keys(keys_down):
+    wired, signer, source = keys_down
+
+    resp = h.handler(_event(_outbound(signer).to_wire(), token="wrong-token"), None)
+
+    assert resp["body"] == _UNIFORM
+    assert source.fetches == 1  # the cold start only
+    assert _drops(wired) == [("authenticity_failed", None)]
+
+
+def test_an_unavailable_key_source_does_not_touch_an_airlock_that_builds_its_envelope(
+    keys_down, monkeypatch, tmp_path
+):
+    wired, _, source = keys_down
+    manifest = tmp_path / "owner-manifest.yaml"
+    manifest.write_text(
+        f"""\
+zone: {_ZONE}
+adapter:
+  kind: owner
+routing:
+  /agent: example-agent
+trust_map:
+  - channel_type: owner
+    channel_identity: maintainer
+    principal: example-agent
+    sender_class: owner
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CHANNELS_MANIFEST", str(manifest))
+    command = json.dumps(
+        {
+            "sender": {"channel_type": "owner", "channel_identity": "maintainer"},
+            "event_id": "evt-owner",
+            "text": "/agent status",
+            "ts": _TS,
+            "expiry": _FUTURE,
+        }
+    )
+
+    resp = h.handler(_event(command), None)
+
+    assert (resp["statusCode"], resp["body"]) == (200, _UNIFORM)
+    assert len(wired.sqs.messages) == 1
+    assert _drops(wired) == []
+    assert source.fetches == 1  # the cold start; gate 3.5 never asked
+
+
+_SECRET_SENTINEL = "SENTINEL-verify-keys-value-7f3c"
+
+
+@pytest.mark.parametrize(
+    "field", ["public_key", "sender_identities", "signer_posture", "custody_evidence"]
+)
+def test_a_malformed_key_secret_never_reaches_the_log(verifying, monkeypatch, caplog, field):
+    """The secret is the key map; a fault in it is logged by setting and type,
+    never by the value that was wrong."""
+    wired, signer = verifying
+    entry = json.loads(keys_mod._fetch_secret("arn:verify"))["broker:A"]
+    entry[field] = _SECRET_SENTINEL
+    monkeypatch.setattr(
+        keys_mod, "_fetch_secret", lambda arn: json.dumps({"broker:A": entry})
+    )
+    caplog.set_level(logging.DEBUG)
+
+    resp = h.handler(_event(_outbound(signer).to_wire()), None)
+
+    assert resp["body"] == _TRANSIENT  # the failing path ran
+    assert _drops(wired) == [("not_evaluated", "key_source")]
+    assert caplog.records, "the failure was logged"
+    for record in caplog.records:
+        rendered = caplog.handler.format(record)
+        assert _SECRET_SENTINEL not in rendered
+        assert _SECRET_SENTINEL not in repr(record.args)
+
+
+def test_with_verification_off_the_key_source_is_never_fetched(wired, monkeypatch):
+    def fetch(arn):
+        raise AssertionError("verification is OFF; nothing should fetch keys")
+
+    monkeypatch.setattr(keys_mod, "_fetch_secret", fetch)
+
+    resp = h.handler(_event(_envelope_json()), None)
+
+    assert resp["body"] == _UNIFORM and len(wired.sqs.messages) == 1
+    assert h._STATE.verify_chain is None
+
+
+def test_a_webhook_token_that_cannot_be_fetched_still_fails_the_cold_start(wired, monkeypatch):
+    def fetch(arn):
+        raise ConnectionError("secrets manager unreachable")
+
+    monkeypatch.setattr(h, "_fetch_webhook_token", fetch)
+
+    resp = h.handler(_event(_envelope_json()), None)
+
+    assert (resp["statusCode"], resp["body"]) == (200, _UNIFORM)
+    assert h._STATE is None
+    assert wired.s3.puts == [] and wired.sqs.messages == []
+
+
+# --- the dedupe store -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("failing", ["get_item", "put_item"])
+def test_an_unavailable_dedupe_store_is_transient_and_claims_nothing(wired, failing):
+    def down(**kwargs):
+        raise ConnectionError("dynamodb unreachable")
+
+    setattr(wired.dynamo, failing, down)
+
+    resp = h.handler(_event(_envelope_json()), None)
+
+    assert (resp["statusCode"], resp["body"]) == (200, _TRANSIENT)
+    assert _drops(wired) == [("not_evaluated", "dedupe_store")]
+    assert wired.dynamo.items == {} and wired.sqs.messages == []
+
+
+def test_a_resend_after_a_dedupe_store_outage_is_accepted_once(wired):
+    # The transient answer claimed nothing, so the sender's re-send of the same
+    # envelope is evaluated afresh once the store answers, and a further copy
+    # dedupes like any replay.
+    working_get_item = wired.dynamo.get_item
+
+    def down(**kwargs):
+        raise ConnectionError("dynamodb unreachable")
+
+    wired.dynamo.get_item = down
+    message = _event(_envelope_json(event_id="evt-outage"))
+
+    assert h.handler(message, None)["body"] == _TRANSIENT
+    assert wired.dynamo.items == {} and wired.sqs.messages == []
+
+    wired.dynamo.get_item = working_get_item
+    resent = h.handler(message, None)
+    assert (resent["statusCode"], resent["body"]) == (200, _UNIFORM)
+    assert len(wired.sqs.messages) == 1
+
+    again = h.handler(message, None)
+    assert (again["statusCode"], again["body"]) == (200, _UNIFORM)
+    assert len(wired.sqs.messages) == 1
+    assert _drops(wired) == [("not_evaluated", "dedupe_store")]
+
+
+def test_a_lost_race_to_claim_the_key_is_not_a_store_failure(wired):
+    # A concurrent copy claimed the key between this copy's read and write. The
+    # store swallows that ConditionalCheckFailed, so it is not `not_evaluated`.
+    def lost_race(**kwargs):
+        raise _FakeClientError("ConditionalCheckFailedException")
+
+    wired.dynamo.put_item = lost_race
+
+    resp = h.handler(_event(_envelope_json()), None)
+
+    assert resp["body"] == _UNIFORM
+    assert _drops(wired) == []

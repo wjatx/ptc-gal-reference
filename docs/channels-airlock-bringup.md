@@ -179,16 +179,23 @@ Enabling the Bedrock classifier screen is config only — no base code changes:
 
 ## Operational boundaries (by design; know them)
 
-- **200-always.** Drops are silent to the sender; a 5xx would make the provider retry, the retry
-  would dedupe, and the record would strand. Consequence: misconfiguration (missing env var,
-  Secrets Manager outage) is also silent to callers — the airlock answers 200 while dropping
-  everything, visible only in the logs. The stack now ships the alarms for this: metric
-  filters on the `handler_error` (hard failure — the handler threw, the message dropped) and
-  `screen_error` (the classifier screen failing closed — 100% drop when persistent)
-  structured-log events, each alarming on first occurrence in a 5-minute window into the
+- **Status 200 always.** A 5xx would make the provider retry, the retry would dedupe, and the
+  record would strand. The body says `{"ok": true}` to everyone except a sender the airlock
+  authenticated and mapped, which is told only whether a refusal before the screen is permanent
+  or transient (`channels/ADAPTERS.md` §"What the sender is told"). Consequence: misconfiguration
+  (a missing env var, an unreachable webhook-token secret) is silent to callers: the airlock
+  answers `{"ok": true}` while dropping everything, visible only in the logs. The stack now ships
+  the alarms for this: metric filters on the `handler_error` (hard failure — the handler threw,
+  the message dropped) and `screen_error` (the classifier screen failing closed — 100% drop when
+  persistent) structured-log events, each alarming on first occurrence in a 5-minute window into the
   `safe-agents-{env}-channels-airlock-alerts` SNS topic. Subscribing that topic (email, a
   Telegram/Slack bridge, ...) is a per-environment ops step — an unsubscribed topic alarms into
   the void. **Still recommended and still manual:** a post-deploy canary request.
+  An unreachable or malformed verification-keys secret does not fail the cold start and so does
+  not raise `handler_error`. It is logged as `verify_keys_unavailable` on each fetch attempt,
+  every envelope that reaches chain verification is dropped `not_evaluated` (`detail`
+  `key_source`), and the keys are fetched again on the next such request. A third metric filter
+  and alarm, on `verify_keys_unavailable`, cover it the same way.
 - **At-most-once at the handoff.** The dedupe key commits before the SQS send; if the send fails,
   the 200 has been earned, the replay dedupes, and the message is lost to the queue. This is the
   chosen polarity (never double-emit); the downstream drain must be idempotent regardless.

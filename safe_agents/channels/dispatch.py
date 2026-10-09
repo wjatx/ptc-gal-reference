@@ -6,16 +6,64 @@ channels/ADAPTERS.md §"Gate ordering" are executable, and it passes the same
 conformance suite (`test_adapters.py`) a third-party dispatcher would. No
 transport binding lives here or is named here — see channels/ADAPTERS.md
 §"Reference bindings" for where webhook/queue/peer-transit bindings land.
+
+`dispatch_outcome` also says what the sender is told (channels/ADAPTERS.md
+§"What the sender is told"): nothing, unless the airlock authenticated the
+sender at gate 1 and its gate-2 identity is in the trust map, in which case a
+refusal before the screen is classed `permanent` or `transient`. `dispatch` is
+the same run returning only the envelope, the form the conformance suite calls.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 from safe_agents.channels.adapters import InboundAdapter
 from safe_agents.channels.schemas import EventTrigger
 from safe_agents.channels.screening import SCREEN_ERROR, ScreenVerdict, make_screen_record
 from safe_agents.channels.signing import CUSTODY_EVIDENCE_PREFIX, ChainVerifyResult
-from safe_agents.channels.trust_map import ChannelTrustMap, make_drop_record, stamp_inbound
+from safe_agents.channels.trust_map import (
+    ChannelTrustMap,
+    DropReason,
+    make_drop_record,
+    stamp_inbound,
+)
+
+RefusalClass = Literal["permanent", "transient"]
+PERMANENT: RefusalClass = "permanent"
+TRANSIENT: RefusalClass = "transient"
+
+# The `detail` of a `not_evaluated` drop: which fetched input was unavailable.
+NOT_EVALUATED_KEY_SOURCE = "key_source"
+NOT_EVALUATED_DEDUPE_STORE = "dedupe_store"
+
+
+class KeySourceUnavailable(Exception):
+    """Raised by a `verify_chain` seam whose verification keys are configured but
+    could not be obtained.
+
+    The dispatcher records the envelope `not_evaluated` (`detail` `key_source`)
+    and classes the refusal `transient`. A seam raises this only when it cannot
+    evaluate at all; a chain it evaluated and refused is a `ChainVerifyResult`.
+    Any other exception from the seam is not caught here.
+    """
+
+
+@dataclass(frozen=True)
+class DispatchOutcome:
+    """One airlock run: the stamped envelope, or the refusal class the sender is told.
+
+    `envelope` is the stamped, worker-ready envelope on acceptance, else None.
+    `refusal` is None on acceptance, on a screen refusal (`screen_error`
+    included), on a deduplicated replay, and on every refusal toward a sender
+    that is not both authenticated (gate 1) and mapped (its gate-2 identity
+    resolves in the trust map). Toward an authenticated and mapped sender, a
+    refusal before the screen is `permanent` when the airlock evaluated the
+    envelope and `transient` when a fetched input it needed was unavailable.
+    """
+
+    envelope: EventTrigger | None
+    refusal: RefusalClass | None = None
 
 
 def dispatch(
@@ -31,6 +79,39 @@ def dispatch(
     now: datetime,
     zone: str,
 ) -> EventTrigger | None:
+    """Run the fixed airlock gate order and return the stamped envelope, or None.
+
+    The same run as `dispatch_outcome`, which documents the seams; this form
+    drops the refusal class and is what the conformance suite
+    (`test_adapters.py`) calls.
+    """
+    return dispatch_outcome(
+        request,
+        adapter=adapter,
+        trust_map=trust_map,
+        screen=screen,
+        verify_chain=verify_chain,
+        verdicts=verdicts,
+        dedupe_store=dedupe_store,
+        drops=drops,
+        now=now,
+        zone=zone,
+    ).envelope
+
+
+def dispatch_outcome(
+    request: Any,
+    *,
+    adapter: InboundAdapter,
+    trust_map: ChannelTrustMap,
+    screen: Callable[[EventTrigger], ScreenVerdict | bool] | None,
+    verify_chain: Callable[[EventTrigger], ChainVerifyResult] | None = None,
+    verdicts: Any = None,
+    dedupe_store: Any,
+    drops: Any,
+    now: datetime,
+    zone: str,
+) -> DispatchOutcome:
     """Run the fixed airlock gate order (channels/ADAPTERS.md §"Gate ordering").
 
     `dedupe_store` is any object supporting `__contains__`/`add` (a plain
@@ -44,8 +125,15 @@ def dispatch(
 
     Short-circuits on the first gate failure, appending exactly one
     `DropRecord` per failure — the one exception is a dedupe hit, a silent
-    no-op, since replays are expected transport behavior. Returns the
-    stamped, worker-ready `EventTrigger` on success, else `None`.
+    no-op, since replays are expected transport behavior. Returns a
+    `DispatchOutcome`: the stamped, worker-ready `EventTrigger` on success,
+    and the refusal class the sender is told (see `DispatchOutcome`).
+
+    `verify_chain` may raise `KeySourceUnavailable` when its keys are
+    configured but cannot be obtained; `dedupe_store` may raise anything when
+    the store cannot be read or written. Either is recorded `not_evaluated`
+    and classed `transient`. Neither leaves the dedupe key claimed (one edge
+    is noted at gate 6), so a retry is evaluated afresh.
     """
     # Gate 1 — transport authenticity, before the body is parsed. The
     # sender's identity is unknown at this point, so the drop digests the
@@ -54,23 +142,48 @@ def dispatch(
         drops.append(
             make_drop_record(adapter.channel_type, "", "authenticity_failed", now.isoformat())
         )
-        return None
+        return DispatchOutcome(None)
 
     # Gate 2 — identity extraction; keys every later gate.
     try:
         identity = adapter.extract_identity(request)
     except Exception:
         drops.append(make_drop_record(adapter.channel_type, "", "malformed", now.isoformat()))
-        return None
+        return DispatchOutcome(None)
+
+    # Who the sender is told anything about. A lookup only: no gate moves, no
+    # record is written, and gate 5 still decides admission. The sender passed
+    # gate 1 and its gate-2 identity is in the trust map, so a refusal before
+    # the screen is classed for it; every other sender is told nothing, so a
+    # stranger probing the ingress learns nothing about the trust map.
+    mapped = trust_map.resolve(adapter.channel_type, identity) is not None
+
+    def refuse(
+        reason: DropReason,
+        refusal: RefusalClass,
+        *,
+        detail: str | None = None,
+        chain_verified: bool = False,
+        signer_key_id: str | None = None,
+    ) -> DispatchOutcome:
+        drops.append(
+            make_drop_record(
+                adapter.channel_type,
+                identity,
+                reason,
+                now.isoformat(),
+                detail=detail,
+                chain_verified=chain_verified,
+                signer_key_id=signer_key_id,
+            )
+        )
+        return DispatchOutcome(None, refusal if mapped else None)
 
     # Gate 3 — schema check.
     try:
         envelope = adapter.normalize(request)
     except Exception:
-        drops.append(
-            make_drop_record(adapter.channel_type, identity, "malformed", now.isoformat())
-        )
-        return None
+        return refuse("malformed", PERMANENT)
 
     # Gate 3 (receiver-owned field) — `sender_class` is the receiver's to set and
     # is absent on the wire (channels/SCHEMAS.md C4). Whatever arrived is discarded
@@ -89,16 +202,7 @@ def dispatch(
     try:
         envelope.to_wire()
     except Exception:
-        drops.append(
-            make_drop_record(
-                adapter.channel_type,
-                identity,
-                "malformed",
-                now.isoformat(),
-                detail="not_forwardable",
-            )
-        )
-        return None
+        return refuse("malformed", PERMANENT, detail="not_forwardable")
 
     # Gate 3 (sender-transport binding) — an adapter's `normalize` MUST produce
     # `sender.channel_identity` equal to the SAME request's gate-2
@@ -113,16 +217,7 @@ def dispatch(
     # cryptographic. A divergence here is untrusted input, so the drop carries
     # no verification evidence — placed BEFORE gate 3.5 for exactly that reason.
     if envelope.sender.channel_identity != identity:
-        drops.append(
-            make_drop_record(
-                adapter.channel_type,
-                identity,
-                "malformed",
-                now.isoformat(),
-                detail="sender_identity_mismatch",
-            )
-        )
-        return None
+        return refuse("malformed", PERMANENT, detail="sender_identity_mismatch")
 
     # Gate 3 (audience) — an envelope names the one receiver it is addressed to
     # (channels/SIGNING.md S9). Zone ids are compared exactly, the way a
@@ -134,19 +229,14 @@ def dispatch(
     # can never be counted against the signer. It is also before dedupe, so it
     # claims no key.
     if envelope.audience != zone:
-        drops.append(
-            make_drop_record(
-                adapter.channel_type, identity, "audience_mismatch", now.isoformat()
-            )
-        )
-        return None
+        return refuse("audience_mismatch", PERMANENT)
 
     # Gate 3.5 — chain-signature verification (channels/SIGNING.md). Injected
     # like the screen and ships OFF (None): with no required-signers configured
     # the airlock skips it and unsigned peers pass, today's trust-by-transport
     # behavior (docs/friction-doctrine.md). When ON, a forged/unsigned/unknown-
-    # signer chain drops and is quarantined here — before spending any trust-map,
-    # dedupe, or screen budget, so a forged chain is the cheapest thing to reject
+    # signer chain drops and is quarantined here — before gate 5, dedupe, or any
+    # screen budget, so a forged chain is the cheapest thing to reject
     # (the same reasoning that puts expiry ahead of the budget gates). The drop
     # reason is the verification reason verbatim, a closed DropReason vocabulary.
     # Evidence-of-check (for the campaign watchdog): a *successful* gate 3.5 verification
@@ -166,22 +256,23 @@ def dispatch(
     # custody, the evidence class of those records is carried to gate 8. It is
     # a record consulted in the receiver's own configuration, never a check on
     # the peer, and it stays None when the gate is off, skipped or failed.
+    #
+    # Keys configured but unavailable (the seam raises `KeySourceUnavailable`):
+    # the airlock could not evaluate this envelope, so it is recorded
+    # `not_evaluated` with `detail` `key_source` and classed transient. This is
+    # ahead of gate 5, so an unmapped sender gets the same record and, being
+    # unmapped, is told nothing. It is also ahead of dedupe, so nothing is
+    # claimed and a retry once the keys are back is evaluated afresh.
     chain_verified = False
     signer_key_id: str | None = None
     custody_evidence: str | None = None
     if verify_chain is not None and getattr(adapter, "originates_envelope", False) is not True:
-        result = verify_chain(envelope)
+        try:
+            result = verify_chain(envelope)
+        except KeySourceUnavailable:
+            return refuse("not_evaluated", TRANSIENT, detail=NOT_EVALUATED_KEY_SOURCE)
         if not result.ok:
-            drops.append(
-                make_drop_record(
-                    adapter.channel_type,
-                    identity,
-                    result.reason,
-                    now.isoformat(),
-                    detail=result.detail,
-                )
-            )
-            return None
+            return refuse(result.reason, PERMANENT, detail=result.detail)
         chain_verified = True
         signer_key_id = result.signer_key_id
         if result.agent_separated_custody:
@@ -189,53 +280,50 @@ def dispatch(
 
     # Gate 4 — expiry, ahead of any budget-spending gate.
     if envelope.is_expired(now):
-        drops.append(
-            make_drop_record(
-                adapter.channel_type,
-                identity,
-                "expired",
-                now.isoformat(),
-                chain_verified=chain_verified,
-                signer_key_id=signer_key_id,
-            )
+        return refuse(
+            "expired", PERMANENT, chain_verified=chain_verified, signer_key_id=signer_key_id
         )
-        return None
 
-    # Gate 5 — trust-map resolution and principal match.
+    # Gate 5 — trust-map resolution and principal match. An unmapped identity
+    # is told nothing (`mapped` is False), whatever class is named here.
     resolution = trust_map.resolve(adapter.channel_type, identity)
     if resolution is None:
-        drops.append(
-            make_drop_record(
-                adapter.channel_type,
-                identity,
-                "unmapped",
-                now.isoformat(),
-                chain_verified=chain_verified,
-                signer_key_id=signer_key_id,
-            )
+        return refuse(
+            "unmapped", PERMANENT, chain_verified=chain_verified, signer_key_id=signer_key_id
         )
-        return None
     if resolution.principal != envelope.principal:
-        drops.append(
-            make_drop_record(
-                adapter.channel_type,
-                identity,
-                "principal_mismatch",
-                now.isoformat(),
-                chain_verified=chain_verified,
-                signer_key_id=signer_key_id,
-            )
+        return refuse(
+            "principal_mismatch",
+            PERMANENT,
+            chain_verified=chain_verified,
+            signer_key_id=signer_key_id,
         )
-        return None
 
     # Gate 6 — dedupe, after trust-map (so only mapped senders can write the
     # dedupe store) and before the screen (so replays cannot re-spend
     # screening budget). Marking seen before the screen means a refused
     # message's replays never re-spend screening budget either.
+    #
+    # A store that cannot be read or written leaves the message unevaluated:
+    # recorded `not_evaluated` with `detail` `dedupe_store`, classed transient.
+    # A failed read claims nothing. A failed write normally claims nothing
+    # either; the one edge is a write that succeeded whose response was lost,
+    # which leaves a claimed key behind a transient answer, so the retry
+    # dedupes silently. The record exists so an operator can see that case;
+    # this build does not try to undo the claim.
     key = envelope.dedupe_key()
-    if key in dedupe_store:
-        return None
-    dedupe_store.add(key)
+    try:
+        if key in dedupe_store:
+            return DispatchOutcome(None)
+        dedupe_store.add(key)
+    except Exception:
+        return refuse(
+            "not_evaluated",
+            TRANSIENT,
+            detail=NOT_EVALUATED_DEDUPE_STORE,
+            chain_verified=chain_verified,
+            signer_key_id=signer_key_id,
+        )
 
     # Gate 7 — the injection screen: injected, not owned. A null screen
     # (None) is pass-through; the gate's position is contract, its
@@ -263,6 +351,9 @@ def dispatch(
                 )
             )
         if not passed:
+            # Told nothing, whoever the sender is: a screen refusal reads as an
+            # acceptance (channels/SCREENING.md), so a compromised peer gets no
+            # feedback on content.
             drops.append(
                 make_drop_record(
                     adapter.channel_type,
@@ -274,7 +365,7 @@ def dispatch(
                     signer_key_id=signer_key_id,
                 )
             )
-            return None
+            return DispatchOutcome(None)
 
     # Gate 8 — taint stamp; cannot fail. Appends the receiver's own
     # provenance entry and sets sender_class, overwriting any wire value.
@@ -289,11 +380,13 @@ def dispatch(
         evidence.append("sig:pass")
         if custody_evidence is not None:
             evidence.append(f"{CUSTODY_EVIDENCE_PREFIX}{custody_evidence}")
-    return stamp_inbound(
-        envelope,
-        resolution,
-        zone=zone,
-        source=f"channel:{adapter.channel_type}",
-        evidence=evidence,
-        ts=now.isoformat(),
+    return DispatchOutcome(
+        stamp_inbound(
+            envelope,
+            resolution,
+            zone=zone,
+            source=f"channel:{adapter.channel_type}",
+            evidence=evidence,
+            ts=now.isoformat(),
+        )
     )
