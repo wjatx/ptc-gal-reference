@@ -33,6 +33,14 @@ class InboundAdapter(ABC):
     # it is subject to chain verification (channels/SIGNING.md S5).
     originates_envelope: bool = False
 
+    # True when the gate-1 credential is bound to one sender identity, so that a
+    # sender authenticated at gate 1 is authenticated AS the identity gate 2
+    # returns. Only then may the dispatcher tell a mapped sender a refusal class
+    # (channels/ADAPTERS.md §"What the sender is told"); with a credential
+    # shared across senders, any holder could claim any identity and learn from
+    # the answer whether the trust map holds it.
+    credential_per_sender: bool = False
+
     @abstractmethod
     def verify_token(self, request: Any) -> bool:
         """Verify the transport-layer authenticity proof.

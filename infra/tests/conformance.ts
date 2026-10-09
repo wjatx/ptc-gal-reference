@@ -1727,6 +1727,20 @@ function dedupeTableCmkWithTtl(): boolean {
   );
 }
 
+function webhookSecretPlaceholderIsATokenMap(): boolean {
+  // The airlock refuses a bare-string webhook secret at cold start, so the generated placeholder
+  // must already be an identity → token map. Its one identity is `placeholder:unseeded`, holding a
+  // random token no real peer has: until the real map is seeded every real peer's request fails
+  // gate 1 as `authenticity_failed`.
+  const secrets = channelsResourcesOfType('AWS::SecretsManager::Secret');
+  if (secrets.length !== 1) return false;
+  const gen = (secrets[0][1].Properties?.GenerateSecretString ?? {}) as {
+    SecretStringTemplate?: string;
+    GenerateStringKey?: string;
+  };
+  return gen.SecretStringTemplate === '{}' && gen.GenerateStringKey === 'placeholder:unseeded';
+}
+
 function channelsNoFnHasNoLambdaOrApi(): boolean {
   // The first-phase (channelsDeployFunction=false) template lays down repo + queue + secret only —
   // no function and no API can exist before the image does.
@@ -1745,14 +1759,20 @@ const ALWAYS_ON_CHANNELS_ENV = [
 
 function airlockEnvHasAlwaysOnAndNoManifest(): boolean {
   // The five always-on CHANNELS_* vars are set; CHANNELS_MANIFEST is absent (no channelsManifestPath
-  // context here — the base image bakes nothing in).
+  // context here — the base image bakes nothing in). CHANNELS_WEBHOOK_SECRET_ARN must Ref the
+  // stack's one webhook secret: present but pointing elsewhere, the airlock loads the wrong map.
   const fns = channelsResourcesOfType('AWS::Lambda::Function');
-  if (fns.length !== 1) return false;
+  const secrets = channelsResourcesOfType('AWS::SecretsManager::Secret');
+  if (fns.length !== 1 || secrets.length !== 1) return false;
   const envBlock = fns[0][1].Properties?.Environment as
     | { Variables?: Record<string, unknown> }
     | undefined;
   const vars = envBlock?.Variables ?? {};
-  return ALWAYS_ON_CHANNELS_ENV.every((k) => k in vars) && !('CHANNELS_MANIFEST' in vars);
+  return (
+    ALWAYS_ON_CHANNELS_ENV.every((k) => k in vars) &&
+    !('CHANNELS_MANIFEST' in vars) &&
+    refId(vars.CHANNELS_WEBHOOK_SECRET_ARN) === secrets[0][0]
+  );
 }
 
 function airlockErrorAlarmsWired(): boolean {
@@ -2830,6 +2850,12 @@ const ROWS: Row[] = [
     check: dedupeTableCmkWithTtl,
   },
   {
+    id: 'channels/webhook-secret-placeholder-map',
+    group: 'Channels',
+    desc: 'the webhook secret placeholder is a token map whose one identity no trust map names',
+    check: webhookSecretPlaceholderIsATokenMap,
+  },
+  {
     id: 'channels/two-phase-skip',
     group: 'Channels',
     desc: 'channelsDeployFunction=false yields no Lambda function or API',
@@ -2838,7 +2864,7 @@ const ROWS: Row[] = [
   {
     id: 'channels/env-vars',
     group: 'Channels',
-    desc: 'airlock env has the five always-on CHANNELS_* vars and no CHANNELS_MANIFEST',
+    desc: 'airlock env has the five always-on CHANNELS_* vars, the secret ARN Refs the webhook secret, and no CHANNELS_MANIFEST',
     check: airlockEnvHasAlwaysOnAndNoManifest,
   },
   {

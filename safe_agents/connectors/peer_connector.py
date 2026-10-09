@@ -10,13 +10,15 @@ transport that could skip the broker-side stamp. Stamping stays floor
 It is the sending mirror of the receiver's `SignedWebhookAdapter`
 (safe_agents/channels/webhook.py): it POSTs a broker-stamped `EventTrigger` to a
 peer agent's airlock as a JSON body, proving transport authenticity with the
-shared secret-token header the receiver's `verify_token` (gate 1) checks.
+sender's own secret token, in the header the receiver's `verify_token` (gate 1)
+checks. The receiver binds that token to one sender identity, so the envelope's
+`sender.channel_identity` must be the identity the token names.
 
 It is **pure transport**. It does NOT construct provenance and does NOT decide
 taint: the envelope it transports was already stamped broker-side by
 ``stamp_outbound`` from the sending turn (PUBLISH.md P3). The connector validates
 only that the payload parses as a well-formed EventTrigger — it refuses to POST
-garbage — and never edits it. The peer endpoint URL and shared secret are the
+garbage — and never edits it. The peer endpoint URL and the token are the
 broker-fetched credential facts the agent never holds (PUBLISH.md P1); the agent
 supplied only the envelope's intent.
 

@@ -38,7 +38,9 @@ properties before anything reaches an agent (the normative gate ordering lives i
    sender, with a PII-safe `DropRecord` logged (`TRUST-MAPPING.md`). The owner `chat_id` case is
    one row of that map, not a special path.
 2. **Secret-token verification.** The transport-layer token (Telegram secret-token header, or
-   equivalent per channel) is verified before the message body is read.
+   equivalent per channel) is verified before the message body is read. Where the channel allows
+   it the token is per sender: each peer holds its own, the token names the peer, and one peer's
+   token is revoked or rotated without touching another's (`ADAPTERS.md` §"InboundAdapter").
 3. **Deduplication.** Idempotency on the transport message id (`update_id` in the Telegram case)
    against a DynamoDB table, so retries and webhook replays are no-ops.
 4. **Injection screening.** The one model-judged gate (`SCREENING.md`): an injected screen may

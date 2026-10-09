@@ -28,7 +28,8 @@ from safe_agents.channels.tests.test_adapters import (
 )
 from safe_agents.channels.trust_map import ChannelTrustMap, TrustMapEntry
 
-_TOKEN = "example-token"
+# The webhook token secret as stored: an identity → token map.
+_TOKEN = '{"peer:example": "example-token"}'
 _MODEL_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 # A distinctive string placed in a payload; no exception or record may echo it.
 _SENTINEL = "SENTINEL_PAYLOAD_do_not_leak_9f3a"

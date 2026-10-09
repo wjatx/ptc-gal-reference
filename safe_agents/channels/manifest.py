@@ -31,7 +31,7 @@ from safe_agents.channels.schemas import EventTrigger
 from safe_agents.channels.schemas.event_trigger import ZONE_ID_RULE, is_zone_id
 from safe_agents.channels.screening import ScreenVerdict
 from safe_agents.channels.trust_map import ChannelTrustMap, TrustMapEntry
-from safe_agents.channels.webhook import SignedWebhookAdapter
+from safe_agents.channels.webhook import SignedWebhookAdapter, parse_token_map
 
 # A screen is any callable turning an envelope into a pass/refuse judgment; a
 # factory builds one from its manifest `params` block.
@@ -48,8 +48,9 @@ SCREEN_REGISTRY: dict[str, ScreenFactory] = {}
 class WebhookAdapterConfig(BaseModel):
     """Config for `SignedWebhookAdapter` — the webhook shape, no secrets.
 
-    The token itself never lives here (it is fetched from Secrets Manager and
-    injected at build time); only the non-sensitive header name does.
+    The tokens never live here: the identity → token map is fetched from
+    Secrets Manager and injected at build time (`webhook.parse_token_map`
+    gives its shape). Only the non-sensitive header name does.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -93,10 +94,13 @@ class OwnerAdapterConfig(BaseModel):
 
 
 # An adapter factory builds a concrete `InboundAdapter` from its typed config,
-# the injected token, the manifest routing table, and the airlock's own zone.
-# The signature is uniform across kinds (webhook ignores routing and zone) so
-# `build_airlock` dispatches without a per-kind conditional. The zone is what an
-# adapter that builds the envelope itself writes as its `audience`.
+# the injected token secret, the manifest routing table, and the airlock's own
+# zone. The signature is uniform across kinds (webhook ignores routing and zone)
+# so `build_airlock` dispatches without a per-kind conditional. The token secret
+# arrives as the raw `SecretString` and each factory reads it in its own kind's
+# shape: the webhook factory parses an identity → token map (a bare string is
+# refused), and the owner factory takes the bot's one token as it is. The zone
+# is what an adapter that builds the envelope itself writes as its `audience`.
 AdapterFactory = Callable[[BaseModel, str, "dict[str, str]", str], InboundAdapter]
 
 # Registry of adapter kinds a manifest may name. Unlike SCREEN_REGISTRY (whose
@@ -104,7 +108,9 @@ AdapterFactory = Callable[[BaseModel, str, "dict[str, str]", str], InboundAdapte
 # pure stdlib — so this registry is populated EAGERLY at import. An enabled-but-
 # unregistered kind is caught loudly at build time (docs/friction-doctrine.md).
 ADAPTER_REGISTRY: dict[str, AdapterFactory] = {
-    "signed-webhook": lambda config, token, routing, zone: SignedWebhookAdapter(config, token),
+    "signed-webhook": lambda config, token, routing, zone: SignedWebhookAdapter(
+        config, parse_token_map(token)
+    ),
     "owner": lambda config, token, routing, zone: _build_owner_adapter(
         config, token, routing, zone
     ),
@@ -235,12 +241,17 @@ class AirlockRuntime:
 
 
 def build_airlock(manifest: ChannelsManifest, *, token: str) -> AirlockRuntime:
-    """Construct the airlock from `manifest` and the injected webhook `token`.
+    """Construct the airlock from `manifest` and the injected token secret.
+
+    `token` is the secret's `SecretString` as stored; the adapter factory reads
+    it in its kind's shape (see `ADAPTER_REGISTRY`).
 
     Raises `ValueError` if the manifest enables a screen whose `kind` is not in
     `SCREEN_REGISTRY`, or names an adapter `kind` not in `ADAPTER_REGISTRY` — a
     configured-but-unbuildable seam must fail loudly, not silently degrade to
-    pass-through (docs/friction-doctrine.md).
+    pass-through (docs/friction-doctrine.md). A webhook token secret that is
+    not a usable identity → token map raises `webhook.WebhookTokenMapError`, a
+    `ValueError` whose message carries no value from the secret.
     """
     factory = ADAPTER_REGISTRY.get(manifest.adapter.kind)
     if factory is None:

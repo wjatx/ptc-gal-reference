@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from safe_agents.channels.adapters import InboundAdapter
-from safe_agents.channels.dispatch import dispatch
+from safe_agents.channels.dispatch import DispatchOutcome, dispatch, dispatch_outcome
 from safe_agents.channels.manifest import ChannelsManifest, OwnerAdapterConfig, build_airlock
 from safe_agents.channels.owner import (
     APPROVE_COMMAND,
@@ -114,6 +114,16 @@ def test_verify_token_rejects_wrong_token():
 
 def test_verify_token_rejects_missing_header():
     assert _adapter().verify_token(_req(token=None)) is False
+
+
+@pytest.mark.parametrize(
+    "presented",
+    [pytest.param("café-token", id="non-ascii"), pytest.param("\ud800x", id="lone-surrogate")],
+)
+def test_verify_token_answers_false_for_a_header_that_is_not_ascii(presented):
+    # `hmac.compare_digest` raises TypeError on a non-ASCII str; the header is
+    # whatever the caller sent, so it must fail gate 1 instead of raising.
+    assert _adapter().verify_token(_req(token=presented)) is False
 
 
 def test_verify_token_honors_configured_header_name():
@@ -358,6 +368,47 @@ def test_owner_unmapped_address_drops_principal_mismatch():
 
     assert result is None
     assert drops[-1].reason == "principal_mismatch"
+
+
+@pytest.mark.parametrize(
+    "body,reason",
+    [
+        pytest.param(_owner_body("/trader buy AAPL"), "principal_mismatch", id="principal-mismatch"),
+        pytest.param(_owner_body("/agent go", expiry="2000-01-01T00:00:00+00:00"), "expired", id="expired"),
+        pytest.param(_owner_body("   "), "malformed", id="address-less"),
+    ],
+)
+def test_a_mapped_owner_is_told_nothing_of_a_refusal(body, reason):
+    """The owner token is one per bot, shared by every owner, so gate 1 does not
+    say which owner sent the request (`credential_per_sender` is False). A
+    mapped owner refused before the screen is told nothing, as a stranger is."""
+    adapter = _adapter(routing={"/agent": "example-agent"})
+    assert adapter.credential_per_sender is False
+    trust_map = ChannelTrustMap(
+        entries=[
+            TrustMapEntry(
+                channel_type="owner",
+                channel_identity="maintainer",
+                principal="example-agent",
+                sender_class="owner",
+            )
+        ]
+    )
+    drops: list = []
+
+    outcome = dispatch_outcome(
+        _req(body=body),
+        adapter=adapter,
+        trust_map=trust_map,
+        screen=None,
+        dedupe_store=set(),
+        drops=drops,
+        now=_NOW,
+        zone=_ZONE,
+    )
+
+    assert outcome == DispatchOutcome(None, None)
+    assert [d.reason for d in drops] == [reason]
 
 
 # --- Target 3 — unknown identity -> unmapped (distinct from target 2) --------

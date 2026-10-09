@@ -6,7 +6,8 @@ queue URL, and secret ARN all resolve from the CloudFormation exports the
 Channels stack publishes, so the run needs no per-run wiring.
 
 Drives the deployed endpoint through the gate matrix — bad token, unmapped
-sender, expired envelope, the valid signal, and its replay — then proves
+sender, a peer claiming another peer's identity, expired envelope, the valid
+signal, and its replay — then proves
 acceptance and end-to-end delivery from each seam's OWN output:
 
 Since the drain worker went live, the accepted queue is consumed by
@@ -32,6 +33,7 @@ from types import SimpleNamespace
 import pytest
 
 from safe_agents.channels.manifest import load_channels_manifest
+from safe_agents.channels.webhook import parse_token_map
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("AIRLOCK_LIVE_SMOKE"),
@@ -43,6 +45,9 @@ _AIRLOCK_LOG_GROUP = f"/safe-agents/{_ENV}/channels-airlock"
 
 # The example consumer wired on the dev floor (examples/webhook-peer).
 _PEER = "peer:example"
+# An identity the example trust map does not map. The webhook secret needs an
+# entry for it too, so the unmapped leg is an authenticated peer of its own.
+_STRANGER = "peer:stranger"
 _PRINCIPAL = "example-agent"
 _WEBHOOK_PEER = Path(__file__).resolve().parents[3] / "examples" / "webhook_peer"
 
@@ -64,9 +69,21 @@ _AIRLOCK_ZONE = airlock_zone()
 _TOKEN_HEADER = "x-airlock-token"
 
 
+def token_for(tokens: dict[str, str], identity: str) -> str:
+    """The token the airlock's webhook secret binds to `identity`."""
+    assert identity in tokens, (
+        f"the webhook secret holds no token for {identity!r}; seed one entry per identity "
+        f"this smoke sends as (docs/channels-airlock-bringup.md §3 and §5)"
+    )
+    return tokens[identity]
+
+
 def resolve_live() -> SimpleNamespace:
     """Resolve the deployed wiring from CloudFormation exports (shared with the
-    screened + peer-publish variants)."""
+    screened + peer-publish variants).
+
+    `tokens` is the webhook secret parsed as the airlock parses it (identity →
+    token); `token` is the mapped example peer's own."""
     import boto3
 
     cfn = boto3.client("cloudformation")
@@ -81,13 +98,16 @@ def resolve_live() -> SimpleNamespace:
         return exports[name]
 
     secret_arn = export("channels-webhook-secret-arn")
-    token = boto3.client("secretsmanager").get_secret_value(SecretId=secret_arn)["SecretString"]
+    tokens = parse_token_map(
+        boto3.client("secretsmanager").get_secret_value(SecretId=secret_arn)["SecretString"]
+    )
     return SimpleNamespace(
         url=export("airlock-url"),
         queue=export("channel-accepted-queue-url"),
         audit_bucket=export("audit-bucket-name"),
         ledger_bucket=export("ledger-bucket-name"),
-        token=token,
+        tokens=tokens,
+        token=token_for(tokens, _PEER),
         sqs=boto3.client("sqs"),
         s3=boto3.client("s3"),
         logs=boto3.client("logs"),
@@ -191,11 +211,20 @@ def test_deployed_airlock_gate_matrix(live):
     assert resp == {"status": 200, "body": {"ok": True}}
     dropped_ids.append(wrong_token_id)
 
-    # Gate 5 — unmapped sender: same contentless ack.
+    # Gate 5: an authenticated peer the trust map does not map gets the same contentless ack.
     unmapped_id = f"evt-{uuid.uuid4()}"
-    resp = _post(live, _envelope(unmapped_id, identity="peer:stranger"), live.token)
-    assert resp["status"] == 200
+    resp = _post(
+        live, _envelope(unmapped_id, identity=_STRANGER), token_for(live.tokens, _STRANGER)
+    )
+    assert resp == {"status": 200, "body": {"ok": True}}
     dropped_ids.append(unmapped_id)
+
+    # Gate 3: the unmapped peer's token, a body claiming the mapped peer. The
+    # token names the sender, so the claim is refused and tells it nothing.
+    claimed_id = f"evt-{uuid.uuid4()}"
+    resp = _post(live, _envelope(claimed_id, identity=_PEER), token_for(live.tokens, _STRANGER))
+    assert resp == {"status": 200, "body": {"ok": True}}
+    dropped_ids.append(claimed_id)
 
     # Gate 4 — expired envelope from the mapped sender.
     expired_id = f"evt-{uuid.uuid4()}"

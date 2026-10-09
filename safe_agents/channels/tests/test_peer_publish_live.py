@@ -35,7 +35,7 @@ from safe_agents.channels.publish import stamp_outbound
 
 # Reuse the live resolver from the inbound smoke (importing the module is harmless
 # — its pytestmark only skips ITS OWN tests).
-from safe_agents.channels.tests.test_airlock_live import _AIRLOCK_ZONE, resolve_live
+from safe_agents.channels.tests.test_airlock_live import _AIRLOCK_ZONE, resolve_live, token_for
 
 from safe_agents.connectors import PeerConnector
 
@@ -70,7 +70,9 @@ def _credential(live) -> str:
     url = live.url.rstrip("/")
     if not url.endswith("/inbound"):
         url += "/inbound"
-    return json.dumps({"url": url, "token_header": _TOKEN_HEADER, "token": live.token})
+    # The token the airlock binds to the identity this smoke publishes as.
+    token = token_for(live.tokens, _PEER_IDENTITY)
+    return json.dumps({"url": url, "token_header": _TOKEN_HEADER, "token": token})
 
 
 def _await_accept(logs, event_id: str, timeout: float) -> bool:

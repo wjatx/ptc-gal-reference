@@ -21,7 +21,10 @@ from safe_agents.channels.schemas import EventTrigger
 from safe_agents.channels.schemas.event_trigger import MAX_ENVELOPE_BYTES, MAX_FORWARD_BYTES
 from safe_agents.channels.signing import ChainSigner
 
-_TOKEN = "test-airlock-token"
+_TOKEN = "test-airlock-token"  # peer:example's own token
+_STRANGER_TOKEN = "test-stranger-token"  # an authenticated peer the trust map does not map
+# The webhook token secret as stored: one entry per peer.
+_WEBHOOK_SECRET = json.dumps({"peer:example": _TOKEN, "peer:stranger": _STRANGER_TOKEN})
 _TS = "2026-07-08T00:00:00+00:00"
 _FUTURE = "2099-01-01T00:00:00+00:00"
 # The airlock's own zone, as its manifest below declares it.
@@ -96,7 +99,7 @@ def wired(monkeypatch, tmp_path):
     monkeypatch.setattr(h, "_dynamodb_client", lambda: fakes.dynamo)
     monkeypatch.setattr(h, "_s3_client", lambda: fakes.s3)
     monkeypatch.setattr(h, "_sqs_client", lambda: fakes.sqs)
-    monkeypatch.setattr(h, "_fetch_webhook_token", lambda arn: _TOKEN)
+    monkeypatch.setattr(h, "_fetch_webhook_token", lambda arn: _WEBHOOK_SECRET)
     monkeypatch.setattr(h, "_STATE", None)
 
     yield fakes
@@ -156,8 +159,14 @@ def test_base64_body_is_decoded_and_accepted(wired):
     assert len(wired.sqs.messages) == 1
 
 
-def test_bad_token_drops_silently_without_enqueue(wired):
-    resp = h.handler(_event(_envelope_json(), token="wrong-token"), None)
+@pytest.mark.parametrize(
+    "token",
+    [pytest.param("wrong-token", id="wrong"), pytest.param("\ud800x", id="lone-surrogate")],
+)
+def test_bad_token_drops_silently_without_enqueue(wired, token):
+    # A lone surrogate cannot be encoded for the compare; it must fail gate 1
+    # as `authenticity_failed`, not escape as a handler error.
+    resp = h.handler(_event(_envelope_json(), token=token), None)
 
     assert resp["statusCode"] == 200
     assert json.loads(resp["body"]) == {"ok": True}  # silent to the sender
@@ -186,7 +195,7 @@ def test_unmapped_sender_drops_without_enqueue(wired):
     body["sender"]["channel_identity"] = "peer:stranger"
     body["principal"] = "example-agent"
 
-    resp = h.handler(_event(json.dumps(body)), None)
+    resp = h.handler(_event(json.dumps(body), token=_STRANGER_TOKEN), None)
 
     assert resp["statusCode"] == 200
     assert wired.sqs.messages == []
@@ -464,9 +473,11 @@ def _drops(wired) -> list[tuple[str, str | None]]:
 
 
 def test_every_path_that_tells_nothing_answers_the_same_bytes(wired):
-    """Acceptance, screen refusal, screen_error, replay, a gate-1 failure, a
-    gate-2 failure, an unmapped identity, an undecodable body, a non-POST and an
-    unexpected exception: one status, one body, byte for byte."""
+    """Acceptance, screen refusal, screen_error, replay, a gate-1 failure, an
+    unmapped peer's unparseable body, an unmapped identity, an unmapped peer
+    claiming a mapped identity, an undecodable body, a non-POST and an
+    unexpected exception: one status, one body, byte for byte. (Gate 2 reads
+    the identity from the token, so it cannot fail after gate 1 passes.)"""
     responses = {}
 
     responses["accepted"] = h.handler(_event(_envelope_json("evt-ok")), None)
@@ -474,8 +485,13 @@ def test_every_path_that_tells_nothing_answers_the_same_bytes(wired):
     responses["authenticity failed"] = h.handler(
         _event(_envelope_json("evt-tok"), token="wrong-token"), None
     )
-    responses["no identity"] = h.handler(_event("not json"), None)
-    responses["unmapped"] = h.handler(_event(_stranger_json("evt-stranger")), None)
+    responses["unmapped, not json"] = h.handler(_event("not json", token=_STRANGER_TOKEN), None)
+    responses["unmapped"] = h.handler(
+        _event(_stranger_json("evt-stranger"), token=_STRANGER_TOKEN), None
+    )
+    responses["claims a mapped identity"] = h.handler(
+        _event(_envelope_json("evt-claim"), token=_STRANGER_TOKEN), None
+    )
     undecodable = _event("")
     undecodable["body"] = base64.b64encode(b"\xff\xfe").decode()
     undecodable["isBase64Encoded"] = True
@@ -538,7 +554,7 @@ def test_a_pre_screen_refusal_is_permanent_toward_a_mapped_sender_only(wired, bo
     mapped = h.handler(_event(body(_mapped_json)), None)
     assert (mapped["statusCode"], mapped["body"]) == (200, _PERMANENT)
 
-    stranger = h.handler(_event(body(_stranger_json)), None)
+    stranger = h.handler(_event(body(_stranger_json), token=_STRANGER_TOKEN), None)
     assert (stranger["statusCode"], stranger["body"]) == (200, _UNIFORM)
 
     expected_stranger = ("unmapped", None) if reason[0] == "principal_mismatch" else reason
@@ -616,7 +632,7 @@ def test_an_unavailable_key_source_is_transient_and_retried_until_it_answers(key
 def test_an_unavailable_key_source_tells_an_unmapped_sender_nothing(keys_down):
     wired, _, source = keys_down
 
-    resp = h.handler(_event(_stranger_json()), None)
+    resp = h.handler(_event(_stranger_json(), token=_STRANGER_TOKEN), None)
 
     assert (resp["statusCode"], resp["body"]) == (200, _UNIFORM)
     assert _drops(wired) == [("not_evaluated", "key_source")]
@@ -654,6 +670,7 @@ trust_map:
         encoding="utf-8",
     )
     monkeypatch.setenv("CHANNELS_MANIFEST", str(manifest))
+    monkeypatch.setattr(h, "_fetch_webhook_token", lambda arn: _TOKEN)  # the bot's one token
     command = json.dumps(
         {
             "sender": {"channel_type": "owner", "channel_identity": "maintainer"},
@@ -723,6 +740,98 @@ def test_a_webhook_token_that_cannot_be_fetched_still_fails_the_cold_start(wired
     assert (resp["statusCode"], resp["body"]) == (200, _UNIFORM)
     assert h._STATE is None
     assert wired.s3.puts == [] and wired.sqs.messages == []
+
+
+# --- the per-peer token ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "claimed", ["peer:example", "peer:nobody"], ids=["claims-mapped", "claims-unmapped"]
+)
+def test_a_token_holder_learns_nothing_about_an_identity_it_claims(wired, claimed):
+    """The probe a shared token allowed: an authenticated peer claims another
+    identity and reads the answer. Its token names it, so the claim is refused
+    as its own malformed envelope, and the answer does not depend on whether the
+    claimed identity is mapped."""
+    body = json.loads(_envelope_json())
+    body["sender"]["channel_identity"] = claimed
+
+    resp = h.handler(_event(json.dumps(body), token=_STRANGER_TOKEN), None)
+
+    assert (resp["statusCode"], resp["body"]) == (200, _UNIFORM)
+    assert _drops(wired) == [("malformed", "sender_identity_mismatch")]
+    assert wired.sqs.messages == [] and wired.dynamo.items == {}
+
+
+_SECRET_TOKEN_SENTINEL = "SENTINEL-webhook-token-5be1"
+
+
+@pytest.mark.parametrize(
+    "secret,fault",
+    [
+        pytest.param(_SECRET_TOKEN_SENTINEL, "bare token string", id="old-shared-form"),
+        pytest.param("{}", "empty object", id="empty-map"),
+        pytest.param(
+            json.dumps({"peer:example": _SECRET_TOKEN_SENTINEL, "peer:b": _SECRET_TOKEN_SENTINEL}),
+            "gives one token to more than one identity",
+            id="one-token-two-peers",
+        ),
+    ],
+)
+def test_a_webhook_secret_that_is_not_a_token_map_fails_the_cold_start(
+    wired, monkeypatch, caplog, secret, fault
+):
+    """No usable map leaves no way to authenticate anyone: every request is
+    answered the uniform body, nothing is cached, and the log names the fault
+    without any value from the secret."""
+    monkeypatch.setattr(h, "_fetch_webhook_token", lambda arn: secret)
+    caplog.set_level(logging.DEBUG)
+
+    resp = h.handler(_event(_envelope_json(), token=_SECRET_TOKEN_SENTINEL), None)
+
+    assert (resp["statusCode"], resp["body"]) == (200, _UNIFORM)
+    assert h._STATE is None
+    assert wired.s3.puts == [] and wired.sqs.messages == []
+    assert "handler_error" in caplog.text and fault in caplog.text
+    for record in caplog.records:
+        assert "SENTINEL" not in caplog.handler.format(record)
+
+
+def test_a_mapped_owner_is_told_nothing_of_a_refusal(wired, monkeypatch, tmp_path):
+    """The owner token is shared by every owner, so the owner adapter is not
+    per-sender: a mapped owner refused before the screen reads the uniform body."""
+    manifest = tmp_path / "owner-manifest.yaml"
+    manifest.write_text(
+        f"""\
+zone: {_ZONE}
+adapter:
+  kind: owner
+routing:
+  /agent: example-agent
+trust_map:
+  - channel_type: owner
+    channel_identity: maintainer
+    principal: example-agent
+    sender_class: owner
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CHANNELS_MANIFEST", str(manifest))
+    monkeypatch.setattr(h, "_fetch_webhook_token", lambda arn: _TOKEN)
+    expired = json.dumps(
+        {
+            "sender": {"channel_type": "owner", "channel_identity": "maintainer"},
+            "event_id": "evt-owner",
+            "text": "/agent status",
+            "ts": _EXPIRED_TS,
+            "expiry": _EXPIRED_TS,
+        }
+    )
+
+    resp = h.handler(_event(expired), None)
+
+    assert (resp["statusCode"], resp["body"]) == (200, _UNIFORM)
+    assert _drops(wired) == [("expired", None)]
 
 
 # --- the dedupe store -------------------------------------------------------------

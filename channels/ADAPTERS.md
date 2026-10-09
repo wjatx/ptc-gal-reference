@@ -23,8 +23,13 @@ instance values never enter contract surface).
 Which inbound adapter the airlock runs is consumer config, not a base constant. A `ChannelsManifest`
 names `adapter.kind`; `build_airlock` looks that kind up in **`ADAPTER_REGISTRY`** (the adapter
 mirror of `SCREEN_REGISTRY`) and builds the concrete adapter from its typed config, the injected
-token, the manifest `routing` table, and the manifest `zone`. Every factory takes all four; the
-webhook factory ignores the last two. Three invariants hold this seam:
+token secret, the manifest `routing` table, and the manifest `zone`. Every factory takes all four; the
+webhook factory ignores the last two. The token secret arrives as stored and each factory reads it
+in its own kind's shape: the webhook factory parses it as a map from channel identity to that
+peer's own token (`webhook.parse_token_map`), refusing a bare string, an empty map, an identity
+named twice once canonicalized, a token that is empty or not a string, and one token under two
+identities, each by name and without echoing any value from the secret; the owner factory takes
+the bot's one token as a bare string. Three invariants hold this seam:
 
 - **A kind-less adapter block keeps its meaning.** `adapter.kind` defaults to `signed-webhook`,
   so an adapter block written before kinds existed resolves to the webhook adapter.
@@ -50,6 +55,7 @@ seam, not the set of kinds registered in it.
 // STUB — illustrative; the canonical encoding is adapters.py
 interface InboundAdapter {
   channel_type: string                          // the adapter IS a channel type ("telegram", "peer-agent", …)
+  credential_per_sender: boolean                // true when the gate-1 credential names one sender; default false
   verify_token(request): boolean                // transport authenticity — BEFORE the body is read
   extract_identity(request): string             // the NORMALIZED channel identity of the sender
   normalize(request): EventTrigger              // the wire request as a typed envelope (schema check)
@@ -60,6 +66,12 @@ interface InboundAdapter {
   HMAC signature, a message signature) **without parsing the message body** — unauthenticated bytes
   never reach a parser. Failure is a drop (`authenticity_failed`), recorded PII-safely
   (`channels/TRUST-MAPPING.md` §DropRecord), with nothing revealed to the sender.
+- **`credential_per_sender`** is true when the gate-1 credential is bound to one sender identity,
+  so that a sender authenticated at gate 1 is authenticated *as* the identity `extract_identity`
+  returns. It defaults to false, and only when an adapter declares it true are its senders told a
+  refusal class (§"What the sender is told"). The webhook adapter declares it: each peer holds its own
+  token, and `extract_identity` returns the identity that token is bound to. The owner adapter does
+  not: its token is one per bot by the transport's design.
 - **`extract_identity`** returns the sender's transport identity, **normalized** (canonical chat
   id, lower-cased domain) — the trust map's `resolve` is an exact-match lookup and does no
   normalization of its own.
@@ -81,11 +93,14 @@ adapter-level check is what covers the gap when verification is OFF, hasn't run 
 envelope, or the adapter's own gate-2/gate-3 identity extraction diverges independently of anything
 cryptographic. Dispatch enforces it structurally, right after gate 3 and before gate 3.5: a
 divergence drops `malformed` with `detail="sender_identity_mismatch"` and carries no verification
-evidence (the divergence is untrusted input at the moment it's caught). Both reference adapters
-satisfy this by construction — `extract_identity` and `normalize` both derive `channel_identity`
-from the identical wire field via the identical canonicalization (`SignedWebhookAdapter`/
-`OwnerInboundAdapter`, `_canonical_identity`) — so the check is a backstop for adapters that don't
-share that construction, not a case either reference adapter can trip.
+evidence (the divergence is untrusted input at the moment it's caught). The owner adapter
+satisfies this by construction: `extract_identity` and `normalize` both derive `channel_identity`
+from the identical wire field via the identical canonicalization (`_canonical_identity`). The
+webhook adapter does not, on purpose: its `extract_identity` returns the identity the presented
+token is bound to, its `normalize` reads the identity the body claims, and both canonicalize by
+the same rule. So for the webhook adapter this check is what binds the body to the token: a peer
+whose body claims another peer's identity drops here, before gate 3.5 and before the trust map is
+asked about the claimed identity.
 
 **Supersession (2026-07-08).** `normalize` replaces the earlier sketch's `extract_payload(request)
 -> bytes`: with the EventTrigger contract in place, handing raw bytes forward would re-open
@@ -180,17 +195,20 @@ The body is one of three, and carries exactly these keys:
 | `{"ok": false, "refusal": "permanent"}` | an authenticated, mapped sender | a refusal before the screen that the airlock evaluated: `malformed` (any gate-3 variant), `audience_mismatch`, the three chain failures, `expired`, `principal_mismatch` |
 | `{"ok": false, "refusal": "transient"}` | an authenticated, mapped sender | the airlock could not evaluate because a fetched input was unavailable: its verification keys (gate 3.5) or its dedupe store (gate 6) |
 
-A sender is **authenticated and mapped** when it passed gate 1 and its gate-2 identity resolves in
-the trust map for `(adapter.channel_type, identity)`. The dispatcher makes that lookup right after
-gate 2. It moves no gate and writes no record, and gate 5 still decides admission. A sender that
-fails gate 1 or gate 2, or whose identity is not in the trust map, gets `{"ok": true}` for
-everything. A party that fails gate 1 learns nothing from the answers. A holder of the transport
-token, which every declared peer holds, can learn whether an identity it claims is in the trust
-map, with signing on or off, because the lookup comes before gate 3.5; beyond that it is told only
-what a mapped sender is told. That is what authenticated means for a transport with one shared
-token per airlock and the identity taken from the body, such as the webhook adapter; an adapter
-whose gate-1 credential is per sender does not have this property. A screen refusal reads as an
-acceptance to everyone, so a compromised peer gets no feedback on content.
+A sender is **authenticated and mapped** when its gate-1 credential names it
+(`credential_per_sender`), it passed gate 1, and the identity that credential names resolves in the
+trust map for `(adapter.channel_type, identity)`. The dispatcher makes that lookup right after
+gate 2, and only for an adapter whose credential is per sender. It moves no gate and writes no
+record, and gate 5 still decides admission. A sender that fails gate 1 or gate 2, or whose identity
+is not in the trust map, gets `{"ok": true}` for everything. A party that fails gate 1 learns
+nothing from the answers. A token holder is authenticated as the one identity its token names, so
+it learns about that identity and nothing about any other: a body claiming another identity is
+refused at gate 3 as the holder's own malformed envelope, and the answer is the same whether the
+claimed identity is mapped or not. An adapter whose gate-1 credential is shared across senders,
+such as the owner adapter, tells its senders nothing on every path, because there the identity is
+whatever the holder claims and a differing answer would tell it which identities the trust map
+holds. A screen refusal reads as an acceptance to everyone, so a compromised peer gets no feedback
+on content.
 
 A permanent refusal is recorded with the drop reason the gate always wrote. A transient refusal is
 recorded as a `not_evaluated` drop whose `detail` names the input, `key_source` or `dedupe_store`.
@@ -236,8 +254,10 @@ principal ever synthesized**.
 ## The named inbound cases
 
 - **Peer-agent (the new case).** `verify_token` verifies the sending zone's transport
-  signature; `extract_identity` returns the peer's publisher identity; `normalize` validates the
-  wire EventTrigger as-is. The payload is already parsed — the sending zone did that work — and its
+  credential, which is per peer: each peer holds its own token, so one peer's token can be revoked
+  or rotated without touching another's; `extract_identity` returns the peer identity that
+  credential is bound to; `normalize` validates the wire EventTrigger as-is, and its claimed sender
+  must be that identity. The payload is already parsed — the sending zone did that work — and its
   provenance (e.g. `email:example-vendor.com · untrusted`) rides through untouched until the receiver
   stamps its own entry at gate 8.
 - **Telegram (the existing case, restated agent-agnostically).** Secret-token header verification;
@@ -305,13 +325,17 @@ clauses:
 | outbound stub returns a delivery reference | `test_outbound_stub_delivers` |
 | sender-transport binding: mismatch drops `malformed`/`sender_identity_mismatch` before gate 3.5, no evidence; match unaffected | `test_sender_identity_mismatch_drops_malformed_before_verify_chain` · `test_sender_identity_match_is_unaffected` |
 | an envelope addressed to another zone drops `audience_mismatch` before gate 3.5: verification, the screen and dedupe never run, the record carries no evidence, and zone ids are compared exactly | `test_an_envelope_addressed_to_another_zone_drops_before_verification` · `test_audience_is_checked_ahead_of_expiry_and_the_trust_map` · `test_signing.py::test_audience_is_checked_with_verification_off` · `test_airlock_handler.py::test_a_request_addressed_to_another_airlock_enqueues_nothing` |
-| both reference adapters satisfy sender-transport binding by construction, across identity spellings | `test_webhook_adapter.py::test_normalize_sender_identity_matches_extract_identity` · `test_owner_adapter.py::test_normalize_sender_identity_matches_extract_identity` |
+| a body claiming its own token's identity, or for the owner adapter its own identity, satisfies sender-transport binding across identity spellings | `test_webhook_adapter.py::test_normalize_sender_identity_matches_extract_identity` · `test_owner_adapter.py::test_normalize_sender_identity_matches_extract_identity` |
+| the webhook token is per peer: gate 1 compares every entry with no early exit and reads no body; gate 2 returns the identity the token names, never the body's; a wrong token is `authenticity_failed` whatever the body claims; each peer is accepted under its own token | `test_webhook_adapter.py::test_verify_token_accepts_each_peers_own_token` · `::test_gates_1_and_2_never_read_the_body` · `::test_verify_token_compares_every_entry_whichever_matches` · `::test_extract_identity_ignores_the_identity_the_body_claims` · `::test_a_wrong_token_is_authenticity_failed_whatever_the_body_claims` · `::test_each_peer_is_accepted_under_its_own_token` |
+| a body claiming another identity under a peer's token drops `malformed`/`sender_identity_mismatch` before gate 3.5 and before the trust map is asked about the claimed identity, and the answer does not depend on whether that identity is mapped | `test_webhook_adapter.py::test_a_body_claiming_another_peer_drops_before_verification_and_tells_nothing_of_it` · `test_airlock_handler.py::test_a_token_holder_learns_nothing_about_an_identity_it_claims` |
+| the webhook token secret is refused at load, by name, giving the expected shape and no value from the secret, when it is a bare string, not an object, empty, names an identity twice (before or after canonicalization), gives one token to two identities, or holds an empty or non-string token, an empty identity, or a token or identity not encodable as UTF-8; the refusal fails the cold start | `test_webhook_adapter.py::test_a_token_secret_that_is_not_a_usable_map_is_refused_by_name` · `test_manifest.py::test_a_webhook_airlock_refuses_a_bare_token_secret` · `test_airlock_handler.py::test_a_webhook_secret_that_is_not_a_token_map_fails_the_cold_start` |
+| a refusal class is told only behind an adapter that declares `credential_per_sender` exactly true: a mapped sender behind a shared credential, the owner adapter's included, is told nothing on every path, and the trust-map lookup that decides it is not made | `test_dispatch_outcome.py::test_a_mapped_sender_behind_a_shared_credential_is_told_nothing` · `::test_a_dedupe_store_failure_behind_a_shared_credential_is_told_nothing` · `::test_only_an_adapter_that_says_true_is_told_anything` · `::test_the_mapped_lookup_is_made_only_for_a_per_sender_credential` · `test_adapters.py::test_an_inbound_adapter_claims_a_per_sender_credential_only_by_saying_so` · `test_owner_adapter.py::test_a_mapped_owner_is_told_nothing_of_a_refusal` · `test_airlock_handler.py::test_a_mapped_owner_is_told_nothing_of_a_refusal` |
 | toward an authenticated, mapped sender each pre-screen refusal is classed permanent; toward any other sender the same refusal is classed nothing; a screen refusal, `screen_error` and a replay are classed nothing (`dispatch_outcome`) | `test_dispatch_outcome.py::test_a_mapped_sender_is_told_a_pre_screen_refusal_is_permanent` · `::test_an_unmapped_sender_is_told_nothing_about_the_same_refusal` · `::test_a_sender_that_never_reached_the_trust_map_lookup_is_told_nothing` · `::test_a_screen_refusal_reads_as_an_acceptance_and_is_dedupe_marked` · `::test_a_replay_is_told_nothing` |
 | an unavailable key source or dedupe store is classed transient toward a mapped sender, recorded `not_evaluated`, and claims no dedupe key | `test_dispatch_outcome.py::test_keys_unavailable_is_transient_toward_a_mapped_sender_and_claims_nothing` · `::test_keys_unavailable_tells_an_unmapped_sender_nothing_and_records_what_happened` · `::test_a_dedupe_store_failure_is_transient_and_claims_nothing` |
 | the response body: status 200 on every path; the uniform body is the same bytes for every path that tells nothing; a retry after a transient answer is evaluated afresh; the keys are fetched again until a fetch succeeds | `test_airlock_handler.py::test_every_path_that_tells_nothing_answers_the_same_bytes` · `::test_a_pre_screen_refusal_is_permanent_toward_a_mapped_sender_only` · `::test_an_unavailable_key_source_is_transient_and_retried_until_it_answers` · `::test_an_unavailable_dedupe_store_is_transient_and_claims_nothing` |
 | a mutated-sender replay never accrues an attributed record, whichever gate sees it first: a divergent sender claim (an adapter whose gate-2/gate-3 identities diverge) drops at gate 3 before gate 3.5 runs, carrying no verification evidence; an internally-consistent mutation of a still-validly-signed envelope — which gate 3 cannot see — is caught at gate 3.5 as a forgery, with no second attributed record and no second screen spend | `test_adapters.py::test_sender_identity_mismatch_drops_malformed_before_verify_chain` · `test_signing.py::test_mutated_sender_replay_fails_verification_no_second_attributed_record` |
 
-<!-- assumption-tested 2026-08-06 — gate-3-before-3.5 ordering HOLDS (reorder mutation red, no masking); by-construction binding HOLDS for the two reference adapters (normalize mutation red); both dead citations in this table re-pointed same run -->
+<!-- assumption-tested 2026-08-06 — gate-3-before-3.5 ordering HOLDS (reorder mutation red, no masking); by-construction binding HOLDS for the two reference adapters (normalize mutation red); both dead citations in this table re-pointed same run; 2026-10-09: the webhook half is superseded by #188, the body-to-identity binding is now enforced by the dispatcher's gate-3 check rather than by construction -->
 
 The owner cases are proven across three suites — the owner adapter +
 dispatch (`test_owner_adapter.py`), the drain fork (`test_drain_owner.py`), and

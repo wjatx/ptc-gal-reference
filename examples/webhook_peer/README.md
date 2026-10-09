@@ -17,9 +17,9 @@ source changed.
 ## What it shows
 
 The A2A driving case — a peer agent reaching this agent over A2A. The peer POSTs an
-`EventTrigger` envelope to a signed webhook; the airlock verifies the shared token, maps
-the peer identity to a principal, dedupes, (optionally) screens, and stamps its own
-provenance hop before the envelope reaches a worker. The airlock loop itself is
+`EventTrigger` envelope to a signed webhook; the airlock verifies the peer's own token, takes
+the identity that token names, maps it to a principal, dedupes, (optionally) screens, and
+stamps its own provenance hop before the envelope reaches a worker. The airlock loop itself is
 channel-agnostic — everything peer-shaped lives in `channels-manifest.yaml`:
 
 - **one trust-map row** admits `peer:example` as principal `example-agent`, sender class

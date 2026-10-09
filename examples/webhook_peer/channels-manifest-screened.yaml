@@ -20,7 +20,9 @@
 # addressing the screened airlock writes this id, not the sibling's.
 zone: webhook-peer-screened-example
 
-# The signed-webhook adapter — unchanged from the sibling manifest.
+# The signed-webhook adapter — unchanged from the sibling manifest: each peer holds its
+# own token, kept in Secrets Manager as a JSON map with one entry per peer, keyed by the
+# trust map's `channel_identity`.
 adapter:
   channel_type: webhook
   token_header: x-airlock-token

@@ -48,7 +48,8 @@ connector_secrets:
 Its class is base, but the secret + endpoint stay consumer-supplied (they vary per
 deployment). The secret VALUE is the JSON peer descriptor `{url, token_header, token}` the
 connector authenticates with — the sending mirror of the receiver's `SignedWebhookAdapter`
-secret-token gate.
+secret-token gate. `token` is this sender's own entry in the receiving airlock's token map, so
+the envelopes it publishes must name the identity that entry is keyed by.
 
 ## Files
 

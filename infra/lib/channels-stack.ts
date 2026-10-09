@@ -275,15 +275,20 @@ export class ChannelsStack extends Stack {
       publish(this, env, 'channel-accepted-missileer-queue-arn', missileerAcceptedQueue.queueArn);
     }
 
-    // ── Webhook shared secret ─────────────────────────────────────────────────────────────────────
-    // The inbound shared-secret header the airlock verifies (auth is in-Lambda per the channels
-    // contracts — the HTTP API carries no authorizer). A random placeholder is generated so the
-    // secret exists post-deploy; the REAL token is seeded out of band and overwrites it.
+    // ── Webhook token map ─────────────────────────────────────────────────────────────────────────
+    // The per-peer tokens the airlock verifies in its secret-token header (auth is in-Lambda per
+    // the channels contracts — the HTTP API carries no authorizer). The secret is a JSON map from
+    // each peer's channel identity to that peer's own token; the airlock refuses a bare string at
+    // cold start. The placeholder generated here is a valid map with one random token for the
+    // identity `placeholder:unseeded`. No real peer holds that token, so until the REAL map is
+    // seeded out of band every real peer's request fails gate 1 as `authenticity_failed`.
     const webhookSecret = new Secret(this, 'WebhookSecret', {
       secretName: resourceName(env, 'channels-webhook'),
-      description: `safe-agents ${env} - channels inbound webhook shared secret (seeded out of band)`,
+      description: `safe-agents ${env} - channels inbound webhook token map, one token per peer (seeded out of band)`,
       removalPolicy: removalPolicyFor(env),
       generateSecretString: {
+        secretStringTemplate: '{}',
+        generateStringKey: 'placeholder:unseeded',
         passwordLength: 32,
         excludePunctuation: true,
       },

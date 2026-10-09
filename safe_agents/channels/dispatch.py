@@ -8,9 +8,10 @@ transport binding lives here or is named here — see channels/ADAPTERS.md
 §"Reference bindings" for where webhook/queue/peer-transit bindings land.
 
 `dispatch_outcome` also says what the sender is told (channels/ADAPTERS.md
-§"What the sender is told"): nothing, unless the airlock authenticated the
-sender at gate 1 and its gate-2 identity is in the trust map, in which case a
-refusal before the screen is classed `permanent` or `transient`. `dispatch` is
+§"What the sender is told"): nothing, unless the adapter's gate-1 credential is
+per sender (`credential_per_sender`), the sender passed gate 1, and its gate-2
+identity is in the trust map, in which case a refusal before the screen is
+classed `permanent` or `transient`. `dispatch` is
 the same run returning only the envelope, the form the conformance suite calls.
 """
 
@@ -56,8 +57,9 @@ class DispatchOutcome:
     `envelope` is the stamped, worker-ready envelope on acceptance, else None.
     `refusal` is None on acceptance, on a screen refusal (`screen_error`
     included), on a deduplicated replay, and on every refusal toward a sender
-    that is not both authenticated (gate 1) and mapped (its gate-2 identity
-    resolves in the trust map). Toward an authenticated and mapped sender, a
+    that is not both authenticated (gate 1, by a credential bound to that one
+    sender) and mapped (its gate-2 identity resolves in the trust map). Toward
+    an authenticated and mapped sender, a
     refusal before the screen is `permanent` when the airlock evaluated the
     envelope and `transient` when a fetched input it needed was unavailable.
     """
@@ -156,7 +158,18 @@ def dispatch_outcome(
     # gate 1 and its gate-2 identity is in the trust map, so a refusal before
     # the screen is classed for it; every other sender is told nothing, so a
     # stranger probing the ingress learns nothing about the trust map.
-    mapped = trust_map.resolve(adapter.channel_type, identity) is not None
+    #
+    # That holds only when gate 1 authenticated the sender AS that identity
+    # (`credential_per_sender`). Behind a credential every sender shares, the
+    # identity is whatever the holder claims, and an answer that differed by
+    # identity would tell the holder which identities the trust map holds. So
+    # such an adapter's senders are told nothing on every path, and the lookup
+    # is not made: `is True`, like `originates_envelope` below, so only an
+    # adapter that says so is answered.
+    mapped = (
+        getattr(adapter, "credential_per_sender", False) is True
+        and trust_map.resolve(adapter.channel_type, identity) is not None
+    )
 
     def refuse(
         reason: DropReason,

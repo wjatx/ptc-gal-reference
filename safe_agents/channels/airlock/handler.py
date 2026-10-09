@@ -3,7 +3,7 @@
 Thin by design: the whole point of the reference dispatcher
 (channels/dispatch.py) is that it stays unchanged and transport-free, so this
 handler only binds seams. It builds the airlock once per container from the
-in-image manifest and the Secrets-Manager webhook token, then per request:
+in-image manifest and the Secrets-Manager webhook token secret, then per request:
 lowercases headers, decodes the body, calls `dispatch_outcome`, and — on an
 accepted envelope — SendMessages it to the accepted queue.
 
@@ -12,19 +12,20 @@ is 200 on every path, an unexpected exception included, which is logged
 (structured JSON). A 5xx would make the provider retry, the retry would dedupe,
 and the record would strand, and a status that varied would tell a prober which
 gate it reached. The body is `{"ok": true}` toward everyone, with one exception:
-a sender that passed gate 1 and whose identity is in the trust map is told
-`{"ok": false, "refusal": "permanent"}` when the airlock evaluated its envelope
-and refused it before the screen, and `{"ok": false, "refusal": "transient"}`
-when the airlock could not evaluate because its verification keys or its dedupe
-store were unavailable. A screen refusal, a replay, and a failure of the airlock
+a sender that passed gate 1 with its own token and whose identity is in the
+trust map is told `{"ok": false, "refusal": "permanent"}` when the airlock
+evaluated its envelope and refused it before the screen, and
+`{"ok": false, "refusal": "transient"}` when the airlock could not evaluate
+because its verification keys or its dedupe store were unavailable. A screen refusal, a replay, and a failure of the airlock
 while handling the request read as an acceptance.
 
 The verification keys are fetched at cold start. When that fetch fails the
 handler still serves: the keys are fetched again by the next request that
 reaches gate 3.5, and cached once the fetch succeeds. Every other cold-start
-failure still fails the whole cold start, as before: a failed webhook-token fetch
-leaves no way to authenticate anyone, and a manifest that does not load leaves
-no trust map. Each request is then answered `{"ok": true}`, the failure is
+failure still fails the whole cold start, as before: a failed webhook-token
+fetch, or a token secret that is not a usable identity → token map, leaves no
+way to authenticate anyone, and a manifest that does not load leaves no trust
+map. Each request is then answered `{"ok": true}`, the failure is
 logged as `handler_error`, and nothing is cached.
 
 Env contract (fixed; the infra side binds these):
@@ -35,7 +36,12 @@ Env contract (fixed; the infra side binds these):
   CHANNELS_DROP_PREFIX         drop key prefix (default channels/drops/)
   CHANNELS_VERDICT_PREFIX      verdict key prefix (default channels/verdicts/)
   CHANNELS_ACCEPTED_QUEUE_URL  SQS queue for accepted, stamped envelopes
-  CHANNELS_WEBHOOK_SECRET_ARN  Secrets Manager ARN of the shared webhook token
+  CHANNELS_WEBHOOK_SECRET_ARN  Secrets Manager ARN of the webhook token secret. For
+                               the signed-webhook adapter, a JSON map, one entry
+                               per peer: {channel_identity: token}, keyed as the
+                               trust map writes the identity (a bare string is
+                               refused at cold start); for the owner adapter, the
+                               bot's one token as a bare string
   BROKER_VERIFY_KEYS_SECRET_ARN  optional; ARN of the JSON chain-verification map
                                {key_id: {public_key, zone, sender_identities,
                                signer_posture, custody_evidence}}

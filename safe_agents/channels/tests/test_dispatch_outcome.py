@@ -1,9 +1,10 @@
 """What the sender is told: the refusal class `dispatch_outcome` returns.
 
 channels/ADAPTERS.md §"What the sender is told" is the contract. A sender that
-passed gate 1 and whose gate-2 identity is in the trust map learns whether a
-refusal before the screen is `permanent` or `transient`; every other sender, and
-every screen refusal and replay, learns nothing (`refusal` is None). A transient
+passed gate 1 with a credential bound to it (`credential_per_sender`) and whose
+gate-2 identity is in the trust map learns whether a refusal before the screen
+is `permanent` or `transient`; every other sender, and every screen refusal and
+replay, learns nothing (`refusal` is None). A transient
 refusal is recorded `not_evaluated` and is given only before the dedupe key is
 claimed. The transport binding that turns this into a response body is proven in
 `test_airlock_handler.py`.
@@ -69,6 +70,7 @@ class _Adapter(InboundAdapter):
         identity_raises: bool = False,
         normalize_raises: bool = False,
         originates_envelope: bool = False,
+        credential_per_sender: bool = True,
     ) -> None:
         self._envelope = envelope
         self._verify = verify
@@ -76,6 +78,7 @@ class _Adapter(InboundAdapter):
         self._identity_raises = identity_raises
         self._normalize_raises = normalize_raises
         self.originates_envelope = originates_envelope
+        self.credential_per_sender = credential_per_sender
 
     def verify_token(self, request: Any) -> bool:
         return self._verify
@@ -92,10 +95,20 @@ class _Adapter(InboundAdapter):
         return self._envelope
 
 
+class _CountingTrustMap(ChannelTrustMap):
+    """A trust map that counts how many times resolve() was consulted."""
+
+    resolves: int = 0
+
+    def resolve(self, channel_type: str, channel_identity: str):
+        object.__setattr__(self, "resolves", self.resolves + 1)
+        return super().resolve(channel_type, channel_identity)
+
+
 def _trust_map(*, mapped: bool) -> ChannelTrustMap:
     if not mapped:
-        return ChannelTrustMap(entries=[])
-    return ChannelTrustMap(
+        return _CountingTrustMap(entries=[])
+    return _CountingTrustMap(
         entries=[
             TrustMapEntry(
                 channel_type=_CHANNEL,
@@ -126,13 +139,14 @@ def _run(
     verify_chain=None,
     screen=None,
     dedupe_store: Any = None,
+    trust_map: ChannelTrustMap | None = None,
 ) -> tuple[DispatchOutcome, list, Any]:
     drops: list = []
     store = set() if dedupe_store is None else dedupe_store
     outcome = dispatch_outcome(
         "request",
         adapter=adapter,
-        trust_map=_trust_map(mapped=mapped),
+        trust_map=_trust_map(mapped=mapped) if trust_map is None else trust_map,
         screen=screen,
         verify_chain=verify_chain,
         dedupe_store=store,
@@ -225,6 +239,73 @@ def test_an_unmapped_sender_is_told_nothing_about_the_same_refusal(
         # Gate 5 cannot get as far as the principal for an unmapped identity.
         reason = "unmapped"
     assert [(d.reason, d.detail) for d in drops] == [(reason, detail)]
+
+
+# The same refusals, plus the two transient ones, from a mapped identity behind an
+# adapter whose gate-1 credential is shared across senders. Gate 1 does not say
+# who sent the request, so the identity is a claim and nothing is told.
+_SHARED_CREDENTIAL_REFUSALS = _PRE_SCREEN_REFUSALS + [
+    pytest.param(
+        lambda: _Adapter(_envelope()),
+        _keys_unavailable,
+        ("not_evaluated", "key_source"),
+        id="keys-unavailable",
+    ),
+]
+
+
+@pytest.mark.parametrize("make_adapter,verify_chain,record", _SHARED_CREDENTIAL_REFUSALS)
+def test_a_mapped_sender_behind_a_shared_credential_is_told_nothing(
+    make_adapter, verify_chain, record
+):
+    adapter = make_adapter()
+    adapter.credential_per_sender = False
+
+    outcome, drops, store = _run(adapter, verify_chain=verify_chain)
+
+    assert outcome == DispatchOutcome(None, None)
+    # The record is what happened, as it is for a sender that is told.
+    assert [(d.reason, d.detail) for d in drops] == [record]
+    assert store == set()
+
+
+def test_a_dedupe_store_failure_behind_a_shared_credential_is_told_nothing():
+    outcome, drops, _ = _run(
+        _Adapter(_envelope(), credential_per_sender=False),
+        dedupe_store=_DownStore(fail_on="read"),
+    )
+    assert outcome == DispatchOutcome(None, None)
+    assert [(d.reason, d.detail) for d in drops] == [("not_evaluated", "dedupe_store")]
+
+
+@pytest.mark.parametrize("flag", [None, 1, "yes"], ids=["interface-default", "truthy-int", "truthy-str"])
+def test_only_an_adapter_that_says_true_is_told_anything(flag):
+    """`credential_per_sender` must be exactly True. An adapter that keeps the
+    interface default, or declares something merely truthy, is told nothing."""
+    adapter = _Adapter(normalize_raises=True)
+    if flag is None:
+        del adapter.credential_per_sender  # falls back to the interface's default
+        assert adapter.credential_per_sender is False
+    else:
+        adapter.credential_per_sender = flag
+
+    outcome, drops, _ = _run(adapter)
+
+    assert outcome == DispatchOutcome(None, None)
+    assert [d.reason for d in drops] == ["malformed"]
+
+
+@pytest.mark.parametrize("per_sender,lookups", [(True, 1), (False, 0)])
+def test_the_mapped_lookup_is_made_only_for_a_per_sender_credential(per_sender, lookups):
+    """A refusal before gate 5: the only trust-map lookup is the one after gate 2
+    that decides what the sender is told, and it is not made when nothing will
+    be told."""
+    trust_map = _trust_map(mapped=True)
+    _run(
+        _Adapter(_envelope(audience="another-zone"), credential_per_sender=per_sender),
+        trust_map=trust_map,
+    )
+    assert trust_map.resolves == lookups
 
 
 def test_an_unmapped_drop_after_a_verified_chain_carries_the_check_that_happened():

@@ -543,6 +543,15 @@ def test_stub_adapters_satisfy_interfaces():
         OutboundAdapter()
 
 
+def test_an_inbound_adapter_claims_a_per_sender_credential_only_by_saying_so():
+    """`credential_per_sender` defaults to False: an adapter is treated as
+    holding a credential every sender shares until it declares otherwise, so a
+    new adapter tells its senders nothing (channels/ADAPTERS.md §"What the
+    sender is told")."""
+    assert InboundAdapter.credential_per_sender is False
+    assert StubInboundAdapter().credential_per_sender is False
+
+
 def test_outbound_stub_delivers():
     outbound = StubOutboundAdapter(delivery_ref="ref-123")
 

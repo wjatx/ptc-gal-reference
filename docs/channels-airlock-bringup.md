@@ -64,19 +64,33 @@ imageTag="$TAG" --query 'imageDetails[0].imageDigest' --output text`.
 
 ## 3. Seed the webhook secret
 
-The stack creates the secret with a random placeholder; the real shared token is seeded out of
-band (the raw string, not JSON — the handler reads `SecretString` verbatim):
+The secret is a JSON map with one entry per peer: the key is the peer's identity exactly as the
+trust map writes its `channel_identity`, and the value is that peer's own token. The stack creates
+it with a placeholder map whose one entry gives the identity `placeholder:unseeded` a random
+token. No real peer holds that token, so every real peer's request fails gate 1 as
+`authenticity_failed` until the real map is seeded out of band:
 
 ```
 SECRET_ARN=$(aws cloudformation list-exports \
   --query "Exports[?Name=='safe-agents-development-channels-webhook-secret-arn'].Value" --output text)
 aws secretsmanager put-secret-value --secret-id "$SECRET_ARN" \
-  --secret-string "$(openssl rand -hex 32)"
+  --secret-string "$(jq -n --arg example "$(openssl rand -hex 32)" '{"peer:example": $example}')"
 ```
 
-The peer that will POST to the airlock gets this token; it rides the manifest-configured header
-(default `x-airlock-token`). The Lambda caches it per container — after rotating, force new
-containers (any function-config update, or wait out the idle recycle).
+Add one `--arg` and one entry per peer. Each peer gets only its own token, which rides the
+manifest-configured header (default `x-airlock-token`); the token names the peer, so a peer whose
+body claims another identity is refused. Rotating or revoking one peer rewrites that one entry and
+leaves the others' tokens as they were. The Lambda caches the map per container, so after a change
+force new containers (any function-config update, or wait out the idle recycle).
+
+The airlock refuses, at cold start and by name, a secret that is not such a map: the old bare
+token string, an empty map, an identity written twice, or one token under two identities. A
+refused secret fails the cold start, so every request is answered `{"ok": true}`, nothing is
+accepted, and the refusal is logged as `handler_error` without any value from the secret. A secret
+seeded in the bare-string form is refused this way and must be seeded again as a map. A change to
+the secret's `GenerateSecretString` creates a new secret version (CloudFormation reference,
+`AWS::SecretsManager::Secret`), and the deploy that introduces the map form makes that change. That
+deploy therefore replaces a seeded value with the placeholder: seed the map again after it.
 
 ## 4. Phase-2 deploy: the function and the API
 
@@ -98,8 +112,10 @@ AIRLOCK_LIVE_SMOKE=1 python -m pytest safe_agents/channels/tests/test_airlock_li
 ```
 
 The opt-in live smoke resolves everything from the stack exports and drives the deployed endpoint
-through the gate matrix (bad token / unmapped / expired / valid / replay), drains the accepted
-queue, and runs the `ingest_chain` bridge both ways. Drop records land PII-safe in the audit
+through the gate matrix (bad token / unmapped / a peer claiming another identity / expired / valid
+/ replay), drains the accepted queue, and runs the `ingest_chain` bridge both ways. It sends as
+`peer:example` and as `peer:stranger`, an identity the example trust map does not map, so seed an
+entry for each on the development floor. Drop records land PII-safe in the audit
 bucket under `channels/drops/`.
 
 The webhook-peer drain (`docs/channels-drain-bringup.md`) also reads this same
@@ -180,9 +196,10 @@ Enabling the Bedrock classifier screen is config only — no base code changes:
 ## Operational boundaries (by design; know them)
 
 - **Status 200 always.** A 5xx would make the provider retry, the retry would dedupe, and the
-  record would strand. The body says `{"ok": true}` to everyone except a sender the airlock
-  authenticated and mapped, which is told only whether a refusal before the screen is permanent
-  or transient (`channels/ADAPTERS.md` §"What the sender is told"). Consequence: misconfiguration
+  record would strand. The body says `{"ok": true}` to everyone except a sender that presented
+  its own token and whose identity the trust map holds, which is told only whether a refusal
+  before the screen is permanent or transient (`channels/ADAPTERS.md` §"What the sender is
+  told"). A token holder learns nothing about any identity but its own. Consequence: misconfiguration
   (a missing env var, an unreachable webhook-token secret) is silent to callers: the airlock
   answers `{"ok": true}` while dropping everything, visible only in the logs. The stack now ships
   the alarms for this: metric filters on the `handler_error` (hard failure — the handler threw,

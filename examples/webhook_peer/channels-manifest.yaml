@@ -17,8 +17,11 @@
 # operator's to get right.
 zone: webhook-peer-example
 
-# The signed-webhook adapter: the peer proves authenticity with a shared secret token
-# in this header (the token itself lives in Secrets Manager, never in the manifest).
+# The signed-webhook adapter: each peer proves authenticity with its own secret token
+# in this header. The tokens live in Secrets Manager, never in the manifest, as a JSON
+# map with one entry per peer, keyed by the trust map's `channel_identity` below:
+# {"peer:example": "<token>"}. The token names the peer, so a body claiming another
+# identity is refused.
 adapter:
   channel_type: webhook
   token_header: x-airlock-token

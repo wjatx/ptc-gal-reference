@@ -511,6 +511,8 @@ def test_a_verification_key_without_a_full_scope_is_refused(monkeypatch, entry):
 
 class _RecordingAdapter:
     channel_type = "webhook"
+    # Stands in for the webhook adapter, whose gate-1 token names the sender.
+    credential_per_sender = True
 
     def __init__(self, envelope: EventTrigger) -> None:
         self.calls: list[str] = []
@@ -595,7 +597,10 @@ def test_forged_chain_drops_before_trust_map(signer_and_resolver):
     assert [d.reason for d in drops] == [SIGNATURE_INVALID]
     # Quarantined before gate 5 runs. The one lookup is the side-effect-free one
     # after gate 2 that decides whether the sender is told a refusal class
-    # (channels/ADAPTERS.md §"What the sender is told"); gate 5 would be a second.
+    # (channels/ADAPTERS.md §"What the sender is told"), made because this
+    # adapter's credential is per sender; gate 5 would be a second. For an
+    # adapter whose credential is shared the count is zero
+    # (test_dispatch_outcome.py::test_the_mapped_lookup_is_made_only_for_a_per_sender_credential).
     assert tm.resolves == 1
 
 
@@ -1045,7 +1050,7 @@ def test_forged_payload_ref_envelope_drops_at_the_webhook_gate(signer_and_resolv
     wire JSON, the real webhook adapter's schema gate, then gate 3.5."""
     signer, resolver = signer_and_resolver
     token = "s3cr3t-token"
-    adapter = SignedWebhookAdapter(WebhookAdapterConfig(), token)
+    adapter = SignedWebhookAdapter(WebhookAdapterConfig(), {"peer:example": token})
 
     def receive(wire: dict):
         drops: list[Any] = []
@@ -1578,7 +1583,7 @@ def _receive_at(zone: str, wire: str, resolver, dedupe_store: set):
     drops: list[Any] = []
     out = dispatch(
         WebhookRequest(headers={"x-airlock-token": token}, body=wire),
-        adapter=SignedWebhookAdapter(WebhookAdapterConfig(), token),
+        adapter=SignedWebhookAdapter(WebhookAdapterConfig(), {"peer:example": token}),
         trust_map=_trust_map(),
         screen=None,
         verify_chain=make_gate(resolver),

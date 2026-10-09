@@ -27,9 +27,11 @@ from safe_agents.channels.manifest import (
     load_channels_manifest,
 )
 from safe_agents.channels.schemas import EventTrigger
-from safe_agents.channels.webhook import SignedWebhookAdapter
+from safe_agents.channels.webhook import SignedWebhookAdapter, WebhookRequest, WebhookTokenMapError
 
-_TOKEN = "example-token"
+# The webhook token secret as stored: one entry per peer. The owner factory takes
+# whatever string it is handed as the bot's one token.
+_TOKEN = '{"peer:example": "example-token"}'
 # The zone the manifests built here name. Any id will do; none is a default.
 _ZONE = "example-airlock"
 
@@ -68,6 +70,21 @@ def test_build_airlock_zone_only_manifest_is_off_and_drops_everything():
     assert rt.adapter.channel_type == "webhook"
     # Empty trust map ⇒ no sender resolves ⇒ dispatch gate 5 drops (unmapped).
     assert rt.trust_map.resolve("webhook", "peer:example") is None
+
+
+def test_a_webhook_airlock_refuses_a_bare_token_secret():
+    """The shared single-token form is refused at build, by name, so the cold
+    start fails rather than authenticating every peer as no one."""
+    with pytest.raises(WebhookTokenMapError, match="bare token string"):
+        build_airlock(ChannelsManifest(zone=_ZONE), token="example-token")
+
+
+def test_an_owner_airlock_takes_its_token_as_a_bare_string():
+    manifest = ChannelsManifest(zone=_ZONE, adapter=OwnerAdapterConfig())
+    adapter = build_airlock(manifest, token="example-token").adapter
+    assert adapter.credential_per_sender is False
+    request = WebhookRequest(headers={"x-airlock-token": "example-token"}, body="")
+    assert adapter.verify_token(request) is True
 
 
 def test_unknown_screen_kind_raises_loudly():

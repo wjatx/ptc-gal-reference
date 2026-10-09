@@ -62,9 +62,9 @@ class OwnerInboundAdapter(InboundAdapter):
     """Owner-command adapter: the owner sends a raw command, not an envelope.
 
     `verify_token` (gate 1) is a constant-time compare of the configured header
-    against the shared token, run before the body is parsed — byte-identical to
-    the webhook adapter. `extract_identity` (gate 2) reads the sender identity
-    from the JSON body. `normalize` (gate 3) is the heart: it parses the raw
+    against the bot's one shared token, run before the body is parsed. Unlike
+    the webhook adapter, whose tokens are per peer, this token names no sender,
+    so `extract_identity` (gate 2) reads the sender identity from the JSON body. `normalize` (gate 3) is the heart: it parses the raw
     command, classifies it as `command` vs `approval`, resolves the address
     token to a claimed principal through the `routing` block, and constructs a
     fresh-chain `EventTrigger` with a single seed provenance hop.
@@ -78,6 +78,13 @@ class OwnerInboundAdapter(InboundAdapter):
     # there is no chain signature to verify (channels/ADAPTERS.md).
     originates_envelope = True
 
+    # One token per bot, by the transport's design: every owner shares it, so
+    # gate 1 does not say which owner sent the request, and `credential_per_sender`
+    # stays False. Its senders are therefore told nothing on any path, which
+    # costs nothing here: the chat transport in front of this adapter discards
+    # the response body.
+    credential_per_sender = False
+
     def __init__(
         self, config: "OwnerAdapterConfig", token: str, routing: dict[str, str], zone: str
     ) -> None:
@@ -85,15 +92,25 @@ class OwnerInboundAdapter(InboundAdapter):
         # `channel_type: str` — the airlock resolves the trust map against it.
         self.channel_type = config.channel_type
         self._token_header = config.token_header
-        self._token = token
+        # Compared as bytes: `hmac.compare_digest` refuses a non-ASCII str, and
+        # a header is whatever the caller sent.
+        try:
+            self._token = token.encode("utf-8")
+        except UnicodeEncodeError:
+            # `from None`: the codec's message names a character of the token.
+            raise ValueError("owner token is not encodable as UTF-8") from None
         self._routing = dict(routing)
         self._zone = zone
 
     def verify_token(self, request: Any) -> bool:
         provided = request.headers.get(self._token_header)
-        if provided is None:
+        if not isinstance(provided, str):
             return False
-        return hmac.compare_digest(provided, self._token)
+        try:
+            presented = provided.encode("utf-8")
+        except UnicodeEncodeError:  # a lone surrogate matches no token: fail gate 1, never raise
+            return False
+        return hmac.compare_digest(presented, self._token)
 
     def extract_identity(self, request: Any) -> str:
         # Any parse/shape failure propagates → dispatch's gate 2 drops `malformed`.
