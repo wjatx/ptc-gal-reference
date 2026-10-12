@@ -115,6 +115,14 @@ through the real `decide()`, and pins a single SHA-256 over the canonicalized `(
 pairs. The space decomposes as **24 call points × 3,072 fact points = 73,728**, which is the figure
 `docs/PTC.md` §5, `docs/lf-standards-brief.md` and `ptc-gal-standards/PTC-SPEC.md` cite.
 
+A Facts field added after that figure was fixed is swept as a further slice rather than folded in.
+`Facts.destination_composed` (the opt-in composed-destination hold, PTC-52) is the first: its off
+value is the Facts default, so the published 73,728 points and `GOLDEN_CORPUS_DIGEST` are its off
+slice and did not move, which is the evidence that the control changes nothing while it is off.
+Its on slice is another 73,728 points pinned as `GOLDEN_DESTINATION_ON_DIGEST`, and
+`test_on_slice_moves_only_tainted_composed_points` checks point by point that only the points the
+rule claims moved.
+
 It exists for two jobs:
 
 - **The reproducible basis for the policy-language decision.** Keeping the custom pure PDP over Cedar and

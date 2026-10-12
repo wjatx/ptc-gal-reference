@@ -129,7 +129,7 @@ gap this table exists to make visible.
 
 | # | Channel | Enters at | Mechanical defense | Pinned by |
 |---|---|---|---|---|
-| 1 | Connector/tool results returned to the agent (the primary injection carrier) | `safe_agents/broker/runtime/pep.py:1004` | No content filtering, by design. A successful external read self-ingests `connector:{tool}.{op}` into the broker-held turn (`pep.py:1045`); taint is non-strippable (`safe_agents/broker/taint/context.py:81`); `tainted_external_write` escalates the next external write (`safe_agents/broker/pdp/engine.py:266`) | `test_taint_self_ingest.py:108`, `test_turn_identity.py` |
+| 1 | Connector/tool results returned to the agent (the primary injection carrier) | `safe_agents/broker/runtime/pep.py:1004` | No content filtering, by design. A successful external read self-ingests `connector:{tool}.{op}` into the broker-held turn (`pep.py:1045`); taint is non-strippable (`safe_agents/broker/taint/context.py:81`); `tainted_external_write` escalates the next external write (`safe_agents/broker/pdp/engine.py:333`) | `test_taint_self_ingest.py:108`, `test_turn_identity.py` |
 | 2 | Accepted channel envelopes delivered to the consumer's receiver | `safe_agents/channels/drain/handler.py:229,353` | Chain taint is ingested into the same broker-held turn before the receiver runs; the receiver's facade exposes no turn controls; the provider path is honored from deploy env, not the message (#126 tracks moving it fully image-baked) | `test_drain_handler.py:183,197,208` |
 | 3 | Tool descriptions served to the wrapped model by the MCP gateway | `safe_agents/broker/gateway/surface.py:130` | Defense by absence: descriptions are composed from the broker's own classification, never from anything a tool server said | `test_gateway_surface.py:60` |
 
@@ -137,7 +137,7 @@ gap this table exists to make visible.
 
 | # | Channel | Enters at | Mechanical defense | Pinned by |
 |---|---|---|---|---|
-| 4 | Agent-authored `/call` fields (tool, op, args, confidence, idempotency key) | `safe_agents/broker/prototype/broker_server.py:1030`; `safe_agents/broker/gateway/surface.py:198` | Unclassified `(tool, op)` is denied and recorded before the PDP; a malformed confidence artifact is a loud deny and a missing one draws the worst-case budget; the idempotency key cannot set turn identity; the egress arg is byte-capped and budget-metered | `test_runtime.py:551,568`, `test_gateway_surface.py:93,129` (name invariance and unclassified refusal); `test_confidence_wiring.py` and the read-gating egress cases pin the confidence and egress halves |
+| 4 | Agent-authored `/call` fields (tool, op, args, confidence, idempotency key) | `safe_agents/broker/prototype/broker_server.py:1145`; `safe_agents/broker/gateway/surface.py:198` | Unclassified `(tool, op)` is denied and recorded before the PDP; a malformed confidence artifact is a loud deny and a missing one draws the worst-case budget; the idempotency key cannot set turn identity; the egress arg is byte-capped and budget-metered; with the opt-in composed-destination knob on, a declared destination arg supplied on a tainted turn is held as an external write | `test_runtime.py:551,568`, `test_gateway_surface.py:93,129` (name invariance and unclassified refusal); `test_confidence_wiring.py` and the read-gating egress cases pin the confidence and egress halves; `test_composed_destination.py` pins the destination hold |
 | 5 | Inbound envelopes at the airlock (peer webhook, owner transport) | `safe_agents/channels/airlock/handler.py:280,297`; `safe_agents/channels/webhook.py:163,179`; `safe_agents/channels/owner.py:107` | Per-sender constant-time token verify before any body parse (each peer's token names that peer; the owner transport's one token names no sender); schema check; identity/transport binding; exact-match trust map as sole authorization authority; the stamp overwrites any wire `sender_class`; the status is 200 on every path, and the body is `{"ok": true}` toward every sender except one that presented its own token and whose identity the trust map holds, which learns only whether a refusal before the screen is permanent or transient, so a stranger gets no error oracle, a token holder learns nothing about any identity but its own, and no sender gets a verdict on content (`channels/ADAPTERS.md` §"What the sender is told") | `test_adapters.py`, `test_dispatch_outcome.py`, `test_airlock_handler.py`, `test_drain_owner.py:243,301` |
 | 6 | Sender-asserted provenance chains feeding turn taint | `safe_agents/channels/drain/handler.py:340` | The label floor: a source is trusted only when its chain label is trusted AND the receiver's own map trusts it, so a forged `trusted` stamp launders nothing. The broker-side ingest surfaces (`session_turn`, `ingested_sources`) are wired to no agent-facing route | `test_trust_map.py:195,240`, `test_drain_handler.py` |
 | 7 | MCP discovery output: server-advertised names, descriptions, schemas | `safe_agents/broker/mcp/client.py:93` | Two-key admission as a pure function: undeclared coordinates are UNLISTED, a hash mismatch is DRIFTED and uncallable, the description sits deliberately inside the signed set, duplicate names fail closed, and `server_id` comes from our config, never the server | `test_mcp_discovery.py:102,133`, `test_mcp_host.py` |
@@ -183,17 +183,21 @@ reviewer.
 - **Taint gates writes, never reads or reasoning.** The floor cut fires on a tainted external
   write; reads taint but proceed (bounded only by opt-in envelope knobs), internal writes are not
   taint-gated, and enforcement today is the two-level projection of the Biba lattice, not
-  multi-level (`broker/TAINT.md` §1.1, §5).
+  multi-level (`broker/TAINT.md` §1.1, §5). The one opt-in exception is the composed-destination
+  hold below, which ships off.
 - **The broker does not stop request forgery inside a tool server.** An attacker who plants an
   address in text the agent reads can have a tool fetch it from network position the attacker
-  lacks, and a tainted read is allowed like any other read. A server that follows a redirect, or
+  lacks, and by default a tainted read is allowed like any other read. A server that follows a redirect, or
   resolves a name to an internal address, does so after the broker has decided. No list of
   approved destinations is offered at the broker, because the broker sees an argument and not the
   connection, and a list checked against the argument is defeated by the redirect. Containment at
   a boundary around the server closes the gap: only the component that opens the connection, or a
-  network boundary around it, can check where a request lands. PTC §6.4 (PTC-52, tracked in #178)
-  adds a hold on an agent-composed destination on a tainted turn. That narrows the gap, it does
-  not close it, and it is not yet implemented (`broker/TAINT.md` §6.1).
+  network boundary around it, can check where a request lands. PTC §6.4 (PTC-52, #178) adds a
+  hold on an agent-composed destination on a tainted turn: with
+  `Envelope.escalate_composed_destinations` on, a call that supplies its op's image-baked
+  `ToolOp.destination_arg` is decided as an external write and held for a human. It ships off.
+  It narrows the gap and does not close it, because the hold decides on the argument and a
+  destination a human approved can still redirect (`broker/TAINT.md` §6.1).
 - **The screen is additive and statistical.** It ships OFF, may only refuse, and an injection that
   fools it gains nothing it did not already have; nothing in the deterministic floor depends on it
   (`channels/SCREENING.md`).

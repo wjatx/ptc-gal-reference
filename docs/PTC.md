@@ -86,7 +86,7 @@ data must not influence a higher-integrity action without a logged endorsement):
     reason to consider Cedar; it does not reach the ordering property.
   - **Ordering does not survive a direct port.** One policy per rule agrees on only 71.27% of inputs:
     75.17% match more than one determining policy, and Cedar returns them unordered. A tainted +
-    external + irreversible in-loop write matches three forbids; the PDP must return rule 11, and
+    external + irreversible in-loop write matches three forbids; the PDP must return `tainted_external_write`, and
     that reason string lands on the hash-chained audit record.
   - **Three of the five verbs degrade.** Cedar policy bodies must evaluate to `bool` — there is no
     value channel, so `transform` (which must produce `op` + clamped `args`) is not expressible at

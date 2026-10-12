@@ -77,9 +77,25 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # Kept as a literal so the change in the hash is a recorded fact and not only a
 # comparison between two values computed by the code under test.
 _MINIMAL_HASH_BEFORE = "sha256:6599616c5aad7b595d35e3bb3d87d7d4c0f47bf7225c32fb610cba55d7e0534d"
+# The same envelope just after the field was removed.
+_MINIMAL_HASH_AFTER_RETIREMENT = (
+    "sha256:d6bb46f9a7f8714a063646e6dfe180d80dc8a2ac619d5964b29c67065f814fb0"
+)
 # The same envelope now. A change to this value re-quarantines every grant in
 # every deployment, so it moves only with a deliberate, documented change.
-_MINIMAL_HASH_NOW = "sha256:d6bb46f9a7f8714a063646e6dfe180d80dc8a2ac619d5964b29c67065f814fb0"
+#
+# 2026-10-11: adding `Envelope.escalate_composed_destinations` (#178) moved it
+# from _MINIMAL_HASH_AFTER_RETIREMENT, because the knob is dumped, and hashed,
+# like every other field. That is acceptable before release: the retirement
+# above already requires every floor to re-seed its stored envelope and
+# re-attest every grant at its next redeploy, so this moves nothing that is
+# not already moving. Hiding the field from the dump while it is off would
+# have kept the old value, at the price of an envelope whose stored bytes do
+# not say what it is.
+_MINIMAL_HASH_NOW = "sha256:98e6db19bede3d5eae5a89aa36bc8cec1bd9dc0ec2cbf4b944ba826e342792ef"
+# The fields added since the retirement, at their defaults. Removing them from
+# today's dump recovers the dump the retirement left.
+_ADDED_SINCE_RETIREMENT = {"escalate_composed_destinations": False}
 
 
 def _canonical_hash(dump: dict) -> str:
@@ -231,10 +247,17 @@ def test_the_minimal_envelope_hash_is_pinned_and_differs_from_before():
 def test_the_old_hash_is_the_new_dump_plus_the_null_the_field_used_to_write():
     """The whole difference between the two bases is one key. This is why an
     envelope that never set the block is affected: the old dump carried the
-    key as null and the hash covers the dump."""
+    key as null and the hash covers the dump. Every key added since is
+    accounted for too, so each move of the pinned value is explained."""
     dump = Envelope(polarity="abstain").model_dump(mode="json")
     assert _canonical_hash(dump) == _MINIMAL_HASH_NOW, f"{A2}: the hash basis is not the dump"
-    assert _canonical_hash({**dump, "allowlists": None}) == _MINIMAL_HASH_BEFORE, (
+    for name, default in _ADDED_SINCE_RETIREMENT.items():
+        assert dump[name] == default, f"{A2}: {name} is not dumped at its default"
+    retired = {k: v for k, v in dump.items() if k not in _ADDED_SINCE_RETIREMENT}
+    assert _canonical_hash(retired) == _MINIMAL_HASH_AFTER_RETIREMENT, (
+        f"{A2}: the move since the retirement is not explained by the keys added since"
+    )
+    assert _canonical_hash({**retired, "allowlists": None}) == _MINIMAL_HASH_BEFORE, (
         f"{A2}: the pre-retirement hash is no longer explained by the removed key alone"
     )
 

@@ -102,6 +102,8 @@ class ToolOpTable:
 #               can't widen). False ONLY when a mistake is both irreversible AND
 #               unbounded — rule 8 then requires approval every call. Omit for reads.
 #   egress_arg: name of the arg whose value egresses to the provider.
+#   destination_arg: name of the arg that says where the request goes; read only by
+#               the opt-in composed-destination hold (broker/TAINT.md §6.1).
 # ---------------------------------------------------------------------------
 
 CATALOG: list[ToolOp] = [

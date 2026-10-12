@@ -13,14 +13,16 @@ Rule table — evaluated in priority order, first match wins:
   4.  confidence_below_bar_escalate — WRITE: below the confidence bar, escalation budget available
   5.  confidence_below_bar_deny    — WRITE: below the confidence bar, escalation budget exhausted
   6.  read_query_exfil_deny        — read: query egress byte cap / period budget exceeded
-  7.  read_rung_gate               — read: in-loop external read from an untrusted source
-  8.  cap_budget_breached          — capacity / rate budget breached (reads now draw it too)
-  9.  read_allow                   — read: all read guards above passed → allow
-  10. transform_to_safer_op        — PIP supplied a safer op; downgrade the write
-  11. tainted_external_write       — prompt-injection cut: taint + external + write
-  12. external_irreversible        — high-blast: external + irreversible → require_approval
-  13. in_loop_write                — in-loop: every write needs explicit human approval
-  14. supervised_write_allow       — on-loop / out-of-loop write: allow (guards above passed)
+  7.  tainted_composed_destination — knob ON: taint + agent-supplied destination arg →
+                                     decided as an external write (PTC-52; ships OFF)
+  8.  read_rung_gate               — read: in-loop external read from an untrusted source
+  9.  cap_budget_breached          — capacity / rate budget breached (reads now draw it too)
+  10. read_allow                   — read: all read guards above passed → allow
+  11. transform_to_safer_op        — PIP supplied a safer op; downgrade the write
+  12. tainted_external_write       — prompt-injection cut: taint + external + write
+  13. external_irreversible        — high-blast: external + irreversible → require_approval
+  14. in_loop_write                — in-loop: every write needs explicit human approval
+  15. supervised_write_allow       — on-loop / out-of-loop write: allow (guards above passed)
   (fallback)                      — default-deny: write with no permitting rule matched
 
 Reads: the former blanket ``read_allow_by_scope`` (old rule 2) is gone. A
@@ -129,9 +131,9 @@ def _approval_or_deny(call: BrokeredCall, facts: Facts, reason: str) -> Decision
     """Return require_approval if a human is reachable; deny otherwise.
 
     THE single polarity seam. Every rule that must fall back when it cannot act
-    autonomously (in-loop write, tainted/irreversible external write, and the
-    in-loop external read rung-gate) routes through HERE — no caller may
-    bake its own require_approval-vs-deny fallback. The polarity-design workstream
+    autonomously (in-loop write, tainted/irreversible external write, a tainted
+    composed destination, and the in-loop external read rung-gate) routes through
+    HERE — no caller may bake its own require_approval-vs-deny fallback. The polarity-design workstream
     will make this dispatch on ``Envelope.polarity`` (abstain-is-safe vs
     positive-safe-action) at this one point; keeping the fallback centralized is
     what lets that land without touching any rule. (Deny/approval literals live
@@ -253,7 +255,30 @@ RULES: list[Rule] = [
         ),
         action=lambda c, f: Deny(kind="deny", reason="query egress bound exceeded"),
     ),
-    # 7. Read: in-loop external read rung-gate. An in-loop grant means every
+    # 7. A destination the agent composed, on a tainted turn (PTC §6.4, PTC-52).
+    #    destination_composed is True only when Envelope.escalate_composed_destinations
+    #    is on AND the call supplies its op's image-baked ToolOp.destination_arg, so with
+    #    the knob off this rule can never fire. The call is then decided as an external
+    #    write, so it sits where the write path decides one: after the denies and
+    #    abstains above it and after the capacity bound (rule 9 comes later in the
+    #    table, so this predicate checks the cap itself), and before the in-loop
+    #    rung-gate, read_allow and the grant-level write rules, as
+    #    tainted_external_write sits before in_loop_write. An external write is
+    #    excluded: the standing cut (rule 12) already holds it and keeps its own
+    #    reason. Routes through the single polarity seam.
+    Rule(
+        name="tainted_composed_destination",
+        predicate=lambda c, f: (
+            c.taint.tainted
+            and f.destination_composed
+            and not f.cap_budget_breached
+            and not (c.manifest.external and c.manifest.effect == "write")
+        ),
+        action=lambda c, f: _approval_or_deny(
+            c, f, "tainted composed destination: decided as an external write"
+        ),
+    ),
+    # 8. Read: in-loop external read rung-gate. An in-loop grant means every
     #    action needs a human; that must bind reads too, not only writes — an external
     #    read pulls untrusted content across a trust boundary. A read whose source is in
     #    the consumer's trusted_read_sources set (read_source_trusted) or held at on/
@@ -269,7 +294,7 @@ RULES: list[Rule] = [
         ),
         action=lambda c, f: _approval_or_deny(c, f, "in-loop external read requires approval"),
     ),
-    # 8. Capacity / rate budget breached. Reads now draw this cap too: the
+    # 9. Capacity / rate budget breached. Reads now draw this cap too: the
     #    former read_allow_by_scope short-circuited before this rule, leaving reads
     #    uncapped — deleting it routes reads through here.
     Rule(
@@ -277,7 +302,7 @@ RULES: list[Rule] = [
         predicate=lambda c, f: f.cap_budget_breached,
         action=lambda c, f: Deny(kind="deny", reason="capacity budget breached"),
     ),
-    # 9. Read: all read-path guards above (exfil bound, rung-gate, capacity) passed →
+    # 10. Read: all read-path guards above (exfil bound, rung-gate, capacity) passed →
     #    allow. The error-budget rules are write-scoped, so a read reaches here without
     #    drawing them. Placed after the cap rule so a read is capped, and before the
     #    write-path rules so it never falls through to a write predicate.
@@ -286,9 +311,9 @@ RULES: list[Rule] = [
         predicate=lambda c, f: c.manifest.effect == "read",
         action=lambda c, f: Allow(kind="allow"),
     ),
-    # 10. Transform: the PIP has supplied a safer op to substitute (e.g. send→draft).
+    # 11. Transform: the PIP has supplied a safer op to substitute (e.g. send→draft).
     #    Fires only on untainted external reversible writes — tainted external writes
-    #    must go through require_approval (rule 11), not a silent downgrade.
+    #    must go through require_approval (rule 12), not a silent downgrade.
     Rule(
         name="transform_to_safer_op",
         predicate=lambda c, f: (
@@ -300,7 +325,7 @@ RULES: list[Rule] = [
         ),
         action=lambda c, f: Transform(kind="transform", op=f.transform_op, args=c.args),
     ),
-    # 11. Tainted turn + external write: the structural prompt-injection cut.
+    # 12. Tainted turn + external write: the structural prompt-injection cut.
     #    "Read this email, then wire the money" cannot fire autonomously however
     #    persuasive the email. Taint propagates from untrusted sources at ingestion;
     #    the model never judges whether content looks malicious.
@@ -311,11 +336,11 @@ RULES: list[Rule] = [
         ),
         action=lambda c, f: _approval_or_deny(c, f, "tainted external write"),
     ),
-    # 12. External + NOT recoverable (high-blast): require_approval always.
+    # 13. External + NOT recoverable (high-blast): require_approval always.
     #    reversible=False means a mistake is both irreversible AND unbounded — e.g.
     #    payments.transfer, email.send. An op that is unrecoverable-but-bounded (a fixed
     #    broker-held destination, like notify.send) is reversible=True and does NOT fire
-    #    here; it's allowable autonomously on an untainted turn (rule 14).
+    #    here; it's allowable autonomously on an untainted turn (rule 15).
     Rule(
         name="external_irreversible",
         predicate=lambda c, f: (
@@ -325,7 +350,7 @@ RULES: list[Rule] = [
         ),
         action=lambda c, f: _approval_or_deny(c, f, "irreversible external write"),
     ),
-    # 13. In-loop: the grant contract requires human approval for every write.
+    # 14. In-loop: the grant contract requires human approval for every write.
     Rule(
         name="in_loop_write",
         predicate=lambda c, f: (
@@ -333,7 +358,7 @@ RULES: list[Rule] = [
         ),
         action=lambda c, f: _approval_or_deny(c, f, "in-loop write requires approval"),
     ),
-    # 14. On-loop / out-of-loop: allow. All high-risk cases filtered above.
+    # 15. On-loop / out-of-loop: allow. All high-risk cases filtered above.
     Rule(
         name="supervised_write_allow",
         predicate=lambda c, f: (

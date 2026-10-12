@@ -417,7 +417,7 @@ say "14. DEMONSTRATION 1 — the sandbox permits, the broker refuses"
 # dependency inside the cluster arm, which this epic deliberately does not carry.
 #
 # Safe to run after demonstration 2 even though the turn is now tainted: every call it
-# makes is either a READ (rule 11 is taint + external + WRITE, so reads are unaffected)
+# makes is either a READ (rule tainted_external_write is taint + external + WRITE, so reads are unaffected)
 # or is denied at the manifest layer before any taint rule is reached.
 run_leg safe-agents-demo-sandbox 58-job-demo-sandbox.yaml "agent / sandbox-vs-broker"
 

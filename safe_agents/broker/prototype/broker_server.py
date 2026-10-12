@@ -72,8 +72,9 @@ import os
 import signal
 import sys
 import threading
+from collections.abc import Mapping
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import TYPE_CHECKING, Callable, Mapping
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -288,6 +289,34 @@ class _OverlaySecrets:
             raise
 
 
+def supplies_destination(call: BrokeredCall) -> bool:
+    """Does this call carry a value for its op's declared destination arg?
+
+    This is what "a destination the agent composed" (PTC §6.4) means here. Every
+    arg on a BrokeredCall came from the agent's request (``handle_request`` copies
+    ``request.args`` verbatim), so on a tainted turn a destination the call supplies
+    is one an attacker could have chosen. Operationally:
+
+    - no ``ToolOp.destination_arg`` declared → False: the op takes no destination
+      the agent can choose, and the control never touches it;
+    - args a mapping → True when the declared key is PRESENT, whatever its value
+      (null and "" included: the broker cannot know how a connector reads them);
+    - args absent (None) → False: the agent supplied nothing, so the connector's
+      own default is not the agent's choice;
+    - args of any other shape → True, toward less authority: the broker cannot
+      read them by name, so it cannot rule the destination out.
+
+    The declaration is a top-level arg name, as ``egress_arg`` is; a destination
+    nested inside another arg is not seen. Pure: no I/O.
+    """
+    destination = call.manifest.destination_arg
+    if destination is None or call.args is None:
+        return False
+    if isinstance(call.args, Mapping):
+        return destination in call.args
+    return True
+
+
 def _make_pip(
     grant_store,
     enforcement_store,
@@ -301,6 +330,7 @@ def _make_pip(
     clock: Callable[[], datetime.datetime] | None = None,
     sub_grant_store=None,
     clock_skew: datetime.timedelta = ZERO_SKEW,
+    escalate_composed_destinations: bool = False,
 ):
     """Build the real PIP: per call, read grant (presence + level) from the grant
     store and the cap-budget fact from the real counter. The counter_key MUST match
@@ -319,6 +349,12 @@ def _make_pip(
         cumulative byte budget. The PIP only READS the ``…:query_bytes`` counter (it
         runs twice per request and MUST stay side-effect-free); the PEP does the single
         metered increment after a successful read.
+
+    ``escalate_composed_destinations`` (``Envelope.escalate_composed_destinations``,
+    default OFF) drives ``destination_composed``: True only when the knob is on AND
+    ``supplies_destination(call)``. Off, the fact is always False and no decision
+    moves. The knob folds into the fact here, so the PDP reads one boolean and never
+    the agent's args.
 
     The ``confidence_knob`` (``Envelope.confidence``) drives two more facts,
     both read-only:
@@ -486,6 +522,9 @@ def _make_pip(
             query_bytes_exceeded=query_bytes_exceeded,
             query_egress_breached=query_egress_breached,
             confidence_below_bar=confidence_below_bar,
+            destination_composed=(
+                escalate_composed_destinations and supplies_destination(call)
+            ),
         )
 
     return pip
@@ -1029,6 +1068,7 @@ def build_runtime(
             counter_period=manifest.counter_period,
             sub_grant_store=sub_grant_store,
             clock_skew=clock_skew,
+            escalate_composed_destinations=envelope.escalate_composed_destinations,
         ),
         enforcement_store=enforcement_store,  # type: ignore[arg-type]
         intent_store=intent_store,  # type: ignore[arg-type]

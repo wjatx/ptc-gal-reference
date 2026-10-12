@@ -27,7 +27,7 @@
 # the outbound hop's label from the broker-held turn's taint — has NO RUNTIME CALLER,
 # so the provenance chain on the published envelope is agent-authored. This
 # demonstration therefore rests on the BROKER'S VERDICT and not on the envelope, and
-# says so on screen. The verdict is decided by PDP rule 11 from ToolOp facts plus the
+# says so on screen. The verdict is decided by PDP rule tainted_external_write from ToolOp facts plus the
 # broker-held turn's taint, never from anything in the envelope, so it is unaffected.
 set -euo pipefail
 

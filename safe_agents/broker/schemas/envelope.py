@@ -310,6 +310,17 @@ class Envelope(BaseModel):
     max_query_bytes: Optional[int] = None
     query_egress_budget: Optional[float] = None
 
+    # -- Request forgery steered by injected content (PTC §6.4, PTC-52) -------
+    # On a tainted turn, a call that supplies its op's declared destination arg
+    # (ToolOp.destination_arg, image-baked) is decided as an external write: the
+    # same escalation as the standing tainted_external_write cut (PDP rule
+    # tainted_composed_destination). Ships OFF, because switched on it holds every
+    # step in which an agent reads a page and then follows a link from it. It does
+    # not stop request forgery inside a tool server (a redirect, an internal name
+    # resolution happen after the broker decides); containment at a boundary around
+    # the server is the closure (broker/TAINT.md §6.1).
+    escalate_composed_destinations: bool = False
+
     # -- Availability floor, consumer-configurable -------------------
     # Typed liveness / dead-man's-switch contract. Unset = OFF (the base ships
     # no polarity default, and an unset field must never read as a false
@@ -354,6 +365,7 @@ def compute_envelope_hash(envelope: Envelope) -> str:
     old hash is quarantined until `re-seed` re-attests it with the issuer
     signing key. Retiring `allowlists` did exactly that (#135); the value for
     the smallest envelope is pinned in `test_envelope_allowlists_retired.py`.
+    Adding `escalate_composed_destinations` moved it again (#178).
     """
     serialized = json.dumps(
         envelope.model_dump(mode="json"),

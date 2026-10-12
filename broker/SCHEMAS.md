@@ -26,7 +26,7 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 > Envelope is per-agent config that *fills* the seven base schemas above — not an eighth base contract.
 > See `core/manifest-schema.md` for the field-by-field prose.
 >
-> **Read-gating knobs, consumer-configurable.** Three Envelope fields tune how external
+> **Read-gating knobs, consumer-configurable.** Four Envelope fields tune how external
 > reads are gated; all are safe-by-default (an unset knob adds no bound):
 > - `trusted_read_sources: string[]` (default `[]`) — source ids (`connector:{tool}.{op}`) whose
 >   external reads are trusted. Consulted in BOTH halves of the read seam from one list: the PIP's
@@ -37,6 +37,15 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 > - `query_egress_budget: float | null` (default `null`) — per-period cumulative byte budget on the
 >   same egress arg; once cumulative spend reaches it, the next such read is denied. The PEP meters
 >   spend after each successful read; the PIP only reads the counter.
+> - `escalate_composed_destinations: bool` (default `false`) — PTC-52. On a tainted turn, a call
+>   that supplies its op's declared `destination_arg` (§2), a read or an internal write alike, is
+>   decided as an external write: held through the polarity seam with the reason `tainted
+>   composed destination: decided as an external write` (`broker/TAINT.md` §6.1). It does not stop request forgery inside a tool
+>   server; containment is the closure. While it is off no decision moves. It dumps like every
+>   other knob, so adding the field moved the hash of every envelope once (#178: a grant stamped
+>   under the old hash is re-attested by `re-seed`), and turning it on changes the hash as any
+>   policy change does. A manifest that turns it on with no `destination_arg` declared is refused
+>   at load.
 >
 > **Availability / liveness knob, consumer-configurable.** One Envelope field, the typed
 > dead-man's-switch, safe-by-default (unset = OFF):
@@ -79,7 +88,7 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   value is resolved under `<prefix>/connectors/<leaf>`, so a pre-prefixed value
 >   would double the prefix and miss the IAM grant.
 > - `tool_ops: list[ToolOp]` (default `[]`) — the consumer-owned ToolOp table. Each op's
->   `effect/external/reversible/egress_arg` classification travels WITH the agent here, not in a
+>   `effect/external/reversible/egress_arg/destination_arg` classification travels WITH the agent here, not in a
 >   base global; `build_runtime` compiles it into the runtime's `ToolOpTable` and the broker
 >   resolves every `(tool, op)` against it — so a consumer-defined op gates identically regardless
 >   of its name (the base owns the ToolOp *schema* + the PDP rules that key on it, never the op
@@ -244,6 +253,7 @@ interface ToolOp {
   external: boolean                // does it cross a trust boundary to an external party
   reversible?: boolean             // can a wrong action be undone (deletes a bad event) vs not (a wire)
   egress_arg?: string              // read-gating: name of the arg that egresses to the provider (e.g. "query")
+  destination_arg?: string         // PTC-52: name of the arg that says where the request goes (e.g. "url")
 }
 ```
 
@@ -266,6 +276,17 @@ Per-field notes:
   `Envelope.max_query_bytes` (per call) and its cumulative spend against `Envelope.query_egress_budget`
   (per period), and the PEP meters the bytes that actually cross the wire. `null` = the op egresses no
   agent-composed argument.
+- **manifest.destination_arg** — the name of the top-level arg whose value says where the request
+  goes (an address, a host, a path on another system). Declared in the image-baked manifest, never
+  model-supplied, and read only by the composed-destination control: with
+  `Envelope.escalate_composed_destinations` on, a tainted-turn call whose args carry this key (or
+  are present but not a mapping the broker can read by name) is decided as an external write
+  (`broker/TAINT.md` §6.1). The match is the exact key, so the declaration has to name the key the
+  connector actually reads; a case variant or alias the connector also accepts is not seen. Absent
+  = the op takes no destination the agent can choose. It dumps as `null` when unset, as
+  `egress_arg` does. A declaration is in the runtime's table and in a stored call's bytes (and so
+  in its `storedCallDigest`) whether or not the knob is on; only the control reads it, and only
+  while the knob is on.
 
 ---
 
@@ -316,7 +337,9 @@ Per-field notes:
 - **abstain.escalate** — escalation spends the **attention/escalation budget** (Budgets §5), so
   `abstain → escalate:true` is itself rationed; an adversary DoSes this channel. `abstain` is a
   first-class outcome, not a failure.
-- **Facts** — supplied by the PIP: grant presence and level, counter balances, human reachability, and
+- **Facts** — supplied by the PIP: grant presence and level, counter balances, human reachability,
+  `destination_composed` (the composed-destination knob, the op's `destination_arg` and the call's
+  args folded into one boolean, so the PDP never reads args), and
   *constructed* confidence (self-consistency / ensemble / conformal / stale — high-stakes tier
   only). Confidence is computed deterministically, never read off a raw model logprob. The
   constructed value is packaged as a typed `ConfidenceArtifact` and gated by the deterministic

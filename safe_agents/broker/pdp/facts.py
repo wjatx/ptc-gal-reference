@@ -74,3 +74,11 @@ class Facts:
     # The constructed-confidence artifact failed the Envelope.confidence bar
     # (meets_bar returned False). False when the knob/bar is unset — no bar, no gate.
     confidence_below_bar: bool = False
+
+    # The call supplies its op's declared destination arg (ToolOp.destination_arg)
+    # and the deployment has turned on Envelope.escalate_composed_destinations. The
+    # PIP folds the knob, the image-baked declaration and the agent's args into this
+    # one boolean, so the PDP never reads args. False whenever the knob is off, which
+    # is what keeps every decision what it was before the control.
+    # Read by rule tainted_composed_destination, which also requires a tainted turn.
+    destination_composed: bool = False

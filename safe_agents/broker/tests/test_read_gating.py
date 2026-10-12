@@ -366,6 +366,12 @@ def test_trusted_read_does_not_taint_and_next_write_is_not_escalated(fake_urlope
             _call("notify", "send", tainted=True, args={"message": "x"}),
             {"grant_level": AutonomyLevel.on_loop},
         ),
+        # tainted_composed_destination: a destination the agent composed (PTC-52).
+        (
+            "tainted_composed_destination",
+            _call("search", "query", tainted=True, args={"query": "x"}),
+            {"grant_level": AutonomyLevel.on_loop, "destination_composed": True},
+        ),
     ],
 )
 def test_all_fallback_rules_route_through_the_single_polarity_seam(description, call, facts_kwargs):

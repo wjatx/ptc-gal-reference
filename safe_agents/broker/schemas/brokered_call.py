@@ -7,7 +7,7 @@ See SCHEMAS.md §2 and broker/README.md §"The request → decision → audit fl
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .common import Principal
 from .evidence import ConfidenceArtifact
@@ -33,9 +33,10 @@ class ToolOp(BaseModel):
     # is small (e.g. a fixed, broker-held destination/amount the model cannot widen). False
     # only when a mistake is BOTH irreversible AND unbounded — a wire, an arbitrary external
     # send. This is the "high-blast?" fact the PDP keys on: reversible=False on an external
-    # write → require_approval every call (rule 8); reversible≠False + untainted → allowable
-    # autonomously (rules 6/10); a tainted turn requires approval regardless (rule 7). The
-    # name is shorthand for "recoverable"; absent for reads (not applicable).
+    # write → require_approval every call (rule external_irreversible); reversible≠False +
+    # untainted → allowable autonomously (transform_to_safer_op / supervised_write_allow); a
+    # tainted turn requires approval regardless (tainted_external_write). The name is
+    # shorthand for "recoverable"; absent for reads (not applicable).
     reversible: bool | None = None
     # Read-gating — the name of the arg whose value egresses to an external provider (the
     # covert-exfil channel; e.g. "query" for search.query). Code-resident, never
@@ -43,6 +44,17 @@ class ToolOp(BaseModel):
     # Envelope.max_query_bytes / query_egress_budget and the PEP meters cumulative
     # egress bytes. None (the default) = this op egresses no agent-composed argument.
     egress_arg: str | None = None
+    # Destination — the name of the arg whose value says WHERE the request goes (an
+    # address, a host, a path on another system; e.g. "url" for a fetch). Image-baked
+    # like every other ToolOp fact, never model-supplied. It is inert unless the
+    # deployment turns on Envelope.escalate_composed_destinations: then, on a tainted
+    # turn, a call that supplies this arg is decided as an external write (PDP rule
+    # tainted_composed_destination, broker/TAINT.md §6.1). None (the default) = the op
+    # takes no destination the agent can choose, and the control never touches it.
+    # No leading or trailing whitespace: a padded name is a typo for a key the connector
+    # reads, and it would satisfy the manifest's "the knob needs a declaration" check
+    # while holding nothing.
+    destination_arg: str | None = Field(default=None, pattern=r"^\S(?:.*\S)?$")
 
 
 class Taint(BaseModel):

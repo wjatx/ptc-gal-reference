@@ -397,7 +397,7 @@ def _notify_world():
 def test_transform_at_release_refuses():
     """A release never runs anything other than the bytes the human saw."""
     runtime, _sink, pip, connector, _store, intent_store = _notify_world()
-    # in-loop write with no transform available → held (rule 13).
+    # in-loop write with no transform available → held (in_loop_write).
     intent_id = _hold(
         runtime, intent_store, tool="notify", op="send", args={"body": "hello"}
     )

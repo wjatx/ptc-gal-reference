@@ -58,9 +58,9 @@ class AgentManifest(BaseModel):
     connectors: list[str] = []  # connector NAMES only, e.g. ["github"]; resolution is P2
 
     # -- Consumer-owned ToolOp classifications -------------------------
-    # The per-agent tool-operation table: each op's effect/external/reversible/egress_arg
-    # classification travels WITH the agent, not in a base global. build_runtime builds a
-    # ToolOpTable from this list and the broker resolves every call against it — so a
+    # The per-agent tool-operation table: each op's effect/external/reversible/
+    # egress_arg/destination_arg classification travels WITH the agent, not in a base
+    # global. build_runtime builds a ToolOpTable from this list and the broker resolves every call against it — so a
     # consumer-defined op gates identically regardless of its name (the base owns the
     # ToolOp *schema* + PDP rules, never the op *names*). The base ships a copyable
     # CATALOG of domain-neutral ops (safe_agents.broker.manifest.CATALOG) an author may
@@ -232,6 +232,27 @@ class AgentManifest(BaseModel):
             if not secret_name:
                 raise ValueError(f"connector_secrets[{name!r}] must be a non-empty secret leaf")
         return value
+
+    @model_validator(mode="after")
+    def _composed_destination_knob_gates_something(self) -> "AgentManifest":
+        """Refuse `envelope.escalate_composed_destinations` with no destination declared.
+
+        The control reads only `ToolOp.destination_arg`. Switched on over a table that
+        declares none, it would hold nothing while reading as enabled, the shape the
+        friction doctrine rejects for an empty knob. Fail at load and say what is
+        missing. Checked against this manifest's own envelope; an envelope loaded from
+        the store is not seen here.
+        """
+        if self.envelope.escalate_composed_destinations and not any(
+            op.destination_arg is not None for op in self.tool_ops
+        ):
+            raise ValueError(
+                "envelope.escalate_composed_destinations is on, but no tool_ops entry "
+                "declares a destination_arg, so it would hold nothing. Declare "
+                "destination_arg on each op whose argument names where a request goes, "
+                "or leave the knob off."
+            )
+        return self
 
     @model_validator(mode="after")
     def _capability_iam_pairs_with_assumed_role(self) -> "AgentManifest":

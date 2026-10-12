@@ -150,9 +150,12 @@ policy layered on top, out of scope here (`docs/friction-doctrine.md`).
 - **No silent downgrade.** `transform_to_safer_op` is explicitly blocked on a tainted write
   (`... and not c.taint.tainted`) — a tainted write escalates; it is not quietly turned into a draft.
 - **Tainted reads are allowed and audited** — they are what *taints*. Taint gates writes, not the
-  read that produced it.
+  read that produced it. One exception a deployment opts into: with
+  `Envelope.escalate_composed_destinations` on, a call that supplies its op's declared destination
+  is decided as an external write (§6.1).
 - **Internal writes (`external=False`) are not taint-gated.** The cut is the external trust boundary;
-  an internal, reversible write on a tainted turn is governed by the grant-level rules alone.
+  an internal, reversible write on a tainted turn is governed by the grant-level rules alone, under
+  the same opt-in exception (§6.1).
 
 ## 6. Read-side bounds
 
@@ -165,16 +168,20 @@ opts in per agent.
 - **Query-egress bounds** (rule `read_query_exfil_deny`): the agent-composed egress arg
   (`ToolOp.egress_arg`, e.g. `query`) is bounded per-call (`Envelope.max_query_bytes`) and
   per-period cumulative (`Envelope.query_egress_budget`); the PEP meters the bytes that actually cross
-  the wire, the PIP only reads the counter. Read-path order: exfil-deny → rung-gate → cap →
-  `read_allow`.
+  the wire, the PIP only reads the counter.
+- **Composed-destination hold** (rule `tainted_composed_destination`, §6.1):
+  `Envelope.escalate_composed_destinations` over the declared `ToolOp.destination_arg`.
+
+Read-path order: exfil-deny → composed-destination hold (only with that knob on, and never past a
+breached cap) → rung-gate → cap → `read_allow`.
 
 ### 6.1 What an attacker can still do through a read: request forgery
 
-The bounds above meter how many bytes an agent sends. None of them looks at where a request goes.
-No field names the argument that is an operation's destination, so on a tainted turn a read whose
-address came from planted text is allowed like any other read (§5). The attack is this: the agent
-reads text an attacker wrote, the text supplies an address, and a tool that holds network position
-the attacker lacks fetches it.
+The query-egress bounds above meter how many bytes an agent sends, not where a request goes. With
+the composed-destination control off, which is the default, a read on a tainted turn whose address
+came from planted text is allowed like any other read (§5). The attack is this: the agent reads
+text an attacker wrote, the text supplies an address, and a tool that holds network position the
+attacker lacks fetches it.
 
 **The broker does not stop request forgery inside a tool server.** A server that follows a
 redirect, or resolves a name to an internal address, does so after the broker has decided. An
@@ -191,12 +198,51 @@ connection, or a network boundary around it, can check where a request lands. A 
 needs this closed puts the tool server behind an egress boundary that names what it may reach. The
 broker cannot supply that from where it sits.
 
-**[deferred]** PTC §6.4 (PTC-52, tracked in #178) adds a hold at the broker: on a tainted turn, a
-call whose destination the agent composed is treated as an external write and routed through the
-§5 escalation, with the destination argument declared in the manifest beside `egress_arg`. It is a
-control a deployment may leave off. It is **not yet implemented**: `ToolOp` has no destination
-field and no rule reads one. When built it narrows the gap, because a planted address is held for
-a human. It does not close it, because a destination a human approved can still redirect.
+**The composed-destination hold (PTC §6.4, PTC-52; #178).** A deployment that turns on
+`Envelope.escalate_composed_destinations` (`schemas/envelope.py`, default off) gets this: on a
+tainted turn, a call that supplies its op's declared destination argument is decided as an external
+write. It routes through the same `_approval_or_deny` seam as the §5 cut, so it is held as
+`require_approval` where a human is reachable and denied where none is, and the hold's
+`AuditRecord.reason` reads `tainted composed destination: decided as an external write`.
+
+- **Which argument is the destination** is declared per op as `ToolOp.destination_arg`, beside
+  `egress_arg`, in the image-baked manifest's `tool_ops`. Nothing store-loaded can declare one; an
+  envelope loaded from the store can only switch the control on or off. An op that declares no
+  destination is never touched.
+- **What "the agent composed" means here.** Every argument on a brokered call came from the agent's
+  request, so on a tainted turn any destination the call supplies is one an attacker could have
+  chosen. Operationally (`prototype/broker_server.py::supplies_destination`): the call composed its
+  destination when its args are a mapping that contains the declared key, whatever its value, or
+  are not a mapping at all (the broker cannot read them by name, so it cannot rule the destination
+  out). A call with no args, or whose args omit the key, leaves the connector's own default, which
+  the agent did not choose. The declaration names a top-level argument, matched as that exact key;
+  one nested inside another argument is not seen, and neither is a case variant or alias the
+  connector also accepts, so the declaration has to name the key the connector actually reads.
+- **Where it sits.** The PIP folds the knob, the declaration and the args into one fact,
+  `Facts.destination_composed`, so the PDP never reads args. Rule `tainted_composed_destination`
+  comes after the rules that refuse first (no grant; for a write, the error-budget and
+  confidence rules; for a read, the query-egress bound; a breached capacity budget) and before
+  the in-loop rung-gate, `read_allow` and the grant-level write rules, as
+  `tainted_external_write` sits before `in_loop_write`. An external write is left to the standing cut, which already holds it and keeps
+  its own reason. A source in `trusted_read_sources` is held the same way: trust endorses what
+  the source returns, not a destination an attacker-steered call sends it to. A held call is
+  released by a human like any other hold.
+- **Off, no decision moves.** With the knob off the fact is always false, so every decision, and
+  every audit record's decision, reason and outcome, is what it would be without the field. The
+  bytes do move, and say so. A declaration is in the runtime's table and in a stored call's bytes
+  (and so in its `storedCallDigest`) whether or not the knob is on; only the control reads it. The
+  knob dumps like every other envelope field, so adding it moved the hash of every envelope once
+  (#178), and a grant stamped under the old hash is re-attested by `re-seed`; turning it on moves
+  the hash again, as any policy change does. A manifest that switches the knob on without
+  declaring any destination is refused at load, since it would hold nothing; an envelope loaded
+  from the store is not checked against the table that way.
+- **Why it ships off.** Switched on, it holds every step in which an agent reads a page and then
+  follows a link from it.
+
+It narrows the gap and does not close it: a planted address is held for a human, but the hold
+decides on the argument. A destination a human approved can still redirect, and a name the server
+resolves to an internal address is resolved after the broker has decided. Containment around the
+server, above, remains the closure.
 
 ## 7. Executable acceptance
 
@@ -215,6 +261,14 @@ The broker-side half of the memory-taint acceptance exists as tests today (`safe
   pair `test_a_source_the_consumer_trusts_records_and_does_not_taint`, ingest-before-record
   `test_taint_lands_even_when_the_record_cannot_be_written`; and through a launched gateway,
   `test_gateway_events_e2e.py::test_a_reported_read_holds_the_next_external_write_over_stdio`.
+- **Composed-destination hold (opt-in)** — `test_composed_destination.py`: what "composed" means
+  (`test_supplies_destination`), the PIP fact, the decision table including precedence and the
+  external writes left to the standing cut (`test_rule_decisions`), the declaration in a dump and
+  the envelope hash that moves with the knob (`test_envelope_hash_off_differs_from_on`), the
+  refused empty knob, the hold and its release through `build_runtime`
+  (`test_on_holds_the_composed_destination_and_names_the_rule`), and
+  `test_off_decides_and_records_as_without_the_field`. The exhaustive corpus pins the ON
+  slice and keeps the OFF digest (`test_pdp_corpus.py::test_on_slice_moves_only_tainted_composed_points`).
 - **Trusted-read relief + regression pair** — `test_read_gating.py`:
   `test_untrusted_read_taints_and_escalates_next_write` vs
   `test_trusted_read_does_not_taint_and_next_write_is_not_escalated` (the only difference is

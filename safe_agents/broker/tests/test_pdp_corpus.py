@@ -102,6 +102,14 @@ from safe_agents.broker.schemas.common import AutonomyLevel
 #     transform 192). The rule table was not touched.
 GOLDEN_CORPUS_DIGEST = "edec2f9e6f350a6bdb4020530e9cbba6aa818433f0d567fa7097219143ddb8bc"
 
+# The ON slice of the composed-destination control (PTC-52): the same 73,728 points
+# with Facts.destination_composed=True. The base digest above is the OFF slice and is
+# deliberately NOT re-minted: that it still reproduces is the proof that adding the
+# control moved no decision while it is off. Minted 2026-10-11 with the rule
+# tainted_composed_destination; which points differ from the OFF slice, and how, is
+# asserted rule-by-rule in test_on_slice_moves_only_tainted_composed_points.
+GOLDEN_DESTINATION_ON_DIGEST = "b274b715a2a8b62fc5834ae7539c0995c5350ffef9b0bb8cae006d47d96353b7"
+
 # The historical figure from the policy-language spike, published in docs/PTC.md §5,
 # docs/lf-standards-brief.md and spec/PTC-SPEC.md. Asserted here so the cited number
 # and the running artifact cannot drift apart silently.
@@ -113,8 +121,8 @@ EXPECTED_CORPUS_SIZE = 73_728
 # ---------------------------------------------------------------------------
 
 # BrokeredCall axes. `reversible` is a THREE-valued field (bool | None) and the rules
-# distinguish all three: rule 10 guards `is not False`, rule 12 guards `is False`, so
-# None behaves like True at rule 10 and like True at rule 12 — but that is an outcome
+# distinguish all three: rule 11 guards `is not False`, rule 13 guards `is False`, so
+# None behaves like True at rule 11 and like True at rule 13 — but that is an outcome
 # to be swept, not an assumption to be encoded by collapsing the axis.
 _CALL_AXES: dict[str, tuple[Any, ...]] = {
     "effect": ("read", "write"),
@@ -151,6 +159,19 @@ _FACT_AXES: dict[str, tuple[Any, ...]] = {
     "query_bytes_exceeded": (False, True),
     "query_egress_breached": (False, True),
     "confidence_below_bar": (False, True),
+}
+
+# Facts fields added after the published corpus was fixed. Each is swept as its own
+# slice over the whole base space, never folded into _FACT_AXES: the OFF value (the
+# first point) reproduces GOLDEN_CORPUS_DIGEST and the published 73,728 unchanged,
+# and every other value is a further slice with its own pin.
+#
+#   destination_composed ...... PTC-52, rule tainted_composed_destination. The PIP folds
+#                               Envelope.escalate_composed_destinations, the image-baked
+#                               ToolOp.destination_arg and the agent's args into this one
+#                               boolean, so args still never reach a predicate.
+_EXTENSION_FACT_AXES: dict[str, tuple[Any, ...]] = {
+    "destination_composed": (False, True),
 }
 
 # Held constant across the whole sweep, with the reason each one is safe to freeze.
@@ -222,15 +243,23 @@ def _axis_points(axes: dict[str, tuple[Any, ...]]) -> list[dict[str, Any]]:
     return [dict(zip(names, combo)) for combo in itertools.product(*(axes[n] for n in names))]
 
 
-def _corpus_lines() -> list[str]:
+def _corpus_lines(extension: dict[str, Any] | None = None) -> list[str]:
     """Run the whole reachable input space through decide(); return canonical lines.
 
     One line per point: ``<canonical input> => <canonical decision>``. Sorted by the
     caller, so the digest does not depend on iteration order — an alternative
     implementation may enumerate in any order and still reproduce it.
+
+    ``extension`` fixes extension axes (``_EXTENSION_FACT_AXES``) for a whole slice
+    and names them in each line's input. None is the base space: every extension
+    field at its Facts default and absent from the lines, which is the published
+    corpus exactly.
     """
+    extension = extension or {}
     calls = [(kw, _call(**kw)) for kw in _axis_points(_CALL_AXES)]
-    facts_points = [(kw, Facts(**kw)) for kw in _axis_points(_FACT_AXES)]
+    facts_points = [
+        ({**kw, **extension}, Facts(**kw, **extension)) for kw in _axis_points(_FACT_AXES)
+    ]
 
     lines: list[str] = []
     for call_kw, call in calls:
@@ -254,6 +283,12 @@ def _digest(lines: list[str]) -> str:
 def corpus() -> list[str]:
     """The full corpus, computed once for the module."""
     return _corpus_lines()
+
+
+@pytest.fixture(scope="module")
+def destination_on_slice() -> list[str]:
+    """The base space again with the composed-destination fact on (PTC-52)."""
+    return _corpus_lines({"destination_composed": True})
 
 
 # ---------------------------------------------------------------------------
@@ -379,9 +414,10 @@ def test_swept_axes_match_the_engines_read_surface() -> None:
     assert set(_CALL_AXES_PATHS) == set(_CALL_AXES), "every call axis needs a declared path"
     swept_call = set(_CALL_AXES_PATHS.values())
 
-    assert reads["any_facts"] == set(_FACT_AXES), (
+    swept_facts = set(_FACT_AXES) | set(_EXTENSION_FACT_AXES)
+    assert reads["any_facts"] == swept_facts, (
         "the engine reads Facts fields the corpus does not sweep (or vice versa): "
-        f"reads={sorted(reads['any_facts'])} swept={sorted(_FACT_AXES)}"
+        f"reads={sorted(reads['any_facts'])} swept={sorted(swept_facts)}"
     )
     assert reads["predicate_call"] == swept_call, (
         "rule predicates read BrokeredCall fields the corpus does not sweep "
@@ -417,8 +453,20 @@ def test_input_space_cardinality_decomposes_to_the_published_figure() -> None:
     assert facts_size == 3_072
     assert call_size * facts_size == EXPECTED_CORPUS_SIZE
     # Every axis point must be distinct, or the "product" is an overcount.
-    for name, points in {**_CALL_AXES, **_FACT_AXES}.items():
+    for name, points in {**_CALL_AXES, **_FACT_AXES, **_EXTENSION_FACT_AXES}.items():
         assert len(set(points)) == len(points), f"duplicate axis point on {name}"
+    # Each extension axis's first point is its OFF value, the Facts default, so the
+    # base space above IS that axis's OFF slice.
+    defaults = Facts(
+        grant_present=True,
+        grant_level=AutonomyLevel.in_loop,
+        error_budget_breached=False,
+        cap_budget_breached=False,
+        escalation_budget_available=True,
+        human_reachable=True,
+    )
+    for name, points in _EXTENSION_FACT_AXES.items():
+        assert getattr(defaults, name) == points[0], f"{name}: first point must be the default"
 
 
 # ---------------------------------------------------------------------------
@@ -453,3 +501,76 @@ def test_corpus_exercises_all_five_verbs(corpus: list[str]) -> None:
     """A total sweep of a five-verb gate must produce all five verbs."""
     verbs = {json.loads(line.split(" => ", 1)[1])["kind"] for line in corpus}
     assert verbs == {"allow", "deny", "transform", "require_approval", "abstain"}
+
+
+# ---------------------------------------------------------------------------
+# The composed-destination slice (PTC-52)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.corpus
+def test_destination_on_slice_is_total_and_digest_is_pinned(destination_on_slice: list[str]) -> None:
+    """The ON slice covers the whole base space and hashes to its own pin."""
+    assert len(destination_on_slice) == EXPECTED_CORPUS_SIZE
+    assert len(set(destination_on_slice)) == EXPECTED_CORPUS_SIZE
+    assert _digest(destination_on_slice) == GOLDEN_DESTINATION_ON_DIGEST, (
+        "the composed-destination rule's behaviour changed over the whole input space; "
+        "re-mint only with the rule-table change that caused it."
+    )
+
+
+_COMPOSED_REASON = "tainted composed destination: decided as an external write"
+
+
+@pytest.mark.corpus
+def test_on_slice_moves_only_tainted_composed_points(
+    corpus: list[str], destination_on_slice: list[str]
+) -> None:
+    """Point by point, the ON slice differs from the OFF slice exactly where the rule says.
+
+    A point moves if and only if: the turn is tainted, the call is not an external
+    write (the standing cut already holds those, under its own reason), the cap is not
+    breached, and no earlier rule decided it (no grant; a write's error-budget or
+    confidence rules; a read's egress bound). Every moved point is held through the
+    polarity seam and names the rule: require_approval with a human, deny with the
+    seam's suffix without one. Nothing that did not move may have changed at all.
+    """
+    off = {line.split(" => ", 1)[0]: line.split(" => ", 1)[1] for line in corpus}
+    moved = 0
+    for line in destination_on_slice:
+        key, decided = line.split(" => ", 1)
+        point = json.loads(key)
+        call, facts = point["call"], point["facts"]
+        assert facts.pop("destination_composed") is True
+        off_decision = off[_canonical({"call": call, "facts": facts})]
+        is_write = call["effect"] == "write"
+        earlier_rule_decides = (
+            not facts["grant_present"]
+            or (is_write and (facts["error_budget_breached"] or facts["confidence_below_bar"]))
+            or (
+                not is_write
+                and (facts["query_bytes_exceeded"] or facts["query_egress_breached"])
+            )
+        )
+        should_move = (
+            call["tainted"]
+            and not (call["external"] and is_write)
+            and not facts["cap_budget_breached"]
+            and not earlier_rule_decides
+        )
+        decision = json.loads(decided)
+        if not should_move:
+            assert decided == off_decision, point
+            continue
+        assert decision.get("reason", "").startswith(_COMPOSED_REASON), point
+        if facts["human_reachable"]:
+            assert decision["kind"] == "require_approval", point
+        else:
+            assert decision == {
+                "kind": "deny",
+                "reason": _COMPOSED_REASON + "; no human reachable for approval",
+            }, point
+        if decided != off_decision:
+            moved += 1
+    # Not vacuous: the rule must actually move a large part of the space.
+    assert moved > 1_000
