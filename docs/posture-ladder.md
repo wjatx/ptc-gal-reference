@@ -61,8 +61,11 @@ write to certain paths, and a harness's protected-path list is vendor-controlled
 extend it. So the boundary at posture 1 is one the wrapper borrows rather than one it owns.
 
 The agent's **built-in** tools are also outside the boundary. A wrapper of this shape interposes on
-tool servers; a harness's own shell, file-write and network tools are not tool servers and are not
-gated by anything the wrapper does.
+tool servers; a harness's own shell, file-write and network tools are not tool servers. A harness
+hook can carry a built-in call to the broker before it runs, and the broker answers `permit` or
+`refuse` (`broker/GATEWAY.md` G30 to G38). The harness enforces that answer, not the boundary. A
+call the hook does not carry is decided by nothing, and a hook that fails or is switched off leaves
+the call where it was. The built-ins are not confined at this posture.
 
 **What would move you up.** Not another rule. A boundary.
 

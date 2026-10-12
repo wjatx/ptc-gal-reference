@@ -47,6 +47,18 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   policy change does. A manifest that turns it on with no `destination_arg` declared is refused
 >   at load.
 >
+> **Harness-tool hold, consumer-configurable (#168).** One Envelope field, safe-by-default:
+> - `tainted_harness_hold: ToolClass[]` (default `[]`) — the harness tool classes (`file-read`,
+>   `file-write`, `file-edit`, `shell`, `web-fetch`, `web-search`, `other`) whose decision request is
+>   held on a tainted turn: a request at the reserved coordinate `harness-tool`, op
+>   `<tool_class>/<locality>` (§2), of a listed class at any locality, is routed through the
+>   polarity seam with the reason `tainted harness hold: the envelope holds this tool class on a
+>   tainted turn`, whatever effect and external the consumer declared there (`broker/TAINT.md` §5).
+>   Empty is off, and no decision moves. A class listed twice, or not a member of the set, is
+>   refused; a manifest that lists a class no `harness-tool` entry declares is refused at load. It
+>   holds only a call the harness's hook carries to the broker, and it adds no taint itself. It
+>   dumps like every other knob, so adding it moved the hash of every envelope once (#168).
+>
 > **Availability / liveness knob, consumer-configurable.** One Envelope field, the typed
 > dead-man's-switch, safe-by-default (unset = OFF):
 > - `liveness: {expected_op: string, deadline_seconds: int>0} | null` (default `null`) — the typed
@@ -93,7 +105,9 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   resolves every `(tool, op)` against it — so a consumer-defined op gates identically regardless
 >   of its name (the base owns the ToolOp *schema* + the PDP rules that key on it, never the op
 >   *names*). A grant for a class with no matching `tool_ops` entry is inert (no entry ⇒ the PEP
->   denies). Duplicate `(tool, op)` keys are rejected at load. The base ships a copy-only `CATALOG`
+>   denies). Duplicate `(tool, op)` keys are rejected at load. The reserved tool `harness-tool` is
+>   where a consumer classifies a harness's own tool calls, one entry per `<tool_class>/<locality>`
+>   op (§2); an entry there whose op is not such a pair is refused at load. The base ships a copy-only `CATALOG`
 >   of domain-neutral ops (`safe_agents.broker.manifest.CATALOG`) an author may copy in; it is
 >   **never** consulted at request time. `tool_ops` rides inside `AgentManifest` — it is not an
 >   eighth base schema.
@@ -255,6 +269,8 @@ interface ToolOp {
   egress_arg?: string              // read-gating: name of the arg that egresses to the provider (e.g. "query")
   destination_arg?: string         // PTC-52: name of the arg that says where the request goes (e.g. "url")
 }
+// A harness's own tool call is decided at the reserved tool "harness-tool", op "<tool_class>/<locality>":
+//   { tool:"harness-tool", op:"shell/project", effect:"write", external:false, reversible:true }
 ```
 
 Per-field notes:
@@ -287,6 +303,16 @@ Per-field notes:
   `egress_arg` does. A declaration is in the runtime's table and in a stored call's bytes (and so
   in its `storedCallDigest`) whether or not the knob is on; only the control reads it, and only
   while the knob is on.
+- **The reserved coordinate `harness-tool` (#168).** A harness's own tool call (its shell, its file
+  reads and writes, its web fetch) is decided at tool `harness-tool`, op `<tool_class>/<locality>`,
+  spelled as the tail of the source id `harness:<harness>/<tool_class>/<locality>`; both sides come
+  from closed sets (`schemas/harness_tool.py`). Its `ToolOp` facts are the consumer's declaration in
+  `tool_ops`, activated by an ordinary grant on that action class; the base declares no facts for
+  any class and no polarity. A class with no entry has no connectable op and is refused. The facts
+  are the consumer's classification of what the adapter reports, never an observation of the call.
+  The coordinate is never in the served registry and never a connector op: an agent-facing call
+  (`/call`, MCP `tools/call`) that names `harness-tool` is refused and recorded as `deny`/`denied`
+  before the manifest is consulted.
 
 ---
 
@@ -339,7 +365,9 @@ Per-field notes:
   first-class outcome, not a failure.
 - **Facts** — supplied by the PIP: grant presence and level, counter balances, human reachability,
   `destination_composed` (the composed-destination knob, the op's `destination_arg` and the call's
-  args folded into one boolean, so the PDP never reads args), and
+  args folded into one boolean, so the PDP never reads args), `harness_class_held` (the
+  `tainted_harness_hold` knob and the reserved coordinate's op folded into one boolean, so the PDP
+  parses no op string), and
   *constructed* confidence (self-consistency / ensemble / conformal / stale — high-stakes tier
   only). Confidence is computed deterministically, never read off a raw model logprob. The
   constructed value is packaged as a typed `ConfidenceArtifact` and gated by the deterministic
@@ -362,7 +390,7 @@ interface Intent {
   id:                  string            // stable identifier; referenced by the approval flow and AuditRecord
   materializedRequest: BrokeredCall      // the FROZEN BrokeredCall the broker executes verbatim on approval — never re-derived
   renderedForHuman:    string            // what-you-see: human-readable render pushed to the approval channel
-  status:              "pending" | "approved" | "rejected" | "expired" | "executed" | "refused"
+  status:              "pending" | "approved" | "rejected" | "expired" | "executed" | "refused" | "permitted"
   expiry:              string            // hard TTL; an undecided intent expires at this timestamp (ISO-8601 UTC), recorded as an event
   approvedBy?:         string            // the human identity that approved; absent until approval
   ts:                  string            // when this intent was created
@@ -378,14 +406,27 @@ Per-field notes:
 - **renderedForHuman** — what the approval channel shows the human ("Send this email to alice@…
   with subject '…'"). Separate from `materializedRequest` so the render can be human-friendly
   prose while execution stays typed and frozen.
-- **status** — `pending` (awaiting human decision) · `approved` (broker may execute) · `rejected`
+- **status** — `pending` (awaiting human decision) · `approved` (broker may execute; for a held
+  harness tool call, the harness's next request for the same call may be permitted once) · `rejected`
   (human declined) · `expired` (TTL passed with no human decision) · `executed` (broker ran it) · `refused`
   (a human approved, and release-time revalidation then refused: the grant was revoked or demoted,
   or the op's period budget was exhausted, between the hold and the release, or an input the
   release depends on was past its declared maximum age at the release instant; nothing ran, #9,
-  #176). A release is a decision of its own: it re-reads the frozen call, the grant and the
-  counters, and never relies on the hold's inputs or horizon.
-  Terminal states: `rejected`, `expired`, `executed`, `refused`.
+  #176) · `permitted` (a held harness tool call, at `harness-tool`: a human approved it, and a later
+  request for the same call was evaluated again and permitted once, so the harness performed it;
+  the broker ran nothing, so it is never `executed`, #168). A release is a decision of its own: it
+  re-reads the frozen call, the grant and the counters, and never relies on the hold's inputs or
+  horizon.
+  Terminal states: `rejected`, `expired`, `executed`, `refused`, `permitted`.
+  A held harness tool call (#168, `broker/GATEWAY.md` G36) moves differently once approved, because
+  the broker never runs it. Approving it moves `pending` to `approved` and nothing else: no
+  connector, no `enforce()`, no record. `approved` then waits for the harness to ask again. The next
+  request from the same principal at the same coordinate with the same input digest, inside the
+  expiry, is evaluated again; on `allow` the intent moves `approved` to `permitted` before the
+  `permitted` record is written, and on anything stricter to `refused`. An approval found past its
+  expiry moves `approved` to `expired`. Such an intent is held under an id derived from the
+  principal, the op and the input digest, so the broker finds it with a get by key, and a later
+  hold of the same call reuses the id once the earlier one has resolved.
 - **expiry** — a hard TTL. An intent the human does not act on expires; it never hangs open
   indefinitely, and an expired intent never executes. The agent cannot extend or re-issue. It is stamped
   under the clock of the process that held the call, so a release (`approve`) judges it at
@@ -415,7 +456,7 @@ Per-field notes:
   Copied into `AuditRecord.approvedBy` at execution time, and onto the refusal record when
   release-time revalidation refuses, so the tape shows who approved a release the broker declined.
 
-Intent is stored in **DynamoDB** (the same on-demand table as grants and counters). `AuditRecord.outcome = "held"` means an intent is pending; `"executed"` / `"denied"` / `"refused"` / `"failed"` are terminal, an owner's "no" writes a `"rejected"` record, and an intent that expires with no human decision writes an `"expired"` record.
+Intent is stored in **DynamoDB** (the same on-demand table as grants and counters). `AuditRecord.outcome = "held"` means an intent is pending; `"executed"` / `"denied"` / `"refused"` / `"failed"` are terminal, an owner's "no" writes a `"rejected"` record, an intent that expires with no human decision writes an `"expired"` record, and a held harness tool call that is released writes a `"permitted"` record.
 
 ---
 
@@ -435,7 +476,7 @@ interface AuditRecord {
   reason?: string
   envelopeHash: string             // the exact envelope in force when this was decided
   approvedBy?: string              // the human identity, for approved intents
-  outcome: "executed" | "denied" | "held" | "refused" | "failed" | "rejected" | "flagged" | "observed" | "expired"
+  outcome: "executed" | "denied" | "held" | "refused" | "failed" | "rejected" | "flagged" | "observed" | "expired" | "permitted"
   error?: string
   seed?: string                    // committed randomization seed, where allocation was randomized (auditable randomness)
   intentId?: string                // approval receipt — held + release records: joins a hold to its release across the intent TTL
@@ -470,6 +511,16 @@ Per-field notes:
   class as `op`, a digest of the reported subject inside `argsDigest`, and the result digest, when
   one was reported, as `resultDigest`. It is terminal, and nothing was decided or attempted by the
   broker.
+  `permitted` means the broker decided a harness's own tool call before it ran and allowed it, so
+  the harness performs it (#168). Its record carries `decision: "allow"` and the reserved coordinate
+  `tool: "harness-tool"` with `op` `<tool_class>/<locality>`; one that releases an approved hold also
+  carries `intentId`, `storedCallDigest` and `approvedBy`. It is never `executed`, which says the
+  broker ran the effect: here the broker ran nothing, and only the harness's own report afterwards
+  (`observed`) is evidence that the call ran. Its args are `{"call", "harness", "input",
+  "locality", "subject"}`, all codes or digests, so `argsDigest` binds the input digest; on a release
+  they are the re-issued request's, and `storedCallDigest` binds the held call. Its `reason` cites the
+  coordinate as the manifest's declaration (`permitted at harness-tool.<op> as declared by the
+  manifest; performed by the harness`, or `permitted once at ... on the approval of intent <id>`).
   `expired` means a held intent reached its expiry with no human decision (#163, PTC §6.12). It is
   its own outcome, never `rejected` or `denied`, so a timer never reads as a person having said no.
   Its record carries the stored call's coordinates, `decision: "require_approval"`, `reason:
@@ -478,6 +529,11 @@ Per-field notes:
   counters the promotion predicate reads (`observations`, `human_override`, `false_action`). Its
   `ts` is when the broker recorded the expiry, which a sweep interval can put after `expiredAt`.
   When the approval-queue alarm's count write fails the record is still written, with `error` set.
+  One variant: an approved harness tool call the harness did not ask for again before its expiry
+  (#168) is recorded `expired` with `reason: "approval lapsed unused: the harness did not ask again
+  before the intent expired"` and `approvedBy` set, since a human did decide. It is written when a
+  later request for the same call finds it, not by the sweep, and never once retention has removed
+  the row first (`GATEWAY.md`, Known limits).
 - **seed** — when scarcity allocation was randomized (high-stakes tier), the committed seed is logged
   (commit-reveal / VRF): unpredictable in advance, fully reconstructable after. "Why not engage that
   one?" has an answer in the log.

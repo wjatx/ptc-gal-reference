@@ -72,7 +72,7 @@ import os
 import signal
 import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import TYPE_CHECKING, Callable
 
@@ -146,6 +146,7 @@ from safe_agents.broker.schemas.common import (
     Principal,
 )
 from safe_agents.broker.schemas.envelope import Confidence
+from safe_agents.broker.schemas.harness_tool import HARNESS_TOOL, ToolClass, parse_coordinate_op
 from safe_agents.broker.taint import build_trust_map
 
 # ---------------------------------------------------------------------------
@@ -289,6 +290,25 @@ class _OverlaySecrets:
             raise
 
 
+def holds_harness_class(call: BrokeredCall, held: frozenset[ToolClass]) -> bool:
+    """Is this a harness's own call of a class `Envelope.tainted_harness_hold` lists?
+
+    True only when `held` is not empty, the call is at the reserved coordinate
+    `harness-tool`, and its op names a listed class at any locality. With `held`
+    empty it is always False, which is what keeps every decision as it was. An op
+    at the reserved tool that does not parse cannot come from a loaded manifest
+    (`AgentManifest` refuses it at load); were one to arrive, it is held while the
+    knob is on, toward less authority. Pure: no I/O.
+    """
+    if not held or call.tool != HARNESS_TOOL:
+        return False
+    try:
+        tool_class, _locality = parse_coordinate_op(call.op)
+    except ValueError:
+        return True
+    return tool_class in held
+
+
 def supplies_destination(call: BrokeredCall) -> bool:
     """Does this call carry a value for its op's declared destination arg?
 
@@ -331,6 +351,7 @@ def _make_pip(
     sub_grant_store=None,
     clock_skew: datetime.timedelta = ZERO_SKEW,
     escalate_composed_destinations: bool = False,
+    tainted_harness_hold: Collection[ToolClass] = (),
 ):
     """Build the real PIP: per call, read grant (presence + level) from the grant
     store and the cap-budget fact from the real counter. The counter_key MUST match
@@ -355,6 +376,12 @@ def _make_pip(
     ``supplies_destination(call)``. Off, the fact is always False and no decision
     moves. The knob folds into the fact here, so the PDP reads one boolean and never
     the agent's args.
+
+    ``tainted_harness_hold`` (``Envelope.tainted_harness_hold``, default empty, so
+    OFF) drives ``harness_class_held``: True only when the call is a harness's own
+    call at the reserved coordinate and its class is listed
+    (``holds_harness_class``). Empty, the fact is always False and no decision moves.
+    The PDP reads the one boolean and parses no op string.
 
     The ``confidence_knob`` (``Envelope.confidence``) drives two more facts,
     both read-only:
@@ -393,6 +420,8 @@ def _make_pip(
 
     def _now() -> datetime.datetime:
         return clock() if clock is not None else datetime.datetime.now(datetime.UTC)
+
+    held_harness_classes = frozenset(tainted_harness_hold)
 
     def pip(call: BrokeredCall) -> Facts:
         result = grant_store.get_grant(call.principal, f"{call.tool}.{call.op}")
@@ -525,6 +554,7 @@ def _make_pip(
             destination_composed=(
                 escalate_composed_destinations and supplies_destination(call)
             ),
+            harness_class_held=holds_harness_class(call, held_harness_classes),
         )
 
     return pip
@@ -1069,6 +1099,7 @@ def build_runtime(
             sub_grant_store=sub_grant_store,
             clock_skew=clock_skew,
             escalate_composed_destinations=envelope.escalate_composed_destinations,
+            tainted_harness_hold=envelope.tainted_harness_hold,
         ),
         enforcement_store=enforcement_store,  # type: ignore[arg-type]
         intent_store=intent_store,  # type: ignore[arg-type]

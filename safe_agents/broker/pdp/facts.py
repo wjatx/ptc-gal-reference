@@ -82,3 +82,11 @@ class Facts:
     # is what keeps every decision what it was before the control.
     # Read by rule tainted_composed_destination, which also requires a tainted turn.
     destination_composed: bool = False
+
+    # The call is a harness's own tool call at the reserved coordinate
+    # (`harness-tool`, op `<tool_class>/<locality>`) and its tool class is listed in
+    # Envelope.tainted_harness_hold. The PIP folds the knob and the coordinate into
+    # this one boolean, so the PDP parses no strings. False whenever the knob is
+    # empty, which is what keeps every decision what it was before the control.
+    # Read by rule tainted_harness_hold, which also requires a tainted turn.
+    harness_class_held: bool = False

@@ -438,7 +438,7 @@ class DynamoIntentStore:
                                     id + materializedRequest + renderedForHuman + expiry + ts)
         intentHash = str           (HMAC-SHA-256 over the exact stored data bytes)
         status = str               ("pending" | "approved" | "rejected" | "expired" |
-                                    "executed" | "refused")
+                                    "executed" | "refused" | "permitted")
         ttl = int                  (epoch seconds — DynamoDB TTL attribute; expiry + a grace
                                     while pending so the expiry sweep records first, #163)
         pendingPrincipal = str     (only while pending — the sparse expiry index's key)

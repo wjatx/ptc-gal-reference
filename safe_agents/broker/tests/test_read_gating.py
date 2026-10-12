@@ -372,6 +372,12 @@ def test_trusted_read_does_not_taint_and_next_write_is_not_escalated(fake_urlope
             _call("search", "query", tainted=True, args={"query": "x"}),
             {"grant_level": AutonomyLevel.on_loop, "destination_composed": True},
         ),
+        # tainted_harness_hold: a harness tool class the envelope holds (#168).
+        (
+            "tainted_harness_hold",
+            _call("search", "query", tainted=True),
+            {"grant_level": AutonomyLevel.on_loop, "harness_class_held": True},
+        ),
     ],
 )
 def test_all_fallback_rules_route_through_the_single_polarity_seam(description, call, facts_kwargs):

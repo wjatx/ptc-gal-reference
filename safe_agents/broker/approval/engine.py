@@ -44,6 +44,14 @@ RELEASE_REFUSED_REASON_PREFIX = "release refused"
 # The rejection_reason approve() and reject() return for an intent past its expiry.
 INTENT_EXPIRED_REASON = "intent expired"
 
+# The reason approve_for_reissue() returns on success (#168). The broker ran
+# nothing: the harness's call is permitted once when the harness asks again.
+APPROVED_FOR_REISSUE_REASON = (
+    "approved; nothing was executed by the broker, and the harness's call will be "
+    "permitted once when the harness asks again with the same input before the "
+    "intent expires"
+)
+
 # How long a held approval waits for a human before it expires. ONE fixed period
 # (PTC §6.12): it never shortens as the queue grows, because a period that shrank
 # under load would be shedding by another trigger. Nothing derives it from queue
@@ -376,6 +384,68 @@ def approve(
         intent_id=intent_id,
         executed=True,
         result=result,
+    )
+
+
+def past_expiry(expiry: str, now: datetime, skew: timedelta = ZERO_SKEW) -> bool:
+    """True when ``expiry`` is at or before ``now + skew``: the comparison a release uses.
+
+    The public name of the one expiry comparison, for the runtime's harness-tool
+    release (#168), which judges an approved intent at the instant the harness
+    asks again. A release confers authority, so the skew bound applies toward
+    refusing, as in approve().
+    """
+    return _is_expired(expiry, now, skew)
+
+
+def approve_for_reissue(
+    intent_id: str,
+    approved_by: str,
+    store: IntentStore,
+    *,
+    now: datetime | None = None,
+    skew: timedelta = ZERO_SKEW,
+) -> ExecutionResult:
+    """Approve a held harness tool call, which the broker never executes (#168).
+
+    A harness's own tool call held at the reserved coordinate `harness-tool` is
+    performed by the harness, never by the broker, so approving it runs nothing:
+    it moves the intent from pending to approved, stamps approvedBy, and stops.
+    The next request for the same call, at the same coordinate with the same
+    input digest inside the intent's expiry, is evaluated again by the runtime
+    and permitted once. The checks before the transition are approve()'s: not
+    found, past expiry (the pending→expired compare-and-set, whose winner writes
+    the one expiry record, #163), not pending.
+
+    Returns executed=False always. On success ``approved_for_reissue`` is True
+    and the reason says what happens next.
+    """
+    evaluated_at = _resolve_now(now)
+    intent = store.get_intent(intent_id)
+    if intent is None:
+        return ExecutionResult(
+            intent_id=intent_id,
+            executed=False,
+            rejection_reason="intent not found",
+        )
+    if _is_expired(intent.expiry, evaluated_at, skew):
+        return _expired_result(intent_id, store)
+    transitioned = store.transition_status(
+        intent_id, "pending", "approved", approved_by=approved_by
+    )
+    if not transitioned:
+        current = store.get_intent(intent_id)
+        current_status = current.status if current is not None else "unknown"
+        return ExecutionResult(
+            intent_id=intent_id,
+            executed=False,
+            rejection_reason=f"intent not pending (current status: {current_status})",
+        )
+    return ExecutionResult(
+        intent_id=intent_id,
+        executed=False,
+        rejection_reason=APPROVED_FOR_REISSUE_REASON,
+        approved_for_reissue=True,
     )
 
 

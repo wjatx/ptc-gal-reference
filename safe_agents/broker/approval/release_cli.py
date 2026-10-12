@@ -70,17 +70,32 @@ def render_intent(view: IntentView) -> str:
         f"    principal   {view.agent_id}",
         f"    tool.op     {view.tool}.{view.op}",
         f"    argsDigest  {view.args_digest}",
+    ]
+    if view.input_digest is not None:
+        lines.append(f"    inputDigest {view.input_digest}")
+    lines += [
         f"    held at     {view.ts}",
         f"    expires     {view.expiry}",
         "",
         f"  {view.rendered_for_human}",
         "",
-        "  Releasing executes the STORED call above — not anything the agent has",
-        "  said since. It does not change the grant: the next such call is held",
-        "  again. Tell the agent the write is DONE rather than to retry it, or it",
-        "  will ask for a second one.",
-        "",
     ]
+    if view.input_digest is not None:
+        # A harness's own tool call (#168): the broker never runs it.
+        lines += [
+            "  Approving runs nothing here. The harness performs this call itself:",
+            "  its next request for the same call, with the input digested above,",
+            "  is evaluated again and permitted once before the intent expires.",
+            "",
+        ]
+    else:
+        lines += [
+            "  Releasing executes the STORED call above — not anything the agent has",
+            "  said since. It does not change the grant: the next such call is held",
+            "  again. Tell the agent the write is DONE rather than to retry it, or it",
+            "  will ask for a second one.",
+            "",
+        ]
     return "\n".join(lines)
 
 
@@ -186,10 +201,18 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "intentId": result.intent_id,
                     "executed": result.executed,
-                    "approvedBy": approver if result.executed else None,
+                    "approvedBy": (
+                        approver if result.executed or result.approved_for_reissue else None
+                    ),
                     "rejectionReason": result.rejection_reason,
+                    "approvedForReissue": result.approved_for_reissue,
                 }
             )
+        )
+    elif result.approved_for_reissue:
+        print(
+            f"APPROVED: {view.tool}.{view.op} runs nothing here; the harness's next "
+            f"request for the same call is permitted once. approvedBy {approver}"
         )
     elif result.executed:
         print(f"RELEASED — {view.tool}.{view.op} executed, approvedBy {approver}")
@@ -200,7 +223,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    return EXIT_OK if result.executed else EXIT_NOT_RELEASED
+    return EXIT_OK if result.executed or result.approved_for_reissue else EXIT_NOT_RELEASED
 
 
 if __name__ == "__main__":  # pragma: no cover — process entry point

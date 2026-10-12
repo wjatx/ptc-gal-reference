@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from safe_agents.broker.api import build_runtime, load_agent_manifest
+from safe_agents.broker.audit import hash_args
 from safe_agents.broker.gateway import GatewaySurface
 from safe_agents.broker.gateway import __main__ as launcher
 from safe_agents.broker.gateway.authn import (
@@ -145,6 +146,7 @@ NOT_A_REPORT = [
     pytest.param("POST", _body(tool_class="read"), id="an unknown class"),
     pytest.param("POST", _body(locality="Outside"), id="an unknown locality"),
     pytest.param("POST", _body(harness=3), id="a number as the harness"),
+    pytest.param("POST", _body(call_digest="toolu_0001"), id="a raw call id"),
     pytest.param(
         "POST",
         ('{"harness":"a","harness":"b","tool_class":"file-read","locality":"outside",'
@@ -173,6 +175,19 @@ class TestTheRoute:
         assert (record.tool, record.op, record.outcome) == (OBSERVED_TOOL, "file-read", "observed")
         assert record.reason.endswith("reported by mouth tool-event")
         assert runtime.handle_request(WRITE).decision_kind == "require_approval"
+
+    def test_a_report_carrying_its_call_digest_is_recorded_with_it(self, mouth) -> None:
+        """The optional `call_digest` (G23) reaches the record as the args key `call`."""
+        app, _, sink, _ = mouth
+        call = "sha256:" + "ab" * 32
+        sent, _ = _drive(app, _scope("POST", headers=[AUTH], path=EVENTS_PATH),
+                         _body(call_digest=call))
+        assert _status(sent) == 200
+        (record,) = sink.records()
+        assert record.argsDigest == hash_args({
+            "call": call, "harness": "example-harness", "locality": "outside",
+            "subject": SUBJECT,
+        })
 
     def test_a_report_that_does_not_taint_answers_null(self, mouth) -> None:
         app, runtime, sink, _ = mouth

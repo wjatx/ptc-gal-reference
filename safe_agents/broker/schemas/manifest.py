@@ -36,6 +36,7 @@ from .clock_skew import MAX_CLOCK_SKEW_SECONDS
 from .common import MAX_DECLARABLE_AGE_SECONDS, CounterPeriod, InputName, Principal
 from .connector_auth import AuthStrategy, ConnectorAuth
 from .envelope import Envelope
+from .harness_tool import HARNESS_TOOL, parse_coordinate_op
 from .mcp_registry import McpServerDecl
 
 
@@ -251,6 +252,55 @@ class AgentManifest(BaseModel):
                 "declares a destination_arg, so it would hold nothing. Declare "
                 "destination_arg on each op whose argument names where a request goes, "
                 "or leave the knob off."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _reserved_coordinates_are_well_formed(self) -> "AgentManifest":
+        """Refuse a `tool_ops` entry at `harness-tool` whose op is not a class and locality.
+
+        The reserved coordinate classifies a harness's own tool call, and its op is
+        `<tool_class>/<locality>` from the two closed sets in `harness_tool.py`. An
+        entry spelled any other way could never be asked about, and a misspelled
+        class would leave the consumer believing it declared policy it did not.
+        Fail at load and name the entry.
+        """
+        for index, entry in enumerate(self.tool_ops):
+            if entry.tool != HARNESS_TOOL:
+                continue
+            try:
+                parse_coordinate_op(entry.op)
+            except ValueError as exc:
+                raise ValueError(
+                    f"tool_ops[{index}] ({entry.tool}.{entry.op}) is at the reserved "
+                    f"coordinate {HARNESS_TOOL!r}, whose op must be "
+                    f"'<tool_class>/<locality>': {exc}"
+                ) from None
+        return self
+
+    @model_validator(mode="after")
+    def _harness_hold_knob_gates_something(self) -> "AgentManifest":
+        """Refuse a class in `envelope.tainted_harness_hold` that no entry declares.
+
+        The hold reads only requests at a declared reserved coordinate. A class
+        with no `harness-tool` entry at any locality is refused outright as
+        undeclared, so listing it would hold nothing while reading as enabled, the
+        shape the friction doctrine rejects for an empty knob. Checked against this
+        manifest's own envelope; an envelope loaded from the store is not seen here.
+        Runs after the well-formedness check, so every reserved op parses.
+        """
+        declared = {
+            parse_coordinate_op(entry.op)[0]
+            for entry in self.tool_ops
+            if entry.tool == HARNESS_TOOL
+        }
+        missing = [c.value for c in self.envelope.tainted_harness_hold if c not in declared]
+        if missing:
+            raise ValueError(
+                f"envelope.tainted_harness_hold lists {', '.join(missing)}, but no "
+                f"tool_ops entry at {HARNESS_TOOL!r} declares that class at any "
+                "locality, so it would hold nothing. Declare the coordinate "
+                f"({HARNESS_TOOL}, '<tool_class>/<locality>') or leave the class out."
             )
         return self
 

@@ -29,9 +29,10 @@ import hashlib
 import json
 from typing import Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .evidence import BlastClass, ConfidenceMethod
+from .harness_tool import ToolClass
 
 
 class Liveness(BaseModel):
@@ -321,6 +322,33 @@ class Envelope(BaseModel):
     # the server is the closure (broker/TAINT.md §6.1).
     escalate_composed_destinations: bool = False
 
+    # -- A harness's own tool call on a tainted turn (#168) -------------------
+    # The tool classes (schemas/harness_tool.py) whose decision request is held on
+    # a tainted turn. A request at the reserved coordinate `harness-tool`, op
+    # `<class>/<locality>`, of a listed class, any locality, routes through the
+    # polarity seam beside the standing cut (PDP rule tainted_harness_hold): held
+    # for a human where one is reachable, denied where none is, whatever effect
+    # and external the consumer declared at the coordinate. Empty, the default, is
+    # off: no decision moves. It holds only a call the harness's hook carries to
+    # the decision mouth; a call the hook never carries is untouched. It holds on a
+    # turn already tainted and taints nothing itself: a read made through the
+    # shell does not taint, because the shell's class says nothing about whether
+    # it read (broker/TAINT.md §2).
+    tainted_harness_hold: list[ToolClass] = Field(default_factory=list)
+
+    @field_validator("tainted_harness_hold")
+    @classmethod
+    def _held_classes_are_distinct(cls, value: list[ToolClass]) -> list[ToolClass]:
+        """A class listed twice is refused: one list, one meaning per class."""
+        seen: set[ToolClass] = set()
+        for tool_class in value:
+            if tool_class in seen:
+                raise ValueError(
+                    f"tainted_harness_hold lists {tool_class.value!r} more than once"
+                )
+            seen.add(tool_class)
+        return value
+
     # -- Availability floor, consumer-configurable -------------------
     # Typed liveness / dead-man's-switch contract. Unset = OFF (the base ships
     # no polarity default, and an unset field must never read as a false
@@ -365,7 +393,8 @@ def compute_envelope_hash(envelope: Envelope) -> str:
     old hash is quarantined until `re-seed` re-attests it with the issuer
     signing key. Retiring `allowlists` did exactly that (#135); the value for
     the smallest envelope is pinned in `test_envelope_allowlists_retired.py`.
-    Adding `escalate_composed_destinations` moved it again (#178).
+    Adding `escalate_composed_destinations` moved it again (#178), and adding
+    `tainted_harness_hold` moved it once more (#168).
     """
     serialized = json.dumps(
         envelope.model_dump(mode="json"),

@@ -162,7 +162,10 @@ posture 1, and the fix it names is a sandbox around the agent, which is posture 
 hooks can now report those calls to the gateway's tool-event mouth (`broker/GATEWAY.md` G21 to
 G29). Every report lands on the tape, and a report classed `file-read`, `web-fetch` or
 `web-search` taints the turn. A file read through the shell, such as `cat`, is reported as
-`shell` and does not taint. Reported calls are observed, and still not gated.
+`shell` and does not taint. A hook that fires before the call can also ask the same mouth's
+`/decide` route, and the broker answers `permit` or `refuse` at a coordinate the manifest declares
+(G30 to G38). The harness enforces that answer. A call its hook does not carry is decided by
+nothing, and no built-in tool is confined at this posture.
 
 ### 6. Serve the gateway over the network
 

@@ -121,7 +121,10 @@ value is the Facts default, so the published 73,728 points and `GOLDEN_CORPUS_DI
 slice and did not move, which is the evidence that the control changes nothing while it is off.
 Its on slice is another 73,728 points pinned as `GOLDEN_DESTINATION_ON_DIGEST`, and
 `test_on_slice_moves_only_tainted_composed_points` checks point by point that only the points the
-rule claims moved.
+rule claims moved. `Facts.harness_class_held` (the opt-in hold on a harness tool class, #168) is
+the second, swept the same way: its off slice is the published corpus, and its on slice is pinned
+as `GOLDEN_HARNESS_HOLD_ON_DIGEST` and checked point by point by
+`test_harness_on_slice_moves_only_tainted_points`.
 
 It exists for two jobs:
 

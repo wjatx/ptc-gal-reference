@@ -268,6 +268,22 @@ class SerializedSurface:
         finally:
             self._busy.release()
 
+    def decide(self, **request: Any) -> Any:
+        """A decision request, under the same two rules as a call (G18, G27, G30 on)."""
+        self._enter()
+        try:
+            return self._surface.decide(**request)
+        finally:
+            self._busy.release()
+
+    def refuse_decision(self, **refusal: Any) -> Any:
+        """A malformed decision request's refusal, under the same two rules as a call."""
+        self._enter()
+        try:
+            return self._surface.refuse_decision(**refusal)
+        finally:
+            self._busy.release()
+
     def sweep_expired_intents(self) -> int:
         """The expiry sweep (#163), under the same two rules as a call."""
         self._enter()

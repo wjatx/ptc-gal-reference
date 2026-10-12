@@ -64,7 +64,7 @@ class IntentView:
 
     intent_id: str
     status: Literal[
-        "pending", "approved", "rejected", "expired", "executed", "refused"
+        "pending", "approved", "rejected", "expired", "executed", "refused", "permitted"
     ]
     tool: str
     op: str
@@ -74,6 +74,11 @@ class IntentView:
     ts: str      # ISO-8601 UTC
     agent_id: str
     approved_by: str | None = None
+    # The held input digest of a harness tool call held at `harness-tool` (#168):
+    # what an approval surface digests the reporter's view of the input to, and
+    # what approve_intent's `shown_input_digest` is checked against. None for
+    # every other intent.
+    input_digest: str | None = None
 
 
 @dataclass
@@ -92,3 +97,7 @@ class ExecutionResult:
     # transition is a compare-and-set, so across every late approve, late reject and
     # sweep exactly one caller sees True, and that caller writes the expiry record.
     expired_by_this_call: bool = False
+    # True only when an approval of a held harness tool call landed (#168): the
+    # intent is now approved, the broker executed nothing, and the harness's next
+    # request for the same call will be evaluated again and permitted once.
+    approved_for_reissue: bool = False

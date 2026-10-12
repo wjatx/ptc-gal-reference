@@ -136,6 +136,7 @@ def make_pip(
     query_bytes_exceeded: bool = False,
     query_egress_breached: bool = False,
     destination_composed: bool = False,
+    harness_class_held: bool = False,
 ):
     """Fixed-Facts PIP for tests. The keyword-only knobs let a caller drive
     the read-gating rules directly; all default to today's behavior so existing
@@ -154,6 +155,7 @@ def make_pip(
             query_bytes_exceeded=query_bytes_exceeded,
             query_egress_breached=query_egress_breached,
             destination_composed=destination_composed,
+            harness_class_held=harness_class_held,
         )
 
     return pip

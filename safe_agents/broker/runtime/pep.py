@@ -36,7 +36,7 @@ import json
 import logging
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from pydantic import ValidationError
@@ -55,7 +55,9 @@ from safe_agents.broker.approval import (
 from safe_agents.broker.approval.engine import (
     DEFAULT_APPROVAL_EXPIRY_SECONDS,
     REJECTED_BY_OWNER_REASON,
+    approve_for_reissue,
     expire_if_due,
+    past_expiry,
 )
 from safe_agents.broker.approval.expiry import (
     ALARM_COUNT_WRITE_FAILED,
@@ -64,7 +66,11 @@ from safe_agents.broker.approval.expiry import (
     ApprovalQueueAlarm,
 )
 from safe_agents.broker.approval.store import principal_index_key
-from safe_agents.broker.approval.queue_guard import dedup_intent_id, is_flood
+from safe_agents.broker.approval.queue_guard import (
+    dedup_intent_id,
+    harness_hold_intent_id,
+    is_flood,
+)
 from safe_agents.broker.audit import AuditSink, emit, hash_args, hash_stored_call
 from safe_agents.broker.enforcement import (
     ACTION_CAP_SUFFIX,
@@ -106,7 +112,24 @@ from safe_agents.broker.taint import InputTrustMap, TurnContext
 
 from .doer import ConnectorExecutionError, Doer
 from .input_age import Clock, DecisionInputs, InputAgePolicy, utc_now
-from .observed import SHORT_CODE, validate_observed_event
+from .harness_decision import (
+    DECISION_REFUSAL_CAUSES,
+    FAULT_REASON,
+    MALFORMED_REASON,
+    PERMIT,
+    VERB_ANSWER,
+    HarnessDecision,
+    permitted_reason,
+    refused,
+    transform_reason,
+)
+from .observed import (
+    HARNESS_TOOL,
+    SHORT_CODE,
+    DecisionRequest,
+    validate_decision_request,
+    validate_observed_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -161,10 +184,19 @@ _EVIDENCE_LABEL_WRITE_FAILED = "evidence label write failed"
 MOUTH_REFUSAL_TOOL = "broker-mouth"
 
 # The reserved `tool` on the audit record of a call a harness ran with its own
-# tool and reported afterwards (`record_observed_event`). Not a manifest
-# coordinate: the broker made no call, so the reported tool class rides as the
-# `op`, the way a mouth's code does on a refusal record.
-OBSERVED_TOOL = "harness-tool"
+# tool and reported afterwards (`record_observed_event`): the broker made no
+# call, so the reported tool class rides as the `op`, the way a mouth's code
+# does on a refusal record. The same name is the reserved coordinate a harness's
+# own call is DECIDED at, op `<tool_class>/<locality>`, and a manifest may
+# declare facts there (`schemas/harness_tool.py`). It is never a connector op:
+# `handle_request` refuses it, so no agent-facing caller reaches it.
+OBSERVED_TOOL = HARNESS_TOOL
+
+# The reason on the record of an agent-facing call that names the reserved
+# coordinate. A harness's own call is decided only through the decision mouth.
+HARNESS_TOOL_REFUSAL_REASON = (
+    f"{HARNESS_TOOL} is decided only through the decision mouth; it is not a callable op"
+)
 
 # The shape of a mouth code and of a refusal-cause code. Deliberately narrow: these
 # are the only mouth-supplied strings that reach the tape, and a caller-authored
@@ -259,6 +291,137 @@ class BrokerResponse:
     # tell "the gate said no" from "the gate said yes and execution broke" except
     # by string-matching `reason`. None on every gate decision.
     execution_outcome: str | None = None
+
+
+# The reason on the record of a harness request whose content-derived intent id
+# holds an approved intent that is not this call (#168). Unreachable without a
+# forged row or a hash collision; refused toward less authority, never decided
+# afresh, because a fresh hold would replace the row.
+HARNESS_RELEASE_MISMATCH_REASON = (
+    "an approved intent under this call's id does not match the call; refused"
+)
+
+# The reason on the expiry record of an approved harness intent the harness did
+# not ask for again before it expired (#168). A human decided, so it is never
+# "approval expired undecided".
+HARNESS_APPROVAL_LAPSED_REASON = (
+    "approval lapsed unused: the harness did not ask again before the intent expired"
+)
+
+# The reason approve_intent records and returns when the approval surface showed
+# an input that does not digest to the held input digest (#168, ruling (b)).
+SHOWN_INPUT_MISMATCH_REASON = (
+    "approval refused: the input the approval surface showed does not digest to "
+    "the held input digest"
+)
+
+
+def _held_input_digest(intent) -> str | None:
+    """The input digest a held harness tool call froze, read from its stored bytes.
+
+    None for any intent not at the reserved coordinate, or whose stored args
+    carry no input digest: there is then nothing a shown input can match.
+    """
+    stored = intent.materializedRequest
+    if stored.tool != HARNESS_TOOL or not isinstance(stored.args, dict):
+        return None
+    value = stored.args.get("input")
+    return value if isinstance(value, str) else None
+
+
+def _harness_decider(
+    decider: Callable[[BrokeredCall, Facts], Decision],
+) -> Callable[[BrokeredCall, Facts], Decision]:
+    """The PDP at the reserved coordinate: a transform is a configuration error (#168).
+
+    The broker holds no safer op for a harness tool, so a transform there can
+    only come from a configuration that does not fit the coordinate. It is
+    decided as a deny before `enforce()` draws anything, and recorded with a
+    reason naming it. Every other verb is the PDP's.
+    """
+
+    def _decide(call: BrokeredCall, facts: Facts) -> Decision:
+        decided = decider(call, facts)
+        if decided.kind == "transform":
+            return Deny(kind="deny", reason=transform_reason(call.op))
+        return decided
+
+    return _decide
+
+
+def _harness_release_decider(
+    decider: Callable[[BrokeredCall, Facts], Decision],
+) -> Callable[[BrokeredCall, Facts], Decision]:
+    """The PDP on a release of an approved harness hold: approval satisfied (#168).
+
+    `approve_intent`'s release-time wrapper, for a call the harness asked for
+    again: fresh facts, the PDP re-run, a require_approval folded to allow so the
+    human's ratification cannot loop the call into a second hold, and anything
+    stricter (deny, abstain) still binding. A transform is the configuration
+    error it is on every decision at this coordinate.
+    """
+
+    def _decide(call: BrokeredCall, facts: Facts) -> Decision:
+        decided = decider(call, facts)
+        if decided.kind in ("allow", "require_approval"):
+            return Allow(kind="allow")
+        if decided.kind == "transform":
+            return Deny(kind="deny", reason=transform_reason(call.op))
+        return decided
+
+    return _decide
+
+
+@dataclass(frozen=True)
+class _PipelineHooks:
+    """What the decision mouth's path changes in the shared enforcement pipeline (#168).
+
+    ``_handle_request`` is the one pipeline every call takes: the manifest
+    lookup, the PIP, the PDP, ``enforce()`` (premise revalidation, the per-op
+    counter draw, the write-ahead ledger) and the hold. A harness's own tool
+    call takes it too, at the reserved coordinate, and differs in exactly these
+    places and nowhere else:
+
+      - ``wrap_decider`` wraps ``decide`` before the input-age gate, for the
+        initial decision and the revalidation alike. A transform becomes a
+        recorded configuration error, and on a release the approval
+        requirement is satisfied.
+      - ``make_executor`` builds the callback ``enforce()`` calls on allow. It
+        is handed the turn and the decision's inputs and reaches no connector.
+      - ``hold_id`` is the content-derived id a hold is frozen under, so the
+        same call asked again finds its approval.
+      - ``record_extra`` rides on every record the pipeline itself writes (a
+        refused release carries its intent's receipts).
+      - ``inputs`` is the decision's input record, begun by the caller because
+        the caller read the intent store first.
+    """
+
+    wrap_decider: Callable[[Callable[[BrokeredCall, Facts], Decision]], Callable[[BrokeredCall, Facts], Decision]]
+    make_executor: Callable[[TurnContext, DecisionInputs], Callable[[BrokeredCall, Decision], Any]]
+    inputs: DecisionInputs
+    hold_id: str | None = None
+    record_extra: Mapping[str, Any] = field(default_factory=dict)
+
+
+class _PermitRecorded:
+    """What the harness executor returns once its `permitted` record is written (#168).
+
+    `decide_harness_call` answers permit only when the pipeline hands this back,
+    so a permit with no record behind it cannot be answered, whatever path
+    returned `allow`.
+    """
+
+
+_PERMIT_RECORDED = _PermitRecorded()
+
+
+@dataclass(frozen=True)
+class _HarnessRelease:
+    """An approved harness intent found for this request, verified against it."""
+
+    intent_id: str
+    approved_by: str
+    stored_call_digest: str
 
 
 class BrokerRuntime:
@@ -543,6 +706,7 @@ class BrokerRuntime:
         locality: str,
         subject_digest: str,
         result_digest: str | None = None,
+        call_digest: str | None = None,
     ) -> str | None:
         """Record a call a harness ran with its own tool, and taint the turn if it read.
 
@@ -555,7 +719,11 @@ class BrokerRuntime:
 
         Every field is re-checked against the vocabulary in `observed.py`,
         whatever the mouth checked. A report carries codes, enum members and
-        digests; no path, URL or content is accepted in any field.
+        digests; no path, URL or content is accepted in any field. `call_digest`,
+        when reported, is the harness's own id for the call, digested; it rides
+        in the record's args as `call` so the report pairs with the decision asked
+        before the call ran. Unreported, `call` is null: the args object has one
+        shape whether or not the report carried it.
 
         Order, and why. When the tool class brings content into the agent's context
         (`TAINTING_CLASSES`), the source `harness:<harness>/<class>/<locality>` is
@@ -582,6 +750,7 @@ class BrokerRuntime:
             locality=locality,
             subject_digest=subject_digest,
             result_digest=result_digest,
+            call_digest=call_digest,
         )
         ingested: str | None = None
         if event.taints and event.source_id not in self._trusted_read_sources:
@@ -595,6 +764,7 @@ class BrokerRuntime:
             # A reader holding the subject recomputes this digest: see
             # `observed.digest_subject` and GATEWAY.md for the canonical form.
             args={
+                "call": event.call_digest,
                 "harness": event.harness,
                 "locality": event.locality.value,
                 "subject": event.subject_digest,
@@ -609,6 +779,377 @@ class BrokerRuntime:
             ),
         )
         return ingested
+
+    # ------------------------------------------------------------------
+    # The decision mouth (#168): a harness's own tool call, decided before it runs
+    # ------------------------------------------------------------------
+
+    def decide_harness_call(
+        self,
+        *,
+        mouth: str,
+        harness: str,
+        tool_class: str,
+        locality: str,
+        subject_digest: str,
+        input_digest: str,
+        call_digest: str,
+    ) -> HarnessDecision:
+        """Decide a harness's own tool call before the harness runs it, and answer.
+
+        The seam the decision mouth enters through (`broker/GATEWAY.md`, G30 on).
+        The call is decided at the reserved coordinate `harness-tool`, op
+        `<tool_class>/<locality>`, whose `ToolOp` is the consumer's declaration in
+        the image-baked manifest, through the same pipeline as every call
+        (`_handle_request`): the manifest lookup, the PIP, the PDP and `enforce()`,
+        which revalidates, draws the per-op counter and journals the call. No
+        connector is reached: the harness performs the call, the broker does not.
+
+        Every field is re-checked against `observed.validate_decision_request`.
+        The decided call's args are `{"call", "harness", "input", "locality",
+        "subject"}`, every value a code or a digest, so `argsDigest` binds the
+        input digest and a hold freezes it.
+
+        The answer is closed (`harness_decision.VERB_ANSWER`): allow permits, and
+        every other verb refuses. A permit is answered only after its `permitted`
+        record is written; a permit of a tainting class from an untrusted source
+        ingests that source into the session turn first. A hold refuses now with
+        its intent id; once a human approves the intent, the next request for the
+        same call (`_approved_harness_intent`) is evaluated again and permitted
+        once. A transform refuses as a configuration error.
+
+        Never raises for the request's sake. A malformed field is refused and
+        recorded (`refuse_decision_request`), and any fault inside the runtime
+        (a store, the sink, a record that fails to write) answers refuse, logs,
+        and records the refusal where the sink still takes it. The one exception
+        is a `mouth` that is not a code at all, which raises ValueError: the mouth
+        binds it, so that is a mouth defect and not a request.
+        """
+        try:
+            request = validate_decision_request(
+                mouth=mouth,
+                harness=harness,
+                tool_class=tool_class,
+                locality=locality,
+                subject_digest=subject_digest,
+                input_digest=input_digest,
+                call_digest=call_digest,
+            )
+        except ValueError:
+            return self.refuse_decision_request(mouth=mouth, cause="bad-field")
+        try:
+            return self._decide_harness(request)
+        except Exception as exc:  # noqa: BLE001 (every fault answers refuse, ruling b)
+            logger.error(
+                "a harness decision failed inside the broker and was answered refuse: %s: %s",
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+            self._record_harness_fault(request, exc)
+            return refused(FAULT_REASON)
+
+    def refuse_decision_request(self, *, mouth: str, cause: str) -> HarnessDecision:
+        """Record a decision request the mouth could not read, and answer refuse.
+
+        An authenticated request that is malformed (a wrong method on the path, a
+        body over the bound, a body that is not a request, a field outside its
+        vocabulary) is still answered with a well-formed refusal, because a bare
+        `400` hands the direction to the harness, which by default proceeds. It is
+        recorded once per request, as `deny`/`denied` under the reserved tool
+        `broker-mouth` with the mouth's code as `op`, the way a mouth's refused
+        connections are (G17). Nothing in the record is request-authored: `cause`
+        must be one of `DECISION_REFUSAL_CAUSES` and `mouth` a short code, or this
+        raises ValueError, writing nothing.
+
+        A sink that fails to write is logged and the answer is still refuse.
+        """
+        if not _MOUTH_CODE.fullmatch(mouth):
+            raise ValueError(f"mouth must be a short lowercase code, got {mouth!r}")
+        if cause not in DECISION_REFUSAL_CAUSES:
+            raise ValueError(
+                f"cause must be one of {sorted(DECISION_REFUSAL_CAUSES)}, got {cause!r}"
+            )
+        try:
+            emit(
+                self._audit_sink,
+                principal=self._principal,
+                tool=MOUTH_REFUSAL_TOOL,
+                op=mouth,
+                args={"cause": cause},
+                decision="deny",
+                outcome="denied",
+                envelope_hash=self._envelope_hash,
+                reason=f"decision request refused before it was decided: {cause}",
+            )
+        except Exception as exc:  # noqa: BLE001 (the answer is refuse either way)
+            logger.error(
+                "a malformed decision request (%s) was refused but not recorded: %s: %s",
+                cause,
+                type(exc).__name__,
+                exc,
+                exc_info=True,
+            )
+            return refused(MALFORMED_REASON)
+        return refused(MALFORMED_REASON, decision_kind="deny", outcome="denied")
+
+    @staticmethod
+    def _harness_args(request: DecisionRequest) -> dict[str, str]:
+        """The decided call's args: codes and digests only. `argsDigest` binds the input."""
+        return {
+            "call": request.call_digest,
+            "harness": request.harness,
+            "input": request.input_digest,
+            "locality": request.locality.value,
+            "subject": request.subject_digest,
+        }
+
+    def _decide_harness(self, request: DecisionRequest) -> HarnessDecision:
+        """Find an approval for this call, else decide it afresh; map the verb to the answer."""
+        inputs = self._decision_inputs()
+        # The intent store is read first: whether an approval exists is an input.
+        inputs.establish("intent", self._clock())
+        hold_id = harness_hold_intent_id(self._principal, request.op, request.input_digest)
+        found = self._approved_harness_intent(request, hold_id, inputs)
+        if isinstance(found, HarnessDecision):
+            return found
+        release = found
+        hooks = _PipelineHooks(
+            wrap_decider=(
+                _harness_decider if release is None else _harness_release_decider
+            ),
+            make_executor=(
+                lambda ctx, inp: self._harness_executor(request, release, ctx, inp)
+            ),
+            inputs=inputs,
+            hold_id=hold_id,
+            record_extra=(
+                {}
+                if release is None
+                else {
+                    "intent_id": release.intent_id,
+                    "approved_by": release.approved_by,
+                    "stored_call_digest": release.stored_call_digest,
+                }
+            ),
+        )
+        response = self._handle_request(
+            AgentRequest(tool=HARNESS_TOOL, op=request.op, args=self._harness_args(request)),
+            hooks=hooks,
+        )
+        kind = response.decision_kind
+        if (
+            VERB_ANSWER.get(kind) == PERMIT
+            and not response.idempotent
+            and response.result is _PERMIT_RECORDED
+        ):
+            return HarnessDecision(
+                answer=PERMIT,
+                reason=permitted_reason(
+                    request.op, intent_id=None if release is None else release.intent_id
+                ),
+                intent_id=None if release is None else release.intent_id,
+                decision_kind="allow",
+                outcome="permitted",
+            )
+        if release is not None:
+            # A release the broker refused lands in the terminal "refused" state,
+            # as an approve() release does (#9). Its refusal record is written.
+            self._intent_store.transition_status(release.intent_id, "approved", "refused")
+        if kind == "require_approval":
+            return refused(
+                response.reason or "held for approval",
+                decision_kind=kind,
+                outcome="held",
+                intent_id=response.intent_id,
+            )
+        return refused(
+            response.reason or "refused",
+            decision_kind=kind,
+            outcome="denied",
+        )
+
+    def _approved_harness_intent(
+        self, request: DecisionRequest, hold_id: str, inputs: DecisionInputs
+    ) -> "_HarnessRelease | HarnessDecision | None":
+        """The approved intent this request releases, a refusal, or None to decide afresh.
+
+        Found by its content-derived id (`harness_hold_intent_id`), one get by
+        key on every store, never a scan. Nothing in the request names it. The
+        stored call is verified (verify-then-parse) and checked against the
+        request: this runtime's principal, the reserved coordinate at the same
+        op, and the same input digest. Any mismatch refuses and is recorded, and
+        never decides afresh, because a fresh hold would replace the row.
+
+        An approval past the intent's expiry is not a release: the approved to
+        expired compare-and-set is claimed, its winner writes the one expiry
+        record, and the request is decided afresh. None is also the answer when
+        there is no intent, or it is not approved (pending, permitted, refused,
+        rejected, expired), so a consumed approval is never used twice.
+        """
+        try:
+            held = self._intent_store.get_intent(hold_id)
+        except QuarantinedIntentError as exc:
+            self._surface_quarantined_intent(exc, op="decide", inputs=inputs)
+            return refused(
+                "intent quarantined", decision_kind="deny", outcome="denied"
+            )
+        if held is None or held.status != "approved":
+            return None
+        stored = held.materializedRequest
+        matches = (
+            self._owns_intent(held)
+            and stored.tool == HARNESS_TOOL
+            and stored.op == request.op
+            and isinstance(stored.args, dict)
+            and stored.args.get("input") == request.input_digest
+        )
+        if not matches:
+            emit(
+                self._audit_sink,
+                principal=self._principal,
+                tool=HARNESS_TOOL,
+                op=request.op,
+                args=self._harness_args(request),
+                decision="deny",
+                outcome="denied",
+                envelope_hash=self._envelope_hash,
+                reason=HARNESS_RELEASE_MISMATCH_REASON,
+                intent_id=hold_id,
+                **inputs.audit_fields(),
+            )
+            return refused(
+                HARNESS_RELEASE_MISMATCH_REASON, decision_kind="deny", outcome="denied"
+            )
+        if past_expiry(held.expiry, self._clock(), self._clock_skew):
+            if self._intent_store.transition_status(hold_id, "approved", "expired"):
+                self._record_lapsed_approval(held)
+            return None
+        return _HarnessRelease(
+            intent_id=hold_id,
+            approved_by=held.approvedBy or "",
+            # Recomputed from the stored bytes, never copied off the hold record.
+            stored_call_digest=hash_stored_call(stored),
+        )
+
+    def _record_lapsed_approval(self, intent) -> None:
+        """The one expiry record of an approved harness intent nobody used in time (#163, #168).
+
+        Outcome "expired" under the stored call's coordinates, with intentId,
+        storedCallDigest, expiredAt, and the approver: unlike an undecided hold, a
+        human did approve this one, and the harness did not ask again before the
+        intent expired. No evidence counter moves.
+        """
+        req = intent.materializedRequest
+        emit(
+            self._audit_sink,
+            principal=req.principal,
+            tool=req.tool,
+            op=req.op,
+            args=req.args,
+            decision="require_approval",
+            outcome="expired",
+            envelope_hash=self._envelope_hash,
+            reason=HARNESS_APPROVAL_LAPSED_REASON,
+            approved_by=intent.approvedBy,
+            intent_id=intent.id,
+            stored_call_digest=hash_stored_call(req),
+            expired_at=intent.expiry,
+        )
+
+    def _harness_executor(
+        self,
+        request: DecisionRequest,
+        release: "_HarnessRelease | None",
+        ctx: TurnContext,
+        inputs: DecisionInputs,
+    ) -> Callable[[BrokeredCall, Decision], Any]:
+        """The callback `enforce()` calls on allow at the reserved coordinate. No connector.
+
+        Order, and why. On a release the approved to permitted compare-and-set is
+        claimed first, so one approval permits one call. A tainting class from a
+        source the consumer does not trust is then ingested into the turn, and
+        only then is the `permitted` record written (G24's order): a sink that
+        fails leaves the turn tainted, the record missing and the answer refuse,
+        never the reverse. A release whose record fails is moved on to "refused",
+        best effort, since nothing was permitted.
+        """
+
+        def _permit(call: BrokeredCall, effective: Decision) -> Any:
+            if effective.kind != "allow":
+                raise RuntimeError(
+                    f"{HARNESS_TOOL} is permitted only on allow; got {effective.kind}"
+                )
+            if release is not None and not self._intent_store.transition_status(
+                release.intent_id, "approved", "permitted"
+            ):
+                raise RuntimeError(
+                    f"intent {release.intent_id} was no longer approved at release"
+                )
+            try:
+                if request.taints and request.source_id not in self._trusted_read_sources:
+                    ctx.ingest_source(request.source_id, self._trust_map)
+                emit(
+                    self._audit_sink,
+                    principal=call.principal,
+                    tool=call.tool,
+                    op=call.op,
+                    args=call.args,
+                    decision="allow",
+                    outcome="permitted",
+                    envelope_hash=self._envelope_hash,
+                    reason=permitted_reason(
+                        call.op, intent_id=None if release is None else release.intent_id
+                    ),
+                    **(
+                        {}
+                        if release is None
+                        else {
+                            "intent_id": release.intent_id,
+                            "approved_by": release.approved_by,
+                            "stored_call_digest": release.stored_call_digest,
+                        }
+                    ),
+                    **inputs.audit_fields(),
+                )
+            except BaseException:
+                if release is not None:
+                    try:
+                        self._intent_store.transition_status(
+                            release.intent_id, "permitted", "refused"
+                        )
+                    except Exception:  # noqa: BLE001 (the original fault is the one to raise)
+                        logger.error(
+                            "intent %s claimed for a permit whose record failed could "
+                            "not be moved to refused",
+                            release.intent_id,
+                            exc_info=True,
+                        )
+                raise
+            return _PERMIT_RECORDED
+
+        return _permit
+
+    def _record_harness_fault(self, request: DecisionRequest, exc: Exception) -> None:
+        """Record a harness decision that a fault answered refuse, where the sink still takes it."""
+        try:
+            emit(
+                self._audit_sink,
+                principal=self._principal,
+                tool=HARNESS_TOOL,
+                op=request.op,
+                args=self._harness_args(request),
+                decision="deny",
+                outcome="denied",
+                envelope_hash=self._envelope_hash,
+                reason=f"{FAULT_REASON} ({type(exc).__name__})",
+            )
+        except Exception:  # noqa: BLE001 (answered refuse whatever the sink does)
+            logger.error(
+                "a harness decision answered refuse after a fault, and the refusal "
+                "could not be recorded",
+                exc_info=True,
+            )
 
     def new_turn(self) -> None:
         """Roll the broker-held turn boundary — discard accumulated taint so the
@@ -842,6 +1383,7 @@ class BrokerRuntime:
             return None
         stored = intent.materializedRequest
         return IntentView(
+            input_digest=_held_input_digest(intent),
             intent_id=intent.id,
             status=intent.status,
             tool=stored.tool,
@@ -854,7 +1396,13 @@ class BrokerRuntime:
             approved_by=intent.approvedBy,
         )
 
-    def approve_intent(self, intent_id: str, approved_by: str) -> ExecutionResult:
+    def approve_intent(
+        self,
+        intent_id: str,
+        approved_by: str,
+        *,
+        shown_input_digest: str | None = None,
+    ) -> ExecutionResult:
         """Release a held Intent after an authenticated owner approves it out-of-band.
 
         The sanctioned out-of-band-approval seam: the channels drain worker calls
@@ -908,6 +1456,22 @@ class BrokerRuntime:
         maximum age at the release instant refuses the release, so a call held on
         a decision whose horizon has passed is evaluated again and not run on the
         old one. The release's records carry the release's own instants.
+
+        A harness's own tool call held at the reserved coordinate `harness-tool`
+        (#168) is never executed by the broker, so approving it runs no connector
+        and no `enforce()`. After the same quarantine, foreign-principal and expiry
+        checks, it moves the intent from pending to approved, stamps approvedBy,
+        writes no record, and returns executed=False with ``approved_for_reissue``
+        True. The harness's next request for the same call is evaluated again and
+        permitted once (`decide_harness_call`).
+
+        ``shown_input_digest`` is what the approval surface shows the approver,
+        digested: the surface renders the held input from the reporter's side and
+        the broker checks the two agree before it accepts the approval (ruling
+        (b)). When supplied and not equal to the held call's input digest, read
+        from the stored bytes, the approval is refused, recorded, and never
+        applied: the intent stays pending. An intent that holds no input digest
+        (any call other than a harness's own) never equals a supplied one.
         """
         inputs = self._decision_inputs()
         # The stored call is read from here on (the foreign check, then the
@@ -921,6 +1485,43 @@ class BrokerRuntime:
         foreign = self._foreign_intent_result(held, intent_id)
         if foreign is not None:
             return foreign
+        if held is not None and shown_input_digest is not None:
+            if shown_input_digest != _held_input_digest(held):
+                stored = held.materializedRequest
+                emit(
+                    self._audit_sink,
+                    principal=stored.principal,
+                    tool=stored.tool,
+                    op=stored.op,
+                    args=stored.args,
+                    decision="deny",
+                    outcome="denied",
+                    envelope_hash=self._envelope_hash,
+                    reason=SHOWN_INPUT_MISMATCH_REASON,
+                    approved_by=approved_by,
+                    intent_id=intent_id,
+                    stored_call_digest=hash_stored_call(stored),
+                    **inputs.audit_fields(),
+                )
+                return ExecutionResult(
+                    intent_id=intent_id,
+                    executed=False,
+                    rejection_reason=SHOWN_INPUT_MISMATCH_REASON,
+                )
+        if held is not None and held.materializedRequest.tool == HARNESS_TOOL:
+            try:
+                marked = approve_for_reissue(
+                    intent_id,
+                    approved_by,
+                    self._intent_store,
+                    now=self._clock(),
+                    skew=self._clock_skew,
+                )
+            except QuarantinedIntentError as exc:
+                return self._quarantined_intent_result(exc, op="approve", inputs=inputs)
+            if marked.expired_by_this_call:
+                self._record_late_expiry(held, intent_id, op="approve")
+            return marked
 
         def _approved_decider(call: BrokeredCall, facts: Facts) -> Decision:
             """The release-time PDP wrapper — approval satisfied, authority still checked (#9).
@@ -1609,6 +2210,55 @@ class BrokerRuntime:
         -------
         BrokerResponse
             The broker's reply. Contains no credential value.
+
+        The reserved coordinate `harness-tool` (a harness's own tool call) is
+        refused here, before the manifest is consulted, whatever the manifest
+        declares for it: a harness's call is decided only through the decision
+        mouth, and an agent that names the coordinate as a call is asking for an
+        effect the broker never performs. The refusal is recorded as
+        `deny`/`denied`, the shape of every refusal before the PDP. Sources the
+        caller passed in `ingested_sources` are still ingested first: refusing
+        the call never drops taint.
+        """
+        if request.tool == HARNESS_TOOL:
+            ctx = turn_context if turn_context is not None else self._session_turn()
+            for source in ingested_sources or []:
+                ctx.ingest_source(source, self._trust_map)
+            emit(
+                self._audit_sink,
+                principal=self._principal,
+                tool=request.tool,
+                op=request.op,
+                args=request.args,
+                decision="deny",
+                outcome="denied",
+                envelope_hash=self._envelope_hash,
+                reason=HARNESS_TOOL_REFUSAL_REASON,
+                **self._decision_inputs().audit_fields(),
+            )
+            return BrokerResponse(decision_kind="deny", reason=HARNESS_TOOL_REFUSAL_REASON)
+        return self._handle_request(
+            request, turn_context=turn_context, ingested_sources=ingested_sources
+        )
+
+    def _handle_request(
+        self,
+        request: AgentRequest,
+        *,
+        turn_context: TurnContext | None = None,
+        ingested_sources: list[str] | None = None,
+        hooks: _PipelineHooks | None = None,
+    ) -> BrokerResponse:
+        """The enforcement pipeline behind `handle_request`, minus its one refusal.
+
+        Reachable at any coordinate the manifest declares, including the
+        reserved `harness-tool`, so the runtime's own decision method can run a
+        harness's call through the same lookup, PDP and `enforce()` as every
+        call. Never wire this to an agent-facing caller: `handle_request` is that
+        entry, and it refuses the reserved coordinate before it gets here.
+
+        ``hooks`` is set only by `decide_harness_call` (`_PipelineHooks` says
+        what it changes). None is the agent-facing pipeline, unchanged.
         """
         # Broker-owned turn identity. Production (/call) passes no
         # turn_context, so the runtime threads its OWN broker-held session context
@@ -1623,7 +2273,9 @@ class BrokerRuntime:
         turn_id = ctx.turn_id
         # #176: what this decision depends on and when each input was established.
         # Every record this decision writes carries it.
-        inputs = self._decision_inputs()
+        inputs = hooks.inputs if hooks is not None else self._decision_inputs()
+        # Receipts a release's own records carry (#168). Empty on every other call.
+        extra: Mapping[str, Any] = hooks.record_extra if hooks is not None else {}
 
         # Step 1 — taint: ingest sources into the turn context.
         for source in ingested_sources or []:
@@ -1655,6 +2307,7 @@ class BrokerRuntime:
                 outcome="denied",
                 envelope_hash=self._envelope_hash,
                 reason=reason,
+                **extra,
                 **inputs.audit_fields(),
             )
             return BrokerResponse(decision_kind="deny", reason=reason)
@@ -1705,7 +2358,7 @@ class BrokerRuntime:
         # premise revalidation, so the age is checked again at the last instant
         # before any counter is drawn or connector reached.
         pip = self._timed_pip(inputs)
-        decider = inputs.gate(decide)
+        decider = inputs.gate(hooks.wrap_decider(decide) if hooks is not None else decide)
         initial_facts = pip(call)
 
         # A quarantined grant is treated as absent for the decision,
@@ -1737,6 +2390,7 @@ class BrokerRuntime:
                 outcome="denied",
                 envelope_hash=self._envelope_hash,  # real in-force envelope hash
                 reason=f"grant quarantined: {initial_facts.quarantine_reason}",
+                **extra,
                 **inputs.audit_fields(),
             )
 
@@ -1948,7 +2602,9 @@ class BrokerRuntime:
                 decider=decider,
                 fresh_facts=pip,
                 store=self._enforcement_store,
-                executor=_executor,
+                executor=(
+                    hooks.make_executor(ctx, inputs) if hooks is not None else _executor
+                ),
             )
         except ConnectorExecutionError as exc:
             # Deny-shaped reply — reuse the existing deny shape; no new schema. The
@@ -1995,7 +2651,11 @@ class BrokerRuntime:
             # re-submission coalesces onto the same pending intent (no second
             # page). None dedup_id = today's ts-based hold, unchanged.
             dedup_id = None
-            if aq is not None and aq.dedup:
+            if hooks is not None and hooks.hold_id is not None:
+                # A harness's own call is held under its content-derived id
+                # (#168), so the same call asked again finds the approval.
+                dedup_id = hooks.hold_id
+            elif aq is not None and aq.dedup:
                 dedup_id = dedup_intent_id(
                     call.principal, call.tool, call.op, hash_args(call.args)
                 )
@@ -2017,7 +2677,13 @@ class BrokerRuntime:
                 self._surface_quarantined_intent(exc, op="hold", inputs=inputs)
                 return BrokerResponse(
                     decision_kind="deny",
-                    reason=f"intent quarantined: {exc.reason}",
+                    # The decision mouth's answer reaches a model, so it names the
+                    # quarantine and not the store's detail (#168).
+                    reason=(
+                        "intent quarantined"
+                        if hooks is not None
+                        else f"intent quarantined: {exc.reason}"
+                    ),
                     idempotent=False,
                 )
             except IntentAlreadyPendingError as exc:
@@ -2097,6 +2763,9 @@ class BrokerRuntime:
             )
             return BrokerResponse(
                 decision_kind=effective.kind,
+                # The decision mouth answers a hold with its reason (#168). The
+                # agent-facing reply keeps its shape: a hold carries no reason.
+                reason=effective.reason if hooks is not None else None,
                 intent_id=approval.intent_id,
                 idempotent=False,
             )
@@ -2122,6 +2791,7 @@ class BrokerRuntime:
             outcome="denied",
             envelope_hash=self._envelope_hash,
             reason=reason,
+            **extra,
             **inputs.audit_fields(),
         )
         return BrokerResponse(

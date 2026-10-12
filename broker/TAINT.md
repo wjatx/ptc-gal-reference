@@ -110,6 +110,16 @@ same exact-match lookup. The report is a claim made by a process running as the 
 can only add taint, so a forged one costs approvals and nothing else, and a report never sent
 leaves the turn as it was (`broker/GATEWAY.md` G22, and its Known limits).
 
+**A harness's own read, permitted.** When the harness's hook asks before the call runs, the broker
+decides it at the reserved coordinate `harness-tool` (`broker/GATEWAY.md` G30 to G38). A permit of
+`file-read`, `web-fetch` or `web-search` ingests the same `harness:{harness}/{tool_class}/{locality}`
+source at the permit: after the decision is `allow`, before the `permitted` record is written, and
+so before the harness runs the read (`runtime/pep.py::_harness_executor`). The same
+`trusted_read_sources` skip applies. A failed record leaves the turn tainted and the answer
+`refuse`. For a call the hook carries, the read taints the turn before its content can reach the
+agent; a call the hook does not carry is covered only by its report, as above. A refused call
+ingests nothing: the harness is not to run it.
+
 ## 3. How taint propagates — the agent cannot launder it
 
 Taint accumulates within **one broker-held `TurnContext` per principal**, threaded across every
@@ -150,12 +160,30 @@ policy layered on top, out of scope here (`docs/friction-doctrine.md`).
 - **No silent downgrade.** `transform_to_safer_op` is explicitly blocked on a tainted write
   (`... and not c.taint.tainted`) — a tainted write escalates; it is not quietly turned into a draft.
 - **Tainted reads are allowed and audited** — they are what *taints*. Taint gates writes, not the
-  read that produced it. One exception a deployment opts into: with
+  read that produced it. Two exceptions a deployment opts into: with
   `Envelope.escalate_composed_destinations` on, a call that supplies its op's declared destination
-  is decided as an external write (§6.1).
+  is decided as an external write (§6.1); and with `Envelope.tainted_harness_hold` listing a
+  harness tool class, a harness's own call of that class is held (below).
 - **Internal writes (`external=False`) are not taint-gated.** The cut is the external trust boundary;
   an internal, reversible write on a tainted turn is governed by the grant-level rules alone, under
-  the same opt-in exception (§6.1).
+  the same two opt-in exceptions.
+- **A harness's own tool call, of a held class (opt-in, #168).** A harness's call is decided at the
+  reserved coordinate `harness-tool`, op `<tool_class>/<locality>`, whose `ToolOp` facts are the
+  consumer's declaration in the image-baked manifest. With `Envelope.tainted_harness_hold` listing
+  the class (`shell`, say), a decision request at that class, at any locality, on a tainted turn is
+  routed through the same `_approval_or_deny` seam by rule `tainted_harness_hold`, with the reason
+  `tainted harness hold: the envelope holds this tool class on a tainted turn`, whatever effect and
+  external the consumer declared at the coordinate. The PIP folds the knob and the coordinate into
+  one fact, `Facts.harness_class_held`, so the PDP parses no op string. The rule comes after the
+  rules that decide first (no grant; for a write, the error-budget and confidence rules; for a read,
+  the query-egress bound; a breached capacity budget) and ahead of every rule that would allow the
+  call, and ahead of the composed-destination hold and the standing cut, so its reason is the one
+  on the record. Empty, the default, it is off and no decision moves; a manifest that lists a class
+  no `harness-tool` entry declares is refused at load. What it does not do: it holds only a call
+  the harness's hook carries to the broker, it adds no taint of its own, and a read made through
+  the shell still does not taint (§2), so a turn the shell alone read from is not held by it. A
+  harness's network tool needs no class-specific rule: its coordinate declares `destination_arg`
+  and the composed-destination hold (§6.1) applies to it as to any op.
 
 ## 6. Read-side bounds
 
@@ -172,8 +200,8 @@ opts in per agent.
 - **Composed-destination hold** (rule `tainted_composed_destination`, §6.1):
   `Envelope.escalate_composed_destinations` over the declared `ToolOp.destination_arg`.
 
-Read-path order: exfil-deny → composed-destination hold (only with that knob on, and never past a
-breached cap) → rung-gate → cap → `read_allow`.
+Read-path order: exfil-deny → harness-tool hold and then composed-destination hold (each only with
+its knob on, and never past a breached cap) → rung-gate → cap → `read_allow`.
 
 ### 6.1 What an attacker can still do through a read: request forgery
 
@@ -261,6 +289,10 @@ The broker-side half of the memory-taint acceptance exists as tests today (`safe
   pair `test_a_source_the_consumer_trusts_records_and_does_not_taint`, ingest-before-record
   `test_taint_lands_even_when_the_record_cannot_be_written`; and through a launched gateway,
   `test_gateway_events_e2e.py::test_a_reported_read_holds_the_next_external_write_over_stdio`.
+- **A harness's own read, permitted**: `test_harness_decision.py::TestTaintAtThePermit`: the
+  turn is tainted before the `permitted` record is appended
+  (`test_a_tainting_permit_taints_the_turn_before_its_record`), a sink failure leaves it tainted and
+  refuses, and a trusted source is permitted without taint.
 - **Composed-destination hold (opt-in)** — `test_composed_destination.py`: what "composed" means
   (`test_supplies_destination`), the PIP fact, the decision table including precedence and the
   external writes left to the standing cut (`test_rule_decisions`), the declaration in a dump and
@@ -269,6 +301,15 @@ The broker-side half of the memory-taint acceptance exists as tests today (`safe
   (`test_on_holds_the_composed_destination_and_names_the_rule`), and
   `test_off_decides_and_records_as_without_the_field`. The exhaustive corpus pins the ON
   slice and keeps the OFF digest (`test_pdp_corpus.py::test_on_slice_moves_only_tainted_composed_points`).
+- **Harness-tool hold (opt-in)** — `test_harness_tool.py`: the reserved coordinate's vocabulary
+  and its refusal at load, the coordinate never served and refused before the manifest when an
+  agent calls it, the PIP fact (`TestThePipFact`), the rule's decisions including its precedence
+  over the other taint holds (`TestTheRule`), and the hold through `build_runtime`
+  (`test_a_held_class_on_a_tainted_turn_is_held_and_names_the_rule`); through the decision mouth,
+  the hold, its approval and its one release (`test_harness_decision.py::TestHoldAndRelease`). The
+  exhaustive corpus pins
+  its ON slice and keeps the OFF digest
+  (`test_pdp_corpus.py::test_harness_on_slice_moves_only_tainted_points`).
 - **Trusted-read relief + regression pair** — `test_read_gating.py`:
   `test_untrusted_read_taints_and_escalates_next_write` vs
   `test_trusted_read_does_not_taint_and_next_write_is_not_escalated` (the only difference is

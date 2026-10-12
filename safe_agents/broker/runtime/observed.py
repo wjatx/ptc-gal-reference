@@ -6,11 +6,19 @@ after it ran. The broker records such a report and lets a reported read taint
 the session turn (`broker/GATEWAY.md`, the tool-event mouth; `broker/TAINT.md`
 §2). It decides nothing about the call: the call has already happened.
 
-This module is the vocabulary a report is spelled in, and the check that a
-report is spelled in it. Standard library only, so a mouth can refuse a
-malformed report before it enters the runtime, and the runtime re-checks every
-field itself (`BrokerRuntime.record_observed_event`), because a mouth is not
-trusted to have checked.
+A harness's hook can also ask before a call runs. That request is decided at
+the reserved coordinate `harness-tool`, op `<tool_class>/<locality>`
+(`schemas/harness_tool.py`), and is spelled in the same vocabulary plus two
+digests: the call's input as the adapter serialized it, and the harness's own
+call id. `DecisionRequest` is that request, checked.
+
+This module is the vocabulary a report or a request is spelled in, and the
+check that one is spelled in it. It holds no runtime state, so a mouth can
+refuse a malformed body before it enters the runtime, and the runtime
+re-checks every field itself (`BrokerRuntime.record_observed_event`), because a
+mouth is not trusted to have checked. The two closed sets, the reserved tool
+name and the coordinate spelling live in `schemas/harness_tool.py`, a leaf the
+manifest schema can import, and are re-exported here.
 
 What a report may carry is deliberately narrow: two short codes in a bounded
 alphabet (which mouth, which harness), one member each of two closed enums
@@ -26,7 +34,34 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from enum import Enum
+
+from safe_agents.broker.schemas.harness_tool import (
+    COORDINATE_SEPARATOR,
+    HARNESS_TOOL,
+    Locality,
+    ToolClass,
+    coordinate_op,
+    member,
+    parse_coordinate_op,
+)
+
+__all__ = [
+    "COORDINATE_SEPARATOR",
+    "DIGEST",
+    "DecisionRequest",
+    "HARNESS_SOURCE_PREFIX",
+    "HARNESS_TOOL",
+    "Locality",
+    "ObservedEvent",
+    "SHORT_CODE",
+    "TAINTING_CLASSES",
+    "ToolClass",
+    "coordinate_op",
+    "digest_subject",
+    "parse_coordinate_op",
+    "validate_decision_request",
+    "validate_observed_event",
+]
 
 #: The shape of a mouth code, a harness code and a refusal-cause code: the only
 #: short strings a mouth supplies that reach the tape. A caller-authored value
@@ -40,28 +75,6 @@ DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 HARNESS_SOURCE_PREFIX = "harness:"
 
 
-class ToolClass(str, Enum):
-    """What kind of built-in tool the harness ran, as its adapter classified it."""
-
-    FILE_READ = "file-read"
-    FILE_WRITE = "file-write"
-    FILE_EDIT = "file-edit"
-    SHELL = "shell"
-    WEB_FETCH = "web-fetch"
-    WEB_SEARCH = "web-search"
-    OTHER = "other"
-
-
-class Locality(str, Enum):
-    """Where the call's subject was, as the harness's adapter classified it."""
-
-    PROJECT = "project"
-    HOME = "home"
-    OUTSIDE = "outside"
-    REMOTE = "remote"
-    UNKNOWN = "unknown"
-
-
 #: The classes whose report taints the session turn: each one brings content
 #: into the agent's context. A shell command can read too, but its class says
 #: nothing about whether it did, and that is the harness's to classify
@@ -69,6 +82,11 @@ class Locality(str, Enum):
 TAINTING_CLASSES: frozenset[ToolClass] = frozenset(
     {ToolClass.FILE_READ, ToolClass.WEB_FETCH, ToolClass.WEB_SEARCH}
 )
+
+
+def _source_id(harness: str, tool_class: ToolClass, locality: Locality) -> str:
+    """`harness:<harness>/<class>/<locality>`: the coordinate's op, prefixed by the harness."""
+    return f"{HARNESS_SOURCE_PREFIX}{harness}/{coordinate_op(tool_class, locality)}"
 
 
 @dataclass(frozen=True)
@@ -81,6 +99,9 @@ class ObservedEvent:
     locality: Locality
     subject_digest: str
     result_digest: str | None = None
+    #: The harness's own id for the call, digested, so this report pairs with the
+    #: decision asked before the call ran. None when the report carries none.
+    call_digest: str | None = None
 
     @property
     def source_id(self) -> str:
@@ -89,10 +110,41 @@ class ObservedEvent:
         Built from codes alone, so a consumer's `trusted_read_sources` can trust
         a class of read without ever seeing a path.
         """
-        return (
-            f"{HARNESS_SOURCE_PREFIX}{self.harness}/"
-            f"{self.tool_class.value}/{self.locality.value}"
-        )
+        return _source_id(self.harness, self.tool_class, self.locality)
+
+    @property
+    def taints(self) -> bool:
+        return self.tool_class in TAINTING_CLASSES
+
+
+@dataclass(frozen=True)
+class DecisionRequest:
+    """One request to decide a harness's own tool call before it runs, checked.
+
+    Every field is a code, a member of a closed set, or a digest. `input_digest`
+    covers the full tool input as the adapter serialized it; it becomes the
+    decided call's `argsDigest` and binds the release of a hold. `call_digest`
+    is the harness's own id for the call, digested, so the decision and the
+    post-call report pair on the tape without a harness identifier in the clear.
+    """
+
+    mouth: str
+    harness: str
+    tool_class: ToolClass
+    locality: Locality
+    subject_digest: str
+    input_digest: str
+    call_digest: str
+
+    @property
+    def op(self) -> str:
+        """The reserved coordinate's op this request is decided at."""
+        return coordinate_op(self.tool_class, self.locality)
+
+    @property
+    def source_id(self) -> str:
+        """The source a permit of a tainting class ingests (`ObservedEvent.source_id`)."""
+        return _source_id(self.harness, self.tool_class, self.locality)
 
     @property
     def taints(self) -> bool:
@@ -113,16 +165,6 @@ def _digest(name: str, value: object) -> str:
     return value
 
 
-def _member(name: str, enum: type[Enum], value: object) -> Enum:
-    if not isinstance(value, str):
-        raise ValueError(f"{name} must be a string, got {value!r}")
-    try:
-        return enum(value)
-    except ValueError:
-        valid = ", ".join(member.value for member in enum)
-        raise ValueError(f"{name} must be one of: {valid}; got {value!r}") from None
-
-
 def validate_observed_event(
     *,
     mouth: object,
@@ -131,6 +173,7 @@ def validate_observed_event(
     locality: object,
     subject_digest: object,
     result_digest: object = None,
+    call_digest: object = None,
 ) -> ObservedEvent:
     """Check every field against its vocabulary, or raise ValueError.
 
@@ -140,10 +183,38 @@ def validate_observed_event(
     return ObservedEvent(
         mouth=_code("mouth", mouth),
         harness=_code("harness", harness),
-        tool_class=_member("tool_class", ToolClass, tool_class),  # type: ignore[arg-type]
-        locality=_member("locality", Locality, locality),  # type: ignore[arg-type]
+        tool_class=member("tool_class", ToolClass, tool_class),  # type: ignore[arg-type]
+        locality=member("locality", Locality, locality),  # type: ignore[arg-type]
         subject_digest=_digest("subject_digest", subject_digest),
         result_digest=None if result_digest is None else _digest("result_digest", result_digest),
+        call_digest=None if call_digest is None else _digest("call_digest", call_digest),
+    )
+
+
+def validate_decision_request(
+    *,
+    mouth: object,
+    harness: object,
+    tool_class: object,
+    locality: object,
+    subject_digest: object,
+    input_digest: object,
+    call_digest: object,
+) -> DecisionRequest:
+    """Check every field of a decision request against its vocabulary, or raise ValueError.
+
+    The same checks as `validate_observed_event`, and both digests are required:
+    a request that cannot bind its input or pair with its report is malformed.
+    Nothing is coerced.
+    """
+    return DecisionRequest(
+        mouth=_code("mouth", mouth),
+        harness=_code("harness", harness),
+        tool_class=member("tool_class", ToolClass, tool_class),  # type: ignore[arg-type]
+        locality=member("locality", Locality, locality),  # type: ignore[arg-type]
+        subject_digest=_digest("subject_digest", subject_digest),
+        input_digest=_digest("input_digest", input_digest),
+        call_digest=_digest("call_digest", call_digest),
     )
 
 

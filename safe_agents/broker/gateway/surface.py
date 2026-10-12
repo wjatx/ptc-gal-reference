@@ -215,6 +215,7 @@ class GatewaySurface:
         locality: str,
         subject_digest: str,
         result_digest: str | None = None,
+        call_digest: str | None = None,
     ) -> str | None:
         """Carry one tool-event report to the runtime (`broker/GATEWAY.md` G21 on).
 
@@ -230,7 +231,40 @@ class GatewaySurface:
             locality=locality,
             subject_digest=subject_digest,
             result_digest=result_digest,
+            call_digest=call_digest,
         )
+
+    def decide(
+        self,
+        *,
+        mouth: str,
+        harness: str,
+        tool_class: str,
+        locality: str,
+        subject_digest: str,
+        input_digest: str,
+        call_digest: str,
+    ) -> Any:
+        """Carry one decision request to the runtime (`broker/GATEWAY.md` G30 on).
+
+        A harness's hook asks before the harness runs one of its own tools. The
+        runtime decides it at the reserved coordinate and answers permit or
+        refuse; nothing here decides or reshapes that answer (G1). Returns the
+        runtime's `HarnessDecision`.
+        """
+        return self._runtime.decide_harness_call(
+            mouth=mouth,
+            harness=harness,
+            tool_class=tool_class,
+            locality=locality,
+            subject_digest=subject_digest,
+            input_digest=input_digest,
+            call_digest=call_digest,
+        )
+
+    def refuse_decision(self, *, mouth: str, cause: str) -> Any:
+        """Have the runtime record and refuse a decision request the mouth could not read."""
+        return self._runtime.refuse_decision_request(mouth=mouth, cause=cause)
 
     def sweep_expired_intents(self) -> int:
         """Record this principal's holds that expired undecided (#163).

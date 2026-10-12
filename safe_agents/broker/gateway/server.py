@@ -407,11 +407,16 @@ class EventMouth(_ServedMouth):
     The same guard, authenticator, ledger, budget and stop as the network MCP
     mouth, around `EventApp` instead of the SDK. It holds the serialized surface
     and reaches the runtime only through its `observe`, with this mouth's code
-    bound, so a report cannot name another mouth.
+    bound, so a report cannot name another mouth. The same holds for its second
+    route, `/decide` (G30 on): `decide` and `refuse_decision`, mouth code bound.
     """
 
     def _application(self) -> Any:
-        return EventApp(partial(self._surface.observe, mouth=EVENT_MOUTH_CODE))
+        return EventApp(
+            partial(self._surface.observe, mouth=EVENT_MOUTH_CODE),
+            partial(self._surface.decide, mouth=EVENT_MOUTH_CODE),
+            partial(self._surface.refuse_decision, mouth=EVENT_MOUTH_CODE),
+        )
 
 
 async def serve_until_any_stops(mouths: Sequence[Any]) -> None:

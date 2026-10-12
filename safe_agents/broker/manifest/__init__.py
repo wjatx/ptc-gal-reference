@@ -14,7 +14,9 @@ regardless of what it is called.
     any call for which this returns None (no entry ⇒ no connectable op).
   - ``served(principal, grants)`` — the capability-scoped view: ONLY the ops a
     principal may see given their active grants. An ungranted op is ABSENT (removal,
-    not refusal) — no see-but-can't-use surface.
+    not refusal) — no see-but-can't-use surface. The reserved ``harness-tool``
+    coordinates are never in it: they classify a harness's own tool calls, which
+    are decided through the decision mouth and are never a tool the agent calls.
 
 ``CATALOG`` is an OPTIONAL, copy-only reference table of domain-neutral ops a manifest
 author may copy into ``tool_ops``. It is deliberately NOT consulted at request time —
@@ -29,6 +31,7 @@ broker/SCHEMAS.md §2 (BrokeredCall / ToolOp).
 from __future__ import annotations
 
 from safe_agents.broker.schemas import Grant, Principal, ToolOp
+from safe_agents.broker.schemas.harness_tool import HARNESS_TOOL
 
 
 class ToolOpTable:
@@ -76,12 +79,17 @@ class ToolOpTable:
         future tier-/skill-based scoping; filtering is currently keyed on
         Grant.actionClass alone. Grants naming an op absent from the table contribute
         nothing (no entry = no op), which is correct.
+
+        An entry at the reserved ``harness-tool`` is never served, granted or not.
+        Its grant activates a decision about a harness's own call, made through the
+        decision mouth; advertising it would offer the agent a tool that no
+        connector performs. ``entry()`` still resolves it for the runtime.
         """
         granted_classes = {g.actionClass for g in grants}
         return [
             entry
             for entry in self._entries
-            if f"{entry.tool}.{entry.op}" in granted_classes
+            if entry.tool != HARNESS_TOOL and f"{entry.tool}.{entry.op}" in granted_classes
         ]
 
     def __len__(self) -> int:
@@ -100,7 +108,7 @@ class ToolOpTable:
 #   reversible: shorthand for RECOVERABLE. True if a wrong execution is undoable OR
 #               structurally bounded-blast (a fixed, broker-held destination the model
 #               can't widen). False ONLY when a mistake is both irreversible AND
-#               unbounded — rule 8 then requires approval every call. Omit for reads.
+#               unbounded — external_irreversible then requires approval every call. Omit for reads.
 #   egress_arg: name of the arg whose value egresses to the provider.
 #   destination_arg: name of the arg that says where the request goes; read only by
 #               the opt-in composed-destination hold (broker/TAINT.md §6.1).
@@ -132,13 +140,14 @@ CATALOG: list[ToolOp] = [
     # send: write, crosses a trust boundary. reversible=True reflects blast radius, not
     # undoability: the destination is a fixed, broker-held owner chat id (never a
     # model-suppliable arg), so an untainted send is low-blast and safe to allow
-    # autonomously (rule 10); a tainted turn still hits rule 7 and requires approval.
+    # autonomously (supervised_write_allow); a tainted turn still hits tainted_external_write
+    # and requires approval.
     ToolOp(tool="notify", op="send", effect="write", external=True, reversible=True),
 
     # --- Peer / A2A publish ---
     # publish: emit an EventTrigger to a PEER agent's airlock. external=True,
     # effect="write" is the ENTIRE taint trigger — a tainted turn's publish hits the
-    # standing tainted_external_write cut (rule 9), no publish-specific rule.
+    # standing tainted_external_write cut, no publish-specific rule.
     # reversible=True (same shape as notify.send): the receiver re-gates everything it
     # carries at its own airlock, so a single publish cannot itself effect an
     # irreversible action; an UNTAINTED publish is allowed autonomously. The peer

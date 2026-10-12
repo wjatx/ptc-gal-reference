@@ -327,14 +327,23 @@ def test_confinement_runtime_public_api_has_no_connector_or_doer():
     # an optional instant, returns a count, executes nothing (an expired intent never
     # runs), writes only expiry records under each stored call's coordinates, and is
     # wired to no wire name or HTTP route, so the agent cannot reach it.
+    # decide_harness_call and refuse_decision_request (GATEWAY.md G30 on, #168) are
+    # the decision mouth's seams. The first takes codes, members of two closed enums
+    # and digests, decides at the reserved coordinate through the same pipeline as a
+    # call, reaches no connector, and returns a frozen HarnessDecision of data. The
+    # second takes a mouth code and a closed cause code and writes one refusal
+    # record. The caller is the mouth, never the agent's MCP surface, and no sink,
+    # connector, Doer or secret crosses out.
     assert set(public_methods) == {
         "served_registry", "handle_request", "new_turn", "session_turn",
         "approve_intent", "reject_intent", "flag_intent", "describe_intent", "close",
         "record_refused_connections", "record_observed_event", "sweep_expired_intents",
+        "decide_harness_call", "refuse_decision_request",
     }, (
         "BrokerRuntime must expose only served_registry/handle_request/new_turn/"
         "session_turn/approve_intent/reject_intent/flag_intent/describe_intent/close/"
-        "record_refused_connections/record_observed_event/sweep_expired_intents; "
+        "record_refused_connections/record_observed_event/sweep_expired_intents/"
+        "decide_harness_call/refuse_decision_request; "
         f"found: {public_methods}"
     )
 

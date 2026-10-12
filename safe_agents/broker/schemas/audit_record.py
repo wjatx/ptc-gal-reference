@@ -63,9 +63,16 @@ class AuditRecord(BaseModel):
     # timer is never read as a person having said no. Its record carries the stored
     # call's coordinates, intentId, storedCallDigest and expiredAt, and no actorDigest:
     # nobody acted.
+    #
+    # `permitted` means the broker decided a harness's own tool call before it ran
+    # and allowed it, so the harness performs it; the broker performs nothing.
+    # Never `executed`, which says the broker ran the effect itself. Its record
+    # carries `decision="allow"` and the reserved coordinate `harness-tool`, op
+    # `<tool_class>/<locality>`; a permit that releases an approved hold also
+    # carries intentId, storedCallDigest and approvedBy.
     outcome: Literal[
         "executed", "denied", "held", "refused", "failed", "rejected", "flagged",
-        "observed", "expired",
+        "observed", "expired", "permitted",
     ]
     error: str | None = None
     # committed randomization seed, where allocation was randomized (auditable randomness);

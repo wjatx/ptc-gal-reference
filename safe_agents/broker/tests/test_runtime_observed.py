@@ -168,6 +168,8 @@ MALFORMED = [
     pytest.param({"subject_digest": None}, id="no subject"),
     pytest.param({"result_digest": ""}, id="empty result digest"),
     pytest.param({"result_digest": "the file's contents"}, id="content as the result"),
+    pytest.param({"call_digest": "toolu_0001"}, id="a raw call id"),
+    pytest.param({"call_digest": ""}, id="empty call digest"),
 ]
 
 
@@ -257,12 +259,32 @@ class TestTheRecordingSeam:
         (record,) = sink.records()
         assert record.resultDigest is None
 
-        def digest_for(path: str) -> str:
-            return hash_args({"harness": "example-harness", "locality": "outside",
-                              "subject": digest_subject(path)})
+        def digest_for(path: str, call: str | None = None) -> str:
+            return hash_args({"call": call, "harness": "example-harness",
+                              "locality": "outside", "subject": digest_subject(path)})
 
         assert record.argsDigest == digest_for("/home/someone/.ssh/config")
         assert record.argsDigest != digest_for("/home/someone/.ssh/config2")
+
+    def test_a_reported_call_digest_rides_in_the_args_and_pairs_the_report(self, built) -> None:
+        """A report that carries the harness's call id, digested, records it as the
+        args key `call`, so the report pairs with the decision asked before the call
+        ran. Unreported, `call` is null: one args shape either way (GATEWAY.md G25)."""
+        runtime, sink, _ = built()
+        call = digest_subject("toolu_0001")
+        runtime.record_observed_event(**_report(call_digest=call))
+        runtime.record_observed_event(**_report())
+        with_call, without = sink.records()
+        subject = digest_subject("/home/someone/.ssh/config")
+        shape = {"harness": "example-harness", "locality": "outside", "subject": subject}
+        assert with_call.argsDigest == hash_args({**shape, "call": call})
+        assert without.argsDigest == hash_args({**shape, "call": None})
+        assert with_call.argsDigest != without.argsDigest
+        # Everything else slice 1 recorded is unchanged by the digest.
+        for record in (with_call, without):
+            assert (record.tool, record.op, record.decision, record.outcome) == (
+                OBSERVED_TOOL, "file-read", "abstain", "observed",
+            )
 
     def test_taint_lands_even_when_the_record_cannot_be_written(self, built, monkeypatch) -> None:
         """Ingest before emit: every write order fails toward less authority. A

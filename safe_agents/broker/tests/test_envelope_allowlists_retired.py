@@ -92,10 +92,15 @@ _MINIMAL_HASH_AFTER_RETIREMENT = (
 # not already moving. Hiding the field from the dump while it is off would
 # have kept the old value, at the price of an envelope whose stored bytes do
 # not say what it is.
-_MINIMAL_HASH_NOW = "sha256:98e6db19bede3d5eae5a89aa36bc8cec1bd9dc0ec2cbf4b944ba826e342792ef"
+#
+# 2026-10-12: adding `Envelope.tainted_harness_hold` (#168), dumped as an empty
+# list while off, moved it again from
+# sha256:98e6db19bede3d5eae5a89aa36bc8cec1bd9dc0ec2cbf4b944ba826e342792ef, for
+# the same reason and at the same cost: nothing that is not already moving.
+_MINIMAL_HASH_NOW = "sha256:3d3d6571b5090d888be4db7c44395f3277967c5df5856305b83d2469083691cc"
 # The fields added since the retirement, at their defaults. Removing them from
 # today's dump recovers the dump the retirement left.
-_ADDED_SINCE_RETIREMENT = {"escalate_composed_destinations": False}
+_ADDED_SINCE_RETIREMENT = {"escalate_composed_destinations": False, "tainted_harness_hold": []}
 
 
 def _canonical_hash(dump: dict) -> str:

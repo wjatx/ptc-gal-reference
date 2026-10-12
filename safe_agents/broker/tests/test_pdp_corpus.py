@@ -110,6 +110,13 @@ GOLDEN_CORPUS_DIGEST = "edec2f9e6f350a6bdb4020530e9cbba6aa818433f0d567fa70972191
 # asserted rule-by-rule in test_on_slice_moves_only_tainted_composed_points.
 GOLDEN_DESTINATION_ON_DIGEST = "b274b715a2a8b62fc5834ae7539c0995c5350ffef9b0bb8cae006d47d96353b7"
 
+# The ON slice of the harness-tool hold (#168): the same 73,728 points with
+# Facts.harness_class_held=True. As for the composed-destination slice, the base
+# digest is its OFF slice and is NOT re-minted. Minted 2026-10-12 with the rule
+# tainted_harness_hold; which points differ from the OFF slice, and how, is asserted
+# point by point in test_harness_on_slice_moves_only_tainted_points.
+GOLDEN_HARNESS_HOLD_ON_DIGEST = "741aeff25efb6e7b59a728b9f451dfcdb6a428e54ea818dc609a3697cae389e8"
+
 # The historical figure from the policy-language spike, published in docs/PTC.md §5,
 # docs/lf-standards-brief.md and spec/PTC-SPEC.md. Asserted here so the cited number
 # and the running artifact cannot drift apart silently.
@@ -121,8 +128,9 @@ EXPECTED_CORPUS_SIZE = 73_728
 # ---------------------------------------------------------------------------
 
 # BrokeredCall axes. `reversible` is a THREE-valued field (bool | None) and the rules
-# distinguish all three: rule 11 guards `is not False`, rule 13 guards `is False`, so
-# None behaves like True at rule 11 and like True at rule 13 — but that is an outcome
+# distinguish all three: transform_to_safer_op guards `is not False`,
+# external_irreversible guards `is False`, so None behaves like True at both — but
+# that is an outcome
 # to be swept, not an assumption to be encoded by collapsing the axis.
 _CALL_AXES: dict[str, tuple[Any, ...]] = {
     "effect": ("read", "write"),
@@ -170,8 +178,13 @@ _FACT_AXES: dict[str, tuple[Any, ...]] = {
 #                               Envelope.escalate_composed_destinations, the image-baked
 #                               ToolOp.destination_arg and the agent's args into this one
 #                               boolean, so args still never reach a predicate.
+#   harness_class_held ........ #168, rule tainted_harness_hold. The PIP folds
+#                               Envelope.tainted_harness_hold and the reserved
+#                               coordinate's op into this one boolean, so the engine
+#                               parses no op string.
 _EXTENSION_FACT_AXES: dict[str, tuple[Any, ...]] = {
     "destination_composed": (False, True),
+    "harness_class_held": (False, True),
 }
 
 # Held constant across the whole sweep, with the reason each one is safe to freeze.
@@ -289,6 +302,12 @@ def corpus() -> list[str]:
 def destination_on_slice() -> list[str]:
     """The base space again with the composed-destination fact on (PTC-52)."""
     return _corpus_lines({"destination_composed": True})
+
+
+@pytest.fixture(scope="module")
+def harness_on_slice() -> list[str]:
+    """The base space again with the harness-tool hold fact on (#168)."""
+    return _corpus_lines({"harness_class_held": True})
 
 
 # ---------------------------------------------------------------------------
@@ -572,5 +591,76 @@ def test_on_slice_moves_only_tainted_composed_points(
             }, point
         if decided != off_decision:
             moved += 1
+    # Not vacuous: the rule must actually move a large part of the space.
+    assert moved > 1_000
+
+
+# ---------------------------------------------------------------------------
+# The harness-tool hold slice (#168)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.corpus
+def test_harness_on_slice_is_total_and_digest_is_pinned(harness_on_slice: list[str]) -> None:
+    """The ON slice covers the whole base space and hashes to its own pin."""
+    assert len(harness_on_slice) == EXPECTED_CORPUS_SIZE
+    assert len(set(harness_on_slice)) == EXPECTED_CORPUS_SIZE
+    assert _digest(harness_on_slice) == GOLDEN_HARNESS_HOLD_ON_DIGEST, (
+        "the harness-tool hold's behaviour changed over the whole input space; "
+        "re-mint only with the rule-table change that caused it."
+    )
+
+
+_HARNESS_REASON = "tainted harness hold: the envelope holds this tool class on a tainted turn"
+
+
+@pytest.mark.corpus
+def test_harness_on_slice_moves_only_tainted_points(
+    corpus: list[str], harness_on_slice: list[str]
+) -> None:
+    """Point by point, the ON slice differs from the OFF slice exactly where the rule says.
+
+    A point is decided by the rule if and only if: the turn is tainted, the cap is
+    not breached, and no earlier rule decided it (no grant; a write's error-budget or
+    confidence rules; a read's egress bound). Unlike the composed-destination rule,
+    an external write is NOT left to the standing cut: the hold names itself whatever
+    effect and external the consumer declared. Every such point is held through the
+    polarity seam under this rule's reason: require_approval with a human, deny with
+    the seam's suffix without one. Nothing else may have changed at all.
+    """
+    off = {line.split(" => ", 1)[0]: line.split(" => ", 1)[1] for line in corpus}
+    moved = 0
+    for line in harness_on_slice:
+        key, decided = line.split(" => ", 1)
+        point = json.loads(key)
+        call, facts = point["call"], point["facts"]
+        assert facts.pop("harness_class_held") is True
+        off_decision = off[_canonical({"call": call, "facts": facts})]
+        is_write = call["effect"] == "write"
+        earlier_rule_decides = (
+            not facts["grant_present"]
+            or (is_write and (facts["error_budget_breached"] or facts["confidence_below_bar"]))
+            or (
+                not is_write
+                and (facts["query_bytes_exceeded"] or facts["query_egress_breached"])
+            )
+        )
+        decided_here = (
+            call["tainted"] and not facts["cap_budget_breached"] and not earlier_rule_decides
+        )
+        decision = json.loads(decided)
+        if not decided_here:
+            assert decided == off_decision, point
+            continue
+        assert decision.get("reason", "").startswith(_HARNESS_REASON), point
+        if facts["human_reachable"]:
+            assert decision["kind"] == "require_approval", point
+        else:
+            assert decision == {
+                "kind": "deny",
+                "reason": _HARNESS_REASON + "; no human reachable for approval",
+            }, point
+        assert decided != off_decision, point
+        moved += 1
     # Not vacuous: the rule must actually move a large part of the space.
     assert moved > 1_000
