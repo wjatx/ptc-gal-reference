@@ -130,10 +130,16 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   hundred years (a larger value is refused at load), counted from the instant the broker
 >   established it. The input names are a closed vocabulary: `manifest`, `envelope`, `hmac_key`
 >   (read once at startup), `grant`, `counters`, `sub_grants` (read per call), `intent` (the frozen
->   call, read at release) and `mcp_admission` (an MCP server's two-key admission snapshot, read at
->   spawn and again past its age, `broker/MCP-HOST.md`). A decision depending on an input past its
->   age is refused (`deny`, reason `input past maximum age: <input> …`) before any counter is drawn
->   or connector reached, and a held call released past it is refused at release. The age is
+>   call, read at release), `mcp_admission` (an MCP server's two-key admission snapshot, read at
+>   spawn and again past its age, `broker/MCP-HOST.md`) and `issuer_standing` (the issuer's signed
+>   standing document, #179). The last differs twice. Its maximum age is bound at deploy
+>   (`ISSUER_STANDING_MAX_AGE_SECONDS`, no default), a value here may only shorten it, and a longer
+>   one refuses at startup. And past its age it refuses nothing: the grants whose level rests on an
+>   issuer key act at the lower of their level and `lastSafeLevel`, while the age still counts
+>   toward the decision's horizon, so a held call is evaluated again past it
+>   (`broker/grant-lifecycle.md` §"Key standing"). A decision depending on any other
+>   input past its age is refused (`deny`, reason `input past maximum age: <input> …`) before
+>   any counter is drawn or connector reached, and a held call released past it is refused at release. The age is
 >   checked at the initial decision and again at `enforce()`'s premise revalidation. An error while
 >   checking refuses too (`deny`, reason `input age check failed: <error type>`), never reading the
 >   inputs as fresh. Nothing re-reads an
@@ -688,9 +694,12 @@ Per-field notes:
 ## 7. PromotionRecord
 
 The append-only ceremony-ledger record of every write to a grant. The accountable record (Part 11
-of the philosophy doc). Six record types share one ledger. Five record a level change, and the
-maker-checker act that raises a Grant's level is the `promotion` type. The sixth,
-`reattestation`, records a write that changes none (GAL §4.3, §6.6). **Demotions append a
+of the philosophy doc). Seven record types share one ledger. Six record a level change, and the
+maker-checker act that raises a Grant's level is the `promotion` type. `reattestation` records a
+write that changes none (GAL §4.3, §6.6). `withdrawal` (GAL §6.10, GAL-41, #179) is ahead of the
+published vocabulary: GAL 0.7.0-draft §5.2 lists six types, the design ruling on #179 adds this
+one, and a later revision publishes it beside the clause, which stays marked not yet implemented
+until then. **Demotions append a
 `demotion`-typed record on the same
 ledger** — this supersedes the earlier "demotion needs no such record" exemption (Phase 3,
 `docs/GAL.md` §3); demotion itself stays automatic and deterministic (`grant-lifecycle.md`).
@@ -699,7 +708,7 @@ ledger** — this supersedes the earlier "demotion needs no such record" exempti
 ```ts
 // STUB — illustrative, not an implementation
 interface PromotionRecord {
-  recordType:  "promotion" | "demotion" | "bootstrap" | "tightening" | "lapse" | "reattestation"   // default "promotion"
+  recordType:  "promotion" | "demotion" | "bootstrap" | "tightening" | "lapse" | "reattestation" | "withdrawal"   // default "promotion"
   actionClass: string              // the class of the grant the record accounts for
   principal:   Principal           // for whom
   fromLevel:   "in-loop" | "on-loop" | "out-of-loop" | null   // null = the Recommend rung (no-grant baseline; the record creates the grant)
@@ -710,7 +719,7 @@ interface PromotionRecord {
   ratifiedBy:  string              // checker (promotion: must differ from maker)
   envelopeHash: string             // the envelope hash in force when the record was written; on a reattestation, the NEW hash
   triggeredBy: string[]            // demotion-typed only: the DemotionTrigger values that fired
-  demotionReason: "failing" | "pending-evidence" | null      // demotion-typed; "pending-evidence" on lapse
+  demotionReason: "failing" | "pending-evidence" | null      // demotion-typed; "pending-evidence" on lapse and withdrawal
   ts:          string
   certifiedUntil?: string | null   // promotion: the certification term the checker RATIFIED; lapse: the term that expired; null on every other type
 }
@@ -726,6 +735,7 @@ one-rung-up, level ordering — is the state machine's job, `grant-lifecycle.md`
 | `bootstrap` | the sanctioned seed record — first creation of a grant outside the ceremony (`seed_grants` retires to bootstrap-only, Phase 4) | `fromLevel` null; maker ≠ checker NOT enforced (single-operator seed is sanctioned); `predicate` null; `triggeredBy` empty; `demotionReason` null |
 | `tightening` | voluntary any-level → in-loop move (always permitted, no ceremony, no trigger — `docs/GAL.md` §4) | `toLevel` = `"in-loop"`; maker ≠ checker NOT enforced; `predicate` null; `triggeredBy` empty; `demotionReason` null |
 | `lapse` | a certification term expired (GAL §6.7.6; `grant-lifecycle.md` §Lapse) | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` EMPTY (a lapse is an absence, not a fired condition); `demotionReason` = `"pending-evidence"`; `predicate` null; `fromLevel` non-null; `toLevel` = the grant's `lastSafeLevel` (never `"out-of-loop"`); `certifiedUntil` is the term that expired, where present (absent on records written before the field was allowed here); `evidence` names the expired term for a human reader and is never parsed |
+| `withdrawal` | the issuer key behind the grant's level was withdrawn (GAL §6.10, GAL-41; `grant-lifecycle.md` §"Key standing") | `ratifiedBy` = `"system:demotion-evaluator"`; `triggeredBy` EMPTY (no condition fired); `demotionReason` = `"pending-evidence"` (nothing is proven broken about the agent); `predicate` null; `fromLevel` non-null; `toLevel` never above `fromLevel` and never `"out-of-loop"` (it is the grant's `lastSafeLevel`); `certifiedUntil` null. The key it accounts for is not a field: a reader derives it from the ledger, as the verified signer of the last licensing record before it, and `evidence` names it for a person and is never parsed |
 | `reattestation` | a grant re-issued at its level under a changed envelope (`re-seed`; GAL §6.6) | `fromLevel` = `toLevel` = the grant's level (non-null); `ratifiedBy` is the identity that re-attested; maker ≠ checker NOT enforced; `predicate` null; `triggeredBy` empty; `demotionReason` null; `certifiedUntil` null; `envelopeHash` is the hash the grant was re-issued under |
 
 A `reattestation` record neither earns a level nor lowers one. Every reader that derives a
@@ -799,10 +809,56 @@ Per-field notes:
 **Signing.** Every record type is signed (GAL-SPEC §6.10), by the identity that wrote it: the
 **issuer** key signs `promotion`, `bootstrap`, `tightening` and `reattestation` (the
 ceremony/operator side); the
-**evaluator** key — GAL §6.7.2's separate system identity — signs `demotion` and `lapse`. The two
+**evaluator** key, GAL §6.7.2's separate system identity, signs `demotion`, `lapse` and
+`withdrawal`. The two
 are distinct keys with distinct env contracts, because an evaluator holding the issuer key could
 mint promotion records. Verification selects the key map by `recordType`, so a signature from the
 wrong role fails closed (`grant-lifecycle.md` §"Two signing roles").
+
+**Signing-key standing (GAL §6.10, GAL-41, #179).** Which keys of a role still have standing is
+carried by a signed standing document per record-signing role, signed by a third role, the
+standing authority. Like the Envelope, it is not an eighth base schema: it fills nothing in the
+seven, and it describes the keys that sign one of them. Shapes in `grants/key_standing.py`; the
+loader, the age and the verdicts in `broker/grant-lifecycle.md` §"Key standing".
+
+```ts
+// STUB: illustrative, not an implementation
+interface KeyStandingDocument {
+  role:     "issuer" | "evaluator"
+  version:  number                  // integer >= 1; a verifier refuses one not above what it accepted
+  issuedAt: string                  // explicit UTC instant; the as-of is the earlier of this and the fetch
+  signer:   { keyId: string; zone: string }   // the standing-authority key; must equal the DSSE keyid
+  keys:     { [keyId: string]: KeyStandingEntry }
+}
+
+interface KeyStandingEntry {
+  publicKey:       string           // Ed25519 SubjectPublicKeyInfo PEM; never rebound, and never listed under two key ids
+  state:           "active" | "retired" | "withdrawn"           // one way; no hold state
+  retiredAt:       string | null    // set iff retired, or withdrawn after retirement
+  retiredReason:   "superseded" | "cessationOfOperation" | null
+  withdrawnAt:     string | null    // set iff withdrawn
+  withdrawnReason: "keyCompromise" | "privilegeWithdrawn" | null
+}
+```
+
+Every field dumps, null or not. The carried form is a DSSE envelope with payload type
+`application/vnd.safe-agents.key-standing.v1+json` whose payload is the canonical document bytes
+(sorted keys, no whitespace, ASCII) and whose one signature is over those bytes; a verifier checks
+it before parsing them. Where a role's document is configured, a record signed by a key it lists as
+`withdrawn` verifies as `record_signer_withdrawn`, whatever the record's `ts`.
+
+Where the ISSUER's document is configured, the broker's PIP asks it about the key behind each
+grant's level: the verified signer of the last record that licensed the grant (the latest
+`bootstrap` or `promotion`, or a `reattestation` after it; an unsigned one that comes after a
+signed record at its coordinate leaves the key not established). Withdrawn, or not established
+within the document's maximum age, and the grant acts at the lower of its level and
+`lastSafeLevel`. `propose`, `ratify` and `re-seed` refuse such a grant while it sits above
+`lastSafeLevel`, so no `reattestation` re-licenses a level a withdrawal took. The
+lower level reaches the PDP as `Facts.grant_level`, so no rule changes and the corpus digest does
+not move. Why it fell rides on `Facts.standing_fall_reason`, which no rule reads, for the PEP to
+log once at the initial read, as it does `quarantine_reason`. The runner records the fall with a
+`withdrawal` record, and four un-waivable audit rules report what neither can see
+(`grant-lifecycle.md` §"Key standing").
 
 **Storage.** Records live in the grants table as append-only `RECORD#…` items
 (`pk = RECORD#<principal>#<actionClass>`, `sk = <ts>#<recordType>`), written via a

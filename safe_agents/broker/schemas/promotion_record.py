@@ -1,7 +1,7 @@
 """PromotionRecord schema — the append-only ceremony-ledger record of every grant write.
 
-Six record types share one ledger (see SCHEMAS.md §7). Five record a level
-change; the sixth, ``reattestation``, records a write that changes none:
+Seven record types share one ledger (see SCHEMAS.md §7). Six record a level
+change; ``reattestation`` records a write that changes none:
 
 - ``promotion``  — the maker-checker ceremony that raises a Grant's level.
 - ``demotion``   — automatic deterministic demotion, ratified by the system
@@ -21,6 +21,15 @@ change; the sixth, ``reattestation``, records a write that changes none:
                    (GAL §6.6). It neither earns a level nor lowers one, so a
                    reader deriving a level, or looking for the record that
                    earned it, passes over the type (``bears_level``).
+- ``withdrawal``: the issuer key that signed the record the grant's level
+                   rests on was withdrawn (GAL §6.10, GAL-41): the grant fell
+                   to the lower of its level and lastSafeLevel. Written by the
+                   same system evaluator identity as demotion and lapse, and
+                   neither of them: no trigger fired and no term ran out. The
+                   key it accounts for is the verified signer of the last
+                   record that licensed the grant before it; a reader derives
+                   it from the ledger (``grants.grant_standing``), and the
+                   record's ``evidence`` names it for a person.
 
 This schema enforces field-SHAPE rules per record type, plus one direction rule:
 a demotion or lapse never raises the level (see the class docstring for why
@@ -42,6 +51,10 @@ DEMOTION_RATIFIER = "system:demotion-evaluator"
 # The one record type that changes no level (GAL §4.3). Named once so every
 # reader that passes over it tests the same value.
 REATTESTATION_RECORD_TYPE = "reattestation"
+
+# The record a key withdrawal writes (GAL §6.10, GAL-41). Named once so the
+# writer, the role map and the audit test the same value.
+WITHDRAWAL_RECORD_TYPE = "withdrawal"
 
 # The record types that may carry certifiedUntil (GAL §5.2). They do not carry
 # the same thing: a promotion's is the term the checker ratified, a lapse's is
@@ -87,8 +100,14 @@ class PromotionRecord(BaseModel):
                   ratifiedBy is the identity that re-attested; maker ≠ checker
                   NOT enforced; predicate absent; no demotion fields;
                   certifiedUntil absent (the first rule).
+    - withdrawal: ratifiedBy is the system evaluator; triggeredBy EMPTY (no
+                  condition fired);
+                  demotionReason is "pending-evidence" (nothing is proven
+                  broken, and recovery is a promotion with fresh evidence);
+                  predicate absent; fromLevel non-None; toLevel never
+                  out-of-loop and never above fromLevel.
 
-    The demotion and lapse direction rule is the one level-ordering rule that
+    The demotion, lapse and withdrawal direction rule is the one level-ordering rule that
     lives here. These two types are signed by the evaluator's key, and a
     verifier picks the acceptable key from the record's type alone, so "this
     type never raises" has to be a property of the record: otherwise the
@@ -101,7 +120,13 @@ class PromotionRecord(BaseModel):
 
     # which lifecycle act this record captures
     recordType: Literal[
-        "promotion", "demotion", "bootstrap", "tightening", "lapse", "reattestation"
+        "promotion",
+        "demotion",
+        "bootstrap",
+        "tightening",
+        "lapse",
+        "reattestation",
+        "withdrawal",
     ] = "promotion"
     # the action class of the grant the record accounts for
     actionClass: str
@@ -260,6 +285,9 @@ class PromotionRecord(BaseModel):
             self._require_no_raise()
             self._forbid_predicate()
 
+        elif self.recordType == WITHDRAWAL_RECORD_TYPE:
+            self._withdrawal_shape()
+
         elif self.recordType == REATTESTATION_RECORD_TYPE:
             # The issuer's key signs this type, and a verifier picks the key
             # from the type alone, so "this type moves no level" has to be a
@@ -302,8 +330,42 @@ class PromotionRecord(BaseModel):
         """
         return self.recordType != REATTESTATION_RECORD_TYPE
 
+    def _withdrawal_shape(self) -> None:
+        """The withdrawal rules (see the class docstring).
+
+        Signed by the evaluator's key, so "this type never raises" has to be a
+        property of the record, as it is for demotion and lapse.
+        """
+        if self.ratifiedBy != DEMOTION_RATIFIER:
+            raise ValueError(
+                f"a withdrawal record must be ratified by '{DEMOTION_RATIFIER}': got "
+                f"'{self.ratifiedBy}'. A withdrawal is applied by the system evaluator."
+            )
+        if self.triggeredBy:
+            raise ValueError(
+                "triggeredBy must be empty for a withdrawal record: no trigger fired; "
+                "the key behind the grant's level lost its standing."
+            )
+        if self.demotionReason != "pending-evidence":
+            raise ValueError(
+                "demotionReason must be 'pending-evidence' for a withdrawal record: "
+                f"nothing is proven broken, got {self.demotionReason!r}."
+            )
+        if self.fromLevel is None:
+            raise ValueError(
+                "fromLevel is required (non-None) for a withdrawal record: no grant "
+                "exists at the Recommend rung to lower."
+            )
+        if self.toLevel is AutonomyLevel.out_of_loop:
+            raise ValueError(
+                "toLevel must not be 'out-of-loop' for a withdrawal record: it lands on "
+                "the lower of the grant's level and lastSafeLevel."
+            )
+        self._require_no_raise()
+        self._forbid_predicate()
+
     def _require_no_raise(self) -> None:
-        """A demotion or lapse may lower the level or leave it; it never raises it."""
+        """A demotion, lapse or withdrawal may lower the level or leave it; never raise it."""
         if AUTONOMY_RANK[self.toLevel] > AUTONOMY_RANK[self.fromLevel]:
             raise ValueError(
                 f"a {self.recordType} record must not raise the level: got "

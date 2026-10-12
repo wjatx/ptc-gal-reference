@@ -208,6 +208,10 @@ force.
   with records, signed or not, in every mode. Un-waivable, as `GRANT_TERM_RATIFIED` is: a misstated
   term misstates how long authority was certified. The third check reads today's writer, which
   applies no clock skew; the skew allowance (#175) has to carry its bound into it.
+- **Signing-key standing** (GAL-41): `RECORD_SIGNER_IN_STANDING`, `GRANT_STANDING_WITHDRAWN`,
+  `KEY_SIGNED_AFTER_RETIREMENT` and `WITHDRAWAL_RECORD_MATCHES_LEDGER`, all un-waivable, plus the
+  annotation that names a role with no standing document. What each judges, and its limits, are in
+  §"Key standing" below.
 - **`GRANT_ENVELOPE_IN_FORCE`.** Every grant's `envelopeHash` is compared to the stored
   in-force envelope for its principal (recomputed via the same load path the broker uses at boot —
   a plain content hash, so the keyless posture holds). A mismatch is a grant the broker quarantines
@@ -289,8 +293,8 @@ into a weaker rule than the other. Fully-unconfigured signing gets the same pola
 `ratify` **refuses** to store an unsigned PromotionRecord — writing nothing (no record, no grant
 mutation; the proposal stays pending) — unless the operator passes an explicit `--allow-unsigned`,
 which stores the record UNSIGNED with a loud warning. `acknowledge` and `re-seed` refuse unsigned
-outright, with no override. The other writers (`seed`, `tighten`, and the runner's demotion/lapse
-passes) sign
+outright, with no override. The other writers (`seed`, `tighten`, and the runner's demotion, lapse
+and withdrawal passes) sign
 whenever their role's key is configured and write unsigned when none is, so a local floor with no
 key material still works.
 
@@ -307,7 +311,8 @@ could set, and the authority split would then be a value rather than a boundary
 | role | signs | env |
 |---|---|---|
 | `issuer` | `promotion`, `bootstrap`, `tightening`, `reattestation` (plus acknowledgment waivers and the MCP admission ledger) | `ISSUER_SIGNING_KEY_SECRET_ARN` / `ISSUER_SIGNING_KEY_FILE`, `ISSUER_SIGNING_KEY_ID`, `ISSUER_SIGNING_ZONE`, `ISSUER_VERIFY_KEYS_PARAM` / `ISSUER_VERIFY_KEYS_FILE` |
-| `evaluator` | `demotion`, `lapse` — the automatic, no-model side, which only ever lowers authority | `EVALUATOR_SIGNING_KEY_SECRET_ARN` / `EVALUATOR_SIGNING_KEY_FILE`, `EVALUATOR_SIGNING_KEY_ID`, `EVALUATOR_SIGNING_ZONE`, `EVALUATOR_VERIFY_KEYS_PARAM` / `EVALUATOR_VERIFY_KEYS_FILE` |
+| `evaluator` | `demotion`, `lapse`, `withdrawal`: the automatic, no-model side, which only ever lowers authority | `EVALUATOR_SIGNING_KEY_SECRET_ARN` / `EVALUATOR_SIGNING_KEY_FILE`, `EVALUATOR_SIGNING_KEY_ID`, `EVALUATOR_SIGNING_ZONE`, `EVALUATOR_VERIFY_KEYS_PARAM` / `EVALUATOR_VERIFY_KEYS_FILE` |
+| `standing-authority` | no record; each role's standing document (below) | `STANDING_AUTHORITY_SIGNING_KEY_SECRET_ARN` / `STANDING_AUTHORITY_SIGNING_KEY_FILE`, `STANDING_AUTHORITY_SIGNING_KEY_ID`, `STANDING_AUTHORITY_SIGNING_ZONE`, `STANDING_AUTHORITY_VERIFY_KEYS_PARAM` / `STANDING_AUTHORITY_VERIFY_KEYS_FILE` |
 
 **Verification binds record type to role**, or the second identity is decorative: an
 evaluator-signed `promotion` fails (`record_signer_wrong_role`), and so does an issuer-signed
@@ -317,6 +322,191 @@ re-issue a grant the broker had quarantined. A key_id appearing in BOTH verify m
 configuration error that refuses at cold
 start — one key with two roles is no split at all. A role whose verify keys are not configured
 never passes: a record needing it is `record_role_unresolved`, not an exemption.
+
+### Key standing: a third role and a signed document per role (GAL §6.10, GAL-41, #179)
+
+Whether a record was validly signed and whether its signer still has standing are different
+questions. The verify-key map answers the first. It cannot answer the second, because it has no
+per-key state: removing a key reads the same whether it was rotated out or withdrawn, and either
+way its records turn into `record_signer_unknown` findings while every grant they licensed keeps
+its level.
+
+**The source is a signed standing document, one per record-signing role**
+(`grants/key_standing.py`). Each entry carries a key's public PEM and a state, with RFC 5280's
+reason codes:
+
+| state | fields | what its records keep |
+|---|---|---|
+| `active` | none | standing |
+| `retired` | `retiredAt`, `retiredReason`: `superseded` or `cessationOfOperation` | standing. This is rotation |
+| `withdrawn` | `withdrawnAt`, `withdrawnReason`: `keyCompromise` or `privilegeWithdrawn` (and the retirement pair, if it was retired first) | nothing, whatever the record's `ts` |
+
+The document carries its `role`, a `version` that only rises, an `issuedAt` instant and the
+`signer` that signed it, and every field dumps whether or not it is null. Transitions run one way:
+`active` to `retired`, `active` to `withdrawn`, `retired` to `withdrawn`. There is no hold state and
+nothing leaves `withdrawn`. A key that must be trusted again is a new key pair, added under a new
+key id. A key id is never reused, and no document lists one public key under two key ids, so a
+withdrawn key's bytes cannot come back as `active` under another name. A withdrawal voids records signed before `withdrawnAt` too, for both reasons: a
+record's `ts` is part of what the key signed, so whoever held a compromised key can backdate what it
+forges, and nothing here can date a record independently.
+
+**The standing authority is a third signing role.** It signs standing documents and nothing else.
+It is resolved the way the issuer and evaluator are, from its own names
+(`STANDING_AUTHORITY_SIGNING_KEY_SECRET_ARN` / `STANDING_AUTHORITY_SIGNING_KEY_FILE`,
+`STANDING_AUTHORITY_SIGNING_KEY_ID`, `STANDING_AUTHORITY_SIGNING_ZONE`, and on every verifier
+`STANDING_AUTHORITY_VERIFY_KEYS_PARAM` / `STANDING_AUTHORITY_VERIFY_KEYS_FILE`). No key it holds
+may appear in either role's map or document, by key id or by key bytes: one key that both signed
+records and decided their standing could restore its own. Who holds it is a deployment fact
+(`docs/operator-identities.md`).
+
+**What pins it.** `ISSUER_STANDING_PARAM` / `ISSUER_STANDING_FILE` (and the `EVALUATOR_`
+pair) name where the document is, on the same two transports as the flat map, exactly one per role.
+The document replaces the map for its role, so setting both refuses. The maximum age,
+`ISSUER_STANDING_MAX_AGE_SECONDS` (and the evaluator's), sits beside the pointer, in whole seconds,
+with no default: a configured source without one refuses at startup. A per-agent value,
+`AgentManifest.input_max_age_seconds["issuer_standing"]`, may only shorten the issuer's; a longer
+one refuses at startup, and one given with no source configured refuses too
+(`grants/standing_keys.py`). None of these is ever read from a store, a grant or a record.
+
+**What a verifier accepts** (`grants/standing_source.py`). A fetched document is accepted only when
+its one DSSE signature verifies, over the payload bytes as carried and before they are parsed,
+under a standing-authority key; it is for this role; it lists no standing-authority key; it carries
+every withdrawal this process has already accepted, unchanged; its version is greater than the one
+accepted; no key in it moves backward or names a different public key; it lists no public key
+twice; and no new key id in it names a public key the accepted document, or a withdrawal already
+seen, lists under another id. A refusal is a verdict (`signature_invalid`, `signer_unknown`,
+`malformed`, `wrong_role`, `rollback`, `withdrawal_dropped`, `transition_refused`, `key_rebound`,
+`key_duplicated`, `authority_key_listed`, `unreadable`),
+and the document already accepted stays in force until its own age runs out. Its as-of instant is
+the earlier of the fetch and its `issuedAt` (GAL-43's rule, #176), so fetching the same document
+again never makes it younger. Standing is established up to `as_of + max age`, and a skew bound
+moves that end earlier (GAL-42). The standing authority therefore reissues each document at least
+once per maximum age. A key seen withdrawn stays withdrawn for the life of the process, however old
+the document becomes.
+
+**What the record verifier says.** Where a role's standing document is configured, a record whose
+signature verifies under a withdrawn key is `record_signer_withdrawn`, a verdict of its own and not
+`record_signer_unknown`. The signature is checked first, so a tampered record still reads as a
+signature failure. A retired key's records verify as they always did.
+
+**The ceremony** (`python -m safe_agents.broker.grants.standing_command`): `init`, `add`,
+`retire --reason`, `withdraw --reason`, `reissue`, each with `--role`. It runs under the standing
+authority's key and refuses without it. It reads the current document, verifies it under the
+standing-authority keys before building on it, refuses unless its version is the one named by
+`--expect-version` (every command but `init`), applies one transition, signs the next version,
+verifies its own output as a verifier would, and writes it back to the role's source or to
+`--out`. It has no hold, no reinstate and no backward move. The version check is there because
+the command re-signs what it builds on with a fresh `issuedAt`: an older document written back to
+the source, or a stale `--from`, would otherwise come out as the next version with a withdrawal
+dropped, and a process that had not seen the withdrawal would accept it. The check is only as good
+as the holder's record of the last version issued.
+
+**The enforcer's fall** (`grants/grant_standing.py`, the PIP in `prototype/broker_server.py`).
+Where `ISSUER_STANDING_PARAM` or `ISSUER_STANDING_FILE` is set on the broker, the PIP asks, for
+every grant above its `lastSafeLevel`, whether the issuer key behind its level still has standing.
+That key is the signer of the last record that licensed the grant: the latest `bootstrap` or
+`promotion` at its coordinate, or a `reattestation` after one, among the records at or before the
+grant's own `ts`. It is taken from the record's signature only after the signature verifies over
+the stored bytes. Demotion, lapse, tightening and withdrawal records license nothing, so none of
+them moves the key, and an evaluator key is never the key behind a level. If the key is
+withdrawn, or its standing cannot be established (no document accepted, the document past its age,
+a key the document does not list, or a licensing record that is unsigned at or after the
+record-signing epoch or does not verify), `effective_level` returns the lower of the level and
+`lastSafeLevel`, exactly as a passed term does. That level reaches the PDP through `grant_level`,
+so no rule changes and the corpus digest does not move. Nothing is written. Why the level fell
+rides up as `Facts.standing_fall_reason`, beginning `issuer key withdrawn` or `issuer standing not
+established`, and the PEP logs it once per request at the initial read, as it does a quarantine:
+the first calls for acting on a key, the second on the source.
+
+Standing applies from the record-signing epoch (`RECORD_SIGNING_EPOCH`, read by the broker too
+where a standing source is configured). An unsigned licensing record dated before the epoch, or a
+grant with no licensing record whose own `ts` is before it, is history signed by no key, so there
+is no key whose standing could be asked about and the grant keeps its level. With no epoch
+declared every unsigned licensing record is treated that way, with one exception that holds with
+or without an epoch: an unsigned licensing record that comes after a signed record at its
+coordinate, in ledger order, is never history. Signing had begun there before it was written, and
+its `ts` is only its own claim (GAL §6.10). Without that rule, a writer that may append records but
+holds no issuer key could plant an unsigned `reattestation` at the grant's own `ts`, sorting after
+the signed `promotion` beside it, and restore a level a withdrawal took away. The record's `ts` is judged up to
+the clock-skew bound later (GAL-42), so the bound only narrows that exemption. The audit still
+reports the unsigned record (`RECORD_SIGNATURE_VERIFIES`).
+
+The cost on the hot path: the key behind a coordinate's level is cached against the grant's `ts`,
+and every sanctioned write changes that `ts`, so the first call after a ledger write pays one
+partition Query on `RECORD#` items and one signature check and every other call pays a lookup. A
+verified key stays cached until the grant is written again. A licensing record that did not verify
+is cached against the document's version too, since a later version can add the key that signed
+it. A ledger read that fails is a fall and is never cached. The document is fetched at boot and
+then lazily, at most once per quarter of its maximum age, by the call that finds it due. The
+document's as-of joins the decision's inputs as `issuer_standing` (#176), and its age counts toward
+the decision's horizon but never refuses the decision: past it the grant falls instead, and a held
+call is evaluated again at release. A document not accepted at boot does not refuse the boot; every
+grant resting on an issuer key acts lower until one is accepted, and the broker says so.
+
+**The `withdrawal` record and the runner** (`grants/withdrawal.py`). The evaluator's runner
+(`grants/runner.py`) runs a withdrawal pass first, before lapse and demotion, when an issuer
+standing source is configured for it. For a grant above its `lastSafeLevel` whose licensing key
+the document lists as withdrawn, it lowers the stored grant to `lastSafeLevel` and appends a
+`withdrawal` record in the same paired write (`write_record_and_grant`), signed with the
+evaluator's key where one is configured. The record is neither a demotion nor a lapse: no trigger
+fired (`triggeredBy` is empty) and no term ran out; `demotionReason` is `pending-evidence`, since
+nothing is proven broken about the agent. The key it accounts for is not a field on the record,
+because the published record schema has none for it. A reader derives it from the ledger, and the
+record's `evidence` names it for a person. The runner writes nothing when standing is only not
+established: that fall recovers by itself when the source answers, and a record would claim a
+transition that did not happen. It exits 1 in that case, because the broker is falling for the
+same reason. The type is ahead of the published record vocabulary (GAL 0.7.0-draft lists six).
+
+**Recovery** is the promotion ceremony with fresh evidence, under an issuer key in standing. A new
+promotion is the grant's new licensing record, so its key is the one asked about from then on. No
+command restores a withdrawn key, and a key that must be trusted again is a new key pair under a
+new key id.
+
+**No other ceremony builds on a fall** (`grant_standing.ceremony_standing_refusal`, the standing
+analog of `term.lapse_pending`). Where an issuer standing source is configured for them,
+`propose`, `ratify` and `re-seed` refuse a grant above its `lastSafeLevel` whose issuer standing is
+not held, withdrawn or not established. A promotion from the stored level would raise the grant
+from a level it no longer acts at. A re-attestation would be worse: it becomes the grant's
+licensing record, signed by a key in standing, so re-seed on a routine far-jump redeploy would
+restore the withdrawn key's level with no promotion. The order is the withdrawal runner first, which
+lowers the stored grant, and then `re-seed` at the lowered level and a new promotion. Standing that
+is only not established recovers when the source answers, and the commands proceed then.
+
+**What the audit reports** (`grants/audit_key_standing.py`). Four rules, none waivable:
+`RECORD_SIGNER_IN_STANDING` (a record signed by a key its role's document lists as withdrawn,
+either role, inside the signing epoch's scope or not; an evaluator key's withdrawal is reported here
+and lowers no level, since lowering further would finish an availability attacker's work),
+`GRANT_STANDING_WITHDRAWN` (a grant above its `lastSafeLevel` whose licensing key is withdrawn: the
+runner has not lowered it), `KEY_SIGNED_AFTER_RETIREMENT` (a record whose `ts`, judged up to the
+`--clock-skew-seconds` bound later, is at or after its signer's `retiredAt`) and
+`WITHDRAWAL_RECORD_MATCHES_LEDGER` (a `withdrawal` record with no licensing record before it that
+verifies under a key the issuer's document lists as withdrawn). A signature by a withdrawn key is
+reported under the first rule and not under `RECORD_SIGNATURE_VERIFIES`, which is waivable. An
+acknowledgment signed by an issuer key the document withdraws waives nothing
+(`ACKNOWLEDGMENT_SIGNATURE_VERIFIES`). With no issuer standing document configured the audit
+carries the annotation `gal-41-issuer-standing-unconfigured`, which reports that the deployment
+does not conform to GAL-41, a different fact from passing it; with no evaluator document,
+`evaluator-standing-unconfigured`.
+
+**What this does not cover.** A grant acting in the window between a withdrawal's publication and
+the next fetch, up to the maximum age. Anything a key's holder did before the withdrawal was published. Compromise of the
+standing-authority key itself. Across a restart a process remembers no version and no withdrawal,
+so a replayed document is stopped there only by its age. That holds only while the standing
+authority does not re-sign the replay with a fresh `issuedAt`, which is why its ceremony builds on
+no version but the one its holder names. Because standing is not established once
+the document passes its age, an outage of the source, or an authority that stops reissuing, past
+the maximum age moves every grant resting on an issuer key to the lower of its level and
+`lastSafeLevel` at once. That is the clause working, and a deployment tunes it with the age it
+declares. The reading is the last licensing record, in the enforcer and in the audit: a ladder
+whose lower rung was signed by a withdrawn key and whose upper rung by a key in standing keeps the
+upper rung's level. Re-seed cannot build that ladder past a withdrawal it can see, but a
+re-attestation written before the withdrawal was published, or by a re-seed run with no standing
+source configured, can. The MCP admission ledger's issuer signatures are not checked for standing.
+
+> **Status.** The document, the third role, the loader, the record verdict, the enforcer's fall,
+> the withdrawal runner and the audit rules are built. GAL-41 stays marked NOT YET IMPLEMENTED
+> (#179) until a specification revision removes the marker and publishes the `withdrawal` record
+> type.
 
 ## Demotion — automatic, deterministic, no model in the loop
 

@@ -67,6 +67,13 @@ Rules (each documented at its check site in run_audit):
                             envelope for its principal
   UNPARSEABLE_ITEM          a lifecycle item that cannot be parsed is itself
                             a finding, never a crash
+  RECORD_SIGNER_IN_STANDING, GRANT_STANDING_WITHDRAWN,
+  KEY_SIGNED_AFTER_RETIREMENT, WITHDRAWAL_RECORD_MATCHES_LEDGER
+                            signing-key standing (GAL §6.10, GAL-41), all
+                            un-waivable (grants/audit_key_standing.py). A
+                            record whose signer is withdrawn is reported there
+                            and not as RECORD_SIGNATURE_VERIFIES, which is
+                            waivable
 
 A ``reattestation`` record changes no level (GAL §4.3), so every rule that
 derives a coordinate's level from its ledger, or looks for the record that
@@ -145,6 +152,7 @@ from safe_agents.broker.grants.acknowledgments import (
     verify_acknowledgment,
     violation_detail_digest,
 )
+from safe_agents.broker.grants.audit_key_standing import key_standing_findings
 from safe_agents.broker.grants.audit_lapse_term import lapse_term_findings
 from safe_agents.broker.grants.demotion import (
     _rank,  # the SAME rank ordering the lifecycle moves on — never duplicated
@@ -155,13 +163,17 @@ from safe_agents.broker.grants.ledger_clock import (
 from safe_agents.broker.grants.proposals import ProposalStatus, compute_proposal_hash
 from safe_agents.broker.grants.record_signing import (
     EVALUATOR_ROLE,
+    ISSUER_ROLE,
+    RECORD_SIGNER_WITHDRAWN,
     RoleKeyResolvers,
+    envelope_signer_key_id,
     signing_role_for_record_type,
     stored_record_digest_hex,
     verify_record_by_type,
 )
 from safe_agents.broker.grants.store import _hmac_payload, _principal_key
 from safe_agents.broker.schemas import Envelope, Grant, PromotionRecord
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW
 from safe_agents.broker.schemas.envelope import compute_envelope_hash
 from safe_agents.broker.schemas.promotion_record import REATTESTATION_RECORD_TYPE
 from safe_agents.channels.signing import KeyResolver
@@ -209,8 +221,10 @@ _ALWAYS_SIGNED_TYPES = ("promotion", REATTESTATION_RECORD_TYPE)
 
 # With no signing epoch declared, the types whose signature is verified when
 # one is present and not demanded when it is absent: honest unsigned history
-# of these exists from before signing was adopted.
-_SIGNED_IF_PRESENT_TYPES = ("lapse",)
+# of these exists from before signing was adopted. A withdrawal record is the
+# evaluator's, written unsigned where no evaluator key is configured, like a
+# lapse.
+_SIGNED_IF_PRESENT_TYPES = ("lapse", "withdrawal")
 
 # Annotation names — stable identifiers for the green-with-annotations half of
 # the report. An annotation is never a pass and never a violation: it names a
@@ -775,6 +789,7 @@ def run_audit(
     record_key_resolver: KeyResolver | RoleKeyResolvers | None = None,
     signing_epoch: str | None = None,
     now: datetime.datetime | None = None,
+    clock_skew: datetime.timedelta = ZERO_SKEW,
 ) -> AuditReport:
     """Run every rule the supplied material allows; skip the rest LOUDLY.
 
@@ -790,6 +805,9 @@ def run_audit(
     type and every ``ts`` (see the module docstring); ``now`` is the explicit
     evaluation instant the epoch's own validity is judged at, and is REQUIRED
     when an epoch is supplied. Neither is ever derived from the data.
+
+    ``clock_skew`` is the declared bound (GAL-42) the key-standing rules apply
+    to a record's own ts, toward reporting (grants/audit_key_standing.py).
     """
     if signing_epoch is not None and now is None:
         raise ValueError(
@@ -1225,7 +1243,10 @@ def run_audit(
                 record_type=record_type,
                 resolvers=resolvers,
             )
-            if not result.ok:
+            # A genuine signature by a WITHDRAWN key is RECORD_SIGNER_IN_STANDING's,
+            # which is un-waivable; reporting it here too would offer a waiver
+            # for it under this rule.
+            if not result.ok and result.reason != RECORD_SIGNER_WITHDRAWN:
                 violations.append(
                     AuditViolation(
                         rule=RECORD_SIGNATURE_VERIFIES,
@@ -1237,6 +1258,24 @@ def run_audit(
                         ),
                     )
                 )
+
+    # Signing-key standing (GAL §6.10, GAL-41): four un-waivable rules and the
+    # annotation that says when a role has no standing document, so GAL-41 is
+    # not conformed to. The rules, their scope and their limits are in
+    # grants/audit_key_standing.py.
+    standing = key_standing_findings(
+        ledger=ledger,
+        grants=dataset.grants,
+        resolvers=resolvers,
+        coordinate_of=_grant_coordinate,
+        skew=clock_skew,
+    )
+    violations.extend(
+        AuditViolation(rule=rule, coordinate=coordinate, detail=detail)
+        for rule, coordinate, detail in standing.violations
+    )
+    skipped.extend(standing.skipped)
+    annotations.extend(standing.annotations)
 
     # PROPOSAL_LIFECYCLE — the item-level status must stay in the closed
     # pending/ratified/rejected vocabulary; anything else is a hand edit (the
@@ -1338,6 +1377,23 @@ def run_audit(
                         detail=(
                             f"acknowledgment ts={ack.ts} for rule {ack.rule} failed "
                             f"signature verification ({result.reason}); it waives nothing"
+                        ),
+                    )
+                )
+                continue
+            # GAL-41: a waiver mints green, so one signed by an issuer key the
+            # issuer standing document withdraws waives nothing either.
+            issuer_standing = resolvers.standing.get(ISSUER_ROLE)
+            signer = envelope_signer_key_id(entry.signature)
+            if issuer_standing is not None and issuer_standing.key_state(signer) == "withdrawn":
+                violations.append(
+                    AuditViolation(
+                        rule=ACKNOWLEDGMENT_SIGNATURE_VERIFIES,
+                        coordinate=ack.coordinate,
+                        detail=(
+                            f"acknowledgment ts={ack.ts} for rule {ack.rule} is signed by "
+                            f"issuer key {signer!r}, which the issuer standing document "
+                            "lists as withdrawn; it waives nothing"
                         ),
                     )
                 )

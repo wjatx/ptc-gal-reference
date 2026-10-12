@@ -52,6 +52,8 @@ def _no_ambient_key_material(monkeypatch):
     for role in ("ISSUER", "EVALUATOR"):
         monkeypatch.delenv(f"{role}_VERIFY_KEYS_PARAM", raising=False)
         monkeypatch.delenv(f"{role}_VERIFY_KEYS_FILE", raising=False)
+        monkeypatch.delenv(f"{role}_STANDING_PARAM", raising=False)
+        monkeypatch.delenv(f"{role}_STANDING_FILE", raising=False)
 
 
 def _plant(db_path, items) -> None:

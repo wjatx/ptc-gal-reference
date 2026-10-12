@@ -35,6 +35,13 @@ a startup input is a deadline by which the deployment must restart the broker,
 after which it refuses every call until it does. With no age declared, the
 default, nothing is refused and the as-of instants are still recorded.
 
+One input lowers instead of refusing. The issuer's standing document (GAL-41,
+``issuer_standing``) past its age does not refuse a decision: the grants whose
+level rests on an issuer key act at the lower of their level and lastSafeLevel
+(``grants.grant_standing``). Its age is declared in ``InputAgePolicy.lowering``,
+which counts toward the horizon and never toward the refusal, so a call held on
+a decision past it is still evaluated again at release.
+
 Recording never gates: the as-of instants and the horizon ride on the audit
 record of each decision whatever the knob says. The age check itself fails
 closed: an error while checking refuses the decision with a reason saying so,
@@ -99,10 +106,14 @@ class InputAgePolicy:
 
     ``startup`` holds the as-of of every input read once at startup. ``max_age``
     is the deployment's declared maximum age per input; empty declares none.
+    ``lowering`` is the maximum age of each input whose staleness lowers a level
+    instead of refusing the decision (the module docstring): it counts toward
+    the horizon and is never in the refusal set.
     """
 
     startup: Mapping[InputName, InputAsOf] = field(default_factory=dict)
     max_age: Mapping[InputName, datetime.timedelta] = field(default_factory=dict)
+    lowering: Mapping[InputName, datetime.timedelta] = field(default_factory=dict)
 
     @classmethod
     def from_seconds(
@@ -157,6 +168,7 @@ class DecisionInputs:
 
     def __init__(self, policy: InputAgePolicy, clock: Clock) -> None:
         self._max_age = policy.max_age
+        self._horizon_age = {**policy.lowering, **policy.max_age}
         self._clock = clock
         self._entries: dict[str, InputAsOf] = dict(policy.startup)
 
@@ -185,7 +197,11 @@ class DecisionInputs:
 
         def _read(arg: Any) -> Any:
             fetched_at = self._clock()
-            result = read(arg)
+            # Bound for the read, so an input the read itself consults with a
+            # time of its own (the issuer's standing document) rides on this
+            # decision through establish_in_current_decision.
+            with self.bound():
+                result = read(arg)
             for name in names:
                 self.establish(name, fetched_at)
             return result
@@ -198,9 +214,9 @@ class DecisionInputs:
         None when no input it depended on has a declared maximum age: no bound.
         """
         ends = [
-            end_of(entry.as_of, self._max_age[name])
+            end_of(entry.as_of, self._horizon_age[name])
             for name, entry in self._entries.items()
-            if name in self._max_age
+            if name in self._horizon_age
         ]
         return min(ends) if ends else None
 

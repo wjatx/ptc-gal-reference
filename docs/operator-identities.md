@@ -172,6 +172,98 @@ public key BEFORE the first signed demotion or lapse, and close the loop by runn
 audit under AuditorRole once a record has landed — the standing rule that a promotion is not done
 until the promoted grant acts once applies to a signing key too.
 
+## Key standing: the third key and the two standing documents (GAL-41, #179)
+
+A verify-key map cannot say that a key was withdrawn. A deployment that wants GAL-41 replaces each
+role's map with a signed standing document (`broker/grant-lifecycle.md` §"Key standing"), signed
+by a third key, the standing authority's. That adds a key pair and two documents:
+
+| Object | Kind | Read by | Env var |
+|---|---|---|---|
+| `safe-agents/{env}/standing-authority/signing-key` | Secrets Manager, PEM private key | whoever runs the standing ceremony | `STANDING_AUTHORITY_SIGNING_KEY_SECRET_ARN` |
+| `/safe-agents/{env}/standing-authority/verify-keys` | SSM `String`, JSON `{key_id: public_pem}` | every verifier of a standing document | `STANDING_AUTHORITY_VERIFY_KEYS_PARAM` |
+| `/safe-agents/{env}/issuer/standing` | SSM `String`, a signed standing document | every verifier of issuer records | `ISSUER_STANDING_PARAM`, with `ISSUER_STANDING_MAX_AGE_SECONDS` |
+| `/safe-agents/{env}/evaluator/standing` | SSM `String`, a signed standing document | every verifier of evaluator records | `EVALUATOR_STANDING_PARAM`, with `EVALUATOR_STANDING_MAX_AGE_SECONDS` |
+
+The local arm names files instead: `STANDING_AUTHORITY_SIGNING_KEY_FILE` (owner-only, refused on
+the dynamo arm, as the other signing-key files are), `STANDING_AUTHORITY_VERIFY_KEYS_FILE`,
+`ISSUER_STANDING_FILE` and `EVALUATOR_STANDING_FILE`. A role with a standing document does not
+also set its `_VERIFY_KEYS_PARAM` or `_VERIFY_KEYS_FILE`: setting both refuses.
+
+**Who holds the standing-authority key is a deployment fact, and this runbook is where it is
+recorded.** It must be neither the identity that holds the issuer key nor the one that holds the
+evaluator key, and its key may not appear in either role's map or document; the resolver refuses
+that, by key id and by key bytes. Record the holder here when it is provisioned:
+
+| Environment | Holder of `standing-authority/signing-key` | Since |
+|---|---|---|
+| (none provisioned) | | |
+
+**What the Identity stack grants, and what it leaves to the holder.** `infra/lib/identity-stack.ts`
+grants `ssm:GetParameter` on the issuer's standing document and the standing-authority verify keys
+to `BrokerRole` (the enforcer's fall) and `DemotionRole` (the runner's withdrawal pass), and on both
+standing documents and the verify keys to `WatcherRole` and `AuditorRole`. The broker does not read
+the evaluator's document: an evaluator key's withdrawal changes no enforced level. No role in the
+stack may write any of the three parameters, and nothing in this tree creates them
+(`identity/standing-material-read-only` in `infra/tests/conformance.ts`, which checks the SSM
+statements only). No role's Secrets Manager statement names the standing-authority secret either:
+the role statements are scoped to `*/issuer/*`, `*/evaluator/*`, `*/connectors/*` and the broker's
+HMAC key (`infra/lib/identity-stack.ts`). That second property holds by reading the stack; no
+conformance row asserts it yet. Write on the two standing parameters, and the secret, belong to
+the holder of the standing-authority key alone, granted by the operator outside the stack.
+
+**What each process sets.** The broker and the runner set `ISSUER_STANDING_PARAM`,
+`ISSUER_STANDING_MAX_AGE_SECONDS` and `STANDING_AUTHORITY_VERIFY_KEYS_PARAM`, and the broker also
+sets `RECORD_SIGNING_EPOCH` to the same value the audit uses. Without the epoch the broker treats
+an unsigned licensing record as history and does not lower its grant for it; with it, an unsigned
+licensing record dated at or after the epoch leaves standing not established and the grant falls.
+Either way, an unsigned licensing record that comes after a signed record at its coordinate is
+never history. The ceremony commands `propose`, `ratify` and `re-seed` read the same issuer
+standing variables and epoch where they are set, and refuse a grant whose issuer standing is not
+held while it sits above its `lastSafeLevel`. A broker whose manifest declares `input_max_age_seconds.issuer_standing` longer than the
+deploy-bound age, or declares it with no source set, refuses to start. The auditor and the watcher
+set both roles' `*_STANDING_PARAM` and `*_STANDING_MAX_AGE_SECONDS` and the verify keys.
+
+**The maximum age has no default, and the document must be reissued within it.** A document is
+established for its role's maximum age counted from the earlier of its fetch and its own
+`issuedAt`, and fetching the same document again does not make it younger. So the holder runs
+`reissue` at least once per maximum age, or standing stops being established for every key of that
+role at once. Choose the age with that in mind: a longer age is a longer window in which a
+withdrawn key's grants still act on a verifier that has not fetched the withdrawal. A broker's
+manifest may shorten the issuer's age (`input_max_age_seconds.issuer_standing`), never lengthen it.
+
+Provisioning, then the first document:
+
+```bash
+ENVNAME=development
+openssl genpkey -algorithm ed25519 -out /tmp/standing.pem && chmod 600 /tmp/standing.pem
+openssl pkey -in /tmp/standing.pem -pubout -out /tmp/standing.pub
+# Store the private key under safe-agents/${ENVNAME}/standing-authority/signing-key as for
+# the evaluator above, and publish its public key:
+aws ssm put-parameter --type String --overwrite \
+  --name "/safe-agents/${ENVNAME}/standing-authority/verify-keys" \
+  --value "$(jq -Rn --arg k "${ENVNAME}-standing-1" --rawfile pem /tmp/standing.pub '{($k): $pem}')"
+
+export STANDING_AUTHORITY_SIGNING_KEY_SECRET_ARN=...   # the ARN from create-secret
+export STANDING_AUTHORITY_SIGNING_KEY_ID=${ENVNAME}-standing-1
+export STANDING_AUTHORITY_SIGNING_ZONE=${ENVNAME}
+export STANDING_AUTHORITY_VERIFY_KEYS_PARAM=/safe-agents/${ENVNAME}/standing-authority/verify-keys
+export ISSUER_STANDING_PARAM=/safe-agents/${ENVNAME}/issuer/standing
+python -m safe_agents.broker.grants.standing_command init --role issuer \
+  --key-id ${ENVNAME}-issuer-1 --public-key-file /tmp/issuer.pub
+```
+
+`init` writes version 1 with one active key. `add` adds a key, `retire --reason superseded` rotates
+one out (its records keep standing), `withdraw --reason keyCompromise` or `privilegeWithdrawn`
+withdraws one (no record it signed has standing, whatever its `ts`), and `reissue` refreshes the
+document with no change. Every command but `init` takes `--expect-version N`, the version the
+holder last issued, and refuses unless the current document is that version. Keep that number
+in the holder's own record, not read back from the parameter: the check exists because an older
+document written back to the parameter would otherwise be re-signed as the next version, with a
+withdrawal dropped. Nothing moves a key back. A key trusted again is a new key pair under a new
+key id; `add` refuses a public key the document already lists, in any state. A signed document of about ten keys fits a
+standard-tier parameter's 4 KB.
+
 ## Auditing the two roles — `RECORD_SIGNING_EPOCH`
 
 On whatever identity runs the audit, set **both** verify-key parameters and the epoch:

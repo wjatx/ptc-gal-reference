@@ -50,12 +50,14 @@ from safe_agents.broker.ceremony_identity import attestation_for, is_same_operat
 from safe_agents.broker.grants.ledger_clock import next_ledger_ts
 from safe_agents.broker.grants.proposals import ProposalStore, proposal_expired
 from safe_agents.broker.grants.record_signing import canonical_record_payload
+from safe_agents.broker.grants.grant_standing import ceremony_standing_refusal
 from safe_agents.broker.grants.term import lapse_pending
 from safe_agents.broker.grants.store import (
     GrantStore,
     GrantUpdateConflictError,
     QuarantinedGrantError,
     RecordAlreadyExistsError,
+    StoredRecord,
     validate_record_ts,
 )
 from safe_agents.broker.schemas import Grant, PromotionRecord
@@ -255,6 +257,26 @@ class InMemoryPromotionRecordStore:
             for _, data in sorted(matched, key=lambda pair: pair[0])
         ]
 
+    def list_stored_records(
+        self, principal: Principal, action_class: str, session: object = None
+    ) -> list[StoredRecord]:
+        """A coordinate's records as stored, in sk order (the Dynamo Query mirror)."""
+        pk = f"{principal.agentId}#{principal.skill}#{principal.user}#{principal.tier}#{action_class}"
+        matched = sorted(
+            (
+                (sk, data, signature)
+                for (item_pk, sk), (data, signature) in self._records.items()
+                if item_pk == pk
+            ),
+            key=lambda triple: triple[0],
+        )
+        return [
+            StoredRecord(
+                record=PromotionRecord.model_validate_json(data), data=data, signature=signature
+            )
+            for _, data, signature in matched
+        ]
+
     @property
     def records(self) -> list[PromotionRecord]:
         return [
@@ -395,6 +417,7 @@ class PromotionCeremony:
         checker: CheckerProtocol | None = None,
         record_signer: object = None,
         clock_skew: datetime.timedelta = ZERO_SKEW,
+        standing_check: object = None,
     ) -> None:
         self._grant_store = grant_store
         self._record_store = promotion_record_store
@@ -413,6 +436,11 @@ class PromotionCeremony:
         # replacing the old SigningPromotionRecordStore put_record wrapper,
         # which the atomic write path cannot route through.
         self._record_signer = record_signer
+        # The issuer's standing (GAL §6.10, GAL-41): a
+        # grant_standing.GrantStandingCheck, or None when no issuer standing
+        # source is configured. execute() refuses to raise a grant whose issuer
+        # standing is not held, as it refuses one whose lapse is unrecorded.
+        self._standing_check = standing_check
 
     def sign_record(self, record: PromotionRecord) -> dict | None:
         """Sign a record with the configured ISSUER signer, or None if unset.
@@ -839,6 +867,25 @@ class PromotionCeremony:
                         "yet recorded. Run the lapse evaluator "
                         "(python -m safe_agents.broker.grants.runner), then "
                         "re-propose from the lapsed level."
+                    ),
+                )
+            standing_refusal = ceremony_standing_refusal(
+                self._standing_check, current.grant, term_now
+            )
+            if standing_refusal is not None:
+                # The standing analog of the lapse guard above. Enforcement
+                # already acts at the lower of the level and lastSafeLevel, so a
+                # promotion from the STORED level would raise the grant from a
+                # level it no longer holds.
+                return CeremonyResult(
+                    status="rejected",
+                    reason=(
+                        f"premise changed: {standing_refusal}, so the grant acts at "
+                        f"{current.grant.lastSafeLevel.value!r}. A withdrawal is "
+                        "recorded by the withdrawal runner "
+                        "(python -m safe_agents.broker.grants.runner); re-propose from "
+                        "the lowered level once it is. Standing that is not "
+                        "established recovers when the standing source answers."
                     ),
                 )
             if current.grant.level is not proposal.from_level:

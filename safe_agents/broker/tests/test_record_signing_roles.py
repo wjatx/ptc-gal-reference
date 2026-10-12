@@ -40,6 +40,10 @@ from safe_agents.broker.grants.acknowledgments import (
     sign_acknowledgment,
     violation_detail_digest,
 )
+from safe_agents.broker.grants.audit_key_standing import (
+    ANNOTATION_EVALUATOR_STANDING_UNCONFIGURED,
+    ANNOTATION_ISSUER_STANDING_UNCONFIGURED,
+)
 from safe_agents.broker.grants.audit import (
     ACKNOWLEDGMENT_SIGNATURE_VERIFIES,
     GRANT_TS_RECORDED,
@@ -83,7 +87,9 @@ ENVELOPE_HASH = "sha256:env-roles"
 
 TS = "2026-07-01T00:00:00+00:00"
 
-ALL_RECORD_TYPES = ("promotion", "bootstrap", "tightening", "demotion", "lapse", "reattestation")
+ALL_RECORD_TYPES = (
+    "promotion", "bootstrap", "tightening", "demotion", "lapse", "reattestation", "withdrawal"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +185,15 @@ def _record(record_type: str, *, ts: str = TS, **overrides) -> PromotionRecord:
             predicate=None,
             proposedBy="operator",
             ratifiedBy="operator",
+        ),
+        "withdrawal": dict(
+            fromLevel="on-loop",
+            toLevel="in-loop",
+            predicate=None,
+            proposedBy=DEMOTION_RATIFIER,
+            ratifiedBy=DEMOTION_RATIFIER,
+            triggeredBy=[],
+            demotionReason="pending-evidence",
         ),
     }[record_type]
     return PromotionRecord(**{**common, **per_type, **overrides})
@@ -320,14 +335,8 @@ ROLE_ENVS = [
 def _no_ambient_signing_env(monkeypatch):
     """Both roles' env, cleared. A developer's shell must not decide which
     identity a test's records were signed by."""
-    for role_env in issuer_keys.SIGNING_ROLE_ENVS:
-        for name in (
-            role_env.key_secret_arn_env,
-            role_env.key_file_env,
-            role_env.key_id_env,
-            role_env.zone_env,
-            role_env.verify_keys_param_env,
-        ):
+    for role_env in issuer_keys.ALL_ROLE_ENVS:
+        for name in issuer_keys.role_env_names(role_env):
             monkeypatch.delenv(name, raising=False)
 
 
@@ -771,7 +780,7 @@ def test_with_the_epoch_set_an_unsigned_record_is_a_finding_whatever_its_type_or
     assert [v.detail for v in _signature_findings(report)] == [_unsigned_detail(record)]
     assert report.acknowledged == ()
     # Nothing is reported as exempt, because nothing is.
-    assert report.annotations == ()
+    assert _epoch_annotations(report) == ()
 
 
 @pytest.mark.parametrize("record_type", ALL_RECORD_TYPES)
@@ -789,7 +798,7 @@ def test_correctly_signed_records_of_every_type_verify_on_either_side_of_the_epo
     )
 
     assert not _signature_findings(report)
-    assert report.annotations == ()
+    assert _epoch_annotations(report) == ()
 
 
 @pytest.mark.parametrize(
@@ -966,6 +975,16 @@ def test_an_entry_with_no_stored_bytes_is_a_finding_no_acknowledgment_excuses(si
     assert report.acknowledged == ()
 
 
+def _epoch_annotations(report) -> tuple[str, ...]:
+    """The report's annotations other than key standing's.
+
+    Since #179 every audit also says which roles have no standing document
+    (grants/audit_key_standing.py). These tests pin the epoch's own notes, and
+    the roles fixture configures no standing document."""
+    standing = (ANNOTATION_ISSUER_STANDING_UNCONFIGURED, ANNOTATION_EVALUATOR_STANDING_UNCONFIGURED)
+    return tuple(a for a in report.annotations if not a.startswith(standing))
+
+
 @pytest.mark.parametrize(
     "record_type,expect_finding",
     [
@@ -989,7 +1008,7 @@ def test_with_no_epoch_the_narrower_scope_holds_and_says_so(record_type, expect_
     )
 
     assert bool(_signature_findings(report)) is expect_finding
-    (annotation,) = report.annotations
+    (annotation,) = _epoch_annotations(report)
     assert annotation.startswith(ANNOTATION_SIGNING_EPOCH_UNSET)
 
 

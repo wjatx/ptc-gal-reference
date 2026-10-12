@@ -118,6 +118,8 @@ _SHAPES = {
                      ratifiedBy=DEMOTION_RATIFIER, triggeredBy=["budget_breach"],
                      demotionReason="failing"),
     "reattestation": dict(fromLevel=ON, toLevel=ON, proposedBy="operator", ratifiedBy="operator"),
+    "withdrawal": dict(fromLevel=ON, toLevel=IN, proposedBy=DEMOTION_RATIFIER,
+                       ratifiedBy=DEMOTION_RATIFIER, demotionReason="pending-evidence"),
 }
 
 

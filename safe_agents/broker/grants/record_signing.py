@@ -44,9 +44,11 @@ import binascii
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Protocol
 
 from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from safe_agents.broker.schemas.promotion_record import PromotionRecord
@@ -85,6 +87,13 @@ RECORD_SIGNER_WRONG_ROLE = "record_signer_wrong_role"
 RECORD_SIGNER_ROLE_AMBIGUOUS = "record_signer_role_ambiguous"
 RECORD_ROLE_UNRESOLVED = "record_role_unresolved"
 
+# The signature verifies, and the role's standing document says the key that
+# made it has been WITHDRAWN (GAL §6.10, GAL-41). Distinct from
+# RECORD_SIGNER_UNKNOWN: the key is known and the record is genuine, and no
+# record it signed has standing, whatever that record's ts. Distinct from a
+# retired key, whose records keep verifying.
+RECORD_SIGNER_WITHDRAWN = "record_signer_withdrawn"
+
 
 # ---------------------------------------------------------------------------
 # Signing roles — which identity may sign which record type
@@ -116,6 +125,10 @@ RECORD_TYPE_SIGNING_ROLE: Mapping[str, str] = {
     "reattestation": ISSUER_ROLE,
     "demotion": EVALUATOR_ROLE,
     "lapse": EVALUATOR_ROLE,
+    # GAL §6.10, GAL-41: the record of a grant lowered because the issuer key
+    # behind its level was withdrawn. It only lowers, so it is the automatic
+    # side's to sign, like demotion and lapse.
+    "withdrawal": EVALUATOR_ROLE,
 }
 
 
@@ -141,6 +154,10 @@ class RecordVerifyResult:
 
     ok: bool
     reason: str | None = None
+    # The key id whose signature verified: set on success and on
+    # RECORD_SIGNER_WITHDRAWN, the two outcomes where the signature itself
+    # checked out. None on every other failure, where no key id can be trusted.
+    key_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -361,6 +378,12 @@ class RecordSigner:
         """
         return self._private_key.sign(pae_bytes)
 
+    def public_key_raw(self) -> bytes:
+        """The raw 32 bytes of this signer's PUBLIC key, for comparing keys across roles."""
+        return self._private_key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+
     def sign_record(self, record: PromotionRecord) -> dict:
         """Sign the record; return a standard JSON-serializable DSSE envelope.
 
@@ -435,18 +458,33 @@ def verify_record(
 # ---------------------------------------------------------------------------
 
 
+class KeyStateLookup(Protocol):
+    """What the verifier asks a role's standing source: the state of one key.
+
+    ``grants.standing_source.StandingSource`` implements it. The answer is the
+    state the accepted standing document records, ``"active"``, ``"retired"``
+    or ``"withdrawn"``, or None for a key it does not list.
+    """
+
+    def key_state(self, key_id: str) -> str | None: ...
+
+
 @dataclass(frozen=True)
 class RoleKeyResolvers:
-    """The verify-side key maps, one per signing role.
+    """The verify-side key maps, one per signing role, and their standing.
 
     Injected, like every other key in this module: the cold-start resolution
-    of ``ISSUER_VERIFY_KEYS_PARAM`` / ``EVALUATOR_VERIFY_KEYS_PARAM`` lives in
-    ``grants.issuer_keys``. A role with no resolver is NOT a role that passes —
-    a record needing it verifies as ``RECORD_ROLE_UNRESOLVED``.
+    of ``ISSUER_VERIFY_KEYS_PARAM`` / ``EVALUATOR_VERIFY_KEYS_PARAM``, or of
+    each role's standing document, lives in ``grants.issuer_keys`` and
+    ``grants.standing_keys``. A role with no resolver is NOT a role that passes:
+    a record needing it verifies as ``RECORD_ROLE_UNRESOLVED``. ``standing``
+    holds a role's standing source where one is configured; a role without one
+    has no key states, and its records verify as they always did.
     """
 
     issuer: KeyResolver | None = None
     evaluator: KeyResolver | None = None
+    standing: Mapping[str, KeyStateLookup] = field(default_factory=dict)
 
     def for_role(self, role: str) -> KeyResolver | None:
         return {ISSUER_ROLE: self.issuer, EVALUATOR_ROLE: self.evaluator}.get(role)
@@ -508,7 +546,14 @@ def verify_record_by_type(
         never a role that passes);
       * the signing key_id is known to the OTHER role → ``RECORD_SIGNER_WRONG_ROLE``;
       * the signing key_id is known to BOTH roles → ``RECORD_SIGNER_ROLE_AMBIGUOUS``,
-        refused rather than resolved in either direction.
+        refused rather than resolved in either direction;
+      * the signature verifies and the role's standing source records the key
+        as withdrawn → ``RECORD_SIGNER_WITHDRAWN``, whatever the record's
+        ``ts`` and whichever withdrawal reason. A retired key's records verify.
+
+    The signature is checked first, so a tampered record by a withdrawn key
+    still reads as a signature failure, and a withdrawn verdict always names a
+    record that the key genuinely signed.
     """
     role = signing_role_for_record_type(record_type)
     if role is None:
@@ -525,4 +570,13 @@ def verify_record_by_type(
         if holders and holders[0] != role:
             return RecordVerifyResult(ok=False, reason=RECORD_SIGNER_WRONG_ROLE)
 
-    return verify_record(stored, envelope, resolver)
+    result = verify_record(stored, envelope, resolver)
+    if not result.ok:
+        return result
+    # verify_record succeeded, so every signature's keyid equals the statement's
+    # signer and verified under it: the first keyid is the verified signer.
+    signer = envelope_signer_key_id(envelope)
+    standing = resolvers.standing.get(role)
+    if standing is not None and standing.key_state(signer) == "withdrawn":
+        return RecordVerifyResult(ok=False, reason=RECORD_SIGNER_WITHDRAWN, key_id=signer)
+    return RecordVerifyResult(ok=True, key_id=signer)

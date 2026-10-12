@@ -104,16 +104,21 @@ from safe_agents.broker.grants.audit import (
     read_items_sqlite,
     run_audit,
 )
+from safe_agents.broker.grants.grant_standing import (
+    RECORD_SIGNING_EPOCH_ENV as _RECORD_SIGNING_EPOCH_ENV,
+)
 from safe_agents.broker.grants.issuer_keys import resolve_record_key_resolvers
 from safe_agents.broker.grants.record_signing import RoleKeyResolvers
 from safe_agents.broker.mcp import audit as mcp_audit
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, skew_bound, skew_seconds_arg
 
 #: The ISO-8601 UTC instant record signing was adopted at. Set, EVERY ledger
 #: record must carry a verifying signature of its role, whatever its type or
 #: ``ts`` (GAL-SPEC §6.10). Unset = the narrower scope, reported as a named
 #: annotation — never a silent narrowing. Read here rather than in ``audit.py``
-#: so the rules stay pure over their inputs.
-RECORD_SIGNING_EPOCH_ENV = "RECORD_SIGNING_EPOCH"
+#: so the rules stay pure over their inputs. One name, shared with the
+#: enforcer, which applies issuer standing from the same epoch (GAL-41).
+RECORD_SIGNING_EPOCH_ENV = _RECORD_SIGNING_EPOCH_ENV
 
 #: The closed backend catalog. A string, resolved in ONE place (``load_target``)
 #: — never an import path, and nothing store-loaded can extend it
@@ -185,9 +190,10 @@ class _KeyMaterial:
     resolvers: RoleKeyResolvers | None
     signing_epoch: str | None
     now: datetime.datetime
+    clock_skew: datetime.timedelta = ZERO_SKEW
 
 
-def _resolve_key_material() -> _KeyMaterial:
+def _resolve_key_material(clock_skew: datetime.timedelta = ZERO_SKEW) -> _KeyMaterial:
     """Read the audit's mode from the environment, the one place it is read.
 
     Mode is decided exactly as the live test and the demotion runner decide it:
@@ -207,6 +213,7 @@ def _resolve_key_material() -> _KeyMaterial:
         resolvers=resolve_record_key_resolvers(),
         signing_epoch=os.environ.get(RECORD_SIGNING_EPOCH_ENV) or None,
         now=datetime.datetime.now(datetime.UTC),
+        clock_skew=clock_skew,
     )
 
 
@@ -217,6 +224,7 @@ def _run_grants_rules(dataset: AuditDataset, keys: _KeyMaterial) -> AuditReport:
         record_key_resolver=keys.resolvers,
         signing_epoch=keys.signing_epoch,
         now=keys.now,
+        clock_skew=keys.clock_skew,
     )
 
 
@@ -228,7 +236,9 @@ def run_grants_audit(target: AuditTarget) -> AuditReport:
     return _run_grants_rules(load_target(target), _resolve_key_material())
 
 
-def run_store_audit(target: AuditTarget) -> StoreAudit:
+def run_store_audit(
+    target: AuditTarget, *, clock_skew: datetime.timedelta = ZERO_SKEW
+) -> StoreAudit:
     """Audit everything this door covers in ``target``.
 
     On the sqlite arm that is the grants and the MCP registry, parsed from ONE
@@ -238,7 +248,7 @@ def run_store_audit(target: AuditTarget) -> StoreAudit:
 
     On the dynamo arm it is the grants alone, and ``mcp`` is ``None``.
     """
-    keys = _resolve_key_material()
+    keys = _resolve_key_material(clock_skew)
     if target.backend != "sqlite":
         return StoreAudit(grants=_run_grants_rules(load_target(target), keys))
     items = read_items_sqlite(target.location)
@@ -369,6 +379,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--json", action="store_true", help="emit the machine-readable report"
     )
+    parser.add_argument(
+        "--clock-skew-seconds",
+        type=skew_seconds_arg,
+        default=0,
+        help="clock-skew bound (GAL-42) the key-standing rules apply to a record's ts, "
+        "toward reporting: a record up to this many seconds before a key's retirement "
+        "is judged as signed after it. Default 0 is the unbounded comparison.",
+    )
     args = parser.parse_args(argv)
 
     target = (
@@ -377,7 +395,7 @@ def main(argv: list[str] | None = None) -> int:
         else AuditTarget("dynamo", args.table)
     )
     try:
-        audit = run_store_audit(target)
+        audit = run_store_audit(target, clock_skew=skew_bound(args.clock_skew_seconds))
     except Exception as exc:
         # Exit 2, never 1: failing to RUN the audit is not a clean floor and is
         # not a dirty one either. Callers key on the distinction.

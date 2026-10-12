@@ -45,10 +45,12 @@ from safe_agents.broker.grants.store import (
     GrantReadResult,
     GrantUpdateConflictError,
     RecordAlreadyExistsError,
+    StoredRecord,
     _hmac_payload,
     _principal_key,
     _read_result_from_item,
     canonical_grant_payload,
+    decode_stored_signature,
     refuse_lapse_drift,
     refuse_reattestation_drift,
     refuse_term_extension,
@@ -331,6 +333,20 @@ class SqlitePromotionRecordStore(substrate.SqliteStoreBase):
             PromotionRecord.model_validate_json(attrs["data"])
             for sk, attrs in substrate.get_partition(self._connection(), pk)
             if ts_prefix is None or sk.startswith(ts_prefix)
+        ]
+
+    def list_stored_records(
+        self, principal: Principal, action_class: str, session: object = None
+    ) -> list[StoredRecord]:
+        """A coordinate's records as stored, sk-ascending (the Dynamo Query mirror)."""
+        pk = f"RECORD#{_principal_key(principal)}#{action_class}"
+        return [
+            StoredRecord(
+                record=PromotionRecord.model_validate_json(attrs["data"]),
+                data=attrs["data"],
+                signature=decode_stored_signature(attrs.get("signature")),
+            )
+            for _sk, attrs in substrate.get_partition(self._connection(), pk)
         ]
 
     def signature_for(self, record: PromotionRecord) -> dict | None:

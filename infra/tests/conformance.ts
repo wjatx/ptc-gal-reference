@@ -942,6 +942,37 @@ function evaluatorSigningIsSplitFromIssuer(): boolean {
   return evaluatorCannotSignPromotions && ratifiersCannotSignDemotions && auditorsVerifyBoth;
 }
 
+function standingMaterialIsReadOnly(): boolean {
+  // GAL-41 (#179): the broker (the enforcer's fall) and the demotion runner (the withdrawal
+  // record) read the ISSUER's standing document and the standing authority's PUBLIC verify keys;
+  // the watcher and the auditor read both roles' documents. No role here may WRITE any SSM
+  // parameter: a document a verifier trusts is changed only by whoever holds the standing
+  // authority's key, a deployment fact outside this stack. And the broker does not read the
+  // evaluator's document, whose withdrawals change no enforced level.
+  const reads = (stmts: Statement[], ...names: string[]) => {
+    const resources = stmts
+      .filter((s) => actionsOf(s).includes('ssm:GetParameter'))
+      .map(resourceString)
+      .join('');
+    return names.every((n) => resources.includes(n));
+  };
+  const writesSsm = (stmts: Statement[]) =>
+    stmts.some((s) => actionsOf(s).some((a) => a.startsWith('ssm:') && a !== 'ssm:GetParameter'));
+  const broker = statementsForRole('BrokerRole');
+  const demotion = statementsForRole('DemotionRole');
+  const watcher = statementsForRole(WATCHER_ROLE_NAME);
+  const auditor = statementsForRoleIn(identityOperatorTemplate, 'AuditorRole');
+  const both = ['/issuer/standing', '/evaluator/standing', '/standing-authority/verify-keys'];
+  return (
+    reads(broker, '/issuer/standing', '/standing-authority/verify-keys') &&
+    reads(demotion, '/issuer/standing', '/standing-authority/verify-keys') &&
+    !broker.some((s) => resourceString(s).includes('/evaluator/standing')) &&
+    reads(watcher, ...both) &&
+    reads(auditor, ...both) &&
+    ![broker, demotion, watcher, auditor].some(writesSsm)
+  );
+}
+
 function brokerRoleMcpRegistryIsReadOnly(): boolean {
   // The McpHost's discovery-time read of TOOLDEF# rows must be structurally unable to write the
   // registry — mirrors "the broker cannot write grants" for the MCP admitted-tool store.
@@ -2752,6 +2783,12 @@ const ROWS: Row[] = [
     group: 'Identity',
     desc: 'the two signing identities are disjoint: demotion holds */evaluator/* and not */issuer/*, promotion+checker hold */issuer/* and not */evaluator/* (neither can mint the other\'s record type); watcher+auditor read BOTH PUBLIC verify-key params and sign nothing',
     check: evaluatorSigningIsSplitFromIssuer,
+  },
+  {
+    id: 'identity/standing-material-read-only',
+    group: 'Identity',
+    desc: 'broker and demotion read the issuer standing document and the standing-authority verify keys, watcher and auditor read both documents, and none of them writes an SSM parameter (GAL-41)',
+    check: standingMaterialIsReadOnly,
   },
   {
     id: 'identity/audit-immutable',

@@ -96,6 +96,12 @@ from safe_agents.broker.grants.ceremony import (
     PromotionCeremony,
     PromotionRecordStore,
 )
+from safe_agents.broker.grants.grant_standing import (
+    RECORD_SIGNING_EPOCH_ENV,
+    GrantStandingCheck,
+    ceremony_standing_refusal,
+    parse_signing_epoch,
+)
 from safe_agents.broker.grants.ledger_clock import next_ledger_ts
 from safe_agents.broker.grants.issuer_keys import (
     IssuerSigningConfigError,
@@ -330,6 +336,40 @@ def seed_command(
     return 1 if failures else 0
 
 
+def _issuer_standing_check(
+    record_store: PromotionRecordStore, principal: Principal
+) -> GrantStandingCheck | None:
+    """The issuer's standing for a ceremony command, or None when none is configured.
+
+    The same deploy-bound source the broker reads (ISSUER_STANDING_PARAM or
+    _FILE, its maximum age and the standing-authority keys) and the same
+    record-signing epoch, and the manifest's clock-skew bound, so a ceremony
+    never builds on a level the broker already acts below. The manifest is
+    read only when a source is configured. Fetched once, now. A document that
+    is not accepted leaves standing not established, and the guard then refuses.
+    """
+    from safe_agents.broker.grants.issuer_keys import ISSUER_ROLE_ENV  # noqa: PLC0415
+    from safe_agents.broker.grants.standing_keys import (  # noqa: PLC0415
+        resolve_standing_source,
+    )
+
+    source = resolve_standing_source(ISSUER_ROLE_ENV)
+    if source is None:
+        return None
+    try:
+        epoch = parse_signing_epoch(os.environ.get(RECORD_SIGNING_EPOCH_ENV))
+    except ValueError as exc:
+        raise IssuerSigningConfigError(str(exc)) from exc
+    check = GrantStandingCheck(
+        source=source,
+        records=record_store,
+        signing_epoch=epoch,
+        skew=_ceremony_clock_skew(principal),
+    )
+    check.refresh(datetime.datetime.now(datetime.UTC))
+    return check
+
+
 # ---------------------------------------------------------------------------
 # re-seed — envelope-hash re-attestation (same level, human-ratified, recorded)
 # ---------------------------------------------------------------------------
@@ -376,6 +416,7 @@ def reseed_command(
     signer: RecordSigner | None,
     session: object = None,
     now: datetime.datetime | None = None,
+    standing_check: GrantStandingCheck | None = None,
 ) -> int:
     """Re-stamp HMAC-clean grants under the NEW in-force envelope hash.
 
@@ -405,6 +446,14 @@ def reseed_command(
     evaluator's (GAL §6.10). It is required. None (no issuer signing key
     configured) refuses the whole run before any grant is read and writes
     nothing; unlike ratify, re-seed has no unsigned opt-in.
+
+    ``standing_check`` is the issuer's standing (GAL §6.10, GAL-41), or None
+    when no issuer standing source is configured. A reattestation becomes the
+    grant's licensing record, so re-attesting a grant whose issuer standing is
+    not held would make its stored level act again under the re-attesting key,
+    with no promotion. Such a grant, above its lastSafeLevel, is refused and
+    nothing is written for it. Recovery from a withdrawal is the withdrawal
+    runner's record and then the full promotion ceremony.
     """
     # Re-attestation returns a quarantined grant to acting authority on a
     # human's word, and GAL §6.6 requires the record of it to be signed under
@@ -454,6 +503,20 @@ def reseed_command(
             print(
                 f"[re-seed] SKIP {action_class}: already stamped with the in-force "
                 "envelope hash; nothing to re-attest"
+            )
+            continue
+        standing_refusal = ceremony_standing_refusal(standing_check, read.grant, wall)
+        if standing_refusal is not None:
+            failures += 1
+            print(
+                f"[re-seed] REFUSED {action_class}: {standing_refusal}, so the grant "
+                f"acts at {read.grant.lastSafeLevel.value!r}. A reattestation would "
+                "become its licensing record and restore "
+                f"{read.grant.level.value!r} with no promotion. Run the withdrawal "
+                "runner (python -m safe_agents.broker.grants.runner), then re-seed; "
+                "the level comes back only through the promotion ceremony. Nothing "
+                "was written.",
+                file=sys.stderr,
             )
             continue
         # The ledger clock (#37), per coordinate and read AFTER the skips: a
@@ -515,6 +578,7 @@ def propose_command(
     session: object = None,
     now: datetime.datetime | None = None,
     clock_skew: datetime.timedelta = ZERO_SKEW,
+    standing_check: GrantStandingCheck | None = None,
 ) -> int:
     """Build, predicate-check, and store a PromotionProposal.
 
@@ -528,6 +592,10 @@ def propose_command(
 
     ``clock_skew`` is the manifest's clock-skew bound (GAL-42): a stored term
     is judged at ``now + clock_skew``, the instant the broker judges it at.
+
+    ``standing_check`` is the issuer's standing (GAL-41), or None when no
+    issuer standing source is configured. A grant whose standing is not held
+    is refused as a lapse-pending one is; the ceremony re-checks at ratify.
     """
     principal = _principal_from_args(args)
     caller = _caller_identity(session)
@@ -575,6 +643,23 @@ def propose_command(
             "is not yet recorded. Run the lapse evaluator "
             "(python -m safe_agents.broker.grants.runner) and re-propose from the "
             "lapsed level."
+        )
+        return 1
+    # The standing analog: a grant whose issuer key is withdrawn, or whose
+    # standing is not established, already acts lower. Refused here so the
+    # maker does not stage a proposal the ceremony will reject at ratify.
+    standing_refusal = (
+        ceremony_standing_refusal(standing_check, read.grant, _utc_now(now))
+        if read.grant is not None
+        else None
+    )
+    if standing_refusal is not None:
+        print(
+            f"REFUSED: {standing_refusal}, so the grant acts at "
+            f"{read.grant.lastSafeLevel.value!r}. A withdrawal is recorded by the "
+            "withdrawal runner (python -m safe_agents.broker.grants.runner); "
+            "re-propose from the lowered level once it is. Standing that is not "
+            "established recovers when the standing source answers."
         )
         return 1
     # No grant = the Recommend rung (from_level=None); propose_promotion
@@ -732,6 +817,7 @@ def ratify_command(
     session: object = None,
     now: datetime.datetime | None = None,
     clock_skew: datetime.timedelta = ZERO_SKEW,
+    standing_check: GrantStandingCheck | None = None,
 ) -> int:
     """Load the stored proposal and run the full maker-checker ceremony.
 
@@ -855,6 +941,7 @@ def ratify_command(
         checker=checker,
         record_signer=signer,
         clock_skew=clock_skew,
+        standing_check=standing_check,
     )
     machine = RungStateMachine(
         ceremony=ceremony, grant_store=grant_store, record_store=record_store
@@ -1094,12 +1181,14 @@ def main(argv: list[str] | None = None) -> int:
                 granted_classes=classes,
                 envelope_hash=envelope_hash,
                 signer=resolve_record_signer(zone=args.zone),
+                standing_check=_issuer_standing_check(record_store, principal),
             )
         if args.command == "propose":
-            grant_store, _ = _build_stores(args.table_name)
+            grant_store, record_store = _build_stores(args.table_name)
             tool_ops, high_blast, envelope_hash = _ceremony_blast_context(
                 _principal_from_args(args), args.table_name
             )
+            skew = _ceremony_clock_skew(_principal_from_args(args))
             return propose_command(
                 args,
                 grant_store=grant_store,
@@ -1108,13 +1197,17 @@ def main(argv: list[str] | None = None) -> int:
                 envelope_hash=envelope_hash,
                 tool_ops=tool_ops,
                 high_blast=high_blast,
-                clock_skew=_ceremony_clock_skew(_principal_from_args(args)),
+                clock_skew=skew,
+                standing_check=_issuer_standing_check(
+                    record_store, _principal_from_args(args)
+                ),
             )
         if args.command == "ratify":
             grant_store, record_store = _build_stores(args.table_name)
             tool_ops, high_blast, _ = _ceremony_blast_context(
                 _principal_from_args(args), args.table_name
             )
+            skew = _ceremony_clock_skew(_principal_from_args(args))
             return ratify_command(
                 args,
                 grant_store=grant_store,
@@ -1124,7 +1217,10 @@ def main(argv: list[str] | None = None) -> int:
                 tool_ops=tool_ops,
                 high_blast=high_blast,
                 checker=_resolve_reviewer(),
-                clock_skew=_ceremony_clock_skew(_principal_from_args(args)),
+                clock_skew=skew,
+                standing_check=_issuer_standing_check(
+                    record_store, _principal_from_args(args)
+                ),
             )
         if args.command == "tighten":
             grant_store, record_store = _build_stores(args.table_name)

@@ -53,6 +53,14 @@ class Facts:
     quarantined: bool = False
     quarantine_reason: str | None = None
 
+    # Why grant_level is below the grant's stored level because of issuer
+    # standing (GAL-41): the key behind the level was withdrawn, or its standing
+    # could not be established within the declared maximum age. The lower level
+    # already reaches the PDP through grant_level; this is for the PEP to
+    # surface once, the way it surfaces quarantine_reason. None when standing
+    # lowered nothing. No rule reads it.
+    standing_fall_reason: str | None = None
+
     # Read rung-gating + query-exfil bound. All three are resolved by the
     # PIP and consumed by the read-path rules in engine.py; defaulted so existing
     # Facts(...) call-sites (writes, older tests) stay valid without change.

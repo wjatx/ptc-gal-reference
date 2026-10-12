@@ -69,6 +69,12 @@ CounterPeriod = Literal["utc-day", "utc-hour"]
 #               and the advertised tool definitions), read when the session is
 #               spawned and again when it passes its declared age; recorded by
 #               the MCP host on the decision of each call that reaches it.
+#   issuer_standing - the issuer's signed standing document (GAL §6.10, GAL-41,
+#               #179): which issuer keys are active, retired or withdrawn. Its
+#               maximum age is bound at deploy (ISSUER_STANDING_MAX_AGE_SECONDS,
+#               no default); a value here may only shorten it, and a longer one
+#               is refused at startup (grants/standing_keys.py). Its as-of is
+#               the earlier of the fetch and the document's issuedAt.
 InputName = Literal[
     "manifest",
     "envelope",
@@ -78,6 +84,7 @@ InputName = Literal[
     "sub_grants",
     "intent",
     "mcp_admission",
+    "issuer_standing",
 ]
 
 # The longest maximum age a deployment may declare for an input: one hundred

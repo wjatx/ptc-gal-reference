@@ -81,6 +81,7 @@ if TYPE_CHECKING:
 
     from safe_agents.broker.approval.expiry import ApprovalAlarmEvent
     from safe_agents.broker.envelope.store import EnvelopeStore
+    from safe_agents.broker.grants.grant_standing import GrantStandingCheck
     from safe_agents.broker.schemas.evidence import DemotionSignal
 
 from safe_agents.broker.approval import InMemoryIntentStore
@@ -118,7 +119,13 @@ from safe_agents.broker.prototype.mcp_construction import (
     native_mcp_server_ids,
 )
 from safe_agents.broker.manifest import ToolOpTable
-from safe_agents.broker.runtime.input_age import Clock, InputAgePolicy, InputAsOf, utc_now
+from safe_agents.broker.runtime.input_age import (
+    Clock,
+    InputAgePolicy,
+    InputAsOf,
+    establish_in_current_decision,
+    utc_now,
+)
 from safe_agents.broker.runtime import (
     AgentRequest,
     BrokerRuntime,
@@ -140,6 +147,7 @@ from safe_agents.broker.schemas import (
 )
 from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, skew_bound
 from safe_agents.broker.schemas.common import (
+    AUTONOMY_RANK,
     AutonomyLevel,
     CounterPeriod,
     InputName,
@@ -352,6 +360,7 @@ def _make_pip(
     clock_skew: datetime.timedelta = ZERO_SKEW,
     escalate_composed_destinations: bool = False,
     tainted_harness_hold: Collection[ToolClass] = (),
+    standing_check: "GrantStandingCheck | None" = None,
 ):
     """Build the real PIP: per call, read grant (presence + level) from the grant
     store and the cap-budget fact from the real counter. The counter_key MUST match
@@ -416,7 +425,21 @@ def _make_pip(
     is judged at ``now + clock_skew``: a grant acts at ``lastSafeLevel`` up to the
     bound EARLY, never late. ``clock_skew`` is the manifest's
     ``clock_skew_seconds`` (build_runtime), never anything the grant or the call
-    carries; zero is the unbounded comparison."""
+    carries; zero is the unbounded comparison.
+
+    Issuer standing (GAL §6.10, GAL-41). With ``standing_check`` set (an issuer
+    standing document is configured), the PIP asks it whether the issuer key
+    behind the grant's level still has standing, and ``effective_level`` takes
+    the answer: withdrawn, or not established within the document's maximum
+    age, and the grant acts at the lower of its level and lastSafeLevel. The
+    lower level reaches the PDP through ``grant_level`` alone, so no rule and no
+    corpus digest changes. Why it fell rides up on
+    ``Facts.standing_fall_reason`` for the PEP to surface once. The document's
+    as-of joins the decision's inputs as ``issuer_standing`` (#176). With
+    ``standing_check`` None the PIP is unchanged: no ledger read, no fall.
+    The check reads the grant's ledger once per grant write (cached on the
+    grant's ``ts``) and fetches the document at most once per quarter of its
+    maximum age; every other call is lookups."""
 
     def _now() -> datetime.datetime:
         return clock() if clock is not None else datetime.datetime.now(datetime.UTC)
@@ -449,12 +472,29 @@ def _make_pip(
         grant_present = grant is not None
         # When no grant, level is unused (rule 1 denies on grant_present); default safe.
         # With a grant: the EFFECTIVE level at this instant — a passed
-        # certification term acts at lastSafeLevel before any lapse is written.
-        grant_level = (
-            effective_level(grant, _now(), skew=clock_skew)
-            if grant is not None
-            else AutonomyLevel.in_loop
-        )
+        # certification term, or an issuer key without standing, acts at the
+        # lower of the level and lastSafeLevel before any record is written.
+        grant_level = AutonomyLevel.in_loop
+        standing_fall_reason = None
+        if grant is not None:
+            now = _now()
+            grant_level = effective_level(grant, now, skew=clock_skew)
+            # A grant at or below its lastSafeLevel has nowhere to fall, so its
+            # decision does not depend on standing and nothing is read for it.
+            if standing_check is not None and (
+                AUTONOMY_RANK[grant.level] > AUTONOMY_RANK[grant.lastSafeLevel]
+            ):
+                standing = standing_check.assess(grant, now)
+                if standing.as_of is not None:
+                    establish_in_current_decision(
+                        "issuer_standing", standing.as_of.fetched_at, standing.as_of.stated_at
+                    )
+                fallen = effective_level(
+                    grant, now, skew=clock_skew, standing_held=standing.held
+                )
+                if fallen != grant_level:
+                    grant_level = fallen
+                    standing_fall_reason = standing.reason
 
         # Same principal+period derivation the PEP increments with — the two MUST
         # agree or the cap rule evaluates a different counter than enforce() draws.
@@ -547,6 +587,7 @@ def _make_pip(
             transform_op=None,
             quarantined=quarantined,
             quarantine_reason=quarantine_reason,
+            standing_fall_reason=standing_fall_reason,
             read_source_trusted=read_source_trusted,
             query_bytes_exceeded=query_bytes_exceeded,
             query_egress_breached=query_egress_breached,
@@ -818,6 +859,13 @@ def build_runtime(
     # from the envelope store, a grant or a call. Zero is the unbounded comparison.
     clock_skew = skew_bound(manifest.clock_skew_seconds)
 
+    # Issuer standing (GAL-41, #179): the issuer's signed standing document, its
+    # location, authority keys and maximum age all bound at deploy. None when no
+    # ISSUER_STANDING_* source is configured, and then the PIP is unchanged. A
+    # misconfiguration refuses here, including a manifest
+    # input_max_age_seconds["issuer_standing"] longer than the deploy-bound age.
+    issuer_standing = _resolve_issuer_standing(manifest, now)
+
     # Per-op counter cap from the envelope. Named-or-refuse (boot_config.resolve_counter_cap):
     # the generic fallback is honored only when NO granted class is write-effect —
     # an envelope governing granted writes must NAME its daily cap. The refusal
@@ -882,7 +930,20 @@ def build_runtime(
     ):
         # The envelope rode in on the manifest: a manifest made older is too.
         startup_as_of["envelope"] = startup_as_of["manifest"]
-    input_ages = InputAgePolicy.from_seconds(startup_as_of, manifest.input_max_age_seconds)
+    # issuer_standing is the one input whose age lowers a level instead of
+    # refusing the decision (GAL-41), so it is kept out of the refusal set and
+    # counted toward the horizon only, at the age the source applies.
+    input_ages = InputAgePolicy(
+        startup=dict(startup_as_of),
+        max_age={
+            name: datetime.timedelta(seconds=seconds)
+            for name, seconds in manifest.input_max_age_seconds.items()
+            if name != ISSUER_STANDING_INPUT
+        },
+        lowering=(
+            {ISSUER_STANDING_INPUT: issuer_standing.max_age} if issuer_standing else {}
+        ),
+    )
     if manifest.input_max_age_seconds:
         declared = ", ".join(
             f"{name} {seconds}s"
@@ -1074,6 +1135,11 @@ def build_runtime(
     grants: list[Grant] = _load_grants(
         grant_store, grant_load_mode, principal, granted_classes, in_force_hash
     )
+    standing_check = (
+        _build_standing_check(issuer_standing, grant_store, clock_skew, now)
+        if issuer_standing is not None
+        else None
+    )
 
     # Secret-leaf mapping: manifest connector_secrets overrides the default
     # leaf == tool-name mapping (empty dict preserves the old behavior). The value is a
@@ -1125,6 +1191,7 @@ def build_runtime(
             clock_skew=clock_skew,
             escalate_composed_destinations=envelope.escalate_composed_destinations,
             tainted_harness_hold=envelope.tainted_harness_hold,
+            standing_check=standing_check,
         ),
         enforcement_store=enforcement_store,  # type: ignore[arg-type]
         intent_store=intent_store,  # type: ignore[arg-type]
@@ -1160,6 +1227,92 @@ def build_runtime(
     if sqlite_intent_store is not None:
         _boot_sweep_sqlite_intents(runtime, sqlite_intent_store)
     return runtime, sink
+
+
+#: The decision input the issuer's standing document is recorded under (#176).
+ISSUER_STANDING_INPUT: InputName = "issuer_standing"
+
+
+def _resolve_issuer_standing(manifest: AgentManifest, now: Clock):
+    """The issuer's StandingSource, or None when no issuer standing source is set.
+
+    Every config error refuses the boot (IssuerSigningConfigError): two sources,
+    no maximum age, no standing-authority keys, or a per-agent age that is
+    longer than the deploy-bound one or names a source that does not exist.
+    """
+    from safe_agents.broker.grants.issuer_keys import ISSUER_ROLE_ENV  # noqa: PLC0415
+    from safe_agents.broker.grants.standing_keys import (  # noqa: PLC0415
+        resolve_standing_source,
+    )
+
+    return resolve_standing_source(
+        ISSUER_ROLE_ENV,
+        per_agent_max_age_seconds=manifest.input_max_age_seconds.get(ISSUER_STANDING_INPUT),
+        clock=now,
+    )
+
+
+def _ledger_reader_for(grant_store):
+    """The record store that shares ``grant_store``'s table or file, read-only use.
+
+    The broker reads a coordinate's records to find the key behind a grant's
+    level. On the dynamo arm that is a partition Query on RECORD# items, which
+    the broker role's read-only grants-table statement already allows.
+    """
+    if isinstance(grant_store, DynamoDBGrantStore):
+        from safe_agents.broker.grants.store import (  # noqa: PLC0415
+            DynamoDBPromotionRecordStore,
+        )
+
+        return DynamoDBPromotionRecordStore(table_name=_resolve_grants_table_name())
+    if resolve_store_arm() == "sqlite":
+        from safe_agents.broker.grants.sqlite_store import (  # noqa: PLC0415
+            SqlitePromotionRecordStore,
+        )
+
+        return SqlitePromotionRecordStore(**sqlite_grants_open_options())
+    from safe_agents.broker.grants.ceremony import (  # noqa: PLC0415
+        InMemoryPromotionRecordStore,
+    )
+
+    # The memory arm keeps no ledger beside its grants; every grant then has
+    # no licensing record, and acts as unsigned history or falls by the epoch.
+    return InMemoryPromotionRecordStore()
+
+
+def _build_standing_check(source, grant_store, clock_skew, now: Clock):
+    """The PIP's issuer-standing input, with its first fetch done at boot.
+
+    A document that is not accepted at boot does not refuse the boot: standing
+    is then not established, and every grant whose level rests on an issuer key
+    acts at the lower of its level and lastSafeLevel until a fetch succeeds.
+    """
+    from safe_agents.broker.grants.grant_standing import (  # noqa: PLC0415
+        RECORD_SIGNING_EPOCH_ENV,
+        GrantStandingCheck,
+        parse_signing_epoch,
+    )
+
+    check = GrantStandingCheck(
+        source=source,
+        records=_ledger_reader_for(grant_store),
+        signing_epoch=parse_signing_epoch(os.environ.get(RECORD_SIGNING_EPOCH_ENV)),
+        skew=clock_skew,
+    )
+    load = check.refresh(now())
+    print(
+        f"[broker] issuer standing: {source.source_label}, maximum age "
+        f"{int(source.max_age.total_seconds())}s, first fetch {load.verdict}"
+        + (f" ({load.detail})" if load.detail else "")
+    )
+    if not load.accepted:
+        print(
+            "[broker] WARNING: no issuer standing document is in force; every grant "
+            "whose level rests on an issuer key acts at the lower of its level and "
+            "lastSafeLevel until one is accepted",
+            file=sys.stderr,
+        )
+    return check
 
 
 def _boot_sweep_sqlite_intents(runtime: BrokerRuntime, intent_store) -> None:

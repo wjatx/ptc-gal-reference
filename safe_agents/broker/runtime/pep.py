@@ -2456,6 +2456,21 @@ class BrokerRuntime:
                 **inputs.audit_fields(),
             )
 
+        # GAL-41: the grant acts below its stored level because the issuer key
+        # behind that level was withdrawn, or its standing could not be
+        # established. The lower level is already in grant_level; this says
+        # why, once, at the initial read and never at premise revalidation. A
+        # withdrawal and an outage of the standing source call for different
+        # responses, and the reason's prefix tells them apart.
+        if initial_facts.standing_fall_reason:
+            logger.warning(
+                "grant level lowered by issuer standing: principal=%s action_class=%s "
+                "reason=%s",
+                call.principal.model_dump(),
+                f"{call.tool}.{call.op}",
+                initial_facts.standing_fall_reason,
+            )
+
         initial_decision = decider(call, initial_facts)
 
         # Principal+period scoped (see enforcement.scoped_counter_key for why);

@@ -56,6 +56,16 @@ skips RECORD_SIGNATURE_VERIFIES loudly. A set-but-unresolvable value fails
 closed on both paths rather than silently degrading — the same posture as
 ``channels.keys``.
 
+**A third role, and a standing document per record-signing role** (GAL §6.10,
+GAL-41, #179). The flat map says which keys exist and nothing about whether a
+key was rotated out or withdrawn. Where ``<ROLE>_STANDING_PARAM`` or
+``<ROLE>_STANDING_FILE`` is set, the role's verify keys come instead from its
+signed standing document (``grants.key_standing``), which carries each key's
+state. That document is signed by the ``standing-authority`` role, resolved
+from its own ``STANDING_AUTHORITY_*`` names the way the other two roles are,
+and no key of that role may appear under either of the others. Resolution of
+the document and its maximum age is in ``grants.standing_keys``.
+
 The module-level ``_fetch_secret`` / ``_fetch_parameter`` seams are
 monkeypatched in tests so no live AWS is needed. Keys are never logged.
 """
@@ -66,6 +76,7 @@ import json
 import os
 from dataclasses import dataclass
 
+from safe_agents.broker.grants.key_standing import STANDING_AUTHORITY_ROLE, public_key_raw
 from safe_agents.broker.grants.record_signing import (
     EVALUATOR_ROLE,
     ISSUER_ROLE,
@@ -119,6 +130,34 @@ EVALUATOR_SIGNING_KEY_FILE_ENV = "EVALUATOR_SIGNING_KEY_FILE"
 EVALUATOR_VERIFY_KEYS_PARAM_ENV = "EVALUATOR_VERIFY_KEYS_PARAM"
 EVALUATOR_VERIFY_KEYS_FILE_ENV = "EVALUATOR_VERIFY_KEYS_FILE"
 
+# Each role's STANDING document (GAL §6.10, GAL-41, #179): the signed,
+# versioned statement of which of its keys are active, retired or withdrawn
+# (grants/key_standing.py). It reaches a verifier on the same two transports as
+# the verify-key map: an SSM parameter NAME or a local file, exactly one. It
+# replaces that map for its role, so setting both for one role refuses. The
+# maximum age, in whole seconds, sits beside the pointer and has no default:
+# a source configured with no age refuses at startup. Bound at deploy, like the
+# pointer; nothing store-loaded can set, move or lengthen either.
+ISSUER_STANDING_PARAM_ENV = "ISSUER_STANDING_PARAM"
+ISSUER_STANDING_FILE_ENV = "ISSUER_STANDING_FILE"
+ISSUER_STANDING_MAX_AGE_SECONDS_ENV = "ISSUER_STANDING_MAX_AGE_SECONDS"
+EVALUATOR_STANDING_PARAM_ENV = "EVALUATOR_STANDING_PARAM"
+EVALUATOR_STANDING_FILE_ENV = "EVALUATOR_STANDING_FILE"
+EVALUATOR_STANDING_MAX_AGE_SECONDS_ENV = "EVALUATOR_STANDING_MAX_AGE_SECONDS"
+
+# The THIRD role: the standing authority, which signs standing documents and
+# nothing else. Resolved the way the other two are, from its own names: a
+# private key (Secrets Manager ARN, or a file on the local arm only) with a
+# key_id and zone on the ceremony side, and its PUBLIC keys as a JSON
+# ``{key_id: public_key_pem}`` map (parameter or file) on every verifier. No
+# key it holds may appear in either role's map or document.
+STANDING_AUTHORITY_SIGNING_KEY_SECRET_ARN_ENV = "STANDING_AUTHORITY_SIGNING_KEY_SECRET_ARN"
+STANDING_AUTHORITY_SIGNING_KEY_FILE_ENV = "STANDING_AUTHORITY_SIGNING_KEY_FILE"
+STANDING_AUTHORITY_SIGNING_KEY_ID_ENV = "STANDING_AUTHORITY_SIGNING_KEY_ID"
+STANDING_AUTHORITY_SIGNING_ZONE_ENV = "STANDING_AUTHORITY_SIGNING_ZONE"
+STANDING_AUTHORITY_VERIFY_KEYS_PARAM_ENV = "STANDING_AUTHORITY_VERIFY_KEYS_PARAM"
+STANDING_AUTHORITY_VERIFY_KEYS_FILE_ENV = "STANDING_AUTHORITY_VERIFY_KEYS_FILE"
+
 
 class IssuerSigningConfigError(RuntimeError):
     """A ledger signing/verify key is configured but could not be resolved.
@@ -146,6 +185,11 @@ class SigningRoleEnv:
     zone_env: str
     verify_keys_param_env: str
     verify_keys_file_env: str
+    # The role's standing document (GAL-41). None for the standing authority,
+    # whose own keys are bound at deploy and described by no document.
+    standing_param_env: str | None = None
+    standing_file_env: str | None = None
+    standing_max_age_env: str | None = None
 
 
 ISSUER_ROLE_ENV = SigningRoleEnv(
@@ -156,6 +200,9 @@ ISSUER_ROLE_ENV = SigningRoleEnv(
     zone_env=ISSUER_SIGNING_ZONE_ENV,
     verify_keys_param_env=ISSUER_VERIFY_KEYS_PARAM_ENV,
     verify_keys_file_env=ISSUER_VERIFY_KEYS_FILE_ENV,
+    standing_param_env=ISSUER_STANDING_PARAM_ENV,
+    standing_file_env=ISSUER_STANDING_FILE_ENV,
+    standing_max_age_env=ISSUER_STANDING_MAX_AGE_SECONDS_ENV,
 )
 
 EVALUATOR_ROLE_ENV = SigningRoleEnv(
@@ -166,9 +213,44 @@ EVALUATOR_ROLE_ENV = SigningRoleEnv(
     zone_env=EVALUATOR_SIGNING_ZONE_ENV,
     verify_keys_param_env=EVALUATOR_VERIFY_KEYS_PARAM_ENV,
     verify_keys_file_env=EVALUATOR_VERIFY_KEYS_FILE_ENV,
+    standing_param_env=EVALUATOR_STANDING_PARAM_ENV,
+    standing_file_env=EVALUATOR_STANDING_FILE_ENV,
+    standing_max_age_env=EVALUATOR_STANDING_MAX_AGE_SECONDS_ENV,
 )
 
+STANDING_AUTHORITY_ROLE_ENV = SigningRoleEnv(
+    role=STANDING_AUTHORITY_ROLE,
+    key_secret_arn_env=STANDING_AUTHORITY_SIGNING_KEY_SECRET_ARN_ENV,
+    key_file_env=STANDING_AUTHORITY_SIGNING_KEY_FILE_ENV,
+    key_id_env=STANDING_AUTHORITY_SIGNING_KEY_ID_ENV,
+    zone_env=STANDING_AUTHORITY_SIGNING_ZONE_ENV,
+    verify_keys_param_env=STANDING_AUTHORITY_VERIFY_KEYS_PARAM_ENV,
+    verify_keys_file_env=STANDING_AUTHORITY_VERIFY_KEYS_FILE_ENV,
+)
+
+#: The two record-signing roles. The standing authority signs no record, so it
+#: is not one of them.
 SIGNING_ROLE_ENVS: tuple[SigningRoleEnv, ...] = (ISSUER_ROLE_ENV, EVALUATOR_ROLE_ENV)
+
+#: Every role's env, the third included: what a test clears so a developer's
+#: shell cannot decide which keys count.
+ALL_ROLE_ENVS: tuple[SigningRoleEnv, ...] = SIGNING_ROLE_ENVS + (STANDING_AUTHORITY_ROLE_ENV,)
+
+
+def role_env_names(role_env: SigningRoleEnv) -> tuple[str, ...]:
+    """Every env name ``role_env`` reads, standing pointers included."""
+    names = (
+        role_env.key_secret_arn_env,
+        role_env.key_file_env,
+        role_env.key_id_env,
+        role_env.zone_env,
+        role_env.verify_keys_param_env,
+        role_env.verify_keys_file_env,
+        role_env.standing_param_env,
+        role_env.standing_file_env,
+        role_env.standing_max_age_env,
+    )
+    return tuple(name for name in names if name)
 
 
 def _fetch_secret(secret_arn: str) -> str:
@@ -274,14 +356,14 @@ def _verify_keys_source_env(role_env: SigningRoleEnv) -> str:
 
 def _verify_keys_for_role(
     role_env: SigningRoleEnv,
-) -> tuple[frozenset[str], KeyResolver] | None:
-    """The role's known key_ids and its KeyResolver, or None when unconfigured.
+) -> tuple[frozenset[str], KeyResolver, frozenset[bytes]] | None:
+    """The role's known key_ids, its KeyResolver and its raw public keys, or None.
 
-    The key_id SET comes back beside the resolver so the cross-role overlap
-    check can see what each map holds — a closure alone cannot be enumerated.
-    An empty map is valid: an environment whose signer is not yet provisioned
-    resolves every key_id to unknown, so any signed record appearing there
-    fails LOUD.
+    The key_id SET and the raw key bytes come back beside the resolver so the
+    cross-role overlap checks can see what each map holds; a closure alone
+    cannot be enumerated. An empty map is valid: an environment whose signer is
+    not yet provisioned resolves every key_id to unknown, so any signed record
+    appearing there fails LOUD.
     """
     param_name = os.environ.get(role_env.verify_keys_param_env)
     keys_file = os.environ.get(role_env.verify_keys_file_env)
@@ -304,18 +386,26 @@ def _verify_keys_for_role(
         # key_resolver_from_map parses every PEM up front, so a malformed key
         # fails HERE, at cold start, not on the first record verified.
         resolver = key_resolver_from_map(pem_by_key_id)
+        raw = frozenset(public_key_raw(pem) for pem in pem_by_key_id.values())
     except Exception as exc:
         raise IssuerSigningConfigError(
             f"{source_env} is set but the {role_env.role} verify "
             f"keys could not be resolved ({type(exc).__name__})"
         ) from exc
-    return frozenset(pem_by_key_id), resolver
+    return frozenset(pem_by_key_id), resolver, raw
 
 
 def resolve_verify_keys_for_role(role_env: SigningRoleEnv) -> KeyResolver | None:
-    """Build one role's read-only KeyResolver, or None when unconfigured."""
-    resolved = _verify_keys_for_role(role_env)
-    return None if resolved is None else resolved[1]
+    """Build one role's read-only KeyResolver, or None when unconfigured.
+
+    Where the role's standing document is configured, the resolver is the
+    document's (every key it lists, in any state), loaded once and refused
+    closed if it cannot be accepted (grants/standing_keys.py).
+    """
+    from safe_agents.broker.grants.standing_keys import role_verify_material  # noqa: PLC0415
+
+    material = role_verify_material(role_env)
+    return None if material is None else material.resolver
 
 
 def resolve_signer_for_role(
@@ -419,29 +509,26 @@ def resolve_evaluator_signer(zone: str | None = None) -> RecordSigner | None:
     return resolve_signer_for_role(EVALUATOR_ROLE_ENV, zone)
 
 
-def resolve_record_key_resolvers() -> RoleKeyResolvers | None:
-    """Both roles' verify maps, or None when NEITHER is configured.
+def resolve_standing_signer(zone: str | None = None) -> RecordSigner | None:
+    """Build the STANDING AUTHORITY's signer from the cold-start environment, or None.
 
-    Refuses a key_id present in both maps: a key with two roles is no split at
-    all, and the failure must be loud at cold start rather than per-record at
-    verify time — here, the message can name both sources and the key.
+    The third role: it signs standing documents (grants/standing_command.py)
+    and nothing else. Same rules as the other two roles: exactly one key
+    source, a key_id and a zone, half-configured refuses.
     """
-    issuer = _verify_keys_for_role(ISSUER_ROLE_ENV)
-    evaluator = _verify_keys_for_role(EVALUATOR_ROLE_ENV)
-    if issuer is None and evaluator is None:
-        return None
-    shared = sorted(
-        (issuer[0] if issuer else frozenset()) & (evaluator[0] if evaluator else frozenset())
-    )
-    if shared:
-        raise IssuerSigningConfigError(
-            f"key_id(s) {shared} appear in BOTH "
-            f"{_verify_keys_source_env(ISSUER_ROLE_ENV)} and "
-            f"{_verify_keys_source_env(EVALUATOR_ROLE_ENV)} — "
-            "one key cannot hold two signing roles, or the evaluator could mint "
-            "promotion records. Provision a separate key per role."
-        )
-    return RoleKeyResolvers(
-        issuer=issuer[1] if issuer else None,
-        evaluator=evaluator[1] if evaluator else None,
-    )
+    return resolve_signer_for_role(STANDING_AUTHORITY_ROLE_ENV, zone)
+
+
+def resolve_record_key_resolvers() -> RoleKeyResolvers | None:
+    """Both roles' verify keys, or None when NEITHER is configured.
+
+    Each role's keys come from its standing document where one is configured
+    (and then carry its key states, so a withdrawn key's records verify as
+    ``record_signer_withdrawn``), else from its flat verify-key map. Refuses a
+    key held by two roles, by key_id or by key bytes, and a standing-authority
+    key held by either role: a key with two roles is no split at all, and the
+    failure must be loud at cold start rather than per-record at verify time.
+    """
+    from safe_agents.broker.grants.standing_keys import resolve_role_key_resolvers  # noqa: PLC0415
+
+    return resolve_role_key_resolvers()

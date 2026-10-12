@@ -398,6 +398,38 @@ def _hmac_payload(payload: str, hmac_key: bytes) -> str:
 
 
 # ---------------------------------------------------------------------------
+# A ledger record as stored: the bytes a signature binds, and the signature
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StoredRecord:
+    """One RECORD# item as stored: the parsed record, its stored bytes, its envelope.
+
+    ``data`` is the exact stored serialization, the basis a signature is
+    verified over. ``signature`` is the DSSE envelope stored beside it: a dict
+    when it decodes, None for an unsigned append, or the raw value when it does
+    not decode (verification fails closed on anything that is not a dict).
+    Read by whoever must trust a record's signer: the enforcer's key-standing
+    check and the withdrawal runner (GAL-41, ``grants.grant_standing``).
+    """
+
+    record: PromotionRecord
+    data: str
+    signature: dict | str | None = None
+
+
+def decode_stored_signature(value: object) -> dict | str | None:
+    """A stored ``signature`` attribute as a dict where it decodes, else as stored."""
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value  # type: ignore[return-value]
+
+
+# ---------------------------------------------------------------------------
 # Result type — wraps the Grant with a quarantine flag
 # ---------------------------------------------------------------------------
 
@@ -1034,4 +1066,35 @@ class DynamoDBPromotionRecordStore:
             last_key = response.get("LastEvaluatedKey")
             if not last_key:
                 return records
+            kwargs["ExclusiveStartKey"] = last_key
+
+    def list_stored_records(
+        self, principal: Principal, action_class: str, session: object = None
+    ) -> list[StoredRecord]:
+        """A coordinate's records as stored, chronological, by partition Query.
+
+        The stored bytes and the envelope beside them, so a reader can verify
+        a record's signature before it trusts who signed it. Same Query, same
+        order, as ``list_records``; no Scan.
+        """
+        table = self._get_table(session)
+        kwargs: dict = {
+            "KeyConditionExpression": "pk = :pk",
+            "ExpressionAttributeValues": {":pk": self._record_pk(principal, action_class)},
+            "ScanIndexForward": True,
+        }
+        stored: list[StoredRecord] = []
+        while True:
+            response = table.query(**kwargs)
+            stored.extend(
+                StoredRecord(
+                    record=PromotionRecord.model_validate_json(item["data"]),
+                    data=item["data"],
+                    signature=decode_stored_signature(item.get("signature")),
+                )
+                for item in response.get("Items", [])
+            )
+            last_key = response.get("LastEvaluatedKey")
+            if not last_key:
+                return stored
             kwargs["ExclusiveStartKey"] = last_key

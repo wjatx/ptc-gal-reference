@@ -67,6 +67,17 @@ export class IdentityStack extends Stack {
     });
     // No addToPolicy calls. Intentional.
 
+    // The PUBLIC standing material (GAL-41, #179): each record-signing role's signed standing
+    // document and the standing authority's verify keys. Every verifier of a standing document
+    // reads it; nobody below writes it. The standing authority's PRIVATE key, and write on the two
+    // standing parameters, belong to whoever holds that third key, which is a deployment fact
+    // recorded in docs/operator-identities.md, so no role here is granted either.
+    const ssmParam = (name: string) =>
+      `arn:${Aws.PARTITION}:ssm:${Aws.REGION}:${Aws.ACCOUNT_ID}:parameter/safe-agents/${env}/${name}`;
+    const issuerStandingParam = ssmParam('issuer/standing');
+    const evaluatorStandingParam = ssmParam('evaluator/standing');
+    const standingAuthorityVerifyKeysParam = ssmParam('standing-authority/verify-keys');
+
     // ── 2. brokerRole — holds the keys, cannot promote itself ────────────────────────────────────
     // The broker reads secrets and enforces grants; it is the sole path from agent to connector.
     // It has NO write access to grants. Only promotionRole and demotionRole may alter
@@ -130,6 +141,19 @@ export class IdentityStack extends Stack {
         conditions: {
           'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['INHERIT#*'] },
         },
+      }),
+    );
+
+    // SSM: the ISSUER's standing document and the standing authority's PUBLIC verify keys, read
+    // only. The broker's PIP lowers a grant whose level rests on a withdrawn issuer key (GAL-41),
+    // so it reads the document and verifies it. It finds the key behind a level with a partition
+    // Query on RECORD# items, which the read-only grants statement above already allows. Not the
+    // evaluator's document: an evaluator key's withdrawal changes no enforced level.
+    brokerRole.addToPolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['ssm:GetParameter'],
+        resources: [issuerStandingParam, standingAuthorityVerifyKeysParam],
       }),
     );
 
@@ -404,6 +428,17 @@ export class IdentityStack extends Stack {
         resources: [
           `arn:${Aws.PARTITION}:secretsmanager:${Aws.REGION}:${Aws.ACCOUNT_ID}:secret:*/evaluator/*`,
         ],
+      }),
+    );
+
+    // SSM: the ISSUER's standing document and the standing authority's PUBLIC verify keys, read
+    // only. The runner's withdrawal pass (grants.withdrawal) lowers a grant whose level rests on a
+    // withdrawn issuer key and appends the evaluator-signed record that says so (GAL-41).
+    demotionRole.addToPolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['ssm:GetParameter'],
+        resources: [issuerStandingParam, standingAuthorityVerifyKeysParam],
       }),
     );
 
@@ -697,6 +732,11 @@ export class IdentityStack extends Stack {
           resources: [
             `arn:${Aws.PARTITION}:ssm:${Aws.REGION}:${Aws.ACCOUNT_ID}:parameter/safe-agents/${env}/issuer/verify-keys`,
             `arn:${Aws.PARTITION}:ssm:${Aws.REGION}:${Aws.ACCOUNT_ID}:parameter/safe-agents/${env}/evaluator/verify-keys`,
+            // Either role's standing document replaces its map where configured (GAL-41), and
+            // is verified under the standing authority's keys.
+            issuerStandingParam,
+            evaluatorStandingParam,
+            standingAuthorityVerifyKeysParam,
           ],
         }),
       );
@@ -789,6 +829,10 @@ export class IdentityStack extends Stack {
         resources: [
           `arn:${Aws.PARTITION}:ssm:${Aws.REGION}:${Aws.ACCOUNT_ID}:parameter/safe-agents/${env}/issuer/verify-keys`,
           `arn:${Aws.PARTITION}:ssm:${Aws.REGION}:${Aws.ACCOUNT_ID}:parameter/safe-agents/${env}/evaluator/verify-keys`,
+          // Either role's standing document replaces its map where configured (GAL-41).
+          issuerStandingParam,
+          evaluatorStandingParam,
+          standingAuthorityVerifyKeysParam,
         ],
       }),
     );

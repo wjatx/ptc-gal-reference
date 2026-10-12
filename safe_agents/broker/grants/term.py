@@ -28,6 +28,12 @@ function here takes an optional ``skew`` bound and judges the term at
 (``schemas.clock_skew``). The bound is the evaluator's own configuration
 (``AgentManifest.clock_skew_seconds``, or the lapse runner's flag); nothing on
 the grant can set it. Zero, the default, is the unbounded comparison.
+
+Issuer standing (GAL §6.10, GAL-41, #179). ``effective_level`` also takes
+whether the issuer key behind the grant's level still has standing, as the
+caller established it (``grants.grant_standing``). Without it the grant acts at
+the lower of its level and lastSafeLevel, exactly as a passed term does. The
+default is standing held, which is the level every caller computed before.
 """
 
 from __future__ import annotations
@@ -87,19 +93,27 @@ def lapse_pending(
 
 
 def effective_level(
-    grant: Grant, now: datetime.datetime, *, skew: datetime.timedelta = ZERO_SKEW
+    grant: Grant,
+    now: datetime.datetime,
+    *,
+    skew: datetime.timedelta = ZERO_SKEW,
+    standing_held: bool = True,
 ) -> AutonomyLevel:
     """The level per-call enforcement must act on at instant ``now``.
 
-    Before the term passes (or with no term) this is the stored level. Once it
-    has passed, it is the LOWER of the stored level and lastSafeLevel — without
-    waiting for any writer, so an idle grant nobody sweeps still falls at its
-    boundary. ``min`` rather than lastSafeLevel outright because the demotion
-    path can leave lastSafeLevel ABOVE a demoted level (it records the prior
-    level as the re-promotion reference, demotion.apply_demotion): a lapse must
-    never raise anything. Pure — no write, no store, no clock.
+    Before the term passes (or with no term), and while the issuer key behind
+    the level has standing, this is the stored level. Once the term has passed,
+    or with ``standing_held`` False (GAL-41: the key was withdrawn, or its
+    standing cannot be established within the declared maximum age), it is the
+    LOWER of the stored level and lastSafeLevel, without waiting for any
+    writer, so an idle grant nobody sweeps still falls at its boundary. ``min``
+    rather than lastSafeLevel outright because the demotion path can leave
+    lastSafeLevel ABOVE a demoted level (it records the prior level as the
+    re-promotion reference, demotion.apply_demotion): neither a lapse nor a
+    withdrawal may raise anything. Pure: no write, no store, no clock.
     """
-    if not term_passed(grant, now, skew=skew):
+    passed = term_passed(grant, now, skew=skew)
+    if standing_held and not passed:
         return grant.level
     if _LEVEL_RANK[grant.lastSafeLevel] < _LEVEL_RANK[grant.level]:
         return grant.lastSafeLevel

@@ -23,7 +23,12 @@ Signal flow:
   deduped per UTC day: already recorded today → "deduped", ZERO writes
   (no grant ts/hash churn, no ledger noise). A demotion that WOULD change the
   level is never deduped.
-- Certification-term lapse (GAL §6.7.6) runs FIRST in ``main``, under this
+- Issuer-key withdrawal (GAL §6.10, GAL-41) runs FIRST in ``main`` when an
+  issuer standing document is configured (ISSUER_STANDING_PARAM / _FILE), via
+  ``grants.withdrawal.run_withdrawal``: a grant whose level rests on a key the
+  document withdraws is lowered with a ``withdrawal``-typed record. Nothing is
+  written when standing is only not established.
+- Certification-term lapse (GAL §6.7.6) runs next in ``main``, under this
   same identity, via ``grants.lapse.run_lapse``: an expired term lowers the grant
   to lastSafeLevel with a ``lapse``-typed record — never a demotion record, and
   never with a trigger named. The evaluation instant is the wall clock read
@@ -829,6 +834,68 @@ _EXIT_CODES: dict[RunnerStatus, int] = {
     "quarantined": 1,
 }
 
+# The withdrawal pass (GAL-41). Lowered, in standing or nothing to lower is a
+# clean completion. Not established needs operator attention: the broker is
+# falling for the same reason, whether the source is down or the key behind a
+# level cannot be verified. Conflict and quarantine as for demotion.
+_WITHDRAWAL_EXIT_CODES: dict[str, int] = {
+    "no-grant": 0,
+    "nothing-to-lower": 0,
+    "in-standing": 0,
+    "lowered": 0,
+    "not-established": 1,
+    "conflict": 1,
+    "quarantined": 1,
+}
+
+
+def _run_withdrawal_pass(
+    principal: Principal,
+    action_class: str,
+    *,
+    grant_store: GrantStore,
+    record_store: DemotionLedgerStore,
+    standing: object,
+    now: datetime.datetime,
+    record_signer: object,
+    skew: datetime.timedelta = ZERO_SKEW,
+):
+    """The CLI's withdrawal pass: refresh the issuer document, evaluate, print one line."""
+    from safe_agents.broker.grants.withdrawal import run_withdrawal  # noqa: PLC0415
+
+    load = standing.refresh()
+    outcome = run_withdrawal(
+        principal,
+        action_class,
+        grant_store=grant_store,
+        record_store=record_store,
+        standing=standing,
+        now=now,
+        skew=skew,
+        record_signer=record_signer,
+    )
+    if outcome.status == "lowered" and record_signer is None:
+        print(
+            "WARNING: evaluator signing key not configured; the withdrawal record was "
+            "stored UNSIGNED (asserted, not non-repudiable).",
+            file=sys.stderr,
+        )
+    print(
+        json.dumps(
+            {
+                "event": "withdrawal_runner",
+                "status": outcome.status,
+                "standingDocument": load.verdict,
+                "agentId": principal.agentId,
+                "actionClass": action_class,
+                "evaluatedAt": now.isoformat(),
+                "reason": outcome.reason,
+            }
+        )
+    )
+    return outcome
+
+
 # The lapse pass: a lapse, or nothing owed, is a clean completion;
 # conflict and quarantine need operator attention, as for demotion.
 _LAPSE_EXIT_CODES: dict[LapseStatus, int] = {
@@ -903,13 +970,21 @@ def main(argv: list[str] | None = None) -> int:
         # authority (GAL §6.7.2). None when no EVALUATOR_SIGNING_* env is
         # configured; half-configured signing refuses (exit 2) rather than
         # degrading to unsigned — resolve_signer_for_role's rule.
+        from safe_agents.broker.grants import issuer_keys  # noqa: PLC0415 - lazy
         from safe_agents.broker.grants.issuer_keys import (  # noqa: PLC0415 — lazy
             IssuerSigningConfigError,
             resolve_evaluator_signer,
         )
 
+        from safe_agents.broker.grants.standing_keys import (  # noqa: PLC0415 - lazy
+            resolve_standing_source,
+        )
+
         try:
             evaluator_signer = resolve_evaluator_signer()
+            # The ISSUER's standing document only: the key a level rests on is
+            # an issuer key. None when no issuer standing source is configured.
+            issuer_standing = resolve_standing_source(issuer_keys.ISSUER_ROLE_ENV)
         except IssuerSigningConfigError as exc:
             raise RunnerConfigError(str(exc)) from exc
         signals: list[DemotionSignal] = []
@@ -968,17 +1043,32 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    # The ONE wall-clock read for the lapse pass: the outermost caller supplies
-    # the evaluation instant, and nothing below derives it from a record's ts.
+    # The ONE wall-clock read for the withdrawal and lapse passes: the outermost
+    # caller supplies the evaluation instant, and nothing below derives it from
+    # a record's ts.
+    now = datetime.datetime.now(datetime.UTC)
+    skew = skew_bound(args.clock_skew_seconds)  # the runner's own, never the grant's
+    withdrawal_code = 0
+    if issuer_standing is not None:
+        withdrawal = _run_withdrawal_pass(
+            principal,
+            args.action_class,
+            grant_store=grant_store,
+            record_store=record_store,
+            standing=issuer_standing,
+            now=now,
+            record_signer=evaluator_signer,
+            skew=skew,
+        )
+        withdrawal_code = _WITHDRAWAL_EXIT_CODES[withdrawal.status]
     lapse = _run_lapse_pass(
         principal,
         args.action_class,
         grant_store=grant_store,
         record_store=record_store,
-        now=datetime.datetime.now(datetime.UTC),
+        now=now,
         record_signer=evaluator_signer,
-        # The runner's own configuration, never anything on the grant.
-        skew=skew_bound(args.clock_skew_seconds),
+        skew=skew,
     )
 
     outcome = run_demotion(
@@ -1004,7 +1094,7 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
     )
-    return max(_EXIT_CODES[outcome.status], _LAPSE_EXIT_CODES[lapse.status])
+    return max(_EXIT_CODES[outcome.status], _LAPSE_EXIT_CODES[lapse.status], withdrawal_code)
 
 
 if __name__ == "__main__":

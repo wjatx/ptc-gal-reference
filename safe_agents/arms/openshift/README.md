@@ -417,7 +417,7 @@ gone green. Case A caught it immediately.
 ## Two things this arm does NOT claim
 
 **The second signing identity is a cloud-floor fact this drill does not exercise.** On AWS the
-demotion evaluator signs its `demotion` and `lapse` records with an `*/evaluator/*` key that is
+demotion evaluator signs its `demotion`, `lapse` and `withdrawal` records with an `*/evaluator/*` key that is
 disjoint from the issuer's, so neither signing identity can mint the other's record type
 (`infra/lib/identity-stack.ts`, `docs/operator-identities.md`). This arm has **no demotion or
 lapse leg at all** — five ServiceAccounts, none of them a demotion runner — so nothing here
