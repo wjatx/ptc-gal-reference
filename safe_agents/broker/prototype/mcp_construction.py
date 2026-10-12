@@ -51,6 +51,7 @@ nothing.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 from typing import Callable, Mapping
@@ -305,6 +306,12 @@ def build_mcp_connectors(
     # broker only READS the registry (two-key admission is a read at connect),
     # so it takes the same read-only grant mount the maker does.
     grant_opts = sqlite_grants_open_options() if on_sqlite else {}
+    # The declared maximum age of every server's admission snapshot (#176): one
+    # manifest knob for every server, None when none is declared.
+    admission_seconds = manifest.input_max_age_seconds.get("mcp_admission")
+    admission_max_age = (
+        datetime.timedelta(seconds=admission_seconds) if admission_seconds else None
+    )
     connectors: dict[str, Connector] = {}
     for server_id, decl in constructible.items():
         registry = (
@@ -380,6 +387,7 @@ def build_mcp_connectors(
                         registry=registry,
                         headers_provider=headers_provider,
                         respawn=decl.respawn,
+                        admission_max_age=admission_max_age,
                     )
                     return await inner()
 
@@ -432,6 +440,7 @@ def build_mcp_connectors(
                     cwd=decl.cwd,
                     env_provider=env_provider,
                     respawn=decl.respawn,
+                    admission_max_age=admission_max_age,
                 )
                 return await inner()
 

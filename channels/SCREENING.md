@@ -95,7 +95,8 @@ own screen implementations — declared in config or source, never at runtime.
   failure `docs/friction-doctrine.md` rule 3 names. The dispatcher therefore accepts an optional
   verdict sink; when provided, **every screen invocation appends exactly one PII-safe
   `ScreenRecord`** (pass and refuse alike: channel type, identity digest, event id, verdict, code,
-  timestamp). Unset — the default — nothing is recorded on pass, per allow-and-audit lightness. A
+  timestamp; and, as the Lambda handler writes it, the airlock's `inputs_as_of` and `horizon`,
+  `channels/TRUST-MAPPING.md` §"Input age"). Unset — the default — nothing is recorded on pass, per allow-and-audit lightness. A
   null screen appends nothing even with a sink wired: no judgment happened, so there is nothing to
   record.
 - **A pass record is evidence a check RAN, never a content endorsement** [ruling: maintainer, 2026-08-06].

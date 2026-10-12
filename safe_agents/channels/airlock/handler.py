@@ -21,7 +21,24 @@ while handling the request read as an acceptance.
 
 The verification keys are fetched at cold start. When that fetch fails the
 handler still serves: the keys are fetched again by the next request that
-reaches gate 3.5, and cached once the fetch succeeds. Every other cold-start
+reaches gate 3.5, and cached once the fetch succeeds.
+
+Input age (PTC §6.13, GAL §6.15, #176). The airlock's decisions depend on three
+fetched inputs: the channels manifest (which carries the trust map), the webhook
+token, and the verification keys with their custody records. Each is stamped
+with the instant read before its fetch, and every drop and verdict record, and
+the `channel_accepted` log line, carries those instants (`inputs_as_of`) and the
+earliest instant any of them passes its declared maximum age (`horizon`). The
+manifest's `input_max_age_seconds` declares the ages and ships empty, so every
+input lasts the container as before. With an age declared, a request that finds
+the manifest or the token past it rebuilds the whole state first, and one that
+reaches gate 3.5 with the keys past theirs fetches the keys again first. Neither
+decides on the old input when the fetch fails: the old state or keys are dropped
+before the fetch, so a failed rebuild answers that request `{"ok": true}` as a
+`handler_error` with nothing sent onward, and a failed key fetch is the
+`not_evaluated`/`key_source` refusal above. The manifest is a file in the image,
+so its re-read returns the same bytes; a tightened trust map reaches the airlock
+with a new image. The token and the keys are re-read from Secrets Manager. Every other cold-start
 failure still fails the whole cold start, as before: a failed webhook-token
 fetch, or a token secret that is not a usable identity → token map, leaves no
 way to authenticate anyone, and a manifest that does not load leaves no trust
@@ -54,9 +71,9 @@ import base64
 import json
 import logging
 import os
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Any, Callable
 
 from safe_agents.channels.dispatch import KeySourceUnavailable, RefusalClass, dispatch_outcome
 from safe_agents.channels.manifest import (
@@ -87,6 +104,24 @@ logger.setLevel(logging.INFO)
 
 DEFAULT_DROP_PREFIX = "channels/drops/"
 DEFAULT_VERDICT_PREFIX = "channels/verdicts/"
+
+# The inputs read once per state build; the keys are tracked by their own gate.
+_STARTUP_INPUTS = ("manifest", "webhook_token")
+
+_LATEST_INSTANT = datetime.max.replace(tzinfo=timezone.utc)
+
+
+def _now() -> datetime:
+    """The instant source for input stamps and age checks; a seam for tests."""
+    return datetime.now(timezone.utc)
+
+
+def _end_of(as_of: datetime, max_age: timedelta) -> datetime:
+    """When an input established at `as_of` passes `max_age`; clamped, never raises."""
+    try:
+        return as_of + max_age
+    except OverflowError:
+        return _LATEST_INSTANT
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +159,23 @@ def _fetch_webhook_token(secret_arn: str) -> str:
 # no-op, which appends nothing), carrying only the machine-safe fields.
 # ---------------------------------------------------------------------------
 
+class _AsOfStampingSink:
+    """Stamps each record with the airlock's input instants and horizon (#176).
+
+    `stamp` is read at append time, so a record carries the instants of the
+    inputs as they stood when its decision was made, keys refetched mid-request
+    included. The record is validated again with the stamp, never re-serialized
+    after it is stored: the inner sink serializes it once.
+    """
+
+    def __init__(self, inner: Any, stamp: Callable[[], dict[str, Any]]) -> None:
+        self._inner = inner
+        self._stamp = stamp
+
+    def append(self, record: Any) -> None:
+        self._inner.append(type(record).model_validate({**record.model_dump(), **self._stamp()}))
+
+
 class _LoggingDropSink:
     def __init__(self, inner: Any) -> None:
         self._inner = inner
@@ -154,17 +206,39 @@ class _KeyedVerifyGate:
     the call raises `KeySourceUnavailable`, which the dispatcher records
     `not_evaluated`/`key_source`. The fetch is attempted only for a request
     that reaches gate 3.5, so a request that fails gate 1 never drives one.
+
+    The keys are stamped with the instant read before their fetch (#176). With a
+    declared `max_age`, cached keys that have reached it are dropped and fetched
+    again by the next request that reaches gate 3.5; dropped first, so a failed
+    refetch leaves no old key in use.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_age: timedelta | None = None) -> None:
         self._gate: Any = None
+        self._fetched_at: datetime | None = None
+        self._max_age = max_age
+
+    @property
+    def fetched_at(self) -> datetime | None:
+        """When the cached keys were fetched; None while none are cached."""
+        return self._fetched_at if self._gate is not None else None
+
+    def _past_age(self) -> bool:
+        if self._max_age is None or self._fetched_at is None:
+            return False
+        return _now() >= _end_of(self._fetched_at, self._max_age)
 
     def resolve(self) -> bool:
-        """Fetch the keys if they are not cached yet; True once they are."""
+        """Fetch the keys if none are cached or the cached ones are past their age."""
         if self._gate is not None:
-            return True
+            if not self._past_age():
+                return True
+            logger.info(json.dumps({"event": "verify_keys_past_max_age"}))
+            self._gate = None
+            self._fetched_at = None
+        fetched_at = _now()
         try:
-            self._gate = make_gate(resolve_verification_keys())
+            gate = make_gate(resolve_verification_keys())
         except SigningConfigError as exc:
             # The message names the setting and the fault, never key material
             # (keys.py builds every SigningConfigError that way).
@@ -174,6 +248,8 @@ class _KeyedVerifyGate:
                 )
             )
             return False
+        self._gate = gate
+        self._fetched_at = fetched_at if gate is not None else None
         return self._gate is not None
 
     def __call__(self, envelope: EventTrigger) -> ChainVerifyResult:
@@ -191,10 +267,39 @@ class _HandlerState:
     airlock: AirlockRuntime
     dedupe: DynamoDbDedupeStore
     drops: _LoggingDropSink
-    verdicts: S3VerdictSink | None
+    verdicts: _AsOfStampingSink | None
     verify_chain: _KeyedVerifyGate | None
     sqs: Any
     queue_url: str
+    # #176: when the manifest and the webhook token were fetched, and the ages
+    # the manifest declares (empty: none).
+    startup_as_of: dict[str, datetime] = field(default_factory=dict)
+    max_age: dict[str, timedelta] = field(default_factory=dict)
+
+    def inputs_as_of(self) -> dict[str, datetime]:
+        """Every fetched input's as-of instant, the keys' while any are cached."""
+        as_of = dict(self.startup_as_of)
+        keys_at = self.verify_chain.fetched_at if self.verify_chain is not None else None
+        if keys_at is not None:
+            as_of["verify_keys"] = keys_at
+        return as_of
+
+    def startup_inputs_past_age(self, now: datetime) -> list[str]:
+        """The manifest and token inputs that have reached their declared age at `now`."""
+        return sorted(
+            name
+            for name, at in self.startup_as_of.items()
+            if name in self.max_age and now >= _end_of(at, self.max_age[name])
+        )
+
+    def record_fields(self) -> dict[str, Any]:
+        """The `inputs_as_of` and `horizon` fields every record carries."""
+        as_of = self.inputs_as_of()
+        ends = [_end_of(at, self.max_age[name]) for name, at in as_of.items() if name in self.max_age]
+        return {
+            "inputs_as_of": {name: at.isoformat() for name, at in sorted(as_of.items())} or None,
+            "horizon": min(ends).isoformat() if ends else None,
+        }
 
 
 _STATE: _HandlerState | None = None
@@ -211,9 +316,16 @@ def _load_manifest() -> ChannelsManifest:
 
 
 def _build_state() -> _HandlerState:
+    # Each input is stamped with the instant read BEFORE its fetch (#176).
+    manifest_at = _now()
     manifest = _load_manifest()
+    token_at = _now()
     token = _fetch_webhook_token(os.environ["CHANNELS_WEBHOOK_SECRET_ARN"])
     airlock = build_airlock(manifest, token=token)
+    max_age = {
+        name: timedelta(seconds=seconds)
+        for name, seconds in manifest.input_max_age_seconds.items()
+    }
 
     dedupe = DynamoDbDedupeStore(
         os.environ["CHANNELS_DEDUPE_TABLE"],
@@ -221,18 +333,52 @@ def _build_state() -> _HandlerState:
         client=_dynamodb_client(),
     )
 
+    # The chain-verification seam comes first: every record stamps its keys' as-of.
+    verify_chain = _build_verify_gate(max_age.get("verify_keys"))
+
+    # The record stamp reads the state once it exists; nothing appends before.
+    holder: list[_HandlerState] = []
+
+    def stamp() -> dict[str, Any]:
+        return holder[0].record_fields()
+
     bucket = os.environ["CHANNELS_DROP_BUCKET"]
     s3 = _s3_client()
     drops = _LoggingDropSink(
-        S3DropSink(bucket, os.environ.get("CHANNELS_DROP_PREFIX", DEFAULT_DROP_PREFIX), client=s3)
+        _AsOfStampingSink(
+            S3DropSink(
+                bucket, os.environ.get("CHANNELS_DROP_PREFIX", DEFAULT_DROP_PREFIX), client=s3
+            ),
+            stamp,
+        )
     )
     verdicts = (
-        S3VerdictSink(
-            bucket, os.environ.get("CHANNELS_VERDICT_PREFIX", DEFAULT_VERDICT_PREFIX), client=s3
+        _AsOfStampingSink(
+            S3VerdictSink(
+                bucket, os.environ.get("CHANNELS_VERDICT_PREFIX", DEFAULT_VERDICT_PREFIX), client=s3
+            ),
+            stamp,
         )
         if airlock.verdict_sink
         else None
     )
+
+    state = _HandlerState(
+        airlock=airlock,
+        dedupe=dedupe,
+        drops=drops,
+        verdicts=verdicts,
+        verify_chain=verify_chain,
+        sqs=_sqs_client(),
+        queue_url=os.environ["CHANNELS_ACCEPTED_QUEUE_URL"],
+        startup_as_of={"manifest": manifest_at, "webhook_token": token_at},
+        max_age=max_age,
+    )
+    holder.append(state)
+    return state
+
+
+def _build_verify_gate(max_age: timedelta | None) -> _KeyedVerifyGate | None:
 
     # Chain-signature verification (channels/SIGNING.md). Ships OFF: with no
     # BROKER_VERIFY_KEYS_SECRET_ARN configured the seam is None and dispatch
@@ -241,24 +387,26 @@ def _build_state() -> _HandlerState:
     # with no custody record included, SIGNING.md S10) does not fail the cold
     # start. Every envelope that reaches gate 3.5 meanwhile is refused
     # `not_evaluated`, never passed unverified, and the next one fetches again.
-    verify_chain: _KeyedVerifyGate | None = None
-    if os.environ.get(VERIFY_KEYS_SECRET_ARN_ENV):
-        verify_chain = _KeyedVerifyGate()
-        verify_chain.resolve()
-
-    return _HandlerState(
-        airlock=airlock,
-        dedupe=dedupe,
-        drops=drops,
-        verdicts=verdicts,
-        verify_chain=verify_chain,
-        sqs=_sqs_client(),
-        queue_url=os.environ["CHANNELS_ACCEPTED_QUEUE_URL"],
-    )
+    if not os.environ.get(VERIFY_KEYS_SECRET_ARN_ENV):
+        return None
+    verify_chain = _KeyedVerifyGate(max_age)
+    verify_chain.resolve()
+    return verify_chain
 
 
 def _get_state() -> _HandlerState:
+    """The cached state, rebuilt first when the manifest or token is past its age.
+
+    The old state is dropped BEFORE the rebuild (#176), so a rebuild that fails
+    leaves nothing cached: this request fails as a `handler_error`, and the next
+    one builds again, exactly as after a failed cold start.
+    """
     global _STATE
+    if _STATE is not None:
+        past = _STATE.startup_inputs_past_age(_now())
+        if past:
+            logger.info(json.dumps({"event": "airlock_inputs_past_max_age", "inputs": past}))
+            _STATE = None
     if _STATE is None:
         _STATE = _build_state()
     return _STATE
@@ -346,6 +494,7 @@ def _handle(event: dict) -> dict:
                     "event": "channel_accepted",
                     "identity_digest": digest_identity(accepted.sender.channel_identity),
                     "event_id": accepted.event_id,
+                    **state.record_fields(),
                 }
             )
         )

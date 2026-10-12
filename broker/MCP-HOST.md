@@ -226,6 +226,18 @@ as its re-evaluation: a respawn that resumed the old snapshot would let a server
 definitions behind an already-blessed session. (Credentials follow the same rule — the
 `env_map` half re-resolves per spawn, never cached across a death.)
 
+**The admission snapshot is a fetched input, and it has an age** (#176; PTC §6.13, GAL §6.15).
+Between respawns the snapshot a session gates on (the registry rows and the advertised definitions)
+is the one read at spawn, so a row withdrawn or quarantined after the spawn leaves the tool callable
+until the next one. The host stamps each snapshot with the instant read before either read, and
+records that instant as `mcp_admission` in the `inputsAsOf` of the broker decision each call
+belongs to, whether the host passes the call or refuses it (`broker/SCHEMAS.md` §5). A deployment
+may declare a maximum age for it, `AgentManifest.input_max_age_seconds["mcp_admission"]`, one age
+for every server. A call that finds the snapshot at or past that age re-runs discovery first and is
+gated on the fresh snapshot; a re-run that fails raises, and the call is not made. With no age
+declared, the default, the snapshot lasts the session exactly as before. What this buys is a bound
+on how long a withdrawn row keeps a tool callable; it re-reads nothing between calls inside the age.
+
 **Respawn is policy-as-data and ships OFF.** Whether the broker respawns a dead child at all is an
 *availability* choice, and like liveness its safety is polarity-dependent — an agent
 whose safe state is abstention wants a dead tool to stay dead; an agent with positive safe actions

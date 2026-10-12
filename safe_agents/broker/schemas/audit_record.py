@@ -95,6 +95,16 @@ class AuditRecord(BaseModel):
     # (ISO-8601 UTC) read from its verified stored bytes. `ts` is when the broker
     # recorded the expiry, which a sweep interval can put later than this.
     expiredAt: str | None = None
+    # The age of each fetched input the decision depended on (PTC §6.13, GAL §6.15,
+    # #176): input name -> the ISO-8601 instant as of which the broker established
+    # it, the earlier of its fetch and any time its source stated. Present on the
+    # records of the broker's own decisions on a call; absent on records that carry
+    # no such decision (an owner verdict, an observed event, a mouth refusal).
+    inputsAsOf: dict[str, str] | None = None
+    # The decision's horizon: the earliest instant at which any input in
+    # inputsAsOf passes the maximum age the deployment declared for it. Absent when
+    # no input the decision depended on has a declared age, which is no bound.
+    horizon: str | None = None
     # chains to the previous record (hash-chain integrity)
     prevHash: str
     # hash over this record including prevHash — any later edit is detectable

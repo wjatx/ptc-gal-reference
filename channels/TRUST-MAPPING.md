@@ -165,6 +165,9 @@ interface DropRecord {
   detail: string | null            // gate-specific machine code, ^[a-z][a-z0-9_]{0,63}$ — never free
                                    // text (channels/SCREENING.md); `not_evaluated` always sets it
   ts: string
+  inputs_as_of?: {manifest?: string, webhook_token?: string, verify_keys?: string}
+                                   // when the airlock fetched each input it decides on (#176)
+  horizon?: string                 // earliest instant any of them passes its declared age; absent = no bound
 }
 ```
 
@@ -183,6 +186,37 @@ lets the receiver's own record tell a refusal it evaluated from one it could not
 specification's closed vocabulary (PTC §3.5) gains `not_evaluated` in the revision that removes
 PTC-44's not-yet-implemented marker (#174).
 
+## Input age
+
+PTC §6.13 and GAL §6.15 (#176). The airlock decides on three fetched inputs: the channels
+manifest, which carries the trust map; the webhook token (or identity → token map) from Secrets
+Manager; and the verification keys with their custody records (`channels/SIGNING.md` S8, S10).
+Each is stamped with the instant read before its fetch. Every drop record and every verdict record
+(`channels/SCREENING.md`) the Lambda handler writes carries those instants as `inputs_as_of`, and
+`horizon`, the earliest instant any of them passes the maximum age the manifest declares for it.
+The `channel_accepted` log line carries the same two fields; an accepted envelope's own wire form
+does not, and the worker that consumes it makes its own decision on its own inputs. The fields are
+timestamps under closed names, so the records stay PII-safe. A record built by a caller that
+tracks no inputs (the pure `dispatch`, the conformance suite) carries neither.
+
+`ChannelsManifest.input_max_age_seconds` declares the ages: input name (`manifest`,
+`webhook_token`, `verify_keys`) → positive whole seconds, at most one hundred years. It ships
+empty, and then every input lasts the container exactly as before. With an age declared, the
+airlock fetches the input again before it decides on a request that finds the input past that age:
+
+- `manifest` or `webhook_token`: the whole handler state is dropped and rebuilt. A rebuild that
+  fails decides nothing on the old state; the request is answered `{"ok": true}` as a
+  `handler_error` with nothing sent onward, and the next request builds again.
+- `verify_keys`: the cached keys are dropped and fetched again by the next request that reaches
+  gate 3.5. A fetch that fails is the `not_evaluated` / `key_source` refusal, transient, never a
+  verification against the dropped keys.
+
+What this buys: a peer whose token was rotated out, or whose verification key was withdrawn, is
+refused within the declared age instead of at the next cold start nobody scheduled. What it does
+not: the manifest is a file in the image, so its re-read returns the same bytes, and a tightened
+trust map still reaches the airlock only with a new image. Nothing is held at the airlock, so
+there is no held decision for a horizon to expire.
+
 ## Conformance
 
 | Clause | Test (`test_trust_map.py`) |
@@ -196,6 +230,7 @@ PTC-44's not-yet-implemented marker (#174).
 | one-way rule 1: external hop taints | `test_external_sender_stamp_taints` |
 | one-way rule 2: labels are a floor, receiver map authoritative | `test_sender_asserted_trusted_label_is_only_a_floor` (the anti-laundering test) + its untainted control |
 | drops are recorded, PII-safe | `test_drop_record_digests_identity` |
+| input age: as-of read before each fetch, horizon, refetch past a declared age, a failed refetch decides nothing on the old input (#176) | `test_airlock_input_age.py` |
 
 ## Relationships
 

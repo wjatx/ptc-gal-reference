@@ -73,7 +73,7 @@ import signal
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Mapping
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -117,6 +117,7 @@ from safe_agents.broker.prototype.mcp_construction import (
     native_mcp_server_ids,
 )
 from safe_agents.broker.manifest import ToolOpTable
+from safe_agents.broker.runtime.input_age import Clock, InputAgePolicy, InputAsOf, utc_now
 from safe_agents.broker.runtime import (
     AgentRequest,
     BrokerRuntime,
@@ -137,7 +138,12 @@ from safe_agents.broker.schemas import (
     meets_bar,
 )
 from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, skew_bound
-from safe_agents.broker.schemas.common import AutonomyLevel, CounterPeriod, Principal
+from safe_agents.broker.schemas.common import (
+    AutonomyLevel,
+    CounterPeriod,
+    InputName,
+    Principal,
+)
 from safe_agents.broker.schemas.envelope import Confidence
 from safe_agents.broker.taint import build_trust_map
 
@@ -598,6 +604,8 @@ def build_runtime(
     on_demotion_signal: "Callable[[DemotionSignal], None] | None" = None,
     sub_grant_store: "SubGrantStore | None" = None,
     on_approval_alarm: "Callable[[ApprovalAlarmEvent], None] | None" = None,
+    clock: Clock | None = None,
+    input_as_of: "Mapping[InputName, InputAsOf] | None" = None,
 ) -> tuple[BrokerRuntime, InMemorySink | FileAuditSink | S3ObjectLockSink]:
     """Compose a BrokerRuntime from a manifest + three INDEPENDENT, env-selected backends.
 
@@ -647,8 +655,25 @@ def build_runtime(
     can be deleted. A long-lived host sweeps again on a schedule
     (``approval.expiry.ExpirySweeper``); this build does not start one.
 
+    The age of each input read here (#176): the manifest's as-of is the instant
+    ``load_agent_manifest`` read it (a manifest built in code, never fetched,
+    takes the instant this build began), the envelope's is the manifest's in
+    manifest mode and the instant before the store read in store mode, and the
+    HMAC key's is the instant before it is resolved. Those instants, and
+    ``manifest.input_max_age_seconds``, are handed to the runtime, which records
+    them on every decision and refuses a decision that depends on one past its
+    declared age. ``clock`` is injectable for tests; the UTC wall clock by default.
+    ``input_as_of`` is for a caller that fetched an input itself before handing it
+    over (the drain worker fetches the HMAC key once per container): each entry
+    replaces this build's own stamp for that input where it is EARLIER, and is
+    ignored where it is later, so a caller can make an input older and never
+    fresher.
+
     See safe_agents/arms/fargate/BROKER_ENV.md for the full AWS-mode env contract.
     """
+    now: Clock = clock or utc_now
+    build_started_at = now()
+    manifest_as_of = InputAsOf(fetched_at=manifest._fetched_at or build_started_at)
     # --- Manifest-derived, agent-specific config (no baked constants) -------
     principal = _require_principal(manifest)
     granted_classes = _resolve_granted_classes(manifest)
@@ -693,9 +718,12 @@ def build_runtime(
 
             envelope_source_label = f"table={_resolve_grants_table_name()}"
             active_store = DynamoDBEnvelopeStore(table_name=_resolve_grants_table_name())
+        envelope_as_of = InputAsOf(fetched_at=now())
         envelope = load_inforce_envelope(active_store, principal)
         print(f"[broker] envelope load mode: store ({envelope_source_label})")
     else:
+        # The envelope rode in on the manifest's fetch, so it is as old as that.
+        envelope_as_of = manifest_as_of
         envelope = manifest.envelope
         print("[broker] envelope load mode: manifest")
 
@@ -757,7 +785,33 @@ def build_runtime(
     # key is honored ONLY on the local/memory arm; the real-store arm must NAME the
     # key the ceremony writes with (the write side, grants/_commands_common.py,
     # already refuses; this restores read/write symmetry).
+    hmac_key_as_of = InputAsOf(fetched_at=now())
     hmac_key = resolve_hmac_key()
+    startup_as_of: dict[InputName, InputAsOf] = {
+        "manifest": manifest_as_of,
+        "envelope": envelope_as_of,
+        "hmac_key": hmac_key_as_of,
+    }
+    for name, given in (input_as_of or {}).items():
+        held = startup_as_of.get(name)
+        if held is None or given.as_of < held.as_of:
+            startup_as_of[name] = given
+    if envelope_load_mode == "manifest" and (
+        startup_as_of["manifest"].as_of < startup_as_of["envelope"].as_of
+    ):
+        # The envelope rode in on the manifest: a manifest made older is too.
+        startup_as_of["envelope"] = startup_as_of["manifest"]
+    input_ages = InputAgePolicy.from_seconds(startup_as_of, manifest.input_max_age_seconds)
+    if manifest.input_max_age_seconds:
+        declared = ", ".join(
+            f"{name} {seconds}s"
+            for name, seconds in sorted(manifest.input_max_age_seconds.items())
+        )
+        print(
+            f"[broker] input maximum age: {declared}; a decision depending on an "
+            "input past its age is refused, and a startup input is re-read only "
+            "by a restart"
+        )
 
     # --- Switch 1: stores ---------------------------------------------------
     # memory: in-process fakes (CI + smoke). dynamo: the REAL stores — DynamoDB Local
@@ -1001,6 +1055,8 @@ def build_runtime(
         # (certification term) and the PEP (approval-hold expiry at release) from
         # this ONE field, so the two judge another party's clock alike.
         clock_skew=clock_skew,
+        input_ages=input_ages,
+        clock=now,
     )
     if sqlite_intent_store is not None:
         _boot_sweep_sqlite_intents(runtime, sqlite_intent_store)

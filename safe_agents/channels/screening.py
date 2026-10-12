@@ -12,7 +12,13 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from safe_agents.channels.schemas.event_trigger import require_tz_aware
-from safe_agents.channels.trust_map import IDENTITY_DIGEST_RE, MACHINE_CODE_RE, digest_identity
+from safe_agents.channels.trust_map import (
+    IDENTITY_DIGEST_RE,
+    MACHINE_CODE_RE,
+    AirlockInputName,
+    digest_identity,
+    validate_inputs_as_of,
+)
 
 # The two base-reserved reason codes (SCREENING.md §ScreenVerdict). The seam's
 # fail-closed backstop: an escaped screen error must refuse, never pass
@@ -89,6 +95,21 @@ class ScreenRecord(BaseModel):
     ts: str
     chain_verified: bool = False
     signer_key_id: str | None = None
+    # The airlock's input instants and horizon, as on `DropRecord` (#176).
+    inputs_as_of: dict[AirlockInputName, str] | None = None
+    horizon: str | None = None
+
+    @field_validator("inputs_as_of")
+    @classmethod
+    def _inputs_as_of_are_tz_aware(
+        cls, v: dict[str, str] | None
+    ) -> dict[str, str] | None:
+        return validate_inputs_as_of(v, "ScreenRecord.inputs_as_of")
+
+    @field_validator("horizon")
+    @classmethod
+    def _horizon_is_tz_aware(cls, v: str | None) -> str | None:
+        return require_tz_aware(v, "ScreenRecord.horizon") if v is not None else v
 
     @field_validator("identity_digest")
     @classmethod

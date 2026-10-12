@@ -102,6 +102,23 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   half of two-key MCP admission: the declared `(server_id, tool_name)` namespace +
 >   per-tool `structured_output` trust eligibility, validated at load against `tool_ops` and
 >   `envelope.trusted_read_sources`.
+> - `input_max_age_seconds: {input: seconds}` (default `{}`, #176; PTC §6.13, GAL §6.15): the
+>   longest a decision may rely on each fetched input, in positive whole seconds no larger than one
+>   hundred years (a larger value is refused at load), counted from the instant the broker
+>   established it. The input names are a closed vocabulary: `manifest`, `envelope`, `hmac_key`
+>   (read once at startup), `grant`, `counters`, `sub_grants` (read per call), `intent` (the frozen
+>   call, read at release) and `mcp_admission` (an MCP server's two-key admission snapshot, read at
+>   spawn and again past its age, `broker/MCP-HOST.md`). A decision depending on an input past its
+>   age is refused (`deny`, reason `input past maximum age: <input> …`) before any counter is drawn
+>   or connector reached, and a held call released past it is refused at release. The age is
+>   checked at the initial decision and again at `enforce()`'s premise revalidation. An error while
+>   checking refuses too (`deny`, reason `input age check failed: <error type>`), never reading the
+>   inputs as fresh. Nothing re-reads an
+>   input because it aged: a startup input is fetched again only by a restart, so an age declared
+>   for one is a deadline by which the broker must be restarted, after which it refuses every call
+>   until it is. Empty declares no age and refuses nothing; the as-of instants are recorded on the
+>   audit record either way (§5). Image-baked like `counter_period`, and outside `Envelope` so
+>   declaring it never changes the envelope hash.
 
 ---
 
@@ -341,7 +358,10 @@ Per-field notes:
 - **status** — `pending` (awaiting human decision) · `approved` (broker may execute) · `rejected`
   (human declined) · `expired` (TTL passed with no human decision) · `executed` (broker ran it) · `refused`
   (a human approved, and release-time revalidation then refused: the grant was revoked or demoted,
-  or the op's period budget was exhausted, between the hold and the release; nothing ran, #9).
+  or the op's period budget was exhausted, between the hold and the release, or an input the
+  release depends on was past its declared maximum age at the release instant; nothing ran, #9,
+  #176). A release is a decision of its own: it re-reads the frozen call, the grant and the
+  counters, and never relies on the hold's inputs or horizon.
   Terminal states: `rejected`, `expired`, `executed`, `refused`.
 - **expiry** — a hard TTL. An intent the human does not act on expires; it never hangs open
   indefinitely, and an expired intent never executes. The agent cannot extend or re-issue. It is stamped
@@ -401,6 +421,8 @@ interface AuditRecord {
   actorDigest?: string             // owner-verdict receipt: "sha256:" digest of the human who rejected or flagged; never the identity in clear
   evidenceBucket?: string          // owner-verdict receipt: the counter period bucket the verdict's evidence write landed on
   expiredAt?: string               // expiry receipt: the expired intent's verified expiry instant (ISO-8601 UTC)
+  inputsAsOf?: {[input: string]: string} // per fetched input the decision depended on: the ISO-8601 instant as of which the broker established it (#176)
+  horizon?: string                 // the earliest instant any input in inputsAsOf passes its declared maximum age; absent = no bound
   prevHash: string                 // chains to the previous record
   hash: string                     // hash over this record incl. prevHash -> tamper-evident
 }
@@ -450,6 +472,29 @@ Per-field notes:
   write that did not land. Optional and hash-covered only when present, like the approval receipts.
 - **expiredAt**: the expiry receipt, on `expired` records only: the intent's expiry instant, read
   from its HMAC-verified stored bytes. Optional and hash-covered only when present (#163).
+- **inputsAsOf / horizon** (#176; PTC §6.13, GAL §6.15): on every record of a decision the broker
+  makes on a call (`handle_request` and an approval's release, including their refusals),
+  `inputsAsOf` maps each fetched input the decision depended on to the instant as of which the
+  broker established it. That instant is the earlier of the fetch and any time the source stated
+  for its answer, and the fetch instant is read before the read it stamps, so a recorded instant
+  is never later than a fetch the broker makes. One input arrives fetched by something else: on
+  the Fargate service the platform injects `BROKER_HMAC_KEY` from Secrets Manager before the process
+  starts, and the broker can stamp it only when it first reads it, later than the real fetch by the
+  process's start-up time. The drain worker stamps its key once per cold start, whether it fetched
+  it or found it in its environment, so a declared `hmac_key` age fires there too. No source on the decision path states a time today; the manifest
+  is a file and the rest are store reads that answer as of the read. The startup inputs carry
+  their startup instants on every record for the life of the process, which is what lets an
+  auditor tell a decision on current inputs from one on inputs read long ago. An input read twice
+  in one decision (initial decision and premise revalidation) records the earlier read. `horizon`
+  is the earliest instant at which any of those inputs passes the maximum age the manifest
+  declares for it (`AgentManifest.input_max_age_seconds`); it is absent when none of them has a
+  declared age. A hold's horizon says how long the hold decision was good for; the release is
+  evaluated again and carries its own. An idempotent replay of a call that already executed is not
+  a decision carried on from the earlier one: it returns that call's settled outcome and cached
+  result, starts no new effect, reaches no connector and writes no record, so it is not evaluated
+  again whatever the horizon says. Records that carry no broker decision on fetched inputs
+  carry neither field: an owner's `rejected` or `flagged` verdict and the quarantine record either
+  of those seams writes, an `observed` event, and a mouth's refusal count. Optional and hash-covered only when present, like the receipts.
 - **prevHash / hash** — the chain. Any later edit or deletion breaks it; any gap in `seq` shows.
 
 ---

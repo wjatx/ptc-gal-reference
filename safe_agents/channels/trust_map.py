@@ -118,6 +118,27 @@ DropReason = Literal[
 ]
 
 
+# The closed catalog of fetched inputs an airlock decision depends on (PTC §6.13,
+# GAL §6.15, #176). Each is fetched from a source, so each has an as-of instant on
+# the records of the decisions that used it, and the channels manifest may declare
+# a maximum age for it (`ChannelsManifest.input_max_age_seconds`).
+#
+#   manifest       - the channels manifest file, which carries the trust map.
+#   webhook_token  - the gate-1 token (or identity -> token map) from Secrets Manager.
+#   verify_keys    - the chain-verification keys and their custody records.
+AirlockInputName = Literal["manifest", "webhook_token", "verify_keys"]
+
+
+def validate_inputs_as_of(
+    v: dict[str, str] | None, field_name: str
+) -> dict[str, str] | None:
+    """Each as-of instant parses as ISO-8601 and carries tzinfo."""
+    if v is not None:
+        for name, instant in v.items():
+            require_tz_aware(instant, f"{field_name}[{name!r}]")
+    return v
+
+
 class DropRecord(BaseModel):
     """A PII-safe record of a dropped inbound signal (TRUST-MAPPING.md §DropRecord).
 
@@ -134,6 +155,12 @@ class DropRecord(BaseModel):
     NAME (the DSSE `key_id`), not PII, but it may only be set alongside
     `chain_verified=True` — evidence may never name a signer the gate didn't
     actually verify.
+
+    `inputs_as_of` / `horizon` (#176): the instant as of which the airlock
+    established each fetched input this decision could depend on, keyed by
+    `AirlockInputName`, and the earliest instant any of them passes its declared
+    maximum age (absent when none is declared). Timestamps under closed names,
+    so PII-safe. Absent on a record written by a caller that tracks no inputs.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -145,6 +172,20 @@ class DropRecord(BaseModel):
     detail: str | None = None
     chain_verified: bool = False
     signer_key_id: str | None = None
+    inputs_as_of: dict[AirlockInputName, str] | None = None
+    horizon: str | None = None
+
+    @field_validator("inputs_as_of")
+    @classmethod
+    def _inputs_as_of_are_tz_aware(
+        cls, v: dict[str, str] | None
+    ) -> dict[str, str] | None:
+        return validate_inputs_as_of(v, "DropRecord.inputs_as_of")
+
+    @field_validator("horizon")
+    @classmethod
+    def _horizon_is_tz_aware(cls, v: str | None) -> str | None:
+        return require_tz_aware(v, "DropRecord.horizon") if v is not None else v
 
     @field_validator("identity_digest")
     @classmethod

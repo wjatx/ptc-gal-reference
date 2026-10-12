@@ -16,15 +16,24 @@ only — registry resolution is P2. The envelope stays authoritative as the type
 
 from __future__ import annotations
 
+import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from .brokered_call import ToolOp
 from .budgets import Budgets
 from .capability_iam import CapabilityIam
 from .clock_skew import MAX_CLOCK_SKEW_SECONDS
-from .common import CounterPeriod, Principal
+from .common import MAX_DECLARABLE_AGE_SECONDS, CounterPeriod, InputName, Principal
 from .connector_auth import AuthStrategy, ConnectorAuth
 from .envelope import Envelope
 from .mcp_registry import McpServerDecl
@@ -88,6 +97,25 @@ class AgentManifest(BaseModel):
         default=0, ge=0, le=MAX_CLOCK_SKEW_SECONDS, strict=True
     )
 
+    # -- Maximum input age (PTC §6.13, GAL §6.15, #176) -----------------------
+    # input name -> the longest a decision may rely on that input, in whole
+    # seconds, counted from the instant the broker established it (its fetch, or
+    # an earlier time the source stated for its answer). Past it, a decision that
+    # depends on the input is refused, a held call released past it is refused at
+    # release, and nothing re-reads the input for the broker: a startup-read input
+    # (manifest, envelope, hmac_key) is fetched again only by a restart. Empty, the
+    # default, declares no age, so no input is ever refused for its age and today's
+    # behaviour is unchanged; the as-of instants are recorded either way. Image-baked
+    # like counter_period: it bounds how long authority read from a source lasts,
+    # so nothing store-loaded may set or loosen it, and it sits OUTSIDE Envelope so
+    # declaring it never churns the envelope hash.
+    input_max_age_seconds: dict[InputName, StrictInt] = {}
+
+    # When load_agent_manifest read this manifest from its file: the fetch instant
+    # its as-of is taken from. Not a field, never serialized and never hashed. None
+    # for a manifest built in code, which was never fetched.
+    _fetched_at: Optional[datetime.datetime] = PrivateAttr(default=None)
+
     # -- Consumer-supplied connector implementations + secret mapping --
     # connector_providers: connector name → dotted provider path ("pkg.module:ClassName").
     # Honored ONLY from the image-baked manifest file — never from any store-loaded
@@ -150,6 +178,31 @@ class AgentManifest(BaseModel):
                     "have exactly one classification"
                 )
             seen.add(key)
+        return value
+
+    @field_validator("input_max_age_seconds")
+    @classmethod
+    def _input_ages_are_positive(cls, value: dict[str, int]) -> dict[str, int]:
+        """A declared maximum age is a whole number of seconds above zero.
+
+        Zero or less would refuse every decision from the first call, which is a
+        broker that never acts dressed as a bound; refuse it at load instead. So
+        is a value above one hundred years: no deployment means it as a bound,
+        and one large enough would put the input's end past the last instant a
+        datetime holds, failing every decision instead of bounding it.
+        """
+        for name, seconds in value.items():
+            if seconds <= 0:
+                raise ValueError(
+                    f"input_max_age_seconds[{name!r}] = {seconds} must be a positive "
+                    "number of seconds; leave the input out to declare no maximum age"
+                )
+            if seconds > MAX_DECLARABLE_AGE_SECONDS:
+                raise ValueError(
+                    f"input_max_age_seconds[{name!r}] = {seconds} exceeds the largest "
+                    f"declarable age, {MAX_DECLARABLE_AGE_SECONDS} seconds (one hundred "
+                    "years); leave the input out to declare no maximum age"
+                )
         return value
 
     @field_validator("connector_providers")

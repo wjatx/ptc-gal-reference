@@ -105,6 +105,7 @@ from safe_agents.broker.schemas.evidence import (
 from safe_agents.broker.taint import InputTrustMap, TurnContext
 
 from .doer import ConnectorExecutionError, Doer
+from .input_age import Clock, DecisionInputs, InputAgePolicy, utc_now
 from .observed import SHORT_CODE, validate_observed_event
 
 logger = logging.getLogger(__name__)
@@ -326,6 +327,14 @@ class BrokerRuntime:
         PTC-49). Applied where a release judges a held call's expiry, which
         another process may have stamped: the hold is refused up to the bound
         early, never late. Default zero is the unbounded comparison.
+    input_ages:
+        The as-of of every input read once at startup and the maximum age the
+        deployment declared per input (PTC §6.13, GAL §6.15, #176). Default None
+        records only the per-call reads and declares no age, so nothing is
+        refused for its age. ``build_runtime`` fills it from the manifest.
+    clock:
+        The instant source for input as-of stamps and the age check. Injectable
+        for tests; the UTC wall clock by default.
     """
 
     def __init__(
@@ -350,6 +359,8 @@ class BrokerRuntime:
         sub_grant_store: "SubGrantStore | None" = None,
         on_approval_alarm: Callable[[ApprovalAlarmEvent], None] | None = None,
         clock_skew: datetime.timedelta = ZERO_SKEW,
+        input_ages: InputAgePolicy | None = None,
+        clock: Clock | None = None,
     ) -> None:
         self._principal = principal
         self._grants = grants
@@ -414,6 +425,25 @@ class BrokerRuntime:
         # Intent ids the expiry sweep found quarantined, surfaced once per process so
         # a tampered row does not re-write its quarantine record on every pass.
         self._sweep_quarantined: set[str] = set()
+        # #176: the age of each fetched input. The policy is fixed at startup;
+        # each decision builds its own DecisionInputs from it.
+        self._input_ages = input_ages or InputAgePolicy()
+        self._clock: Clock = clock or utc_now
+
+    def _decision_inputs(self) -> DecisionInputs:
+        """A fresh record of the inputs one decision depends on (#176)."""
+        return DecisionInputs(self._input_ages, self._clock)
+
+    def _timed_pip(self, inputs: DecisionInputs) -> Callable[[BrokeredCall], Facts]:
+        """The PIP, wrapped so each read establishes the per-call inputs it reads.
+
+        The PIP reads the grant and the counters, and the delegation store when
+        delegation is on. The instant is taken before the read begins.
+        """
+        names: tuple = ("grant", "counters")
+        if self._sub_grant_store is not None:
+            names += ("sub_grants",)
+        return inputs.timed(self._pip, names)
 
     def _stamp_call_ts(self) -> str:
         """Stamp a BrokeredCall ``ts`` that no earlier call from this runtime shares (#38).
@@ -655,7 +685,12 @@ class BrokerRuntime:
             self._current_turn = TurnContext(turn_id=f"turn:{uuid.uuid4()}")
         return self._current_turn
 
-    def _surface_quarantined_intent(self, exc: QuarantinedIntentError, op: str) -> None:
+    def _surface_quarantined_intent(
+        self,
+        exc: QuarantinedIntentError,
+        op: str,
+        inputs: DecisionInputs | None = None,
+    ) -> None:
         """Loud, recorded surfacing of a tampered intent row.
 
         Mirrors the loud grant-quarantine surfacing: one ERROR log + one
@@ -682,10 +717,14 @@ class BrokerRuntime:
             envelope_hash=self._envelope_hash,
             reason=f"intent quarantined: {exc.reason}",
             intent_id=exc.intent_id,
+            **(inputs.audit_fields() if inputs is not None else {}),
         )
 
     def _deny_intent_id_collision(
-        self, call: BrokeredCall, exc: IntentAlreadyPendingError
+        self,
+        call: BrokeredCall,
+        exc: IntentAlreadyPendingError,
+        inputs: DecisionInputs,
     ) -> BrokerResponse:
         """Refuse a hold whose intent id is already pending for another call (#39).
 
@@ -711,15 +750,19 @@ class BrokerRuntime:
             envelope_hash=self._envelope_hash,
             reason=reason,
             intent_id=exc.intent_id,
+            **inputs.audit_fields(),
         )
         return BrokerResponse(decision_kind="deny", reason=reason, idempotent=False)
 
     def _quarantined_intent_result(
-        self, exc: QuarantinedIntentError, op: str
+        self,
+        exc: QuarantinedIntentError,
+        op: str,
+        inputs: DecisionInputs | None = None,
     ) -> ExecutionResult:
         """Surface a quarantined intent and return the refusal — the
         action does NOT run; never silently dropped, never auto-repaired."""
-        self._surface_quarantined_intent(exc, op)
+        self._surface_quarantined_intent(exc, op, inputs)
         return ExecutionResult(
             intent_id=exc.intent_id,
             executed=False,
@@ -857,11 +900,24 @@ class BrokerRuntime:
             HMAC verification — a store rewrite between hold and release
             refuses instead of executing; the Doer is never reached), or when
             release-time revalidation refused ("release refused: …", #9).
+
+        A release is a decision of its own (#176). It establishes its inputs
+        afresh: the frozen call as of this read, the grant and counters as of the
+        release's own PIP reads, and the startup inputs as of startup. It never
+        relies on the hold's inputs or horizon, and any input past its declared
+        maximum age at the release instant refuses the release, so a call held on
+        a decision whose horizon has passed is evaluated again and not run on the
+        old one. The release's records carry the release's own instants.
         """
+        inputs = self._decision_inputs()
+        # The stored call is read from here on (the foreign check, then the
+        # engine's verify-then-parse); stamping before the first read can only
+        # make it look older.
+        inputs.establish("intent", self._clock())
         try:
             held = self._intent_store.get_intent(intent_id)
         except QuarantinedIntentError as exc:
-            return self._quarantined_intent_result(exc, op="approve")
+            return self._quarantined_intent_result(exc, op="approve", inputs=inputs)
         foreign = self._foreign_intent_result(held, intent_id)
         if foreign is not None:
             return foreign
@@ -927,7 +983,10 @@ class BrokerRuntime:
             def _release_executor(call: BrokeredCall, effective: Decision) -> Any:
                 """Connector execution callback — called by enforce() on allow."""
                 try:
-                    doer_result = self._doer.execute(call, effective)
+                    # Bound so a decision point inside the connector (the MCP
+                    # host's admission snapshot) records its input here (#176).
+                    with inputs.bound():
+                        doer_result = self._doer.execute(call, effective)
                 except ConnectorExecutionError as exc:
                     # A failed attempt still carries its approval binding (no
                     # result_digest: there is no result). An auditor must see WHICH
@@ -945,6 +1004,7 @@ class BrokerRuntime:
                         error=str(exc),
                         intent_id=intent_id,
                         stored_call_digest=stored_digest,
+                        **inputs.audit_fields(),
                     )
                     raise
                 emit(
@@ -961,6 +1021,7 @@ class BrokerRuntime:
                     stored_call_digest=stored_digest,
                     # Effect receipt — broker-written digest of what the world returned
                     result_digest=hash_args(doer_result.result),
+                    **inputs.audit_fields(),
                 )
                 # Observations, approve-release path. An in-loop principal's acting
                 # ops route require_approval → this release, and the inline executor's
@@ -1020,8 +1081,10 @@ class BrokerRuntime:
                 ancestor_draws=self._tree_draws(
                     stored_call.principal, stored_call.tool, stored_call.op
                 ),
-                decider=_approved_decider,
-                fresh_facts=self._pip,
+                # Gated (#176): an input past its declared maximum age at the
+                # release instant refuses, whatever the hold decided.
+                decider=inputs.gate(_approved_decider),
+                fresh_facts=self._timed_pip(inputs),
                 store=self._enforcement_store,
                 executor=_release_executor,
             )
@@ -1045,6 +1108,7 @@ class BrokerRuntime:
                 approved_by=approved_by,
                 intent_id=intent_id,
                 stored_call_digest=stored_digest,
+                **inputs.audit_fields(),
             )
             raise ReleaseRefusedError(reason)
 
@@ -1059,7 +1123,7 @@ class BrokerRuntime:
         except QuarantinedIntentError as exc:
             # A rewrite that lands BETWEEN the foreign-check read and the
             # engine's own verify-then-parse read still refuses here.
-            return self._quarantined_intent_result(exc, op="approve")
+            return self._quarantined_intent_result(exc, op="approve", inputs=inputs)
         # A late approval that found the hold expired, and won the expiry's
         # compare-and-set, writes the one expiry record (#163). It is not a human
         # decision: the approver is not named on it and no evidence moves.
@@ -1557,6 +1621,9 @@ class BrokerRuntime:
         # fresh turn to shed taint before a write (memory/TAINT.md Rule 2).
         ctx = turn_context if turn_context is not None else self._session_turn()
         turn_id = ctx.turn_id
+        # #176: what this decision depends on and when each input was established.
+        # Every record this decision writes carries it.
+        inputs = self._decision_inputs()
 
         # Step 1 — taint: ingest sources into the turn context.
         for source in ingested_sources or []:
@@ -1588,6 +1655,7 @@ class BrokerRuntime:
                 outcome="denied",
                 envelope_hash=self._envelope_hash,
                 reason=reason,
+                **inputs.audit_fields(),
             )
             return BrokerResponse(decision_kind="deny", reason=reason)
 
@@ -1631,7 +1699,14 @@ class BrokerRuntime:
         )
 
         # Step 4 — initial PDP decision (pure, no I/O).
-        initial_facts = self._pip(call)
+        # The PIP is timed so its reads establish their as-of instants, and the
+        # decider is gated so an input past its declared maximum age refuses
+        # (#176). Both wrappers serve the initial decision AND enforce()'s
+        # premise revalidation, so the age is checked again at the last instant
+        # before any counter is drawn or connector reached.
+        pip = self._timed_pip(inputs)
+        decider = inputs.gate(decide)
+        initial_facts = pip(call)
 
         # A quarantined grant is treated as absent for the decision,
         # but the event must be LOUD: a silent fall-through to a normal deny would
@@ -1662,9 +1737,10 @@ class BrokerRuntime:
                 outcome="denied",
                 envelope_hash=self._envelope_hash,  # real in-force envelope hash
                 reason=f"grant quarantined: {initial_facts.quarantine_reason}",
+                **inputs.audit_fields(),
             )
 
-        initial_decision = decide(call, initial_facts)
+        initial_decision = decider(call, initial_facts)
 
         # Principal+period scoped (see enforcement.scoped_counter_key for why);
         # the PIP reads the SAME derivation when it builds Facts.
@@ -1695,7 +1771,10 @@ class BrokerRuntime:
             failure (#35). Before that it escaped with no audit record at all.
             """
             try:
-                doer_result = self._doer.execute(brokered_call, effective)
+                # Bound so a decision point inside the connector (the MCP host's
+                # admission snapshot) records its input on this decision (#176).
+                with inputs.bound():
+                    doer_result = self._doer.execute(brokered_call, effective)
             except ConnectorExecutionError as exc:
                 # A connector-side control that REFUSED is not a failure.
                 # `decision` stays as the PDP returned it (it did allow; saying
@@ -1713,6 +1792,7 @@ class BrokerRuntime:
                     outcome="refused" if getattr(exc, "refused", False) else "failed",
                     envelope_hash=self._envelope_hash,
                     error=str(exc),
+                    **inputs.audit_fields(),
                 )
                 raise
             # Emit audit at the moment of the side effect — never buffered.
@@ -1727,6 +1807,7 @@ class BrokerRuntime:
                 envelope_hash=self._envelope_hash,
                 # Effect receipt — broker-written digest of what the world returned
                 result_digest=hash_args(doer_result.result),
+                **inputs.audit_fields(),
             )
             # Broker-side taint self-ingestion. An external read pulls untrusted
             # content across a trust boundary; ingest a synthetic connector source into the
@@ -1864,8 +1945,8 @@ class BrokerRuntime:
                 counter_delta=1.0,
                 counter_cap=self._counter_cap,
                 ancestor_draws=self._tree_draws(call.principal, call.tool, call.op),
-                decider=decide,
-                fresh_facts=self._pip,
+                decider=decider,
+                fresh_facts=pip,
                 store=self._enforcement_store,
                 executor=_executor,
             )
@@ -1933,7 +2014,7 @@ class BrokerRuntime:
                 # coalesce onto it (its content cannot be trusted equal) and
                 # never overwrite it (a fresh put would re-mint a valid HMAC
                 # over the attacker's slot — an auto-repair). Refuse the hold.
-                self._surface_quarantined_intent(exc, op="hold")
+                self._surface_quarantined_intent(exc, op="hold", inputs=inputs)
                 return BrokerResponse(
                     decision_kind="deny",
                     reason=f"intent quarantined: {exc.reason}",
@@ -1945,7 +2026,7 @@ class BrokerRuntime:
                 # and approvable to its own call. This call is NOT held: deny
                 # it on the tape and to the agent, toward less authority. A
                 # retry gets a fresh ts and so a fresh id (#38).
-                return self._deny_intent_id_collision(call, exc)
+                return self._deny_intent_id_collision(call, exc, inputs)
             coalesced = approval.status == "coalesced"
 
             # Flood alarm: count NEW holds per principal+op+UTC-day; past
@@ -2010,6 +2091,9 @@ class BrokerRuntime:
                 # that record and the shared intentId is the join.
                 intent_id=approval.intent_id,
                 stored_call_digest=None if coalesced else hash_stored_call(call),
+                # The hold's inputs and horizon. A release is evaluated again on
+                # its own fresh inputs and never relies on these (#176).
+                **inputs.audit_fields(),
             )
             return BrokerResponse(
                 decision_kind=effective.kind,
@@ -2038,6 +2122,7 @@ class BrokerRuntime:
             outcome="denied",
             envelope_hash=self._envelope_hash,
             reason=reason,
+            **inputs.audit_fields(),
         )
         return BrokerResponse(
             decision_kind=effective.kind,

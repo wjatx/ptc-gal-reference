@@ -50,6 +50,41 @@ class DemotionTrigger(str, Enum):
 # clock-injection seam (the 2026-07-15 triggers-vs-effects doctrine).
 CounterPeriod = Literal["utc-day", "utc-hour"]
 
+# The closed catalog of fetched inputs a broker decision can depend on (PTC §6.13,
+# GAL §6.15, #176). Each is fetched from a source, so each has an as-of instant on
+# the audit record of a decision that used it, and the deployment may declare a
+# maximum age for it (AgentManifest.input_max_age_seconds). Closed, so a typo in a
+# manifest refuses at load instead of declaring an age for nothing.
+#
+#   manifest  - the AgentManifest file, read once at launch.
+#   envelope  - the risk envelope in force: from the manifest (manifest mode, same
+#               fetch) or the envelope store (store mode, read once at startup).
+#   hmac_key  - the key the broker verifies grant and intent rows with, read once
+#               at startup.
+#   grant     - the grant row, read per call.
+#   counters  - the budget and evidence counters the PIP reads, per call.
+#   sub_grants - the delegation store, read per call where delegation is on.
+#   intent    - the frozen call a release runs, read at release.
+#   mcp_admission - an MCP server's two-key admission snapshot (the registry rows
+#               and the advertised tool definitions), read when the session is
+#               spawned and again when it passes its declared age; recorded by
+#               the MCP host on the decision of each call that reaches it.
+InputName = Literal[
+    "manifest",
+    "envelope",
+    "hmac_key",
+    "grant",
+    "counters",
+    "sub_grants",
+    "intent",
+    "mcp_admission",
+]
+
+# The longest maximum age a deployment may declare for an input: one hundred
+# years. Larger is no bound anyone means, and large enough would put an input's
+# end past the last instant a datetime holds (#176).
+MAX_DECLARABLE_AGE_SECONDS = 100 * 366 * 24 * 3600
+
 
 class Principal(BaseModel):
     """The (agentId, skill, user, tier) tuple that a grant is issued to."""

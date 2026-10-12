@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime
 import threading
+from typing import Mapping
 
 from safe_agents.broker.schemas import AuditRecord
 from safe_agents.broker.schemas.common import Principal
@@ -28,6 +29,10 @@ _FALLBACK_LOCK = threading.Lock()
 # actorDigest and evidenceBucket (the owner-verdict receipts, #34 and #134) follow the
 # same rule, so every record written before them still hashes identically, and so
 # does expiredAt (the expiry receipt, #163).
+#
+# inputsAsOf and horizon (#176, the age of each fetched input a decision depended
+# on) follow the same rule, so every record written before them still hashes
+# identically and stripping either from a record that carries it breaks the chain.
 _RECEIPT_FIELDS = (
     "intentId",
     "storedCallDigest",
@@ -35,6 +40,8 @@ _RECEIPT_FIELDS = (
     "actorDigest",
     "evidenceBucket",
     "expiredAt",
+    "inputsAsOf",
+    "horizon",
 )
 
 
@@ -70,6 +77,8 @@ def emit(
     actor_digest: str | None = None,
     evidence_bucket: str | None = None,
     expired_at: str | None = None,
+    inputs_as_of: Mapping[str, str] | None = None,
+    horizon: str | None = None,
 ) -> AuditRecord:
     """Build and append a tamper-evident AuditRecord for one broker decision.
 
@@ -116,6 +125,8 @@ def emit(
             "actorDigest": actor_digest,
             "evidenceBucket": evidence_bucket,
             "expiredAt": expired_at,
+            "inputsAsOf": dict(inputs_as_of) if inputs_as_of else None,
+            "horizon": horizon,
             "prevHash": prev_hash,
         }
         record_hash = hash_record(_hashable_fields(record_fields))
@@ -194,6 +205,8 @@ def verify_chain(
             "actorDigest": record.actorDigest,
             "evidenceBucket": record.evidenceBucket,
             "expiredAt": record.expiredAt,
+            "inputsAsOf": record.inputsAsOf,
+            "horizon": record.horizon,
             "prevHash": record.prevHash,
         }
         computed = hash_record(_hashable_fields(record_fields))

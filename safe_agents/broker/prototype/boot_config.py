@@ -48,6 +48,7 @@ import surfaces keep working.
 from __future__ import annotations
 
 import contextlib
+import datetime
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -57,6 +58,8 @@ import yaml
 from safe_agents.broker.schemas import AgentManifest
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from safe_agents.broker.manifest import ToolOpTable
     from safe_agents.broker.schemas import Envelope
     from safe_agents.broker.schemas.common import Principal
@@ -146,7 +149,9 @@ def is_durable_arm() -> bool:
     return resolve_store_arm() in ("dynamo", "sqlite")
 
 
-def load_agent_manifest(path: Path) -> AgentManifest:
+def load_agent_manifest(
+    path: Path, *, clock: "Callable[[], datetime.datetime] | None" = None
+) -> AgentManifest:
     """Read an AgentManifest from a yaml file (broker-side, no pipeline import).
 
     A minimal ``yaml.safe_load`` + ``model_validate`` — the same
@@ -155,13 +160,22 @@ def load_agent_manifest(path: Path) -> AgentManifest:
     FileNotFoundError if ``path`` is absent, ValueError if it is not a YAML mapping,
     and pydantic.ValidationError if the manifest is malformed (e.g. a missing
     polarity — never silently defaulted).
+
+    ``clock`` is the instant source for the fetch stamp, injectable for tests;
+    the UTC wall clock by default.
     """
+    # The fetch instant, read BEFORE the file is: the manifest's as-of on every
+    # decision record (#176). Reading the clock first can only make the input look
+    # older than the read, never fresher.
+    fetched_at = clock() if clock is not None else datetime.datetime.now(datetime.UTC)
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(
             f"manifest {path} must be a YAML mapping; got {type(raw).__name__}"
         )
-    return AgentManifest.model_validate(raw)
+    manifest = AgentManifest.model_validate(raw)
+    manifest._fetched_at = fetched_at
+    return manifest
 
 
 def resolve_manifest_path() -> Path:

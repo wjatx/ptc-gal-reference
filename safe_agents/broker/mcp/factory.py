@@ -59,6 +59,7 @@ SDK-free import discipline.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 from contextlib import asynccontextmanager
 from typing import (
@@ -151,11 +152,15 @@ class SupervisedMcpHost:
         server_decl: McpServerDecl,
         registry: ToolRegistryStore,
         respawn: Optional[McpRespawnPolicy] = None,
+        admission_max_age: Optional[datetime.timedelta] = None,
     ) -> None:
         self._server_id = server_id
         self._server_decl = server_decl
         self._registry = registry
         self._respawn = respawn
+        # The declared maximum age of each generation's admission snapshot
+        # (#176); None declares none. Handed to every McpHost this spawns.
+        self._admission_max_age = admission_max_age
         self._host: Optional[McpHost] = None
         self._driver: Optional[asyncio.Task] = None
         self._death_exc: Optional[BaseException] = None
@@ -417,7 +422,12 @@ class SupervisedMcpHost:
         async def _driver() -> None:
             try:
                 async with self._open_client() as client:
-                    host = McpHost(self._server_decl, self._registry, client)
+                    host = McpHost(
+                        self._server_decl,
+                        self._registry,
+                        client,
+                        max_age=self._admission_max_age,
+                    )
                     await host.refresh()
                     ready.set_result(host)
                     # Hold the session (and the child) until cancel or death.
@@ -535,9 +545,14 @@ class SupervisedStdioHost(SupervisedMcpHost):
         cwd: Optional[str] = None,
         env_provider: Optional[EnvProvider] = None,
         respawn: Optional[McpRespawnPolicy] = None,
+        admission_max_age: Optional[datetime.timedelta] = None,
     ) -> None:
         super().__init__(
-            server_id, server_decl=server_decl, registry=registry, respawn=respawn
+            server_id,
+            server_decl=server_decl,
+            registry=registry,
+            respawn=respawn,
+            admission_max_age=admission_max_age,
         )
         self._command = command
         self._args = list(args)
@@ -587,9 +602,14 @@ class SupervisedStreamableHttpHost(SupervisedMcpHost):
         registry: ToolRegistryStore,
         headers_provider: Optional[HeadersProvider] = None,
         respawn: Optional[McpRespawnPolicy] = None,
+        admission_max_age: Optional[datetime.timedelta] = None,
     ) -> None:
         super().__init__(
-            server_id, server_decl=server_decl, registry=registry, respawn=respawn
+            server_id,
+            server_decl=server_decl,
+            registry=registry,
+            respawn=respawn,
+            admission_max_age=admission_max_age,
         )
         self._url = url
         self._headers_provider = headers_provider
@@ -688,6 +708,7 @@ def stdio_host_factory(
     env: Optional[dict[str, str]] = None,
     env_provider: Optional[EnvProvider] = None,
     respawn: Optional[McpRespawnPolicy] = None,
+    admission_max_age: Optional[datetime.timedelta] = None,
 ) -> Callable[[], Awaitable[SupervisedStdioHost]]:
     """Build the async host factory ``McpConnector`` expects for a stdio server.
 
@@ -723,6 +744,7 @@ def stdio_host_factory(
             cwd=cwd,
             env_provider=env_provider,
             respawn=respawn,
+            admission_max_age=admission_max_age,
         )
         await supervised.start()
         return supervised
@@ -739,6 +761,7 @@ def streamable_http_host_factory(
     headers: Optional[dict[str, str]] = None,
     headers_provider: Optional[HeadersProvider] = None,
     respawn: Optional[McpRespawnPolicy] = None,
+    admission_max_age: Optional[datetime.timedelta] = None,
 ) -> Callable[[], Awaitable[SupervisedStreamableHttpHost]]:
     """Build the async host factory ``McpConnector`` expects for a remote
     streamable-HTTP server (M21).
@@ -775,6 +798,7 @@ def streamable_http_host_factory(
             registry=registry,
             headers_provider=headers_provider,
             respawn=respawn,
+            admission_max_age=admission_max_age,
         )
         await supervised.start()
         return supervised

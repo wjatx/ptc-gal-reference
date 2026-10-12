@@ -107,6 +107,17 @@ def _fetch_hmac_key(secret_arn: str) -> str:
     return client.get_secret_value(SecretId=secret_arn)["SecretString"]
 
 
+# When the cold start established the HMAC key: read BEFORE the Secrets Manager
+# fetch, or, with no ARN, the instant the cold start first saw the key in its
+# environment (it was put there before the process started, and that is the
+# earliest instant the drain can vouch for). Handed to build_runtime as the key's
+# as-of (#176): every record builds a runtime from the environment the cold start
+# populated, so the build's own read of BROKER_HMAC_KEY would make a key the cold
+# start established hours ago look fetched just now, and a declared age would
+# never fire.
+_HMAC_KEY_FETCHED_AT: datetime | None = None
+
+
 def _resolve_hmac_key() -> None:
     """Export the fetched key as BROKER_HMAC_KEY for build_runtime's grant store.
 
@@ -116,11 +127,16 @@ def _resolve_hmac_key() -> None:
     whole invocation closed (a drain running with the dev fallback key would
     silently fail every grant HMAC check instead). The key value is never logged.
     """
+    global _HMAC_KEY_FETCHED_AT
     secret_arn = os.environ.get("BROKER_HMAC_KEY_SECRET_ARN")
+    fetched_at = datetime.now(timezone.utc)
     if not secret_arn:
+        # The key, if any, is already in the environment: stamped once, here.
+        _HMAC_KEY_FETCHED_AT = fetched_at
         return
     try:
         os.environ["BROKER_HMAC_KEY"] = _fetch_hmac_key(secret_arn)
+        _HMAC_KEY_FETCHED_AT = fetched_at
     except Exception as exc:
         raise DrainConfigError(
             "BROKER_HMAC_KEY_SECRET_ARN is set but the secret fetch failed "
@@ -136,10 +152,19 @@ def _build_runtime(manifest: AgentManifest) -> Any:
     contract (BROKER_STORE / BROKER_AUDIT_* / BROKER_SECRETS /
     BROKER_ENVELOPE_LOAD); the drain deployment additionally sets
     BROKER_AUDIT_PREFIX so its audit chain never forks the broker service's.
+
+    The runtime is ephemeral but its inputs are not: the manifest and the HMAC key
+    were fetched once at cold start, and their as-of instants say so (#176).
     """
     from safe_agents.broker.prototype.broker_server import build_runtime  # noqa: PLC0415
+    from safe_agents.broker.runtime.input_age import InputAsOf  # noqa: PLC0415
 
-    runtime, _sink = build_runtime(manifest)
+    fetched_before = (
+        {"hmac_key": InputAsOf(fetched_at=_HMAC_KEY_FETCHED_AT)}
+        if _HMAC_KEY_FETCHED_AT is not None
+        else None
+    )
+    runtime, _sink = build_runtime(manifest, input_as_of=fetched_before)
     return runtime
 
 
@@ -169,12 +194,17 @@ def _load_manifest() -> AgentManifest:
     path = os.environ.get("CHANNELS_DRAIN_MANIFEST")
     if not path:
         raise DrainConfigError("CHANNELS_DRAIN_MANIFEST is unset — the drain has no manifest")
+    # The fetch instant, read before the file: the manifest's as-of on every
+    # record's decisions for the life of this container (#176).
+    fetched_at = datetime.now(timezone.utc)
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise DrainConfigError(
             f"drain manifest {path} must be a YAML/JSON mapping; got {type(raw).__name__}"
         )
-    return AgentManifest.model_validate(raw)
+    manifest = AgentManifest.model_validate(raw)
+    manifest._fetched_at = fetched_at
+    return manifest
 
 
 def _build_state() -> _DrainState:

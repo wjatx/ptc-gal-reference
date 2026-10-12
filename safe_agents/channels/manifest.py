@@ -24,15 +24,16 @@ from pathlib import Path
 from typing import Callable, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_validator, model_validator
 
 from safe_agents.broker.schemas.clock_skew import MAX_CLOCK_SKEW_SECONDS, ZERO_SKEW, skew_bound
+from safe_agents.broker.schemas.common import MAX_DECLARABLE_AGE_SECONDS
 from safe_agents.channels.adapters import InboundAdapter
 from safe_agents.channels.owner import build as _build_owner_adapter
 from safe_agents.channels.schemas import EventTrigger
 from safe_agents.channels.schemas.event_trigger import ZONE_ID_RULE, is_zone_id
 from safe_agents.channels.screening import ScreenVerdict
-from safe_agents.channels.trust_map import ChannelTrustMap, TrustMapEntry
+from safe_agents.channels.trust_map import AirlockInputName, ChannelTrustMap, TrustMapEntry
 from safe_agents.channels.webhook import SignedWebhookAdapter, parse_token_map
 
 # A screen is any callable turning an envelope into a pass/refuse judgment; a
@@ -187,6 +188,30 @@ class ChannelsManifest(BaseModel):
     clock_skew_seconds: int = Field(
         default=0, ge=0, le=MAX_CLOCK_SKEW_SECONDS, strict=True
     )
+
+    # Maximum input age (PTC §6.13, GAL §6.15, #176): input -> the longest the
+    # airlock may rely on it, in positive whole seconds, counted from the instant
+    # it was fetched. Past it the airlock fetches the input again before deciding
+    # on the next request; a fetch that fails decides nothing on the old input
+    # (`channels/TRUST-MAPPING.md` §"Input age"). Empty, the default, declares no
+    # age: every input lasts the container, as before. The as-of instants are
+    # recorded on drop and verdict records either way.
+    input_max_age_seconds: dict[AirlockInputName, StrictInt] = Field(default_factory=dict)
+
+    @field_validator("input_max_age_seconds")
+    @classmethod
+    def _input_ages_are_positive_and_bounded(cls, value: dict[str, int]) -> dict[str, int]:
+        # The broker manifest's rule (AgentManifest.input_max_age_seconds): zero
+        # or less would refetch on every request; above one hundred years is no
+        # bound anyone means and could overflow the end instant.
+        for name, seconds in value.items():
+            if not 0 < seconds <= MAX_DECLARABLE_AGE_SECONDS:
+                raise ValueError(
+                    f"input_max_age_seconds[{name!r}] = {seconds} must be a positive "
+                    f"number of seconds no larger than {MAX_DECLARABLE_AGE_SECONDS}; "
+                    "leave the input out to declare no maximum age"
+                )
+        return value
 
     @model_validator(mode="before")
     @classmethod
