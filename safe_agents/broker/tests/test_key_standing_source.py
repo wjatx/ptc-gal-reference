@@ -21,6 +21,8 @@ import datetime
 import json
 from pathlib import Path
 
+import sys
+
 import pytest
 
 from safe_agents.broker.grants import issuer_keys, standing_command, standing_keys
@@ -565,6 +567,10 @@ def test_init_refuses_where_a_document_exists_and_reissue_moves_only_the_version
     assert (code, document.version, document.keys) == (0, 2, chain["v1"].keys)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="a file-held signing key is refused on Windows by design (issuer_keys)",
+)
 def test_main_writes_the_file_atomically_through_the_configured_source(
     chain, deployed, monkeypatch, tmp_path
 ):
