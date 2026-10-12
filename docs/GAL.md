@@ -52,14 +52,17 @@ Every ingredient has prior art; the assembled lifecycle does not:
   the proposal references the in-force envelope hash, which is stamped onto the record
   (`envelopeHash`) and onto the Grant. Demotions append a demotion-typed record on the same
   ledger — landed in Phase 3's batched schema pass, superseding §7's earlier demotion exemption
-  (previously demotion emitted only an `AuditRecord`). The record ships six types
-  (`promotion` / `demotion` / `bootstrap` / `tightening` / `lapse` / `reattestation`);
+  (previously demotion emitted only an `AuditRecord`). The record ships seven types
+  (`promotion` / `demotion` / `bootstrap` / `tightening` / `lapse` / `reattestation` /
+  `withdrawal`);
   `stale_confidence` demotions
   carry `demotionReason="pending-evidence"` (label-free drift voids the certification), the other
   triggers `"failing"`. A `lapse` records an expired certification term: also
   `"pending-evidence"`, but with an empty `triggeredBy`, because it records that nothing renewed
   the term rather than that something fired. A `reattestation` records a grant re-issued at
   its level under a changed envelope: it moves no level, so a reader deriving one passes over it.
+  A `withdrawal` records a grant lowered because the issuer key its level rested on was withdrawn
+  (GAL §6.10): `"pending-evidence"` with an empty `triggeredBy`, like a lapse.
 - **The evidence artifact** — the typed constructed-confidence + counters input the
   promotion predicate and demotion triggers consume (§7).
 - **`actionClass` derives from the manifest ToolOp model** — a grant's action class is computed

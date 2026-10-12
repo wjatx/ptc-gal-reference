@@ -455,7 +455,7 @@ because the published record schema has none for it. A reader derives it from th
 record's `evidence` names it for a person. The runner writes nothing when standing is only not
 established: that fall recovers by itself when the source answers, and a record would claim a
 transition that did not happen. It exits 1 in that case, because the broker is falling for the
-same reason. The type is ahead of the published record vocabulary (GAL 0.7.0-draft lists six).
+same reason. GAL 0.8.0-draft publishes the type as the seventh record type (§4.3, §5.2).
 
 **Recovery** is the promotion ceremony with fresh evidence, under an issuer key in standing. A new
 promotion is the grant's new licensing record, so its key is the one asked about from then on. No
@@ -504,9 +504,8 @@ re-attestation written before the withdrawal was published, or by a re-seed run 
 source configured, can. The MCP admission ledger's issuer signatures are not checked for standing.
 
 > **Status.** The document, the third role, the loader, the record verdict, the enforcer's fall,
-> the withdrawal runner and the audit rules are built. GAL-41 stays marked NOT YET IMPLEMENTED
-> (#179) until a specification revision removes the marker and publishes the `withdrawal` record
-> type.
+> the withdrawal runner and the audit rules are built. GAL 0.8.0-draft took GAL-41's marker off
+> and publishes the `withdrawal` record type.
 
 ## Demotion — automatic, deterministic, no model in the loop
 

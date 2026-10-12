@@ -696,10 +696,9 @@ Per-field notes:
 The append-only ceremony-ledger record of every write to a grant. The accountable record (Part 11
 of the philosophy doc). Seven record types share one ledger. Six record a level change, and the
 maker-checker act that raises a Grant's level is the `promotion` type. `reattestation` records a
-write that changes none (GAL §4.3, §6.6). `withdrawal` (GAL §6.10, GAL-41, #179) is ahead of the
-published vocabulary: GAL 0.7.0-draft §5.2 lists six types, the design ruling on #179 adds this
-one, and a later revision publishes it beside the clause, which stays marked not yet implemented
-until then. **Demotions append a
+write that changes none (GAL §4.3, §6.6). `withdrawal` (GAL §6.10, GAL-41, #179) records a grant
+lowered because the issuer key its level rested on was withdrawn; GAL 0.8.0-draft publishes it as
+the seventh type (§4.3, §5.2). **Demotions append a
 `demotion`-typed record on the same
 ledger** — this supersedes the earlier "demotion needs no such record" exemption (Phase 3,
 `docs/GAL.md` §3); demotion itself stays automatic and deterministic (`grant-lifecycle.md`).

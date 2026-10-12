@@ -199,27 +199,26 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # PTC 0.5.0-draft. Three existing clauses gain markers the 2026-10-03
     # re-audit found they needed: PTC-11 shares the unstamped publish path with
     # PTC-7/8/9, PTC-29's ordering shares the dedupe race with PTC-14, and
-    # PTC-43's coalescing can join a hold that has already expired. Of the
-    # five clauses PTC 0.5.0-draft added, PTC-51 (taint across a spawned or
-    # deferred context) was the last built (#177, the inheritance ledger); its
-    # marker stays until a spec revision takes it off. PTC 0.6.0-draft took the markers off
-    # PTC-44, PTC-49, PTC-50, PTC-52 and PTC-53 and added PTC-54, owner-routed
-    # approval, which nothing on the approval path implements: ownerId is
-    # written by the ceremony and read by no release.
+    # PTC-43's coalescing can join a hold that has already expired. All five
+    # clauses PTC 0.5.0-draft added are built: PTC 0.6.0-draft took the markers
+    # off PTC-44, PTC-49, PTC-50, PTC-52 and PTC-53, and PTC 0.6.1-draft took
+    # PTC-51's off (taint across a spawned or deferred context, built at #177
+    # as the inheritance ledger). PTC 0.6.0-draft also added PTC-54,
+    # owner-routed approval, which nothing on the approval path implements:
+    # ownerId is written by the ceremony and read by no release.
     "PTC-11": (MARKER_FORM_INLINE, "#15"),
     "PTC-29": (MARKER_FORM_INLINE, "#20"),
     "PTC-43": (MARKER_FORM_INLINE, "#41"),
-    "PTC-51": (MARKER_FORM_INLINE, "#177"),
     "PTC-54": (MARKER_FORM_INLINE, "#189"),
     # GAL 0.6.0-draft. GAL-18 gains the qualifier "where signing is configured"
     # and is marked for the two things #162 records: not every writer refuses
     # once a ledger has adopted signing, and the override leaves nothing
-    # durable. GAL-41 (issuer standing) is unbuilt. GAL 0.7.0-draft took the
-    # markers off GAL-42, GAL-43 and GAL-44 and added GAL-45, the lifecycle
-    # half of PTC-54, sharing its tracking issue as GAL-42 and GAL-43 did with
-    # PTC-49 and PTC-50.
+    # durable. GAL 0.7.0-draft took the markers off GAL-42, GAL-43 and GAL-44
+    # and added GAL-45, the lifecycle half of PTC-54, sharing its tracking
+    # issue as GAL-42 and GAL-43 did with PTC-49 and PTC-50. GAL 0.8.0-draft
+    # took GAL-41's off (issuer standing, built at #179) and published
+    # `withdrawal` as the seventh record type.
     "GAL-18": (MARKER_FORM_INLINE, "#162"),
-    "GAL-41": (MARKER_FORM_INLINE, "#179"),
     "GAL-45": (MARKER_FORM_INLINE, "#189"),
 }
 
