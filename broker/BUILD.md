@@ -69,7 +69,7 @@ For any agent with an external write.
 1. **Out-of-band approval (WYSIWYE).** `require_approval` materializes an `Intent` in DynamoDB
    (id, materializedRequest, expiry, status); the turn ends; a separate notifier (EventBridge/SNS)
    pushes the *materialized* bytes; the human approves on a path authenticated to them; the broker
-   executes the **stored** request; unapproved intents auto-deny at expiry.
+   executes the **stored** request; an undecided intent expires, with its own `expired` audit record.
 2. **Durable spend/rate counters** — DynamoDB atomic counters so two concurrent runs can't both slip
    under a cap. Idempotency keys enforced. (`Budgets`; pre-deploy checklist "caps are atomic
    counters.")

@@ -1705,6 +1705,42 @@ function acceptedQueueHasSse(): boolean {
   return queues.length === 1 && queues[0][1].Properties?.SqsManagedSseEnabled === true;
 }
 
+function intentsTableHasPendingExpiryIndex(): boolean {
+  // #163: the broker's expiry sweep Queries this sparse index per principal (no acting role holds
+  // Scan). Pin its name, both key attributes WITH their types (the sort key is epoch seconds, so a
+  // STRING sort key would order "100" before "99" and skip expired holds), keys-only projection,
+  // and that the table's TTL is still on `ttl` (the store sets a pending row's ttl past its expiry).
+  const table = resourcesOfType(templates.state, 'AWS::DynamoDB::Table').find(
+    ([, r]) => r.Properties?.TableName === `safe-agents-${ENV}-intents`,
+  );
+  if (!table) return false;
+  const p = table[1].Properties ?? {};
+  const gsis = (p.GlobalSecondaryIndexes ?? []) as Array<{
+    IndexName?: string;
+    KeySchema?: Array<{ AttributeName?: string; KeyType?: string }>;
+    Projection?: { ProjectionType?: string };
+  }>;
+  const gsi = gsis.find((g) => g.IndexName === 'pending-by-principal');
+  if (!gsi) return false;
+  const keys = gsi.KeySchema ?? [];
+  const attrTypes = new Map(
+    ((p.AttributeDefinitions ?? []) as Array<{ AttributeName?: string; AttributeType?: string }>).map(
+      (a) => [a.AttributeName, a.AttributeType] as const,
+    ),
+  );
+  const ttl = (p.TimeToLiveSpecification ?? {}) as { AttributeName?: string; Enabled?: boolean };
+  return (
+    keys.length === 2 &&
+    keys.some((k) => k.AttributeName === 'pendingPrincipal' && k.KeyType === 'HASH') &&
+    keys.some((k) => k.AttributeName === 'pendingExpiry' && k.KeyType === 'RANGE') &&
+    attrTypes.get('pendingPrincipal') === 'S' &&
+    attrTypes.get('pendingExpiry') === 'N' &&
+    gsi.Projection?.ProjectionType === 'KEYS_ONLY' &&
+    ttl.AttributeName === 'ttl' &&
+    ttl.Enabled === true
+  );
+}
+
 function dedupeTableCmkWithTtl(): boolean {
   // The dedupe table lives in StateStack: CMK-encrypted (SSEType KMS + a key) and TTL on `ttl`.
   const table = resourcesOfType(templates.state, 'AWS::DynamoDB::Table').find(
@@ -2579,6 +2615,12 @@ const ROWS: Row[] = [
     group: 'State',
     desc: 'mcp-registry table (#174) mirrors grants: generic (pk,sk) key schema + the shared tablesKey CMK',
     check: mcpRegistryTableExistsWithGenericKeySchemaAndCmk,
+  },
+  {
+    id: 'state/intents-pending-expiry-index',
+    group: 'State',
+    desc: 'intents table (#163) carries the sparse pending-by-principal index the expiry sweep queries',
+    check: intentsTableHasPendingExpiryIndex,
   },
   {
     id: 'state/on-demand-pitr',

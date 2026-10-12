@@ -88,3 +88,7 @@ class ExecutionResult:
     # Why execution was refused (e.g., "intent expired", "intent not found").
     # Present only when executed=False.
     rejection_reason: str | None = None
+    # True only when THIS call moved the intent from pending to expired (#163). The
+    # transition is a compare-and-set, so across every late approve, late reject and
+    # sweep exactly one caller sees True, and that caller writes the expiry record.
+    expired_by_this_call: bool = False

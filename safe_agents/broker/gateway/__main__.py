@@ -92,6 +92,7 @@ from safe_agents.broker.gateway.network import (
     resolve_transport,
 )
 from safe_agents.broker.gateway.surface import GatewaySurface
+from safe_agents.broker.gateway.sweep import SweepTask
 from safe_agents.broker.gateway.server import (
     EventMouth,
     NetworkMouth,
@@ -213,6 +214,9 @@ def main() -> None:
             ))
         else:
             mouths.append(StdioMouth(serialized))
+        # The expiry sweep (#163) rides the same loop and the same serialized
+        # entry, and stops with the mouths.
+        mouths.append(SweepTask(serialized))
         if events is not None and event_listener is not None:
             mouths.append(EventMouth(
                 serialized,

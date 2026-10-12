@@ -52,7 +52,18 @@ from safe_agents.broker.approval import (
     materialize,
     reject,
 )
-from safe_agents.broker.approval.engine import REJECTED_BY_OWNER_REASON
+from safe_agents.broker.approval.engine import (
+    DEFAULT_APPROVAL_EXPIRY_SECONDS,
+    REJECTED_BY_OWNER_REASON,
+    expire_if_due,
+)
+from safe_agents.broker.approval.expiry import (
+    ALARM_COUNT_WRITE_FAILED,
+    APPROVAL_EXPIRED_REASON,
+    ApprovalAlarmEvent,
+    ApprovalQueueAlarm,
+)
+from safe_agents.broker.approval.store import principal_index_key
 from safe_agents.broker.approval.queue_guard import dedup_intent_id, is_flood
 from safe_agents.broker.audit import AuditSink, emit, hash_args, hash_stored_call
 from safe_agents.broker.enforcement import (
@@ -167,6 +178,12 @@ def _actor_digest(identity: str) -> str:
     the intent_flagged log line, so the two surfaces always join on the same value.
     """
     return "sha256:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _utc(ts: str) -> datetime.datetime:
+    """An ISO-8601 timestamp as an aware UTC datetime; tz-naive means UTC."""
+    parsed = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=datetime.UTC)
 
 
 def _utc_bucket_of(ts: str, period: CounterPeriod = "utc-day") -> str:
@@ -325,6 +342,7 @@ class BrokerRuntime:
         on_demotion_signal: Callable[[DemotionSignal], None] | None = None,
         counter_period: CounterPeriod = "utc-day",
         sub_grant_store: "SubGrantStore | None" = None,
+        on_approval_alarm: Callable[[ApprovalAlarmEvent], None] | None = None,
     ) -> None:
         self._principal = principal
         self._grants = grants
@@ -368,6 +386,23 @@ class BrokerRuntime:
         # keep it strictly increasing. Locked because stamping is a read-then-write.
         self._last_call_ts: datetime.datetime | None = None
         self._call_ts_lock = threading.Lock()
+        # #163: the approval-queue alarm's raised/cleared state and its delivery to
+        # the approver. It exists only with the flood cap, so it ships OFF with the
+        # approval_queue knob; on_approval_alarm is the approver seam (None = the
+        # structured log line only).
+        self._approval_alarm: ApprovalQueueAlarm | None = None
+        if approval_queue is not None and approval_queue.max_pending_per_op_day is not None:
+            self._approval_alarm = ApprovalQueueAlarm(
+                principal=principal,
+                store=enforcement_store,
+                cap=approval_queue.max_pending_per_op_day,
+                period=counter_period,
+                hold_window_seconds=DEFAULT_APPROVAL_EXPIRY_SECONDS,
+                deliver=on_approval_alarm,
+            )
+        # Intent ids the expiry sweep found quarantined, surfaced once per process so
+        # a tampered row does not re-write its quarantine record on every pass.
+        self._sweep_quarantined: set[str] = set()
 
     def _stamp_call_ts(self) -> str:
         """Stamp a BrokeredCall ``ts`` that no earlier call from this runtime shares (#38).
@@ -680,22 +715,6 @@ class BrokerRuntime:
             rejection_reason=f"intent quarantined: {exc.reason}",
         )
 
-    def _reject_foreign_intent(self, intent_id: str) -> ExecutionResult | None:
-        """Guard an out-of-band action against a DIFFERENT principal's intent.
-
-        The intent store is not principal-partitioned (store.py keys only on
-        INTENT#{intent_id}), and the owner types an arbitrary intent_id. Without
-        this check, at N>1 with a shared intent table a runtime bound to principal
-        A could release principal B's frozen call under A's Doer / credentials /
-        envelope — a confused deputy. Checked BEFORE any status transition, so a
-        foreign intent is never even claimed. Returns an ExecutionResult to
-        short-circuit on mismatch, or None to proceed (including when the intent is
-        absent — approve()/reject() own the not-found path).
-        """
-        return self._foreign_intent_result(
-            self._intent_store.get_intent(intent_id), intent_id
-        )
-
     def _owns_intent(self, intent) -> bool:
         """True iff ``intent`` was frozen for THIS runtime's principal. The one ownership test.
 
@@ -712,11 +731,20 @@ class BrokerRuntime:
         return intent.materializedRequest.principal == self._principal
 
     def _foreign_intent_result(self, intent, intent_id: str) -> ExecutionResult | None:
-        """Pure foreign-principal check over an already-fetched intent.
+        """Guard an out-of-band action against a DIFFERENT principal's intent.
 
-        Split from _reject_foreign_intent so reject_intent can fetch the intent ONCE
-        (it also needs the stored coordinates to label its evidence counters) and reuse
-        that read here, rather than fetching a second time.
+        The intent store is not principal-partitioned (store.py keys only on
+        INTENT#{intent_id}), and the owner types an arbitrary intent_id. Without
+        this check, at N>1 with a shared intent table a runtime bound to principal
+        A could release principal B's frozen call under A's Doer / credentials /
+        envelope — a confused deputy. Checked BEFORE any status transition, so a
+        foreign intent is never even claimed. Returns an ExecutionResult to
+        short-circuit on mismatch, or None to proceed (including when the intent is
+        absent — approve()/reject() own the not-found path).
+
+        Takes an already-fetched intent: approve_intent and reject_intent each read
+        the intent ONCE and reuse that read for their stored coordinates (evidence
+        labels, the expiry record) as well as for this check.
         """
         if intent is not None and not self._owns_intent(intent):
             return ExecutionResult(
@@ -812,16 +840,18 @@ class BrokerRuntime:
         -------
         ExecutionResult
             executed=True on success; executed=False with a rejection_reason when
-            the intent is missing, expired, already actioned, frozen for a
-            different principal, quarantined (the stored bytes failed
+            the intent is missing, expired (a late approval that moves the hold
+            to expired writes its one expiry record, #163), already actioned,
+            frozen for a different principal, quarantined (the stored bytes failed
             HMAC verification — a store rewrite between hold and release
             refuses instead of executing; the Doer is never reached), or when
             release-time revalidation refused ("release refused: …", #9).
         """
         try:
-            foreign = self._reject_foreign_intent(intent_id)
+            held = self._intent_store.get_intent(intent_id)
         except QuarantinedIntentError as exc:
             return self._quarantined_intent_result(exc, op="approve")
+        foreign = self._foreign_intent_result(held, intent_id)
         if foreign is not None:
             return foreign
 
@@ -1008,11 +1038,17 @@ class BrokerRuntime:
             raise ReleaseRefusedError(reason)
 
         try:
-            return approve(intent_id, approved_by, self._intent_store, executor=_exec)
+            result = approve(intent_id, approved_by, self._intent_store, executor=_exec)
         except QuarantinedIntentError as exc:
             # A rewrite that lands BETWEEN the foreign-check read and the
             # engine's own verify-then-parse read still refuses here.
             return self._quarantined_intent_result(exc, op="approve")
+        # A late approval that found the hold expired, and won the expiry's
+        # compare-and-set, writes the one expiry record (#163). It is not a human
+        # decision: the approver is not named on it and no evidence moves.
+        if result.expired_by_this_call:
+            self._record_late_expiry(held, intent_id, op="approve")
+        return result
 
     def reject_intent(self, intent_id: str, rejected_by: str) -> ExecutionResult:
         """Reject a held Intent on an authenticated owner's "no" — executes NOTHING.
@@ -1031,7 +1067,10 @@ class BrokerRuntime:
         actorDigest (the rejecter, digested), and evidenceBucket (the period bucket
         both evidence labels were written under). If the label writes fail the record
         is still written, with evidenceBucket None and `error` set. Every refused path
-        (missing, foreign, expired, already actioned, quarantined) writes no record.
+        (missing, foreign, already actioned, quarantined) writes no record. A late "no"
+        on a hold past its expiry writes no rejection: if this call is the one that
+        moved it to expired, it writes the expiry record instead (#163), and no
+        evidence label.
         """
         # Fetch ONCE: the stored coordinates label the evidence counters below, and the
         # same read feeds the foreign-principal guard (avoids a third store read).
@@ -1045,6 +1084,11 @@ class BrokerRuntime:
             # A tampered row is not transitioned, not labeled, not
             # parsed: refuse loudly and leave the evidence in place.
             return self._quarantined_intent_result(exc, op="reject")
+        # A late "no" that found the hold expired, and won the expiry's
+        # compare-and-set, writes the expiry record, never a rejection (#163).
+        if result.expired_by_this_call:
+            self._record_late_expiry(intent, intent_id, op="reject")
+            return result
         # Label the evidence counters ONLY when this call actually won the reject CAS
         # (not a missing / expired / already-actioned intent). An owner "no" is a
         # human_override; each terminal labeled outcome is also an observation, so
@@ -1320,6 +1364,97 @@ class BrokerRuntime:
             intent_id=intent_id,
             executed=False,
             rejection_reason=FLAGGED_BY_OWNER_REASON,
+        )
+
+    def sweep_expired_intents(self, *, now: datetime.datetime | None = None) -> int:
+        """Find this principal's holds that expired undecided and record each (#163).
+
+        Expiry is an event, found by this sweep on every backend, not a state
+        discovered on the next touch. Candidates come from the store's pending
+        index, which is outside the HMAC basis, so each is read through
+        verify-then-parse and judged on its verified bytes: still pending, this
+        runtime's own principal, expiry at or before ``now``. The pending→expired
+        compare-and-set is the one approve() and reject() take, so a late human
+        action and a sweep write one record between them, whichever wins.
+
+        Never executes anything, never writes an evidence label, never gates a
+        call. Returns the number of expiries this pass recorded. A host runs it on
+        a schedule (``approval.expiry.ExpirySweeper``) on the thread that owns the
+        runtime.
+        """
+        at = now if now is not None else datetime.datetime.now(datetime.UTC)
+        candidates = self._intent_store.expired_pending_candidates(
+            principal_index_key(self._principal), at
+        )
+        recorded = 0
+        for intent_id in candidates:
+            try:
+                intent = self._intent_store.get_intent(intent_id)
+            except QuarantinedIntentError as exc:
+                # A tampered row is never transitioned. Surfaced once per process,
+                # so a row that stays tampered does not flood the tape every pass.
+                if intent_id not in self._sweep_quarantined:
+                    self._sweep_quarantined.add(intent_id)
+                    self._surface_quarantined_intent(exc, op="expire")
+                continue
+            if intent is None or not self._owns_intent(intent):
+                continue
+            if expire_if_due(intent, self._intent_store, now=at):
+                self._record_expiry(intent)
+                recorded += 1
+        if self._approval_alarm is not None:
+            self._approval_alarm.flush(at)
+        return recorded
+
+    def _record_late_expiry(self, intent, intent_id: str, *, op: str) -> None:
+        """Write the expiry record for a late approve or reject that won the expiry."""
+        try:
+            stored = intent or self._intent_store.get_intent(intent_id)
+        except QuarantinedIntentError as exc:
+            self._surface_quarantined_intent(exc, op=op)
+            return
+        if stored is None:
+            logger.error(
+                "expiry CAS won for intent %s but its stored call could not be "
+                "re-read; no expiry record was written",
+                intent_id,
+            )
+            return
+        self._record_expiry(stored)
+        if self._approval_alarm is not None:
+            self._approval_alarm.flush(datetime.datetime.now(datetime.UTC))
+
+    def _record_expiry(self, intent) -> None:
+        """The ONE expiry record (#163), written by whoever won pending→expired.
+
+        Outcome "expired", never "rejected" or "denied", so it cannot be read as a
+        person having said no. Under the stored call's coordinates, with intentId,
+        storedCallDigest recomputed from the stored bytes, and expiredAt, the
+        intent's verified expiry instant. No actorDigest (nobody acted), no
+        approvedBy, no evidenceBucket: no counter the promotion predicate reads
+        is written. Under a raised flood alarm the expiry is counted first, and a
+        failed count is named in ``error`` rather than gating the record.
+        """
+        req = intent.materializedRequest
+        error: str | None = None
+        if self._approval_alarm is not None and not self._approval_alarm.count_expiry(
+            req.tool, req.op, held_at=_utc(intent.ts), expired_at=_utc(intent.expiry)
+        ):
+            error = ALARM_COUNT_WRITE_FAILED
+        emit(
+            self._audit_sink,
+            principal=req.principal,
+            tool=req.tool,
+            op=req.op,
+            args=req.args,
+            decision="require_approval",
+            outcome="expired",
+            envelope_hash=self._envelope_hash,
+            reason=APPROVAL_EXPIRED_REASON,
+            error=error,
+            intent_id=intent.id,
+            stored_call_digest=hash_stored_call(req),
+            expired_at=intent.expiry,
         )
 
     def _emit_demotion_signal(
@@ -1767,8 +1902,14 @@ class BrokerRuntime:
                     call.principal, call.tool, call.op, hash_args(call.args)
                 )
             try:
+                # ONE fixed expiry period, never derived from queue depth or the
+                # flood alarm (PTC §6.12, #163).
                 approval = materialize(
-                    call, effective, self._intent_store, dedup_id=dedup_id
+                    call,
+                    effective,
+                    self._intent_store,
+                    dedup_id=dedup_id,
+                    expiry_seconds=DEFAULT_APPROVAL_EXPIRY_SECONDS,
                 )
             except QuarantinedIntentError as exc:
                 # A tampered row squatting on the dedup id: never
@@ -1822,6 +1963,12 @@ class BrokerRuntime:
                             }
                         )
                     )
+                    # #163: the alarm gains state. Raised for this op for the rest of
+                    # the counter period, delivered to the approver once per period.
+                    if self._approval_alarm is not None:
+                        self._approval_alarm.raise_for(
+                            call.tool, call.op, datetime.datetime.now(datetime.UTC)
+                        )
 
             emit(
                 self._audit_sink,

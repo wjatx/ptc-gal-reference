@@ -16,8 +16,17 @@ sweep instead. Expiry is a PREDICATE AT USE (deletion timing is never
 correctness: ``approve()`` checks the intent's ``expiry`` field at use
 regardless of whether the row still exists). :meth:`SqliteIntentStore.sweep_expired`
 is a BOUNDED-LAG privacy property, not an enforcement mechanism — an expired
-intent's payload should not linger forever — scoped strictly to INTENT# rows
-and run at boot by the broker (wired by boot code, never this module).
+intent's payload should not linger forever — scoped strictly to RESOLVED
+INTENT# rows and run by the broker (wired by boot code, never this module).
+
+It does not delete a PENDING row until a grace period past its expiry (#163),
+the same grace a pending row's DynamoDB time-to-live carries. An undecided hold
+whose expiry passed is first expired by the runtime's expiry sweep, which writes
+its audit record; only then is the row resolved and eligible at its expiry.
+Deleting it first would leave the tape showing a hold followed by nothing. The
+grace bounds retention for a pending row no sweep will ever resolve: a hold
+written before the pending index existed, or one whose principal never runs a
+broker again. Such a row is deleted unrecorded once the grace has passed.
 
 The executed-transition retention semantics match Dynamo (trigger-range pin): the
 retention window derives from ``executed_at`` ITSELF, not the store's clock,
@@ -36,8 +45,13 @@ from pathlib import Path
 from safe_agents.broker import sqlite_substrate as substrate
 from safe_agents.broker.approval.store import (
     EXECUTED_INTENT_RETENTION_DAYS,
+    PENDING_EXPIRY_ATTR,
+    PENDING_TTL_GRACE_DAYS,
+    PENDING_PRINCIPAL_ATTR,
     PENDING_STATUS,
     IntentAlreadyPendingError,
+    _is_expiry_candidate,
+    _now_epoch,
     intent_from_item,
     intent_item_attrs,
 )
@@ -56,6 +70,19 @@ def _parse_utc(ts: str) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt
+
+
+def _status_of(item: str) -> str | None:
+    """The status attribute of a stored item, or None when it cannot be read.
+
+    An unreadable item is treated as not pending and so stays eligible for the
+    privacy delete exactly as before.
+    """
+    try:
+        attrs = json.loads(item)
+    except (TypeError, ValueError):
+        return None
+    return attrs.get("status") if isinstance(attrs, dict) else None
 
 
 class SqliteIntentStore(substrate.SqliteStoreBase):
@@ -140,6 +167,10 @@ class SqliteIntentStore(substrate.SqliteStoreBase):
             if attrs["status"] != expected_status:
                 return False
             attrs["status"] = new_status
+            if new_status != PENDING_STATUS:
+                # Leaving pending ends expiry candidacy (#163).
+                attrs.pop(PENDING_PRINCIPAL_ATTR, None)
+                attrs.pop(PENDING_EXPIRY_ATTR, None)
             if approved_by is not None:
                 attrs["approvedBy"] = approved_by
             if executed_at is not None:
@@ -156,8 +187,29 @@ class SqliteIntentStore(substrate.SqliteStoreBase):
             substrate.update_existing_item(conn, pk, sk, attrs, expires_at=expires_at)
             return True
 
+    def expired_pending_candidates(self, principal_key: str, now: datetime) -> list[str]:
+        """Pending intents of ``principal_key`` whose expiry is at or before ``now``.
+
+        Reads the item attributes' pending index (the item column's JSON, never
+        the HMAC'd ``data`` payload), the sqlite spelling of DynamoDB's sparse
+        index Query. Candidates only: the runtime verify-then-parses each.
+        """
+        now_epoch = _now_epoch(now)
+        rows = self._connection().execute(
+            "SELECT pk, item FROM items WHERE pk LIKE 'INTENT#%'"
+        ).fetchall()
+        ids: list[str] = []
+        for pk, item in rows:
+            try:
+                attrs = json.loads(item)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(attrs, dict) and _is_expiry_candidate(attrs, principal_key, now_epoch):
+                ids.append(pk[len("INTENT#"):])
+        return ids
+
     def sweep_expired(self, now: datetime | None = None) -> int:
-        """Delete INTENT# rows whose expires_at has passed; return the count.
+        """Delete INTENT# rows whose retention has passed; return the count.
 
         This is the sqlite stand-in for the DynamoDB TTL daemon, run at boot by
         the broker (boot wiring calls it — this module never does). It is a
@@ -168,7 +220,11 @@ class SqliteIntentStore(substrate.SqliteStoreBase):
         payload can linger at rest.
 
         Scoped strictly to INTENT# rows — other item families using the
-        expires_at column (e.g. proposal items) own their own lifecycles.
+        expires_at column (e.g. proposal items) own their own lifecycles — and
+        a PENDING one only once ``PENDING_TTL_GRACE_DAYS`` past its expiry
+        (#163): an undecided hold is expired, with its audit record, by the
+        runtime's expiry sweep first, and the grace only bounds how long a hold
+        no sweep resolves can linger.
         Comparison is by parsed datetime, never string order, so 'Z' and
         '+00:00' spellings of one instant compare correctly; ``now=None``
         means ``datetime.now(UTC)``, and a tz-naive ``now`` is treated as UTC.
@@ -180,11 +236,15 @@ class SqliteIntentStore(substrate.SqliteStoreBase):
         deleted = 0
         with substrate.transaction(conn):
             rows = conn.execute(
-                "SELECT pk, sk, expires_at FROM items "
+                "SELECT pk, sk, item, expires_at FROM items "
                 "WHERE pk LIKE 'INTENT#%' AND expires_at IS NOT NULL"
             ).fetchall()
-            for pk, sk, expires_at in rows:
-                if _parse_utc(expires_at) < moment:
+            pending_grace = timedelta(days=PENDING_TTL_GRACE_DAYS)
+            for pk, sk, item, expires_at in rows:
+                deadline = _parse_utc(expires_at)
+                if _status_of(item) == PENDING_STATUS:
+                    deadline += pending_grace
+                if deadline < moment:
                     conn.execute(
                         "DELETE FROM items WHERE pk = ? AND sk = ?", (pk, sk)
                     )

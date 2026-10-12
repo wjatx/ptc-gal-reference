@@ -98,6 +98,8 @@ def render_record(record) -> str:  # noqa: ANN001 — AuditRecord
         detail.append(f"         by   {record.actorDigest}")
     if record.evidenceBucket:
         detail.append(f"         bucket {record.evidenceBucket}")
+    if record.expiredAt:
+        detail.append(f"         expired at {record.expiredAt}")
     if record.error:
         detail.append(f"         error {record.error}")
     return "\n".join([head, *detail])

@@ -54,8 +54,13 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   the human once, not N times. `max_pending_per_op_day` raises an `approval_queue_flood` alarm
 >   (the log-metric alarm surface) past that many NEW held intents per principal+op+UTC-day — but
 >   the broker **still holds the intent**; it never sheds (shedding under flood is the
->   forced-abstention harm under act-safe polarity, kept consumer-side). Unset = OFF: the hold path
->   is byte-identical to today's. Mechanism only; no polarity in the base.
+>   forced-abstention harm under act-safe polarity, kept consumer-side). With the cap set the alarm
+>   also has state (#163): it is **raised** once per op and counter period (an `approval_queue_alarm`
+>   log line plus a delivery to the approver seam `build_runtime(on_approval_alarm=...)`), each hold
+>   that **expires undecided** while it is raised is counted and delivered by count (one delivery per
+>   op per sweep), and it is **cleared** once every hold made in the flooded period has been decided
+>   or has expired. With no seam wired, those deliveries are the log line only. Unset = OFF: the
+>   hold path is byte-identical to today's. Mechanism only; no polarity in the base.
 >
 > **AgentManifest (`safe_agents/broker/schemas/manifest.py`)** is the typed broker-facing
 > deployment-manifest block `build_runtime(manifest)` consumes: `envelope` (required) plus
@@ -309,7 +314,7 @@ interface Intent {
   materializedRequest: BrokeredCall      // the FROZEN BrokeredCall the broker executes verbatim on approval — never re-derived
   renderedForHuman:    string            // what-you-see: human-readable render pushed to the approval channel
   status:              "pending" | "approved" | "rejected" | "expired" | "executed" | "refused"
-  expiry:              string            // hard TTL; unapproved intents auto-deny at this timestamp (ISO-8601 UTC)
+  expiry:              string            // hard TTL; an undecided intent expires at this timestamp (ISO-8601 UTC), recorded as an event
   approvedBy?:         string            // the human identity that approved; absent until approval
   ts:                  string            // when this intent was created
 }
@@ -325,17 +330,36 @@ Per-field notes:
   with subject '…'"). Separate from `materializedRequest` so the render can be human-friendly
   prose while execution stays typed and frozen.
 - **status** — `pending` (awaiting human decision) · `approved` (broker may execute) · `rejected`
-  (human declined) · `expired` (TTL passed, auto-deny) · `executed` (broker ran it) · `refused`
+  (human declined) · `expired` (TTL passed with no human decision) · `executed` (broker ran it) · `refused`
   (a human approved, and release-time revalidation then refused: the grant was revoked or demoted,
   or the op's period budget was exhausted, between the hold and the release; nothing ran, #9).
   Terminal states: `rejected`, `expired`, `executed`, `refused`.
-- **expiry** — a hard TTL. An intent the human does not act on auto-denies; it never hangs open
-  indefinitely. The agent cannot extend or re-issue.
+- **expiry** — a hard TTL. An intent the human does not act on expires; it never hangs open
+  indefinitely, and an expired intent never executes. The agent cannot extend or re-issue. The
+  period is ONE fixed value (`DEFAULT_APPROVAL_EXPIRY_SECONDS`, an hour): it does not shorten as
+  the queue grows (PTC §6.12). Expiry is an **event**, found by the runtime's sweep
+  (`BrokerRuntime.sweep_expired_intents`), which a long-lived host runs on a schedule (the broker
+  server between requests, the gateway beside its mouths, and once at boot on the sqlite arm), and
+  which reads each backend's pending index attributes and never issues a DynamoDB Scan (on
+  DynamoDB it is a Query on the sparse `pending-by-principal` index; the sqlite and in-memory
+  backends read every intent row's attributes and filter in process). Whoever moves the intent from `pending` to `expired` (the sweep,
+  or a late approve or reject that finds it past its expiry) writes its one `expired` audit
+  record; the transition is a compare-and-set, so there is exactly one. A pending row's DynamoDB
+  time-to-live sits a grace period (seven days) past its expiry, and the sqlite privacy sweep keeps
+  a pending row for the same grace, so the record is written before the row can go. Limits of what
+  this buys (#163): a hold outlasting the grace with no broker of its principal running is deleted
+  unrecorded; so is a hold written before the pending index existed, which carries no index
+  attributes and is never a sweep candidate (on DynamoDB it keeps its old time-to-live, its expiry;
+  on sqlite it goes after the grace); and if the audit sink fails after the compare-and-set, the
+  intent is already `expired` and nothing writes its record again, the same as a rejection whose
+  emit fails. "Exactly one" is per hold: with dedup on, an identical call held again after an
+  expiry reuses the content-derived id, so a reader keyed on `intentId` can see two `expired`
+  records for one id, told apart by `expiredAt`, as it can already see two `held` records.
 - **approvedBy** — the authenticated human identity, set by the approval path (not the agent).
   Copied into `AuditRecord.approvedBy` at execution time, and onto the refusal record when
   release-time revalidation refuses, so the tape shows who approved a release the broker declined.
 
-Intent is stored in **DynamoDB** (the same on-demand table as grants and counters). `AuditRecord.outcome = "held"` means an intent is pending; `"executed"` / `"denied"` / `"refused"` / `"failed"` are terminal, and an owner's "no" writes a `"rejected"` record.
+Intent is stored in **DynamoDB** (the same on-demand table as grants and counters). `AuditRecord.outcome = "held"` means an intent is pending; `"executed"` / `"denied"` / `"refused"` / `"failed"` are terminal, an owner's "no" writes a `"rejected"` record, and an intent that expires with no human decision writes an `"expired"` record.
 
 ---
 
@@ -355,7 +379,7 @@ interface AuditRecord {
   reason?: string
   envelopeHash: string             // the exact envelope in force when this was decided
   approvedBy?: string              // the human identity, for approved intents
-  outcome: "executed" | "denied" | "held" | "refused" | "failed" | "rejected" | "flagged" | "observed"
+  outcome: "executed" | "denied" | "held" | "refused" | "failed" | "rejected" | "flagged" | "observed" | "expired"
   error?: string
   seed?: string                    // committed randomization seed, where allocation was randomized (auditable randomness)
   intentId?: string                // approval receipt — held + release records: joins a hold to its release across the intent TTL
@@ -363,6 +387,7 @@ interface AuditRecord {
   resultDigest?: string            // approval receipt — broker-written digest of the connector response (the effect receipt)
   actorDigest?: string             // owner-verdict receipt: "sha256:" digest of the human who rejected or flagged; never the identity in clear
   evidenceBucket?: string          // owner-verdict receipt: the counter period bucket the verdict's evidence write landed on
+  expiredAt?: string               // expiry receipt: the expired intent's verified expiry instant (ISO-8601 UTC)
   prevHash: string                 // chains to the previous record
   hash: string                     // hash over this record incl. prevHash -> tamper-evident
 }
@@ -387,6 +412,14 @@ Per-field notes:
   class as `op`, a digest of the reported subject inside `argsDigest`, and the result digest, when
   one was reported, as `resultDigest`. It is terminal, and nothing was decided or attempted by the
   broker.
+  `expired` means a held intent reached its expiry with no human decision (#163, PTC §6.12). It is
+  its own outcome, never `rejected` or `denied`, so a timer never reads as a person having said no.
+  Its record carries the stored call's coordinates, `decision: "require_approval"`, `reason:
+  "approval expired undecided"`, `intentId`, `storedCallDigest` and `expiredAt`, and no
+  `actorDigest`, `approvedBy` or `evidenceBucket`: nobody acted, and an expiry writes none of the
+  counters the promotion predicate reads (`observations`, `human_override`, `false_action`). Its
+  `ts` is when the broker recorded the expiry, which a sweep interval can put after `expiredAt`.
+  When the approval-queue alarm's count write fails the record is still written, with `error` set.
 - **seed** — when scarcity allocation was randomized (high-stakes tier), the committed seed is logged
   (commit-reveal / VRF): unpredictable in advance, fully reconstructable after. "Why not engage that
   one?" has an answer in the log.
@@ -402,6 +435,8 @@ Per-field notes:
   op's own period for a flag's `false_action` back-write. A rejection whose label write failed
   still gets its record, with `evidenceBucket` absent and `error` set, so the tape never claims a
   write that did not land. Optional and hash-covered only when present, like the approval receipts.
+- **expiredAt**: the expiry receipt, on `expired` records only: the intent's expiry instant, read
+  from its HMAC-verified stored bytes. Optional and hash-covered only when present (#163).
 - **prevHash / hash** — the chain. Any later edit or deletion breaks it; any gap in `seq` shows.
 
 ---

@@ -232,6 +232,15 @@ class GatewaySurface:
             result_digest=result_digest,
         )
 
+    def sweep_expired_intents(self) -> int:
+        """Record this principal's holds that expired undecided (#163).
+
+        Not a call and not agent-reachable: no wire name maps here. The gateway's
+        sweep task runs it on a schedule, through the same serialized entry every
+        call takes.
+        """
+        return self._runtime.sweep_expired_intents()
+
     def tools(self) -> list[GatewayTool]:
         """What this principal is granted, in wire-name order."""
         return [self._index()[name] for name in sorted(self._index())]

@@ -180,52 +180,89 @@ class TestSqliteArmBoots:
 
 
 class TestBootSweep:
-    def test_boot_sweeps_expired_intents_only(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    """#163: the sqlite boot sweep records an undecided expiry, then deletes rows.
+
+    Order is the point: the runtime's expiry sweep writes the "expired" record
+    and resolves the hold, and only then does the privacy delete remove the row,
+    which takes a pending one only after a grace past its expiry. A hold frozen
+    for a different principal is neither expired nor deleted by this runtime
+    inside that grace.
+    """
+
+    def _put(self, db_path: Path, intent_id: str, expiry: datetime.datetime, principal=None):
         from safe_agents.broker.approval.sqlite_store import SqliteIntentStore
         from safe_agents.broker.schemas import Intent
         from safe_agents.broker.tests.test_core_store_differential import make_call
 
-        db_path = _name_sqlite_arm(monkeypatch, tmp_path)
-        now = datetime.datetime.now(datetime.UTC)
-
-        def _intent(intent_id: str, expiry: datetime.datetime) -> Intent:
-            return Intent(
+        call = make_call()
+        call = call.model_copy(update={"principal": principal or _manifest().principal})
+        writer = SqliteIntentStore(db_path, hmac_key=HMAC_KEY)
+        writer.put_intent(
+            Intent(
                 id=intent_id,
-                materializedRequest=make_call(),
+                materializedRequest=call,
                 renderedForHuman="transfer 100 to acct-xyz",
                 status="pending",
                 expiry=expiry.isoformat(),
-                ts=now.isoformat(),
+                ts=(expiry - datetime.timedelta(hours=1)).isoformat(),
             )
-
-        writer = SqliteIntentStore(db_path, hmac_key=HMAC_KEY)
-        writer.put_intent(_intent("stale", now - datetime.timedelta(hours=1)))
-        writer.put_intent(_intent("fresh", now + datetime.timedelta(hours=1)))
+        )
         writer.close()
 
-        monkeypatch.setenv("BROKER_GRANT_LOAD", "skip")
-        build_runtime(_manifest())
+    def test_boot_records_then_deletes_expired_holds_only(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from safe_agents.broker.approval.sqlite_store import SqliteIntentStore
+        from safe_agents.broker.tests.test_core_store_differential import PRINCIPAL
 
+        db_path = _name_sqlite_arm(monkeypatch, tmp_path)
+        now = datetime.datetime.now(datetime.UTC)
+        stale_at = now - datetime.timedelta(hours=1)
+        self._put(db_path, "stale", stale_at)
+        self._put(db_path, "fresh", now + datetime.timedelta(hours=1))
+        self._put(db_path, "foreign", stale_at, principal=PRINCIPAL)
+
+        monkeypatch.setenv("BROKER_GRANT_LOAD", "skip")
+        _, sink = build_runtime(_manifest())
+
+        expired = [r for r in sink.records() if r.outcome == "expired"]
+        assert [(r.intentId, r.expiredAt) for r in expired] == [("stale", stale_at.isoformat())]
         reader = SqliteIntentStore(db_path, hmac_key=HMAC_KEY)
         assert reader.get_intent("stale") is None
-        assert reader.get_intent("fresh") is not None
+        assert reader.get_intent("fresh").status == "pending"
+        # Another principal's undecided hold: not this runtime's to expire, and
+        # the privacy delete keeps a pending row for the grace past its expiry.
+        assert reader.get_intent("foreign").status == "pending"
         reader.close()
 
-    def test_sweep_failure_does_not_block_the_boot(
+    def test_a_restarted_boot_writes_no_second_record(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        db_path = _name_sqlite_arm(monkeypatch, tmp_path)
+        self._put(db_path, "stale", datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=1))
+        monkeypatch.setenv("BROKER_GRANT_LOAD", "skip")
+        build_runtime(_manifest())
+        _, sink = build_runtime(_manifest())  # resumes the same file tape
+        assert [r.intentId for r in sink.records() if r.outcome == "expired"] == ["stale"]
+
+    @pytest.mark.parametrize(
+        "target, attr",
+        [
+            ("safe_agents.broker.approval.sqlite_store.SqliteIntentStore", "sweep_expired"),
+            ("safe_agents.broker.runtime.pep.BrokerRuntime", "sweep_expired_intents"),
+        ],
+    )
+    def test_sweep_failure_does_not_block_the_boot(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, target: str, attr: str
     ) -> None:
         """Hygiene never gates authority: expiry is a predicate at use, so an
         unswept row cannot widen it — a broken sweep must warn, not refuse."""
-        from safe_agents.broker.approval import sqlite_store as approval_sqlite
-
         _name_sqlite_arm(monkeypatch, tmp_path)
         monkeypatch.setenv("BROKER_GRANT_LOAD", "skip")
 
-        def _boom(self, now=None):
+        def _boom(self, *args, **kwargs):
             raise RuntimeError("sweep exploded")
 
-        monkeypatch.setattr(approval_sqlite.SqliteIntentStore, "sweep_expired", _boom)
+        monkeypatch.setattr(f"{target}.{attr}", _boom)
         runtime, _ = build_runtime(_manifest())
         assert runtime is not None

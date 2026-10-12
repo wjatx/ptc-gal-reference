@@ -268,6 +268,14 @@ class SerializedSurface:
         finally:
             self._busy.release()
 
+    def sweep_expired_intents(self) -> int:
+        """The expiry sweep (#163), under the same two rules as a call."""
+        self._enter()
+        try:
+            return self._surface.sweep_expired_intents()
+        finally:
+            self._busy.release()
+
 
 #: The logger the HTTP server underneath the mouth writes its diagnostics to.
 SERVER_LOGGER = "uvicorn.error"

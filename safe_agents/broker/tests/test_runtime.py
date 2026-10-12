@@ -112,6 +112,7 @@ def _make_runtime(
     secret_map: dict[str, str] | None = None,
     approval_queue=None,
     counter_period: str = "utc-day",
+    on_approval_alarm=None,
 ) -> tuple[BrokerRuntime, InMemorySink, dict[str, StubConnector]]:
     """Build a BrokerRuntime with all fakes wired up."""
     connectors = connectors or {
@@ -152,6 +153,7 @@ def _make_runtime(
         counter_cap=100.0,
         approval_queue=approval_queue,
         counter_period=counter_period,  # type: ignore[arg-type]
+        on_approval_alarm=on_approval_alarm,
     )
     return runtime, sink, connectors
 
@@ -320,14 +322,20 @@ def test_confinement_runtime_public_api_has_no_connector_or_doer():
     # nothing; the only state it touches is the session turn, and only to ADD taint
     # (it never calls new_turn). No sink, connector, Doer or secret crosses out, and
     # the caller it serves is the mouth, never the agent's MCP surface.
+    # sweep_expired_intents (#163) is the host's schedule seam: the broker server's
+    # serving loop and the gateway's sweep task call it between requests. It takes
+    # an optional instant, returns a count, executes nothing (an expired intent never
+    # runs), writes only expiry records under each stored call's coordinates, and is
+    # wired to no wire name or HTTP route, so the agent cannot reach it.
     assert set(public_methods) == {
         "served_registry", "handle_request", "new_turn", "session_turn",
         "approve_intent", "reject_intent", "flag_intent", "describe_intent", "close",
-        "record_refused_connections", "record_observed_event",
+        "record_refused_connections", "record_observed_event", "sweep_expired_intents",
     }, (
         "BrokerRuntime must expose only served_registry/handle_request/new_turn/"
         "session_turn/approve_intent/reject_intent/flag_intent/describe_intent/close/"
-        f"record_refused_connections/record_observed_event; found: {public_methods}"
+        "record_refused_connections/record_observed_event/sweep_expired_intents; "
+        f"found: {public_methods}"
     )
 
 

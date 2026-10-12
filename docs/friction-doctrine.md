@@ -134,6 +134,15 @@ The fix keeps the same discipline — de-amplify, never shed:
   the broker **still holds the intent**. It never denies. Shedding under flood is precisely the
   forced-abstention harm under act-safe polarity, so the base must not do it by default; whether to
   shed, and how, is a consumer's polarity call.
+- **Expiry is not a shed, and leaves a trace.** A held approval still expires, on one fixed period
+  that does not shorten as the queue grows, because approving a stale request is its own harm. What
+  the base forbids is an expiry nobody can see (PTC §6.12, #163): each one writes its own `expired`
+  audit record, never a `rejected` one and never evidence for the grant lifecycle, and while the
+  cap's alarm is raised each expiry under it is counted and reported by count. The alarm is raised
+  and cleared state, not only a log line, and it rides the same knob. The report always reaches the
+  `approval_queue_alarm` log line; it reaches the approver only through the seam
+  `build_runtime(on_approval_alarm=...)`, which no host shipped here wires, so without a consumer's
+  delivery the approver learns the count from that log line, as with the base's hold notification.
 
 Both ship as one Envelope knob (`approval_queue`, `safe_agents/broker/schemas/envelope.py`) that is **OFF unless
 set** — with it unset the hold path is byte-identical to before. Classification: **knob**, not

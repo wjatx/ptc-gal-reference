@@ -457,15 +457,17 @@ class TestDynamoIntentStore:
 
     def test_ttl_attribute_is_set(self, table_name):
         """put_intent must set the numeric `ttl` attribute (epoch seconds) that
-        DynamoDB TTL auto-expiry relies on."""
+        DynamoDB TTL auto-expiry relies on. For a PENDING intent it sits a grace
+        period past the expiry (#163): time-to-live deletes with no hook, and the
+        expiry sweep must record the expiry before the row can go."""
         store = DynamoIntentStore(table_name, hmac_key=_INTENT_KEY)
         store.put_intent(_intent("i-ttl"))
 
         raw = _raw_item("INTENT#i-ttl")
         assert raw is not None
         assert "ttl" in raw
-        # 2026-06-28T00:15:00Z in epoch seconds.
-        assert int(raw["ttl"]) == 1782605700
+        # 2026-06-28T00:15:00Z in epoch seconds, plus the 7-day pending grace.
+        assert int(raw["ttl"]) == 1782605700 + 7 * 86400
 
     def test_transition_from_expected_status_succeeds(self, table_name):
         store = DynamoIntentStore(table_name, hmac_key=_INTENT_KEY)

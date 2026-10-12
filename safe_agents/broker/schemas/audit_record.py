@@ -57,9 +57,15 @@ class AuditRecord(BaseModel):
     # with a tool of its own and reported it after it ran (GATEWAY.md, the
     # tool-event mouth). Its record carries `decision="abstain"` and the reserved
     # coordinate `harness-tool`, so it cannot be read as a call the broker allowed.
+    #
+    # `expired` means a held intent reached its expiry with no human decision
+    # (#163, PTC §6.12). It is its own outcome, never `rejected` or `denied`, so a
+    # timer is never read as a person having said no. Its record carries the stored
+    # call's coordinates, intentId, storedCallDigest and expiredAt, and no actorDigest:
+    # nobody acted.
     outcome: Literal[
         "executed", "denied", "held", "refused", "failed", "rejected", "flagged",
-        "observed",
+        "observed", "expired",
     ]
     error: str | None = None
     # committed randomization seed, where allocation was randomized (auditable randomness);
@@ -85,6 +91,10 @@ class AuditRecord(BaseModel):
     # write landed on. None on a rejected record means the label write failed and
     # `error` says so; the tape never claims a landing that did not happen.
     evidenceBucket: str | None = None
+    # Expiry receipt (#163), on expired records only: the intent's expiry instant
+    # (ISO-8601 UTC) read from its verified stored bytes. `ts` is when the broker
+    # recorded the expiry, which a sweep interval can put later than this.
+    expiredAt: str | None = None
     # chains to the previous record (hash-chain integrity)
     prevHash: str
     # hash over this record including prevHash — any later edit is detectable

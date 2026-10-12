@@ -78,10 +78,12 @@ from typing import TYPE_CHECKING, Callable
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from safe_agents.broker.approval.expiry import ApprovalAlarmEvent
     from safe_agents.broker.envelope.store import EnvelopeStore
     from safe_agents.broker.schemas.evidence import DemotionSignal
 
 from safe_agents.broker.approval import InMemoryIntentStore
+from safe_agents.broker.approval.expiry import ExpirySweeper
 from safe_agents.broker.audit import FileAuditSink, InMemorySink, S3ObjectLockSink
 from safe_agents.broker.delegation.pool import resolve_tree_pool
 from safe_agents.broker.delegation.store import SubGrantStore
@@ -585,6 +587,7 @@ def build_runtime(
     envelope_store: "EnvelopeStore | None" = None,
     on_demotion_signal: "Callable[[DemotionSignal], None] | None" = None,
     sub_grant_store: "SubGrantStore | None" = None,
+    on_approval_alarm: "Callable[[ApprovalAlarmEvent], None] | None" = None,
 ) -> tuple[BrokerRuntime, InMemorySink | FileAuditSink | S3ObjectLockSink]:
     """Compose a BrokerRuntime from a manifest + three INDEPENDENT, env-selected backends.
 
@@ -623,6 +626,16 @@ def build_runtime(
     per-zone runtime model each zone builds its own runtime from its own
     image-baked manifest and they SHARE this store, which is how a parent and its
     children reach the same pool while remaining separate principals.
+
+    ``on_approval_alarm`` is the approver seam for the approval-queue alarm (#163):
+    raised, the count of holds that expired undecided while raised, and cleared.
+    It is used only when the envelope sets ``approval_queue.max_pending_per_op_day``;
+    left None, each of those is a structured log line and nothing more.
+
+    On the sqlite arm the boot also runs the runtime's expiry sweep once (#163),
+    so a hold that expired while the broker was down is recorded before its row
+    can be deleted. A long-lived host sweeps again on a schedule
+    (``approval.expiry.ExpirySweeper``); this build does not start one.
 
     See safe_agents/arms/fargate/BROKER_ENV.md for the full AWS-mode env contract.
     """
@@ -746,6 +759,8 @@ def build_runtime(
     # nothing, never toward a half-initialized durable trust store.
     grant_load_mode = _resolve_grant_load_mode()
     require_sanctioned_grant_load(grant_load_mode)
+    # Set on the sqlite arm only: the store its boot sweep runs against (#163).
+    sqlite_intent_store = None
     if resolve_store_arm() == "sqlite":
         # The durable LOCAL arm (product-wrapper Phase 1): one named broker.db behind the
         # same three store Protocols, keyed exactly like the Dynamo items. The
@@ -766,29 +781,13 @@ def build_runtime(
         # Same key surface as the grant store: the intent rows carry an
         # HMAC over their stored frozen-call bytes, verified before any release.
         intent_store = SqliteIntentStore(db_path, hmac_key=hmac_key)
+        sqlite_intent_store = intent_store
         # The grant space is the checker's. This process reads it and —
         # under BROKER_GRANT_LOAD=read, the deployed mode — never writes it, so
         # it takes the same read-only mount the maker does. `seed` mode still
         # writes, and would refuse loudly on a read-only mount rather than
         # silently seeding nothing.
         grant_store = SqliteGrantStore(hmac_key=hmac_key, **sqlite_grants_open_options())
-        # Bounded-lag privacy sweep, NOT correctness: DynamoDB gets
-        # expired-item deletion from its TTL daemon; sqlite has no daemon, so
-        # the boot sweep is where an expired intent's payload stops lingering
-        # at rest. approve() still checks each intent's expiry predicate at
-        # use, swept or not — a failed sweep can never widen authority, so it
-        # logs and continues rather than failing the boot.
-        try:
-            swept = intent_store.sweep_expired()
-            if swept:
-                print(f"[broker] swept {swept} expired intent(s) from {db_path}")
-        except Exception:  # noqa: BLE001 — hygiene must never block the boot
-            logger.warning(
-                "expired-intent sweep failed on %s; continuing (expiry is a "
-                "predicate at use, so unswept rows cannot widen authority)",
-                db_path,
-                exc_info=True,
-            )
         store_label = f"sqlite ({db_path})"
     elif is_dynamo_arm():
         from safe_agents.broker.approval import DynamoIntentStore  # noqa: PLC0415
@@ -982,8 +981,47 @@ def build_runtime(
         # disagree about which pool bounds the call. None disables the pool, so a
         # deployment that does not delegate is unchanged.
         sub_grant_store=sub_grant_store,
+        on_approval_alarm=on_approval_alarm,
     )
+    if sqlite_intent_store is not None:
+        _boot_sweep_sqlite_intents(runtime, sqlite_intent_store)
     return runtime, sink
+
+
+def _boot_sweep_sqlite_intents(runtime: BrokerRuntime, intent_store) -> None:
+    """The sqlite arm's boot sweep: record expiries first, then delete resolved rows.
+
+    Order is the point (#163). The runtime's expiry sweep moves every hold that
+    expired undecided to "expired" and writes its audit record; only then does the
+    store's privacy delete run, and that delete keeps a pending row for a grace
+    period past its expiry. The reverse order would delete an undecided hold with
+    nothing on the tape.
+
+    Neither step can widen authority (expiry is a predicate at use, swept or not),
+    so a failure in either logs and the boot continues.
+    """
+    try:
+        recorded = runtime.sweep_expired_intents()
+        if recorded:
+            print(f"[broker] recorded {recorded} approval(s) that expired undecided")
+    except Exception:  # noqa: BLE001 — a missed pass delays a record, never gates
+        logger.warning(
+            "expired-approval sweep failed at boot; continuing (expiry is a "
+            "predicate at use, and the next scheduled sweep retries)",
+            exc_info=True,
+        )
+    # Bounded-lag privacy sweep, NOT correctness: an expired intent's payload
+    # stops lingering at rest. DynamoDB's time-to-live does this there.
+    try:
+        swept = intent_store.sweep_expired()
+        if swept:
+            print(f"[broker] swept {swept} resolved expired intent row(s)")
+    except Exception:  # noqa: BLE001 — hygiene must never block the boot
+        logger.warning(
+            "expired-intent sweep failed; continuing (expiry is a "
+            "predicate at use, so unswept rows cannot widen authority)",
+            exc_info=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1143,6 +1181,24 @@ class _Handler(BaseHTTPRequestHandler):
         print(f"[broker] {self.address_string()} {fmt % args}")
 
 
+class _SweepingHTTPServer(HTTPServer):
+    """The single-threaded /call server, plus the expiry sweep on a schedule (#163).
+
+    ``serve_forever`` calls ``service_actions`` on its own loop between requests,
+    on the thread that serves them, so the sweep is serialized with every /call
+    exactly as the runtime requires (see ``main``). The sweeper's first pass runs
+    on the first loop, so a hold that expired while the broker was down is
+    recorded at startup on every store arm.
+    """
+
+    def __init__(self, server_address, handler, *, sweeper: ExpirySweeper) -> None:
+        super().__init__(server_address, handler)
+        self._sweeper = sweeper
+
+    def service_actions(self) -> None:
+        self._sweeper.maybe_sweep()
+
+
 def main() -> None:
     runtime, _ = _server_runtime()  # build (and fail) at startup, not first request
     host = os.environ.get("BROKER_HOST", "127.0.0.1")
@@ -1170,7 +1226,9 @@ def main() -> None:
     # So do not restore threading to regain concurrency. Concurrent /call needs
     # per-session turn isolation in the PEP first (tracked in docs/turn-identity.md);
     # until that exists, serialized requests are what the runtime actually promises.
-    srv = HTTPServer((host, port), _Handler)
+    srv = _SweepingHTTPServer(
+        (host, port), _Handler, sweeper=ExpirySweeper(runtime.sweep_expired_intents)
+    )
     print(f"[broker] tool-call API on http://{host}:{port}  (registry: {len(runtime.served_registry())} ops)")
     print("[broker] try:  python3 -m safe_agents.broker.prototype.fake_agent")
 

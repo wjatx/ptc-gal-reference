@@ -222,7 +222,10 @@ def test_reject_non_win_writes_no_record(setup):
     result = runtime.reject_intent(intent_id, _OWNER)
 
     assert result.rejection_reason != REJECTED_BY_OWNER_REASON
-    assert sink.records() == before
+    # No rejection record on any of these. A late "no" on a hold past its expiry
+    # writes the hold's one EXPIRY record instead (#163), never a rejection.
+    written = [r.outcome for r in sink.records()[len(before):]]
+    assert written == (["expired"] if setup is _reject_expired else [])
 
 
 def test_reject_with_failed_label_write_still_records_without_bucket():

@@ -1,5 +1,11 @@
 import { Duration, Stack } from 'aws-cdk-lib';
-import { AttributeType, BillingMode, Table, TableEncryption } from 'aws-cdk-lib/aws-dynamodb';
+import {
+  AttributeType,
+  BillingMode,
+  ProjectionType,
+  Table,
+  TableEncryption,
+} from 'aws-cdk-lib/aws-dynamodb';
 import { Key } from 'aws-cdk-lib/aws-kms';
 import { BlockPublicAccess, Bucket, BucketEncryption, ObjectLockRetention } from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
@@ -65,7 +71,8 @@ export class StateStack extends Stack {
     //
     //   grants:   pk = "GRANT#<principal>"  sk = "CLASS#<actionClass>"
     //   counters: pk = "COUNTER#|IDEM#|LEDGER#<key>"  sk = "v0"
-    //   intents:  pk = "INTENT#<id>"  sk = "v0"  (+ a `ttl` attribute for auto-expiry)
+    //   intents:  pk = "INTENT#<id>"  sk = "v0"  (+ a `ttl` attribute for auto-expiry, and
+    //             the sparse `pending-by-principal` index the expiry sweep queries, #163)
     //   agent-runs: PK=agentId, SK=runId — the AGENT's run record (not a broker store), so it
     //               keeps its own domain schema (RUNNER-CONTRACT element 5).
     //   channel-dedupe: pk = dedupe_pk (+ a `ttl` attribute for dedupe-window auto-expiry) — the
@@ -125,6 +132,19 @@ export class StateStack extends Stack {
       encryption: TableEncryption.CUSTOMER_MANAGED,
       encryptionKey: tablesKey,
       removalPolicy: removalPolicyFor(env),
+    });
+    // #163: an approval that expires undecided is an EVENT the broker records, and time-to-live
+    // deletes a row with no hook. So the broker sweeps: a Query per principal on this sparse index
+    // (the two attributes exist only while an intent is pending) returns the holds whose expiry
+    // has passed, without the Scan no acting role holds. A pending row's ttl sits a grace period
+    // past its expiry, so the sweep records the expiry before the row can go. Keys only: the
+    // sweep reads each candidate through the store's verify-then-parse GetItem. The broker and
+    // drain roles already hold dynamodb:Query on `${intentsTableArn}/index/*`.
+    intentsTable.addGlobalSecondaryIndex({
+      indexName: 'pending-by-principal',
+      partitionKey: { name: 'pendingPrincipal', type: AttributeType.STRING },
+      sortKey: { name: 'pendingExpiry', type: AttributeType.NUMBER },
+      projectionType: ProjectionType.KEYS_ONLY,
     });
 
     const agentRunsTable = new Table(this, 'AgentRunsTable', {

@@ -492,6 +492,51 @@ class TestTheLauncherInProcess:
         assert "WARNING: bound to 192.0.2.7, which is not loopback" in err
         assert err.index("tool-event mouth on") < err.index("WARNING")
 
+    @pytest.mark.parametrize("transport", ["stdio", "streamable-http"])
+    def test_the_expiry_sweep_rides_with_the_mouths_over_their_one_surface(
+        self, launch, monkeypatch, transport
+    ) -> None:
+        """#163: the gateway is the long-lived host of the local store arm, so it
+        sweeps for expired holds on a schedule, not only at boot. The sweep task is
+        served beside the mouths, through the serialized surface they share, and the
+        runtime's sweep actually runs through it."""
+        if transport != "stdio":
+            monkeypatch.setenv(TRANSPORT_ENV, transport)
+            monkeypatch.setenv(PORT_ENV, "0")
+        tasks: list[launcher.SweepTask] = []
+        sweeps: list[int] = []
+        real_task, real_sweep = launcher.SweepTask, GatewaySurface.sweep_expired_intents
+
+        class _RecordedSweepTask(real_task):
+            def __init__(self, surface, **kwargs) -> None:
+                super().__init__(surface, **kwargs)
+                self.surface = surface
+                tasks.append(self)
+
+        def recorded_sweep(surface) -> int:
+            sweeps.append(1)
+            return real_sweep(surface)
+
+        async def serve_until_swept(mouth) -> None:
+            deadline = asyncio.get_running_loop().time() + _STOP_WAIT_S
+            while not sweeps:
+                if asyncio.get_running_loop().time() > deadline:
+                    raise AssertionError(
+                        f"the gateway ran no expiry sweep within {_STOP_WAIT_S}s of serving"
+                    )
+                await asyncio.sleep(0.01)
+
+        monkeypatch.setattr(launcher, "SweepTask", _RecordedSweepTask)
+        monkeypatch.setattr(GatewaySurface, "sweep_expired_intents", recorded_sweep)
+        monkeypatch.setattr(_FakeMouth, "serve", serve_until_swept)
+        launcher.main()
+        assert len(tasks) == 1, "the gateway serves no expiry sweep beside its mouths"
+        assert all(m.surface is tasks[0].surface for m in _FakeMouth.made), (
+            "the expiry sweep must enter the runtime through the mouths' one serialized surface"
+        )
+        assert isinstance(tasks[0].surface, SerializedSurface)
+        assert sweeps == [1]
+
 
 async def _returns(self) -> None:
     return None

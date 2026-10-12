@@ -40,6 +40,15 @@ REJECTED_BY_OWNER_REASON = "rejected by owner"
 # release (#9). Callers key on it the way they key on REJECTED_BY_OWNER_REASON.
 RELEASE_REFUSED_REASON_PREFIX = "release refused"
 
+# The rejection_reason approve() and reject() return for an intent past its expiry.
+INTENT_EXPIRED_REASON = "intent expired"
+
+# How long a held approval waits for a human before it expires. ONE fixed period
+# (PTC §6.12): it never shortens as the queue grows, because a period that shrank
+# under load would be shedding by another trigger. Nothing derives it from queue
+# depth, the flood alarm, or any counter; the runtime passes this constant.
+DEFAULT_APPROVAL_EXPIRY_SECONDS = 3600
+
 
 class ReleaseRefusedError(Exception):
     """The release executor refused to run the approved call (#9).
@@ -97,6 +106,23 @@ def _is_expired(expiry: str, now: datetime) -> bool:
     return now >= expiry_dt
 
 
+def _expired_result(intent_id: str, store: IntentStore) -> ExecutionResult:
+    """Refuse an intent past its expiry, claiming the pending→expired transition.
+
+    ``expired_by_this_call`` is True only when THIS call won the compare-and-set,
+    which is the caller's cue to write the one expiry record. A loser (the sweep,
+    or another late action, already expired it; or the intent was resolved some
+    other way first) refuses the same way and writes nothing.
+    """
+    won = store.transition_status(intent_id, "pending", "expired")
+    return ExecutionResult(
+        intent_id=intent_id,
+        executed=False,
+        rejection_reason=INTENT_EXPIRED_REASON,
+        expired_by_this_call=won,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public entry points
 # ---------------------------------------------------------------------------
@@ -108,7 +134,7 @@ def materialize(
     store: IntentStore,
     notifier: Callable[[NotifierEvent], None] | None = None,
     *,
-    expiry_seconds: int = 3600,
+    expiry_seconds: int = DEFAULT_APPROVAL_EXPIRY_SECONDS,
     dedup_id: str | None = None,
     now: datetime | None = None,
 ) -> ApprovalResult:
@@ -136,8 +162,9 @@ def materialize(
         carrying renderedForHuman. Channel-specific delivery belongs in channels/.
         Pass None to skip notification (e.g., in tests that check only persistence).
     expiry_seconds:
-        How long before the intent auto-denies (defaults to 3600 s = 1 hour).
-        Unactioned intents become expired at this TTL; approve() rejects them.
+        How long before the intent expires undecided (defaults to
+        DEFAULT_APPROVAL_EXPIRY_SECONDS = 1 hour). An expired intent never
+        executes; the runtime records its expiry as an event (#163).
     dedup_id:
         Optional content-derived intent id (approval-queue dedup). When
         supplied, the Intent is held under THIS id instead of the PDP's ts-based
@@ -234,8 +261,10 @@ def approve(
     Two concurrent approval attempts on the same intent cannot both succeed: the
     transition_status() call is a compare-and-set that only one caller can win.
 
-    Unactioned intents auto-deny at expiry. The check happens at call time; DynamoDB
-    TTL may have already removed the item before this is called in production.
+    An intent past its expiry never executes. The check happens at call time on
+    the verified intent; the runtime's expiry sweep normally reaches it first and
+    records the expiry (#163), and the DynamoDB time-to-live removes the row only a
+    grace period after that.
 
     Parameters
     ----------
@@ -283,17 +312,12 @@ def approve(
             rejection_reason="intent not found",
         )
 
-    # Check expiry before claiming the intent. Unactioned intents auto-deny at expiry;
-    # this mirrors the DynamoDB TTL that removes expired items in production.
+    # Check expiry before claiming the intent. An intent past its expiry never
+    # executes. The pending→expired transition is a compare-and-set shared with the
+    # runtime's expiry sweep, so exactly one of them wins it, and the winner is the
+    # one that writes the expiry's audit record (#163).
     if _is_expired(intent.expiry, evaluated_at):
-        # Best-effort status update; may race with another caller but that is fine —
-        # both will refuse to execute, which is the correct outcome.
-        store.transition_status(intent_id, "pending", "expired")
-        return ExecutionResult(
-            intent_id=intent_id,
-            executed=False,
-            rejection_reason="intent expired",
-        )
+        return _expired_result(intent_id, store)
 
     # Atomically claim the approval slot. Only one concurrent caller can win.
     transitioned = store.transition_status(
@@ -341,6 +365,21 @@ def approve(
         executed=True,
         result=result,
     )
+
+
+def expire_if_due(intent: Intent, store: IntentStore, *, now: datetime) -> bool:
+    """Expire a pending intent whose expiry is at or before ``now``; True iff this call did.
+
+    The expiry sweep's transition (#163). ``intent`` must be a VERIFIED read
+    (get_intent's verify-then-parse) and the caller has already checked it is its
+    own; this judges status and expiry on those verified bytes and nothing else,
+    never on the index attributes that nominated it. The compare-and-set is the
+    same one approve() and reject() take, so one record per intent holds however
+    a late human action and a sweep interleave.
+    """
+    if intent.status != "pending" or not _is_expired(intent.expiry, now):
+        return False
+    return store.transition_status(intent.id, "pending", "expired")
 
 
 def reject(
@@ -391,15 +430,11 @@ def reject(
             rejection_reason="intent not found",
         )
 
-    # Symmetric with approve(): an already-expired intent has auto-denied; report
-    # that rather than flipping it to "rejected".
+    # Symmetric with approve(): an intent past its expiry expired undecided; report
+    # that rather than flipping it to "rejected". A late "no" is not a human
+    # denial on the record (#163).
     if _is_expired(intent.expiry, evaluated_at):
-        store.transition_status(intent_id, "pending", "expired")
-        return ExecutionResult(
-            intent_id=intent_id,
-            executed=False,
-            rejection_reason="intent expired",
-        )
+        return _expired_result(intent_id, store)
 
     # Atomically claim the intent for rejection. Only one concurrent caller wins;
     # a non-pending intent (already approved/executed/rejected/expired) refuses.

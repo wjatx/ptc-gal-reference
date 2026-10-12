@@ -35,9 +35,13 @@ import hashlib
 import hmac as _hmac
 import json
 import threading
-from typing import Mapping, Protocol, runtime_checkable
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Mapping, Protocol, runtime_checkable
 
 from safe_agents.broker.schemas import BrokeredCall, Intent
+
+if TYPE_CHECKING:
+    from safe_agents.broker.schemas.common import Principal
 
 # How long an EXECUTED intent is retained past its approval-window TTL (evidence labeling).
 # A pending intent's TTL is the short approval window; once it executes, the item must
@@ -54,6 +58,71 @@ EXECUTED_INTENT_RETENTION_DAYS = 7
 # dedup path re-holds identical content under the same id once the
 # earlier hold has resolved.
 PENDING_STATUS = "pending"
+
+# The expiry sweep's index (#163). An undecided hold that expires is an EVENT the
+# broker records, so the sweep has to find pending intents whose expiry has passed
+# without a table scan (no acting role holds dynamodb:Scan). Every backend carries
+# the same two item-level attributes while, and only while, an intent is pending:
+# the owning principal's key and the expiry as epoch seconds. On DynamoDB they are
+# the keys of a sparse global secondary index, so a Query per principal returns
+# exactly the expiry candidates; a transition out of pending removes them, which
+# drops the row from the index. They sit OUTSIDE the HMAC basis, like status:
+# the sweep treats what they return as candidates only and verify-then-parses
+# each one before acting on it.
+PENDING_INDEX_NAME = "pending-by-principal"
+PENDING_PRINCIPAL_ATTR = "pendingPrincipal"
+PENDING_EXPIRY_ATTR = "pendingExpiry"
+
+# How long a PENDING intent's DynamoDB time-to-live outlasts its expiry (#163).
+# Time-to-live deletes a row with no hook, so a ttl at the expiry instant could
+# remove an undecided hold before the sweep records its expiry, and the tape would
+# show a hold followed by nothing. The grace is how long a broker can be down and
+# still record every expiry when it comes back. The same retention the executed
+# path uses, for the same reason: a record has to be writable before the row goes.
+PENDING_TTL_GRACE_DAYS = EXECUTED_INTENT_RETENTION_DAYS
+
+
+def principal_index_key(principal: "Principal") -> str:
+    """The pending index's partition value for one principal.
+
+    The same agentId#skill#user#tier tuple scoped_counter_key and dedup_intent_id
+    key on, so the sweep of one runtime only ever sees its own principal's holds.
+    """
+    return f"{principal.agentId}#{principal.skill}#{principal.user}#{principal.tier}"
+
+
+def expiry_epoch(expiry: str) -> int:
+    """An ISO-8601 expiry as whole epoch seconds, rounded DOWN.
+
+    Rounding down keeps the index a superset: an intent whose expiry is at or
+    before ``now`` always has ``expiry_epoch(expiry) <= floor(now)``. The sweep
+    re-checks the exact instant on the verified intent, so a candidate expiring
+    later inside the same second is simply skipped until the next pass. A
+    tz-naive expiry is UTC.
+    """
+    dt = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() // 1)
+
+
+def _now_epoch(now: datetime) -> int:
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    return int(now.timestamp() // 1)
+
+
+def _is_expiry_candidate(attrs: Mapping, principal_key: str, now_epoch: int) -> bool:
+    """Shared candidate filter over the unauthenticated index attributes."""
+    if attrs.get("status") != PENDING_STATUS:
+        return False
+    if attrs.get(PENDING_PRINCIPAL_ATTR) != principal_key:
+        return False
+    stored = attrs.get(PENDING_EXPIRY_ATTR)
+    try:
+        return int(stored) <= now_epoch
+    except (TypeError, ValueError):
+        return False
 
 
 class IntentAlreadyPendingError(Exception):
@@ -136,6 +205,12 @@ def intent_item_attrs(intent: Intent, hmac_key: bytes) -> dict:
         "intentHash": _hmac_payload(payload, hmac_key),
         "status": intent.status,
     }
+    if intent.status == PENDING_STATUS:
+        # The expiry sweep's index attributes (#163), present only while pending.
+        attrs[PENDING_PRINCIPAL_ATTR] = principal_index_key(
+            intent.materializedRequest.principal
+        )
+        attrs[PENDING_EXPIRY_ATTR] = expiry_epoch(intent.expiry)
     if intent.approvedBy is not None:
         attrs["approvedBy"] = intent.approvedBy
     if intent.executedAt is not None:
@@ -232,6 +307,23 @@ class IntentStore(Protocol):
         executedAt field and (in the durable store) the item TTL is extended to now +
         EXECUTED_INTENT_RETENTION_DAYS so the executed intent stays flaggable past its
         short approval window.
+
+        A transition OUT of pending removes the pending index attributes, so an
+        intent stops being an expiry candidate the moment anything resolves it.
+        """
+        ...
+
+    def expired_pending_candidates(self, principal_key: str, now: datetime) -> list[str]:
+        """Ids of this principal's pending intents whose expiry is at or before ``now``.
+
+        The expiry sweep's read (#163). Answered from the pending index
+        attributes alone, which are outside the HMAC basis, so the result is a
+        list of CANDIDATES: the caller reads each through get_intent
+        (verify-then-parse) and re-checks status, owner and expiry on the
+        verified intent before it acts. Never a DynamoDB Scan: on DynamoDB it is
+        a Query on the sparse pending index. The sqlite and in-memory backends,
+        which have no IAM boundary to respect, read every intent row's index
+        attributes and filter in process.
         """
         ...
 
@@ -308,8 +400,22 @@ class InMemoryIntentStore:
             # still records so /flag day-derivation matches production.
             if executed_at is not None:
                 update["executedAt"] = executed_at
-            self._items[intent_id] = {**item, **update}
+            merged = {**item, **update}
+            if new_status != PENDING_STATUS:
+                merged.pop(PENDING_PRINCIPAL_ATTR, None)
+                merged.pop(PENDING_EXPIRY_ATTR, None)
+            self._items[intent_id] = merged
             return True
+
+    def expired_pending_candidates(self, principal_key: str, now: datetime) -> list[str]:
+        now_epoch = _now_epoch(now)
+        with self._registry_lock:
+            snapshot = list(self._items.items())
+        return [
+            intent_id
+            for intent_id, item in snapshot
+            if _is_expiry_candidate(item, principal_key, now_epoch)
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +439,10 @@ class DynamoIntentStore:
         intentHash = str           (HMAC-SHA-256 over the exact stored data bytes)
         status = str               ("pending" | "approved" | "rejected" | "expired" |
                                     "executed" | "refused")
-        ttl = int                  (epoch seconds — DynamoDB TTL attribute for auto-expiry)
+        ttl = int                  (epoch seconds — DynamoDB TTL attribute; expiry + a grace
+                                    while pending so the expiry sweep records first, #163)
+        pendingPrincipal = str     (only while pending — the sparse expiry index's key)
+        pendingExpiry = int        (only while pending — expiry epoch, the index's sort key)
         approvedBy = str | absent
         executedAt = str | absent
 
@@ -356,13 +465,14 @@ class DynamoIntentStore:
         return self.__table
 
     def put_intent(self, intent: Intent) -> None:
-        from datetime import datetime  # noqa: PLC0415
-
         from botocore.exceptions import ClientError  # noqa: PLC0415
 
-        # Compute epoch seconds from the ISO-8601 expiry for DynamoDB TTL.
-        expiry_dt = datetime.fromisoformat(intent.expiry.replace("Z", "+00:00"))
-        ttl = int(expiry_dt.timestamp())
+        # Epoch seconds for the DynamoDB time-to-live. A pending intent's ttl is its
+        # expiry PLUS a grace (#163): the daemon deletes with no hook, and the
+        # expiry sweep must record the expiry before the row can go.
+        ttl = expiry_epoch(intent.expiry)
+        if intent.status == PENDING_STATUS:
+            ttl += int(timedelta(days=PENDING_TTL_GRACE_DAYS).total_seconds())
 
         item: dict = {
             "pk": f"INTENT#{intent.id}",
@@ -403,8 +513,6 @@ class DynamoIntentStore:
         approved_by: str | None = None,
         executed_at: str | None = None,
     ) -> bool:
-        from datetime import datetime, timedelta, timezone  # noqa: PLC0415
-
         from botocore.exceptions import ClientError  # noqa: PLC0415
 
         update_expression = "SET #status = :new_status"
@@ -434,6 +542,11 @@ class DynamoIntentStore:
             expr_names["#ttl"] = "ttl"
             expr_values[":executed_at"] = executed_at
             expr_values[":new_ttl"] = new_ttl
+        if new_status != PENDING_STATUS:
+            # Leaving pending drops the row from the sparse expiry index (#163).
+            update_expression += " REMOVE #pendingPrincipal, #pendingExpiry"
+            expr_names["#pendingPrincipal"] = PENDING_PRINCIPAL_ATTR
+            expr_names["#pendingExpiry"] = PENDING_EXPIRY_ATTR
 
         try:
             self._table.update_item(
@@ -448,3 +561,24 @@ class DynamoIntentStore:
             if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 return False
             raise
+
+    def expired_pending_candidates(self, principal_key: str, now: datetime) -> list[str]:
+        # A Query on the sparse pending index, never a Scan: the broker role holds
+        # dynamodb:Query on the table's indexes and no acting role holds Scan.
+        from boto3.dynamodb.conditions import Key  # noqa: PLC0415
+
+        condition = Key(PENDING_PRINCIPAL_ATTR).eq(principal_key) & Key(
+            PENDING_EXPIRY_ATTR
+        ).lte(_now_epoch(now))
+        ids: list[str] = []
+        kwargs: dict = {"IndexName": PENDING_INDEX_NAME, "KeyConditionExpression": condition}
+        while True:
+            resp = self._table.query(**kwargs)
+            for item in resp.get("Items", []):
+                pk = item.get("pk", "")
+                if isinstance(pk, str) and pk.startswith("INTENT#"):
+                    ids.append(pk[len("INTENT#"):])
+            last = resp.get("LastEvaluatedKey")
+            if not last:
+                return ids
+            kwargs["ExclusiveStartKey"] = last

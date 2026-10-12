@@ -136,7 +136,8 @@ model could not." (`tool-broker-sketch.md` §"Capability removal"; **Pillar 2**.
 3. A separate notifier pushes the *materialized* intent (`renderedForHuman`) to the human's channel.
 4. The human approves through a path authenticated to **them, not the agent**. On approval the
    broker executes the **stored `materializedRequest`** — never anything the agent re-sends.
-5. Unapproved intents auto-deny at expiry; the `Intent.status` moves to `expired`.
+5. An intent nobody decides expires: the `Intent.status` moves to `expired` and the broker writes an
+   `expired` audit record, told apart from a human's `rejected` (#163). An expired intent never runs.
 
 The load-bearing property is **what-you-see-is-what-executes**: the human approves the bytes the
 broker will actually send, not a summary the agent wrote. A compromised agent can stage a

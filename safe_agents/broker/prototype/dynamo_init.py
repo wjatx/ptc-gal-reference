@@ -9,6 +9,45 @@ from __future__ import annotations
 import os
 import time
 
+from safe_agents.broker.approval.store import (
+    PENDING_EXPIRY_ATTR,
+    PENDING_INDEX_NAME,
+    PENDING_PRINCIPAL_ATTR,
+)
+
+
+_PENDING_INDEX_ATTRS = [
+    {"AttributeName": PENDING_PRINCIPAL_ATTR, "AttributeType": "S"},
+    {"AttributeName": PENDING_EXPIRY_ATTR, "AttributeType": "N"},
+]
+_PENDING_INDEX = {
+    "IndexName": PENDING_INDEX_NAME,
+    "KeySchema": [
+        {"AttributeName": PENDING_PRINCIPAL_ATTR, "KeyType": "HASH"},
+        {"AttributeName": PENDING_EXPIRY_ATTR, "KeyType": "RANGE"},
+    ],
+    "Projection": {"ProjectionType": "KEYS_ONLY"},
+}
+
+
+def _ensure_pending_index(ddb, table: str) -> int:
+    """Add the expiry sweep's index to a table created before it existed (#163).
+
+    Without it the broker's sweep Query fails, which it logs and survives, and no
+    expiry is recorded until a late approve or reject finds one.
+    """
+    described = ddb.describe_table(TableName=table)["Table"]
+    names = {i["IndexName"] for i in described.get("GlobalSecondaryIndexes", [])}
+    if PENDING_INDEX_NAME in names:
+        return 0
+    ddb.update_table(
+        TableName=table,
+        AttributeDefinitions=_PENDING_INDEX_ATTRS,
+        GlobalSecondaryIndexUpdates=[{"Create": _PENDING_INDEX}],
+    )
+    print(f"[dynamo-init] added index {PENDING_INDEX_NAME!r} to {table!r}", flush=True)
+    return 0
+
 
 def main() -> int:
     import boto3  # noqa: PLC0415
@@ -29,7 +68,7 @@ def main() -> int:
 
     if table in existing:
         print(f"[dynamo-init] table {table!r} already exists", flush=True)
-        return 0
+        return _ensure_pending_index(ddb, table)
 
     ddb.create_table(
         TableName=table,
@@ -40,7 +79,10 @@ def main() -> int:
         AttributeDefinitions=[
             {"AttributeName": "pk", "AttributeType": "S"},
             {"AttributeName": "sk", "AttributeType": "S"},
+            *_PENDING_INDEX_ATTRS,
         ],
+        # The expiry sweep's sparse index (#163), as infra/lib/state-stack.ts declares it.
+        GlobalSecondaryIndexes=[_PENDING_INDEX],
         BillingMode="PAY_PER_REQUEST",
     )
     ddb.get_waiter("table_exists").wait(TableName=table)
@@ -52,7 +94,11 @@ def main() -> int:
         )
     except Exception:  # noqa: BLE001 — TTL is optional locally
         pass
-    print(f"[dynamo-init] created table {table!r} (pk/sk, PAY_PER_REQUEST, TTL=ttl)", flush=True)
+    print(
+        f"[dynamo-init] created table {table!r} (pk/sk, PAY_PER_REQUEST, TTL=ttl, "
+        f"index {PENDING_INDEX_NAME})",
+        flush=True,
+    )
     return 0
 
 

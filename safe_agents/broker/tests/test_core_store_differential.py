@@ -36,10 +36,16 @@ import pytest
 from safe_agents.broker.approval.sqlite_store import SqliteIntentStore
 from safe_agents.broker.approval.store import (
     EXECUTED_INTENT_RETENTION_DAYS,
+    PENDING_EXPIRY_ATTR,
+    PENDING_INDEX_NAME,
+    PENDING_PRINCIPAL_ATTR,
+    PENDING_TTL_GRACE_DAYS,
     InMemoryIntentStore,
     IntentAlreadyPendingError,
     QuarantinedIntentError,
     canonical_intent_payload,
+    expiry_epoch,
+    principal_index_key,
 )
 from safe_agents.broker.enforcement.sqlite_store import SqliteEnforcementStore
 from safe_agents.broker.enforcement.store import InMemoryStore
@@ -172,6 +178,19 @@ def _moto_table(table_name: str):
             AttributeDefinitions=[
                 {"AttributeName": "pk", "AttributeType": "S"},
                 {"AttributeName": "sk", "AttributeType": "S"},
+                {"AttributeName": PENDING_PRINCIPAL_ATTR, "AttributeType": "S"},
+                {"AttributeName": PENDING_EXPIRY_ATTR, "AttributeType": "N"},
+            ],
+            # The expiry sweep's sparse index (#163), as the CDK StateStack declares it.
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": PENDING_INDEX_NAME,
+                    "KeySchema": [
+                        {"AttributeName": PENDING_PRINCIPAL_ATTR, "KeyType": "HASH"},
+                        {"AttributeName": PENDING_EXPIRY_ATTR, "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "KEYS_ONLY"},
+                }
             ],
             BillingMode="PAY_PER_REQUEST",
         )
@@ -743,6 +762,74 @@ class TestIntentConformance:
         assert intent_backend.raw_expires_at("intent-1") == before
 
 
+class TestExpiryCandidates:
+    """#163: the expiry sweep's candidate read, identical on every backend.
+
+    Answered from the pending index attributes alone (never a scan, never the
+    HMAC'd payload); the runtime verifies each candidate before acting.
+    """
+
+    PAST = "2020-01-01T00:00:00Z"
+    AT = datetime(2026, 7, 25, 12, 0, 0, tzinfo=UTC)
+
+    def _key(self) -> str:
+        return principal_index_key(PRINCIPAL)
+
+    def test_expired_pending_is_a_candidate_for_its_own_principal_only(self, intent_backend):
+        store = intent_backend.store
+        store.put_intent(make_intent("old", expiry=self.PAST))
+        store.put_intent(make_intent("live", expiry=EXPIRY))
+        assert store.expired_pending_candidates(self._key(), self.AT) == ["old"]
+        other = principal_index_key(PRINCIPAL.model_copy(update={"user": "someone-else"}))
+        assert store.expired_pending_candidates(other, self.AT) == []
+
+    @pytest.mark.parametrize(
+        "offset_s, expected", [(-1, []), (0, ["edge"]), (1, ["edge"])]
+    )
+    def test_boundary_is_inclusive(self, intent_backend, offset_s, expected):
+        store = intent_backend.store
+        store.put_intent(make_intent("edge", expiry="2026-07-25T12:00:00Z"))
+        at = self.AT + timedelta(seconds=offset_s)
+        assert store.expired_pending_candidates(self._key(), at) == expected
+
+    @pytest.mark.parametrize("resolved", sorted(["approved", "rejected", "expired", "executed", "refused"]))
+    def test_resolving_ends_candidacy(self, intent_backend, resolved):
+        store = intent_backend.store
+        store.put_intent(make_intent("old", expiry=self.PAST))
+        for expected, new in RESOLVED_PATHS[resolved]:
+            assert store.transition_status("old", expected, new) is True
+        assert store.expired_pending_candidates(self._key(), self.AT) == []
+
+    def test_index_attrs_present_only_while_pending(self, intent_backend):
+        store = intent_backend.store
+        store.put_intent(make_intent("old", expiry=self.PAST))
+        raw = _raw_intent_attrs(intent_backend, "old")
+        assert raw[PENDING_PRINCIPAL_ATTR] == self._key()
+        assert int(raw[PENDING_EXPIRY_ATTR]) == expiry_epoch(self.PAST)
+        assert store.transition_status("old", "pending", "expired") is True
+        raw = _raw_intent_attrs(intent_backend, "old")
+        assert PENDING_PRINCIPAL_ATTR not in raw and PENDING_EXPIRY_ATTR not in raw
+
+    def test_dynamo_pending_ttl_outlasts_expiry_by_the_grace(self, intent_backend):
+        """Time-to-live deletes with no hook; a pending row's ttl must leave the
+        sweep a grace period to record the expiry first."""
+        if intent_backend.name != "dynamo":
+            pytest.skip("the ttl attribute exists only on dynamo")
+        intent_backend.store.put_intent(make_intent("old", expiry=self.PAST))
+        raw = _raw_intent_attrs(intent_backend, "old")
+        grace = int(timedelta(days=PENDING_TTL_GRACE_DAYS).total_seconds())
+        assert int(raw["ttl"]) == expiry_epoch(self.PAST) + grace
+
+
+def _raw_intent_attrs(backend: "IntentBackend", intent_id: str) -> dict:
+    """The stored item attrs, read past the store API."""
+    if backend.name == "memory":
+        return dict(backend.store._items[intent_id])
+    if backend.name == "sqlite":
+        return _raw_sqlite_item(backend.db_path, f"INTENT#{intent_id}", "v0")
+    return backend.store._table.get_item(Key={"pk": f"INTENT#{intent_id}", "sk": "v0"})["Item"]
+
+
 # Other-call args for the #39 collision cases: a DIFFERENT call under the same id.
 OTHER_ARGS = {"amount": 999, "to": "acct-other"}
 
@@ -954,6 +1041,9 @@ class TestSqliteSweep:
         db = tmp_path / "broker.db"
         store = SqliteIntentStore(db, hmac_key=INTENT_HMAC_KEY)
         store.put_intent(make_intent("expired", expiry="2020-01-01T00:00:00Z"))
+        # Resolved first, as the runtime's expiry sweep does: the privacy delete
+        # keeps a pending row for a grace past its expiry (#163).
+        assert store.transition_status("expired", "pending", "expired") is True
         store.put_intent(make_intent("alive", expiry=EXPIRY))
         self._plant_counter_with_expiry(db)
 
@@ -967,6 +1057,7 @@ class TestSqliteSweep:
         db = tmp_path / "broker.db"
         store = SqliteIntentStore(db, hmac_key=INTENT_HMAC_KEY)
         store.put_intent(make_intent("edge", expiry="2026-07-25T12:00:00Z"))
+        assert store.transition_status("edge", "pending", "expired") is True
         boundary = datetime(2026, 7, 25, 12, 0, 0, tzinfo=UTC)
 
         assert store.sweep_expired(now=boundary - timedelta(seconds=1)) == 0
@@ -978,5 +1069,40 @@ class TestSqliteSweep:
         db = tmp_path / "broker.db"
         store = SqliteIntentStore(db, hmac_key=INTENT_HMAC_KEY)
         store.put_intent(make_intent("expired", expiry="2020-01-01T00:00:00Z"))
+        assert store.transition_status("expired", "pending", "expired") is True
         store.sweep_expired()
         assert _raw_sqlite_item(db, "INTENT#expired", "v0") is None
+
+    @pytest.mark.parametrize("legacy", [False, True], ids=["indexed", "pre-index"])
+    def test_sweep_keeps_a_pending_row_for_the_grace_past_its_expiry(self, tmp_path, legacy):
+        """#163: an undecided hold past its expiry is NOT deleted by the privacy
+        sweep until the grace has passed. Deleting it at its expiry would leave
+        the tape showing a hold followed by nothing; the runtime's expiry sweep
+        records it and resolves it first. The grace still bounds retention for a
+        pending row no sweep will resolve, including one written before the
+        pending index existed (no index attributes), so it never lingers forever."""
+        db = tmp_path / "broker.db"
+        store = SqliteIntentStore(db, hmac_key=INTENT_HMAC_KEY)
+        store.put_intent(make_intent("undecided", expiry="2026-07-25T12:00:00Z"))
+        if legacy:
+            item = _raw_sqlite_item(db, "INTENT#undecided", "v0")
+            item.pop(PENDING_PRINCIPAL_ATTR)
+            item.pop(PENDING_EXPIRY_ATTR)
+            conn = sqlite3.connect(db)
+            with conn:
+                conn.execute(
+                    "UPDATE items SET item = ? WHERE pk = ? AND sk = ?",
+                    (json.dumps(item), "INTENT#undecided", "v0"),
+                )
+            conn.close()
+        expiry = datetime(2026, 7, 25, 12, 0, 0, tzinfo=UTC)
+        grace_ends = expiry + timedelta(days=PENDING_TTL_GRACE_DAYS)
+
+        assert store.sweep_expired(now=grace_ends - timedelta(seconds=1)) == 0, (
+            "the privacy sweep deleted an undecided hold inside its grace"
+        )
+        assert store.get_intent("undecided").status == "pending"
+        assert store.sweep_expired(now=grace_ends + timedelta(seconds=1)) == 1, (
+            "a pending row no sweep resolves outlived its grace"
+        )
+        assert _raw_sqlite_item(db, "INTENT#undecided", "v0") is None

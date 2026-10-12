@@ -26,13 +26,15 @@ _FALLBACK_LOCK = threading.Lock()
 # omitted from the hashed dict, so every pre-receipts record recomputes byte-for-byte,
 # while STRIPPING a present receipt field breaks the chain like any other mutation.
 # actorDigest and evidenceBucket (the owner-verdict receipts, #34 and #134) follow the
-# same rule, so every record written before them still hashes identically.
+# same rule, so every record written before them still hashes identically, and so
+# does expiredAt (the expiry receipt, #163).
 _RECEIPT_FIELDS = (
     "intentId",
     "storedCallDigest",
     "resultDigest",
     "actorDigest",
     "evidenceBucket",
+    "expiredAt",
 )
 
 
@@ -67,6 +69,7 @@ def emit(
     result_digest: str | None = None,
     actor_digest: str | None = None,
     evidence_bucket: str | None = None,
+    expired_at: str | None = None,
 ) -> AuditRecord:
     """Build and append a tamper-evident AuditRecord for one broker decision.
 
@@ -112,6 +115,7 @@ def emit(
             "resultDigest": result_digest,
             "actorDigest": actor_digest,
             "evidenceBucket": evidence_bucket,
+            "expiredAt": expired_at,
             "prevHash": prev_hash,
         }
         record_hash = hash_record(_hashable_fields(record_fields))
@@ -189,6 +193,7 @@ def verify_chain(
             "resultDigest": record.resultDigest,
             "actorDigest": record.actorDigest,
             "evidenceBucket": record.evidenceBucket,
+            "expiredAt": record.expiredAt,
             "prevHash": record.prevHash,
         }
         computed = hash_record(_hashable_fields(record_fields))
