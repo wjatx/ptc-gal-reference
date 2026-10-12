@@ -239,8 +239,12 @@ def intent_from_item(intent_id: str, attrs: Mapping, hmac_key: bytes) -> Intent:
     if stored_hash != expected:
         raise QuarantinedIntentError(
             intent_id,
-            f"HMAC mismatch over stored intent bytes: stored={stored_hash!r} "
-            f"expected={expected!r}",
+            # The reason names the failure and nothing else. The computed HMAC
+            # never leaves this function: it reaches the tape and, on a hold, the
+            # agent's reply, and an HMAC over attacker-written bytes handed back
+            # to the attacker is a chosen-message oracle over the key.
+            "HMAC mismatch over stored intent bytes; the item cannot be verified "
+            "and must not release anything",
         )
     payload = json.loads(data)
     if payload.get("id") != intent_id:
