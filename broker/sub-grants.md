@@ -124,8 +124,9 @@ turn would let planted content in the parent's turn reach an external write thro
 without a hold. So the op that creates the child declares it (`ToolOp.causes_context`, naming the
 child), the broker writes an inheritance record keyed by the child before the op runs, and every
 turn the child's runtime mints ingests the parent turn's sources under a floor the child's trust
-map and `trusted_read_sources` cannot lift. The record lives until the child's sub-grant expires
-when the broker's sub-grant store holds one for it, else for the declaration's horizon.
+map and `trusted_read_sources` cannot lift. The record lives for the declaration's horizon, or
+until the child's sub-grant expires when the broker's sub-grant store holds one for it and it
+expires later.
 
 This dimension is not a field of `SubGrant` and is not computed by `compute_sub_grant`. It is
 carried by the ledger, so it holds for a child with no sub-grant at all, and it is built today

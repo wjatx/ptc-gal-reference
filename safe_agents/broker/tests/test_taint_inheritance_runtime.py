@@ -16,8 +16,10 @@ red:
     write that fails stops the op;
   * the floor: neither the trust map nor ``trusted_read_sources`` lifts an
     inherited source;
-  * the row's lifetime: the sub-grant expiry or the horizon, judged with the
-    skew bound toward more taint.
+  * the row's lifetime: the later of the sub-grant expiry and the horizon,
+    judged with the skew bound toward more taint;
+  * a cause op that is itself an external read: its own source is on the row
+    before it runs, spelled as the self-ingest spells it.
 
 What is not tested, because it is not claimed (``broker/TAINT.md`` §4.1): a
 context the broker never sees created, a target the manifest misdeclares, and
@@ -41,11 +43,12 @@ from safe_agents.broker.runtime.inheritance import (
 )
 from safe_agents.broker.schemas import AgentManifest, InheritanceRecord, Taint, ToolOp
 from safe_agents.broker.schemas.common import Principal
-from safe_agents.broker.taint import InMemoryInheritanceStore
+from safe_agents.broker.taint import InMemoryInheritanceStore, connector_source_id
 
 PARENT = Principal(agentId="planner", skill="plan", user="local-developer", tier="C")
 CHILD = Principal(agentId="worker", skill="run", user="local-developer", tier="C")
 SEARCH_SOURCE = "connector:crm.search"
+BRIEF_SOURCE = "connector:crm.brief"
 HORIZON = 3600
 STANDING_REASON = "tainted external write"
 T0 = datetime.datetime(2026, 10, 12, 12, 0, tzinfo=datetime.UTC)
@@ -55,6 +58,9 @@ POST = AgentRequest(tool="crm", op="post", args={"body": "x"})
 LAUNCH = AgentRequest(tool="crm", op="launch", args={"task": "t"})
 DISPATCH = AgentRequest(tool="crm", op="dispatch", args={"task": "t"})
 DEFER = AgentRequest(tool="crm", op="defer", args={"task": "t"})
+BRIEF = AgentRequest(tool="crm", op="brief", args={"task": "t"})
+PEEK = AgentRequest(tool="crm", op="peek", args={"task": "t"})
+CAUSE_OPS = ("launch", "dispatch", "brief", "peek")
 
 
 class OfflineConnector:
@@ -63,14 +69,17 @@ class OfflineConnector:
     executed: list[tuple[str, str]] = []
     ledger: InMemoryInheritanceStore | None = None
     rows_at_launch: list[int] = []
+    taint_at_launch: list[list[Taint]] = []
 
     def execute(self, tool: str, op: str, args: Any, credential: str) -> Any:
         OfflineConnector.executed.append((tool, op))
-        if op in ("launch", "dispatch") and OfflineConnector.ledger is not None:
+        if op in CAUSE_OPS and OfflineConnector.ledger is not None:
             # The row must already be stored when the Doer reaches the connector.
-            OfflineConnector.rows_at_launch.append(
-                len(OfflineConnector.ledger.live_records(CHILD, T0))
-            )
+            rows = OfflineConnector.ledger.live_records(CHILD, T0)
+            OfflineConnector.rows_at_launch.append(len(rows))
+            OfflineConnector.taint_at_launch.append([r.taint for r in rows])
+        if isinstance(args, dict) and args.get("fail"):
+            raise ConnectionError("the provider is unreachable")
         return {"ok": op}
 
 
@@ -92,12 +101,16 @@ def _cause(target: Principal | str) -> dict:
     return {"target": t, "horizon_seconds": HORIZON}
 
 
-def _parent_manifest() -> AgentManifest:
+def _parent_manifest(*, trusted: list[str] | None = None) -> AgentManifest:
+    envelope: dict = {"polarity": "abstain", "caps": {"actions_per_run": 25}}
+    if trusted is not None:
+        envelope["trusted_read_sources"] = trusted
     return AgentManifest.model_validate(
         {
             "principal": PARENT.model_dump(),
             "grant_classes": [
                 "crm.search", "crm.post", "crm.launch", "crm.dispatch", "crm.defer",
+                "crm.brief", "crm.peek",
             ],
             "connectors": ["crm"],
             "connector_providers": {"crm": _PROVIDER},
@@ -113,8 +126,14 @@ def _parent_manifest() -> AgentManifest:
                  "reversible": True, "causes_context": _cause(CHILD)},
                 {"tool": "crm", "op": "defer", "effect": "write", "external": False,
                  "reversible": True, "causes_context": _cause("self")},
+                # An external read that causes a context: its own source rides the row.
+                {"tool": "crm", "op": "brief", "effect": "read", "external": True,
+                 "causes_context": _cause(CHILD)},
+                # An internal read that causes a context: it adds nothing.
+                {"tool": "crm", "op": "peek", "effect": "read", "external": False,
+                 "causes_context": _cause(CHILD)},
             ],
-            "envelope": {"polarity": "abstain", "caps": {"actions_per_run": 25}},
+            "envelope": envelope,
         }
     )
 
@@ -174,6 +193,7 @@ def _memory_arm(monkeypatch):
     OfflineConnector.executed = []
     OfflineConnector.ledger = None
     OfflineConnector.rows_at_launch = []
+    OfflineConnector.taint_at_launch = []
 
 
 @pytest.fixture
@@ -224,7 +244,11 @@ def test_the_cause_op_writes_its_row_before_the_doer_and_the_child_is_held(built
     row = rows[0]
     assert row.target == CHILD and row.causingPrincipal == PARENT
     assert row.causingTurnId == turn_id
-    assert row.taint == Taint(tainted=True, sources=[SEARCH_SOURCE])
+    assert row.taint == Taint(tainted=True, sources=[SEARCH_SOURCE]), (
+        f"the row carries {row.taint.sources}, not the causing call's own taint "
+        f"[{SEARCH_SOURCE!r}]: an op that is not an external read added its source, or the "
+        "self-ingest spelled the earlier read's source differently"
+    )
     assert (row.tool, row.op) == ("crm", "launch")
     assert datetime.datetime.fromisoformat(row.notAfter) == T0 + datetime.timedelta(
         seconds=HORIZON
@@ -519,21 +543,161 @@ def _sub_grant(sg_id: str, expiry: datetime.datetime) -> SubGrant:
     )
 
 
-def test_a_child_row_lives_until_the_child_sub_grant_expires(built) -> None:
+@pytest.mark.parametrize(
+    ("sub_grant_minutes", "expected_minutes"),
+    [(10, HORIZON // 60), (120, 120)],
+    ids=["short sub-grant: the horizon", "long sub-grant: its expiry"],
+)
+def test_a_child_row_lives_until_the_later_of_its_sub_grant_and_the_horizon(
+    built, sub_grant_minutes, expected_minutes
+) -> None:
     sub_grants = InMemorySubGrantStore()
-    expiry = T0 + datetime.timedelta(minutes=10)
-    sub_grants.save(_sub_grant("sg-1", expiry))
+    sub_grants.save(_sub_grant("sg-1", T0 + datetime.timedelta(minutes=sub_grant_minutes)))
     store = InMemoryInheritanceStore()
     parent, _ = built(_parent_manifest(), store, sub_grant_store=sub_grants)
+    parent.handle_request(SEARCH)
     parent.handle_request(LAUNCH)
     [row] = store.live_records(CHILD, T0)
-    assert datetime.datetime.fromisoformat(row.notAfter) == expiry
+    expected = T0 + datetime.timedelta(minutes=expected_minutes)
+    assert datetime.datetime.fromisoformat(row.notAfter) == expected, (
+        f"a {sub_grant_minutes}-minute sub-grant against a {HORIZON}s horizon gave notAfter "
+        f"{row.notAfter}: the row's lifetime is not the later of the two"
+    )
+
+    # Just before the later bound the child is still held; at it, it acts clean.
+    clock = Clock(expected - datetime.timedelta(seconds=1))
+    child, _ = built(_child_manifest(), store, clock=clock)
+    assert child.handle_request(POST).decision_kind == "require_approval", (
+        "the child acted clean before the later of its sub-grant expiry and the horizon"
+    )
+    clock.now = expected
+    child.new_turn()
+    assert child.handle_request(POST).decision_kind == "allow"
+
+
+# ---------------------------------------------------------------------------
+# A cause op that is itself an external read passes on its own source
+# ---------------------------------------------------------------------------
+
+
+def test_an_external_read_cause_op_passes_on_its_own_source_before_it_runs(built) -> None:
+    store = InMemoryInheritanceStore()
+    OfflineConnector.ledger = store
+    parent, _ = built(_parent_manifest(), store)
+    assert parent.handle_request(BRIEF).decision_kind == "allow"
+
+    expected = Taint(tainted=True, sources=[BRIEF_SOURCE])
+    [[at_launch]] = OfflineConnector.taint_at_launch
+    misspelled = any("brief" in source for source in at_launch.sources)
+    assert at_launch.sources == [BRIEF_SOURCE], (
+        f"when the connector ran, the stored row named {at_launch.sources}, not "
+        f"[{BRIEF_SOURCE!r}]: "
+        + (
+            "the row spells the read's source differently from connector_source_id"
+            if misspelled
+            else "the read's own source was not on the row before the read ran"
+        )
+    )
+    assert at_launch.tainted is True, (
+        "the row names the read's own source but is not marked tainted"
+    )
+    [row] = store.live_records(CHILD, T0)
+    assert row.taint == expected
+
+    # One spelling: the row's source is the one the self-ingest put on the causing turn.
+    turn_sources = parent.session_turn().to_taint().sources
+    assert turn_sources == row.taint.sources, (
+        f"the self-ingest put {turn_sources} on the causing turn and the row names "
+        f"{row.taint.sources}: the two spell the read's source differently"
+    )
+    assert connector_source_id("crm", "brief") == BRIEF_SOURCE
+
+    child, child_sink = built(_child_manifest(), store)
+    assert child.session_turn().to_taint() == expected
+    assert child.handle_request(POST).decision_kind == "require_approval"
+    assert _held_reason(child_sink, "post") == STANDING_REASON
+
+
+@pytest.mark.parametrize(
+    ("request_", "expected"),
+    [
+        (BRIEF, [SEARCH_SOURCE, BRIEF_SOURCE]),
+        (PEEK, [SEARCH_SOURCE]),
+        (LAUNCH, [SEARCH_SOURCE]),
+    ],
+    ids=["external read: appended", "internal read: nothing", "internal write: nothing"],
+)
+def test_only_an_external_read_adds_its_source_to_the_call_taint(
+    built, request_, expected
+) -> None:
+    store = InMemoryInheritanceStore()
+    _taint_and_launch(built, store, request_)
+    [row] = store.live_records(CHILD, T0)
+    assert row.taint == Taint(tainted=True, sources=expected), (
+        f"crm.{request_.op} wrote {row.taint.sources}, expected {expected}: an op that is "
+        "not an external read added a source, or an external read did not"
+    )
+
+
+@pytest.mark.parametrize("request_", [PEEK, LAUNCH], ids=["internal read", "internal write"])
+def test_an_op_that_is_not_an_external_read_leaves_a_clean_call_clean(built, request_) -> None:
+    store = InMemoryInheritanceStore()
+    parent, _ = built(_parent_manifest(), store)
+    assert parent.handle_request(request_).decision_kind == "allow"
+    [row] = store.live_records(CHILD, T0)
+    assert row.taint == Taint(tainted=False, sources=[]), (
+        f"crm.{request_.op} is not an external read and still tainted its row"
+    )
+
+
+def test_an_external_read_already_on_the_turn_is_not_named_twice(built) -> None:
+    store = InMemoryInheritanceStore()
+    parent, _ = built(_parent_manifest(), store)
+    parent.handle_request(BRIEF)
+    parent.handle_request(BRIEF)
+    rows = store.live_records(CHILD, T0)
+    assert [r.taint.sources for r in rows] == [[BRIEF_SOURCE], [BRIEF_SOURCE]], (
+        "a read whose source the turn already carries named it twice on the row"
+    )
+
+
+def test_a_trusted_external_read_adds_no_source_to_the_row(built) -> None:
+    """A source the consumer's trusted_read_sources names is skipped at the row, as at the self-ingest."""
+    store = InMemoryInheritanceStore()
+    OfflineConnector.ledger = store
+    parent, _ = built(_parent_manifest(trusted=[BRIEF_SOURCE]), store)
+    assert parent.handle_request(BRIEF).decision_kind == "allow"
+    [[at_launch]] = OfflineConnector.taint_at_launch
+    assert at_launch == Taint(tainted=False, sources=[]), (
+        f"the row carried {at_launch} for a read the consumer's trusted_read_sources names: "
+        "the record did not apply the trusted-source skip the self-ingest applies"
+    )
+    child, _ = built(_child_manifest(), store)
+    assert child.handle_request(POST).decision_kind == "allow", (
+        "the child was held on a source the causing runtime's consumer declared trusted"
+    )
+
+
+def test_an_external_read_that_fails_has_still_tainted_the_child(built) -> None:
+    store = InMemoryInheritanceStore()
+    parent, _ = built(_parent_manifest(), store)
+    failing = AgentRequest(tool="crm", op="brief", args={"task": "t", "fail": True})
+    response = parent.handle_request(failing)
+    assert response.execution_outcome == "failed"
+    # The causing turn took no taint from a read that returned nothing ...
+    assert parent.session_turn().to_taint().tainted is False
+    # ... and the child was tainted for nothing, which costs it approvals only.
+    [row] = store.live_records(CHILD, T0)
+    assert row.taint.sources == [BRIEF_SOURCE]
+    child, _ = built(_child_manifest(), store)
+    assert child.handle_request(POST).decision_kind == "require_approval"
 
 
 def test_the_cause_op_entry_is_the_one_in_the_runtime_table() -> None:
     """The test manifest's declarations are what the runtime's table holds."""
     table = ToolOpTable(_parent_manifest().tool_ops)
     assert [(e.tool, e.op) for e in table.cause_entries()] == [
-        ("crm", "launch"), ("crm", "dispatch"), ("crm", "defer"),
+        ("crm", "launch"), ("crm", "dispatch"), ("crm", "defer"), ("crm", "brief"),
+        ("crm", "peek"),
     ]
     assert all(isinstance(e, ToolOp) for e in table.cause_entries())

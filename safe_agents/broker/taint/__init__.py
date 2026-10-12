@@ -38,12 +38,13 @@ from .inheritance import (
     require_inheritance_store,
     resolve_not_after,
 )
-from .propagation import InputTrustMap, build_trust_map
+from .propagation import InputTrustMap, build_trust_map, connector_source_id
 
 __all__ = [
     "TurnContext",
     "InputTrustMap",
     "build_trust_map",
+    "connector_source_id",
     # PTC-51 (#177): the inheritance ledger's store and its writer's helpers.
     # SqliteInheritanceStore lives in .inheritance_sqlite.
     "InheritanceStore",

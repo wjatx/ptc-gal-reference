@@ -276,7 +276,7 @@ interface ToolOp {
   destination_arg?: string         // PTC-52: name of the arg that says where the request goes (e.g. "url")
   causes_context?: {               // PTC-51: running this op creates a context that acts later
     target: "self" | Principal     //   a deferred run of this principal, or a child spelled in full
-    horizon_seconds: number        //   the record's lifetime when no sub-grant to the target exists
+    horizon_seconds: number        //   the record's least lifetime; a later child sub-grant expiry extends it
   }
 }
 // A harness's own tool call is decided at the reserved tool "harness-tool", op "<tool_class>/<locality>":
@@ -352,7 +352,7 @@ interface InheritanceRecord {
   target: Principal          // whose turns inherit: the causing principal for "self", else the child
   causingPrincipal: Principal
   causingTurnId: string      // the broker-minted turn the cause op ran in
-  taint: { tainted: boolean; sources: string[] }   // the causing call's own frozen taint, whole
+  taint: { tainted: boolean; sources: string[] }   // the causing call's frozen taint, plus an external read's own source
   tool: string; op: string   // the op coordinate that caused the context
   issuedAt: string           // ISO-8601 with an offset
   notAfter: string           // ISO-8601 with an offset, later than issuedAt; fixed at write
@@ -361,11 +361,18 @@ interface InheritanceRecord {
 
 - **taint** is copied from the causing call. A call released from an approval hold carries the
   taint the hold froze into its intent, so a released call writes the same record an inline call
-  would. Source ids keep their original spelling; no lineage prefix is added.
-- **notAfter** is resolved by `taint.inheritance.resolve_not_after`: the expiry of the child's
-  sub-grant when the broker's sub-grant store holds one for the target, otherwise `issuedAt` plus
-  the declaration's `horizon_seconds`, and always the latter for `"self"`. A record whose
-  `notAfter` is not after its `issuedAt` is refused, so the write fails and the op does not run.
+  would. Source ids keep their original spelling; no lineage prefix is added. When the cause op is
+  itself an external read (`effect` `read`, `external` true), the record also carries the op's own
+  source, `connector:<tool>.<op>`, spelled by the same `taint.connector_source_id` the PEP's
+  self-ingest uses, and `tainted` is then true. It is written before the read runs, so a read that
+  fails has tainted the target for nothing. Any other op adds nothing.
+- **notAfter** is resolved by `taint.inheritance.resolve_not_after`: `issuedAt` plus the
+  declaration's `horizon_seconds`, or, for a child whose sub-grant the broker's sub-grant store
+  holds, the later of that and the sub-grant's expiry. Taking the later value never shortens a
+  record's life. For `"self"` it is the horizon alone. A sub-grant lookup that finds two rows, or
+  one held by another principal, fails the write and the op does not run. A record whose
+  `notAfter` is not after its `issuedAt` is refused the same way; with a positive horizon the rule
+  above cannot produce one, so that refusal is a backstop.
   A record taints while the reader's instant, less the reader's `clock_skew_seconds`, is before
   `notAfter`, so another broker's clock can only keep it tainting longer.
 - **No hash or signature.** Like every other broker-written row, a record's integrity rests on who

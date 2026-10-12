@@ -39,10 +39,10 @@ class CausesContext(BaseModel):
     manifest declares the op, or a child principal spelled in full. Nothing else
     is accepted, so a typo cannot name a principal nobody runs as.
 
-    ``horizon_seconds`` fixes the record's ``notAfter`` when no sub-grant to the
-    target exists at write time: ``issuedAt`` plus this many seconds. Required on
-    every declaration, so every record's lifetime is known at load. When a
-    sub-grant to a child target exists, its expiry is used instead
+    ``horizon_seconds`` is the consumer's stated exposure window: a record lives
+    at least until ``issuedAt`` plus this many seconds. Required on every
+    declaration, so every record's lifetime is known at load. When a sub-grant to
+    a child target exists and expires later, its expiry is used instead
     (``safe_agents.broker.taint.inheritance.resolve_not_after``).
     """
 

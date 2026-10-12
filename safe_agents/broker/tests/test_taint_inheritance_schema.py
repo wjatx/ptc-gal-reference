@@ -207,23 +207,27 @@ def _sub_grant_for(principal: Principal, ttl_seconds: float = 7200.0):
 
 
 @pytest.mark.parametrize(
-    ("target", "sub_grant_principal", "expected"),
+    ("target", "sub_grant", "expected", "why"),
     [
-        # A deferred own run: the horizon, always.
-        ("self", None, NOW + timedelta(seconds=900)),
-        ("self", CHILD, NOW + timedelta(seconds=900)),
-        # A child with no sub-grant yet: the horizon.
-        (CHILD, None, NOW + timedelta(seconds=900)),
-        # A child with a sub-grant: the sub-grant's expiry.
-        (CHILD, CHILD, NOW + timedelta(seconds=7200)),
+        ("self", None, 900, "a deferred own run lives for the horizon"),
+        ("self", (CHILD, 7200), 900, "a 'self' target ignores any sub-grant"),
+        (CHILD, None, 900, "a child with no sub-grant lives for the horizon"),
+        (CHILD, (CHILD, 7200), 7200, "a sub-grant expiring after the horizon extends the record"),
+        (CHILD, (CHILD, 300), 900, "a sub-grant expiring before the horizon cannot shorten it"),
     ],
+    ids=["self", "self-ignores-sub-grant", "child-no-sub-grant", "sub-grant-later",
+         "horizon-later"],
 )
-def test_not_after_is_the_sub_grant_expiry_for_a_child_else_the_horizon(
-    target, sub_grant_principal, expected
+def test_not_after_is_the_later_of_the_sub_grant_expiry_and_the_horizon(
+    target, sub_grant, expected, why
 ) -> None:
     decl = CausesContext(target=target, horizon_seconds=900)
-    sub_grant = _sub_grant_for(sub_grant_principal) if sub_grant_principal else None
-    assert resolve_not_after(decl, issued_at=NOW, sub_grant=sub_grant) == expected
+    held = _sub_grant_for(sub_grant[0], ttl_seconds=sub_grant[1]) if sub_grant else None
+    got = resolve_not_after(decl, issued_at=NOW, sub_grant=held)
+    assert got == NOW + timedelta(seconds=expected), (
+        f"{why}: notAfter is {got - NOW} after issuedAt, expected {expected}s. The lifetime "
+        "is not the later of the sub-grant expiry and the horizon"
+    )
 
 
 def test_a_sub_grant_held_by_another_principal_is_refused_as_a_lifetime() -> None:

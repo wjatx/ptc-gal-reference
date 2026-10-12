@@ -17,6 +17,18 @@ from typing import Callable
 InputTrustMap = Callable[[str], bool]
 
 
+def connector_source_id(tool: str, op: str) -> str:
+    """The source id an external read of ``tool.op`` taints a turn with.
+
+    One spelling, shared by the PEP's self-ingest after a successful external
+    read and by the inheritance record a cause op that is itself an external read
+    writes (PTC-51, #177). ``Envelope.trusted_read_sources`` names sources in
+    this form too. ``connector:`` is not an ``internal:`` prefix, so no trust map
+    built from the base defaults trusts it.
+    """
+    return f"connector:{tool}.{op}"
+
+
 def build_trust_map(trusted_prefixes: list[str]) -> InputTrustMap:
     """Build a prefix-based trust map from an explicit allowlist.
 

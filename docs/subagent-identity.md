@@ -82,8 +82,9 @@ image-baked `causes_context` declaration on its `ToolOp`, naming the target: `"s
 deferred run of the same principal, or the child principal spelled in full. The target comes from
 that declaration and never from the call's arguments, so the agent cannot choose where its taint
 goes. When the op runs, the broker writes an inheritance record keyed by the target before it
-calls the connector. The record holds the causing turn's sources, the causing principal and turn,
-the op, and a `notAfter` fixed at write time. Every runtime reads the live records for its own
+calls the connector. The record holds the causing turn's sources, the op's own source when the op
+is itself an external read, the causing principal and turn, the op, and a `notAfter` fixed at
+write time. Every runtime reads the live records for its own
 principal whenever it mints a turn, including after a turn rollover, and ingests the sources
 under a floor its own trust map cannot lift. The child presents nothing, which fits the per-zone
 model above: the broker already knows which principal it serves. A held cause op that a human

@@ -174,9 +174,24 @@ inheritance record keyed by the target (`runtime/pep.py::_write_inheritance_if_d
 from both `_executor` and `_release_executor`). The record carries the call's own `taint`, copied
 whole with its original source ids, plus the causing principal and turn, the op, `issuedAt` and
 `notAfter`. A held call froze its taint when it was held, so a call a human releases writes the same
-record an inline call would: approval is not declassification. `notAfter` is fixed at write time:
-the child's sub-grant expiry when the broker's sub-grant store holds one for the child, otherwise
-`issuedAt` plus the declaration's `horizon_seconds`, and always the latter for `"self"`.
+record an inline call would: approval is not declassification.
+
+When the declared op is itself an external read (`effect` `read`, `external` true), the record
+also carries the op's own source, `connector:<tool>.<op>`. That is the source the self-ingest adds
+to the causing turn once the read succeeds, and both spell it with one function,
+`taint/propagation.py::connector_source_id`. The record is written before the read runs, so the
+content the read fetches reaches the child as taint. If the read then fails, the child is tainted
+for nothing, which costs approvals only. A source the causing runtime's
+`Envelope.trusted_read_sources` names is not added, exactly as the self-ingest skips it: the
+consumer's declassification covers the child as it covers the causing turn. Any other op adds
+nothing to the call's taint.
+
+`notAfter` is fixed at write time: `issuedAt` plus the declaration's `horizon_seconds`, the
+consumer's stated exposure window. For a child whose sub-grant the broker's sub-grant store holds,
+it is the later of that and the sub-grant's expiry. So a child that also holds grants of its own
+stays tainted for at least the horizon, even after a short sub-grant expires, and a sub-grant that
+outlives the horizon keeps the record live to its expiry. Taking the later value never shortens a
+record's life. For `"self"` it is the horizon alone.
 
 **The read.** Whenever a runtime mints a turn (`runtime/pep.py::_session_turn`: its first call, and
 its first call after each `new_turn()`), it reads the live records for its own principal and
@@ -192,8 +207,8 @@ tainting up to the bound longer.
 **Fail directions.**
 
 - *The write fails* (the store refuses or is unreachable, two sub-grants name the child, or the
-  child's sub-grant has already expired so the record would be born expired). The op does not
-  run. Inline, the audit record has `outcome="failed"` and an `error` naming the inheritance
+  sub-grant found for the child is held by another principal). The op does not run. A record born
+  expired is refused the same way; with a positive horizon the later-of rule cannot produce one. Inline, the audit record has `outcome="failed"` and an `error` naming the inheritance
   record, and the agent gets a deny. On release, the audit record is written the same way, with
   `outcome="failed"`, and the intent lands in `refused` with a reason that begins
   `release refused`.
@@ -229,12 +244,9 @@ not a loss of safety.
   memory-layer floor owns that case (§8, #147).
 - A child turn that is already open when the record lands. The read happens at mint, never mid-turn,
   so that turn stays as clean as it was until the child's next `new_turn()`.
-- The content a cause op itself fetches. The record copies the call's taint as it stood before the
-  connector ran. A declared op that both reads external content and creates a context passes on
-  the turn's earlier sources, not the source its own read adds afterwards.
-- A child that outlives its sub-grant. With a sub-grant, `notAfter` is the sub-grant's expiry. A
-  child that also holds grants of its own keeps acting under them after that instant, and from
-  its next mint it does so clean.
+- Exposure past the window. Once `notAfter` passes, a child that holds grants of its own acts
+  under them clean from its next mint. The horizon is the consumer's statement of how long that
+  exposure lasts.
 - A same-zone child that starts its own broker process begins with a clean turn (#190), and a
   process restart clears the live turn's own taint (#191).
 - A context in another deployment, which shares no store. That hand-off is a channel publish: an
@@ -418,7 +430,9 @@ The broker-side half of the memory-taint acceptance exists as tests today (`safe
   (`test_a_held_cause_op_approved_writes_the_frozen_taint_and_the_child_is_held`), the child's
   rollover (`test_new_turn_in_the_child_sheds_nothing_while_the_row_is_live`), the floor
   (`test_nothing_the_child_configures_lifts_an_inherited_source`), the failed write inline and on
-  release, the `"self"` target and its control, the sub-grant expiry and the skew bound. The
+  release, the `"self"` target and its control, the later-of lifetime in both directions, a cause
+  op that is itself an external read
+  (`test_an_external_read_cause_op_passes_on_its_own_source_before_it_runs`), and the skew bound. The
   declaration's load-time refusals and the stores are in `test_taint_inheritance_schema.py` and
   `test_taint_inheritance_store.py`.
 - **Trusted-read relief + regression pair** — `test_read_gating.py`:

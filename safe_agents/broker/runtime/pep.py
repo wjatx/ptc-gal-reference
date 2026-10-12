@@ -108,7 +108,7 @@ from safe_agents.broker.schemas.evidence import (
     effective_blast_class,
     error_budget_draw,
 )
-from safe_agents.broker.taint import InputTrustMap, TurnContext
+from safe_agents.broker.taint import InputTrustMap, TurnContext, connector_source_id
 from safe_agents.broker.taint.inheritance import InheritanceStore, require_inheritance_store
 
 from .doer import ConnectorExecutionError, Doer
@@ -1274,11 +1274,11 @@ class BrokerRuntime:
             return
         write_inheritance_record(
             store=self._inheritance_store,
-            decl=entry.causes_context,
+            entry=entry,
             call=call,
-            op=op,
             sub_grant_store=self._sub_grant_store,
             now=self._clock(),
+            trusted_read_sources=self._trusted_read_sources,
         )
 
     def _surface_quarantined_intent(
@@ -2552,7 +2552,7 @@ class BrokerRuntime:
             # adds approvals. The ctx is the broker-held session turn (_session_turn) unless a
             # caller drove an explicit one, so the taint rides into every later /call.
             if brokered_call.manifest.external and brokered_call.manifest.effect == "read":
-                source_id = f"connector:{brokered_call.tool}.{brokered_call.op}"
+                source_id = connector_source_id(brokered_call.tool, brokered_call.op)
                 # A read from a consumer-declared trusted source does NOT taint
                 # the turn: skip the self-ingest for it. Untrusted reads still taint
                 # (self-ingest preserved). Same envelope list the PIP's rung-gate reads —

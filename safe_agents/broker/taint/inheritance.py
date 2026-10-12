@@ -131,13 +131,16 @@ def resolve_not_after(
 ) -> datetime:
     """When a record written at ``issued_at`` stops tainting its target.
 
-    For a child target with a sub-grant, the sub-grant's expiry: the delegated
-    authority ends there. It does not bound a child that also holds grants of
-    its own. Such a child keeps acting under them past this instant, clean from
-    its next mint (``broker/TAINT.md`` §4.1). Otherwise, and always for a
-    ``"self"`` target, ``issued_at`` plus the declaration's ``horizon_seconds``.
+    ``issued_at`` plus the declaration's ``horizon_seconds``, the consumer's
+    stated exposure window. For a child target whose sub-grant the broker's
+    store holds, the LATER of that and the sub-grant's expiry: a child that also
+    holds grants of its own keeps acting past its sub-grant's expiry, so the
+    horizon still bounds it, and a sub-grant that outlives the horizon extends
+    the record to its expiry. Taking the later value never shortens a record's
+    life. For a ``"self"`` target the horizon alone.
+
     ``sub_grant`` is the target's sub-grant as the broker's store holds it, or
-    None; it is ignored for a ``"self"`` target, and refused if it names a
+    None. It is ignored for a ``"self"`` target, and refused if it names a
     principal other than the child, since its expiry would bound the wrong
     context.
 
@@ -145,6 +148,7 @@ def resolve_not_after(
     """
     if issued_at.tzinfo is None:
         raise ValueError(f"issued_at {issued_at!r} states no UTC offset")
+    horizon_end = issued_at + timedelta(seconds=decl.horizon_seconds)
     if sub_grant is not None and isinstance(decl.target, Principal):
         if sub_grant.principal != decl.target:
             raise ValueError(
@@ -152,8 +156,8 @@ def resolve_not_after(
                 f"{principal_key(sub_grant.principal)}, not the declared target "
                 f"{principal_key(decl.target)}; its expiry would bound the wrong context"
             )
-        return parse_aware_instant(sub_grant.expiry)
-    return issued_at + timedelta(seconds=decl.horizon_seconds)
+        return max(horizon_end, parse_aware_instant(sub_grant.expiry))
+    return horizon_end
 
 
 @runtime_checkable

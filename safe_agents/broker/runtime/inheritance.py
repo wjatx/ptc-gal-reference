@@ -28,12 +28,13 @@ from __future__ import annotations
 import datetime
 import logging
 import uuid
+from collections.abc import Collection
 
 from safe_agents.broker.delegation.keys import principal_key
 from safe_agents.broker.delegation.store import SubGrantStore
-from safe_agents.broker.schemas import BrokeredCall, CausesContext, InheritanceRecord
+from safe_agents.broker.schemas import BrokeredCall, InheritanceRecord, Taint, ToolOp
 from safe_agents.broker.schemas.common import Principal
-from safe_agents.broker.taint import TurnContext
+from safe_agents.broker.taint import TurnContext, connector_source_id
 from safe_agents.broker.taint.inheritance import (
     InheritanceStore,
     inheritance_target,
@@ -82,25 +83,32 @@ def _untrusted(_source: str) -> bool:
 def write_inheritance_record(
     *,
     store: InheritanceStore | None,
-    decl: CausesContext,
+    entry: ToolOp,
     call: BrokeredCall,
-    op: str,
     sub_grant_store: SubGrantStore | None,
     now: datetime.datetime,
+    trusted_read_sources: Collection[str] = (),
 ) -> InheritanceRecord:
     """Write the record a cause op owes its target, or raise ``InheritanceWriteError``.
 
-    ``decl`` is the declaration from the writing runtime's own ``ToolOpTable``
-    for the op about to run, never one a call carried. ``call`` supplies the
-    causing principal, the causing turn id and the taint, all frozen on the call:
-    a call released from a hold carries the taint its hold froze, so a human's
-    approval writes the same record an inline call would.
+    ``entry`` is the ``ToolOp`` from the writing runtime's own ``ToolOpTable``
+    for the op about to run, never one a call carried, and it must declare
+    ``causes_context``. ``call`` supplies the causing principal, the causing turn
+    id and the taint, all frozen on the call: a call released from a hold carries
+    the taint its hold froze, so a human's approval writes the same record an
+    inline call would.
 
-    ``notAfter`` is the child's sub-grant expiry when the sub-grant store holds
-    one for the target, else ``now`` plus the declaration's horizon, and always
-    the latter for ``"self"``. Every failure on the way, including a sub-grant
-    lookup that finds two rows and a record born expired, is a write failure.
+    The record's taint is the call's, plus the op's own source when ``entry`` is
+    an external read (``_record_taint``). ``notAfter`` is ``resolve_not_after``:
+    the later of the child's sub-grant expiry, when the sub-grant store holds one
+    for the target, and ``now`` plus the declaration's horizon; the horizon alone
+    for ``"self"``. Every failure on the way, including a sub-grant lookup that
+    finds two rows, one that names another principal, and a record born expired,
+    is a write failure.
     """
+    decl = entry.causes_context
+    if decl is None:
+        raise ValueError(f"{entry.tool}.{entry.op} declares no causes_context")
     target = inheritance_target(decl, call.principal)
     try:
         if store is None:
@@ -116,9 +124,9 @@ def write_inheritance_record(
             target=target,
             causingPrincipal=call.principal,
             causingTurnId=call.session.turnId,
-            taint=call.taint,
+            taint=_record_taint(entry, call.taint, trusted_read_sources),
             tool=call.tool,
-            op=op,
+            op=entry.op,
             issuedAt=now.isoformat(),
             notAfter=not_after.isoformat(),
         )
@@ -126,9 +134,31 @@ def write_inheritance_record(
     except Exception as exc:  # noqa: BLE001 -- every failure stops the op
         raise InheritanceWriteError(
             f"taint inheritance record for {principal_key(target)} not written, so "
-            f"{call.tool}.{op} did not run: {type(exc).__name__}: {exc}"
+            f"{call.tool}.{entry.op} did not run: {type(exc).__name__}: {exc}"
         ) from None
     return record
+
+
+def _record_taint(entry: ToolOp, taint: Taint, trusted_read_sources: Collection[str]) -> Taint:
+    """The taint a record carries: the call's, plus the op's own source for an external read.
+
+    A cause op that is itself an external read pulls in content the call's taint
+    cannot yet name, because the record is written before the read runs. So the
+    record also carries the source the PEP's self-ingest will add to the causing
+    turn after the read, spelled by the same ``connector_source_id``. It is added
+    even when the read then fails; that taints the target for nothing, which costs
+    approvals only. A source the causing runtime's ``trusted_read_sources`` names
+    is not added, exactly as the self-ingest skips it: the consumer's
+    declassification covers the child as it covers the causing turn. Any other op
+    adds nothing, and the call's sources keep their order and spelling.
+    """
+    if not (entry.effect == "read" and entry.external):
+        return taint
+    source = connector_source_id(entry.tool, entry.op)
+    if source in trusted_read_sources:
+        return taint
+    sources = taint.sources if source in taint.sources else [*taint.sources, source]
+    return Taint(tainted=True, sources=sources)
 
 
 def ingest_inherited(
