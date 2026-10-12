@@ -98,7 +98,8 @@ interface Receiver {
   again here, because queue latency post-dates the airlock's expiry gate: an envelope whose
   `expiry` has passed is dropped (structured `drain_expired` log, D8-safe) **before** ingest,
   runtime construction, or any other budget-spending step, and is terminal per D7 — never
-  redelivered, never handed to the receiver.
+  redelivered, never handed to the receiver. The worker applies its own manifest's
+  `clock_skew_seconds` toward expiring early (PTC-49), never a bound the envelope carries.
 
 ## Conformance
 

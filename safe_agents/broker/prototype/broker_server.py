@@ -136,6 +136,7 @@ from safe_agents.broker.schemas import (
     compute_envelope_hash,
     meets_bar,
 )
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, skew_bound
 from safe_agents.broker.schemas.common import AutonomyLevel, CounterPeriod, Principal
 from safe_agents.broker.schemas.envelope import Confidence
 from safe_agents.broker.taint import build_trust_map
@@ -293,6 +294,7 @@ def _make_pip(
     counter_period: CounterPeriod = "utc-day",
     clock: Callable[[], datetime.datetime] | None = None,
     sub_grant_store=None,
+    clock_skew: datetime.timedelta = ZERO_SKEW,
 ):
     """Build the real PIP: per call, read grant (presence + level) from the grant
     store and the cap-budget fact from the real counter. The counter_key MUST match
@@ -339,7 +341,13 @@ def _make_pip(
     write. The instant comes from ``clock`` — injectable for tests, the wall
     clock by default — read once per pip call. It is NEVER derived from the
     grant's ``ts`` or any ledger record: those say when something was written,
-    and a quiet log writes nothing."""
+    and a quiet log writes nothing.
+
+    Clock skew (GAL-42). The term was asserted under the checker's clock, so it
+    is judged at ``now + clock_skew``: a grant acts at ``lastSafeLevel`` up to the
+    bound EARLY, never late. ``clock_skew`` is the manifest's
+    ``clock_skew_seconds`` (build_runtime), never anything the grant or the call
+    carries; zero is the unbounded comparison."""
 
     def _now() -> datetime.datetime:
         return clock() if clock is not None else datetime.datetime.now(datetime.UTC)
@@ -372,7 +380,9 @@ def _make_pip(
         # With a grant: the EFFECTIVE level at this instant — a passed
         # certification term acts at lastSafeLevel before any lapse is written.
         grant_level = (
-            effective_level(grant, _now()) if grant is not None else AutonomyLevel.in_loop
+            effective_level(grant, _now(), skew=clock_skew)
+            if grant is not None
+            else AutonomyLevel.in_loop
         )
 
         # Same principal+period derivation the PEP increments with — the two MUST
@@ -695,6 +705,10 @@ def build_runtime(
     # AuditRecord. No literal placeholder anywhere.
     in_force_hash = compute_envelope_hash(envelope)
 
+    # The clock-skew bound (PTC-49 / GAL-42): from the image-baked manifest, never
+    # from the envelope store, a grant or a call. Zero is the unbounded comparison.
+    clock_skew = skew_bound(manifest.clock_skew_seconds)
+
     # Per-op counter cap from the envelope. Named-or-refuse (boot_config.resolve_counter_cap):
     # the generic fallback is honored only when NO granted class is write-effect —
     # an envelope governing granted writes must NAME its daily cap. The refusal
@@ -960,6 +974,7 @@ def build_runtime(
             confidence_knob=confidence_knob,
             counter_period=manifest.counter_period,
             sub_grant_store=sub_grant_store,
+            clock_skew=clock_skew,
         ),
         enforcement_store=enforcement_store,  # type: ignore[arg-type]
         intent_store=intent_store,  # type: ignore[arg-type]
@@ -982,6 +997,10 @@ def build_runtime(
         # deployment that does not delegate is unchanged.
         sub_grant_store=sub_grant_store,
         on_approval_alarm=on_approval_alarm,
+        # GAL-42 / PTC-49 -- the manifest's clock-skew bound, threaded to the PIP
+        # (certification term) and the PEP (approval-hold expiry at release) from
+        # this ONE field, so the two judge another party's clock alike.
+        clock_skew=clock_skew,
     )
     if sqlite_intent_store is not None:
         _boot_sweep_sqlite_intents(runtime, sqlite_intent_store)

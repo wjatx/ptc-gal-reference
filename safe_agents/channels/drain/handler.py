@@ -51,6 +51,7 @@ from typing import Any
 import yaml
 
 from safe_agents.broker.schemas import AgentManifest
+from safe_agents.broker.schemas.clock_skew import skew_bound
 from safe_agents.broker.taint.propagation import InputTrustMap
 from safe_agents.channels.drain.receiver import Receiver, load_receiver
 from safe_agents.channels.schemas import EventTrigger
@@ -239,7 +240,12 @@ def _process_record(record: dict, state: _DrainState) -> None:
 
     # Hard TTL (SCHEMAS C6): expired envelopes drop before ingest or any other
     # budget-spending step. Replays of a stale message can never spend budget.
-    if envelope.is_expired(datetime.now(timezone.utc)):
+    # The expiry is the original sender's, so the drain applies its OWN
+    # manifest's skew bound toward less authority (PTC-49), never the
+    # envelope's: an envelope expires up to the bound early, never late.
+    if envelope.is_expired(
+        datetime.now(timezone.utc), skew_bound(state.manifest.clock_skew_seconds)
+    ):
         logger.info(
             json.dumps(
                 {

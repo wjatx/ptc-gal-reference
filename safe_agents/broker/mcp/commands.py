@@ -154,6 +154,12 @@ from safe_agents.broker.runtime.secrets import (
     SecretsProvider,
 )
 from safe_agents.broker.schemas import AgentManifest, McpServerDecl
+from safe_agents.broker.schemas.clock_skew import (
+    ZERO_SKEW,
+    end_judged_at,
+    skew_bound,
+    skew_seconds_arg,
+)
 from safe_agents.broker.schemas.mcp_registry import (
     McpServerSnapshot,
     McpSnapshotEntry,
@@ -364,9 +370,14 @@ def admit_ratify_command(
     signer: RecordSigner | None,
     session: object = None,
     now: datetime.datetime | None = None,
+    clock_skew: datetime.timedelta = ZERO_SKEW,
 ) -> int:
     """Run the maker-checker ceremony: burn the proposal, append the signed
     admission record, then write the ACTIVE row.
+
+    ``clock_skew`` is the checker's declared bound (PTC-49, the
+    ``--clock-skew-seconds`` flag): the proposal's expiry was stamped under the
+    maker's clock, so it is taken up to the bound early, never late.
 
     Refuses up front — before the proposal is loaded — when no issuer signer is
     configured, so a refusal provably writes nothing (M8: an admission record
@@ -404,7 +415,7 @@ def admit_ratify_command(
         return 1
 
     effective_now = _utc_now(now)
-    if proposal_expired(proposal.expires_at, effective_now):
+    if proposal_expired(proposal.expires_at, effective_now, skew=clock_skew):
         print(
             f"REFUSED: proposal {args.proposal_id} expired at {proposal.expires_at} — "
             "re-propose against the current advertised definition"
@@ -583,31 +594,32 @@ def _parse_utc(value: str) -> datetime.datetime | None:
 
 def _load_snapshot_and_decl(
     snapshot_path: str, manifest_path: str
-) -> tuple[McpServerSnapshot, McpServerDecl, str | None]:
+) -> tuple[McpServerSnapshot, McpServerDecl, datetime.timedelta, str | None]:
     """Load the snapshot artifact + its server's image-baked declaration.
 
-    Returns (snapshot, decl, None) or (…, refusal message) — the caller maps a
-    refusal to exit 2. Mirrors `diff_command`'s prelude exactly: the server_id
+    Returns (snapshot, decl, clock_skew, None) or (…, refusal message) — the
+    caller maps a refusal to exit 2. ``clock_skew`` is the manifest's declared
+    bound (PTC-49), which the snapshot age check applies. Mirrors `diff_command`'s prelude exactly: the server_id
     comes from the ARTIFACT, never a flag, and the declared namespace comes
     from an operator-NAMED image-baked manifest, never a store.
     """
     try:
         snapshot = McpServerSnapshot.model_validate_json(Path(snapshot_path).read_text(encoding="utf-8"))
     except (OSError, ValidationError) as exc:
-        return None, None, f"REFUSED: --snapshot {snapshot_path} is unusable: {exc}"
+        return None, None, ZERO_SKEW, f"REFUSED: --snapshot {snapshot_path} is unusable: {exc}"
 
     try:
         manifest = load_agent_manifest(Path(manifest_path))
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
-        return None, None, f"REFUSED: --manifest {manifest_path} is unusable: {exc}"
+        return None, None, ZERO_SKEW, f"REFUSED: --manifest {manifest_path} is unusable: {exc}"
 
     decl = manifest.mcp_servers.get(snapshot.server_id)
     if decl is None:
-        return None, None, (
+        return None, None, ZERO_SKEW, (
             f"REFUSED: manifest {manifest_path} declares no mcp server "
             f"{snapshot.server_id!r} (declared: {sorted(manifest.mcp_servers)})"
         )
-    return snapshot, decl, None
+    return snapshot, decl, skew_bound(manifest.clock_skew_seconds), None
 
 
 def bulk_propose_command(
@@ -636,7 +648,9 @@ def bulk_propose_command(
     rollback is attempted, and none is needed — an unratified proposal is inert
     (it admits nothing on its own) and expires on its own TTL.
     """
-    snapshot, decl, refusal = _load_snapshot_and_decl(args.snapshot, args.manifest)
+    snapshot, decl, clock_skew, refusal = _load_snapshot_and_decl(
+        args.snapshot, args.manifest
+    )
     if refusal is not None:
         print(refusal)
         return 2
@@ -644,7 +658,10 @@ def bulk_propose_command(
     # Snapshot age bound: a stale artifact describes a server as it WAS, and
     # proposing from it binds bytes the server may no longer advertise (the
     # ratified row would quarantine on the very next discovery). Pure timestamp
-    # comparison — never a judgement about WHY the snapshot is old.
+    # comparison — never a judgement about WHY the snapshot is old. captured_at
+    # was stamped under the snapshotting process's clock, so the age is judged
+    # with the manifest's skew bound toward refusing (PTC-49): the snapshot is
+    # taken to go stale up to the bound early, never late.
     captured_at = _parse_utc(snapshot.captured_at)
     if captured_at is None:
         print(
@@ -652,10 +669,18 @@ def bulk_propose_command(
             "timezone-aware ISO-8601 timestamp — its age cannot be bounded"
         )
         return 2
-    age_minutes = (_utc_now(now) - captured_at).total_seconds() / 60
-    if age_minutes > args.max_snapshot_age_minutes:
+    evaluated_at = _utc_now(now)
+    age_minutes = (evaluated_at - captured_at).total_seconds() / 60
+    judged_minutes = (end_judged_at(evaluated_at, clock_skew) - captured_at).total_seconds() / 60
+    if judged_minutes > args.max_snapshot_age_minutes:
+        bound_note = (
+            f" ({judged_minutes:.1f} with the manifest's "
+            f"{int(clock_skew.total_seconds())}s clock_skew_seconds bound)"
+            if clock_skew
+            else ""
+        )
         print(
-            f"REFUSED: snapshot is {age_minutes:.1f} minutes old, exceeding "
+            f"REFUSED: snapshot is {age_minutes:.1f} minutes old{bound_note}, exceeding "
             f"--max-snapshot-age-minutes {args.max_snapshot_age_minutes} — "
             "re-run `snapshot` and propose against what the server advertises "
             "NOW. Nothing was written."
@@ -911,7 +936,9 @@ def bulk_ratify_command(
             )
             continue
         proposal, _status = pending[0]
-        if proposal_expired(proposal.expires_at, effective_now):
+        if proposal_expired(
+            proposal.expires_at, effective_now, skew=skew_bound(manifest.clock_skew_seconds)
+        ):
             refused.append(f"{name}: proposal expired at {proposal.expires_at}")
             continue
         # M7, re-derived PER COORDINATE — never one aggregate check for the
@@ -1449,6 +1476,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     _add_coordinate_args(ratify)
     ratify.add_argument("--proposal-id", required=True)
     ratify.add_argument(
+        "--clock-skew-seconds",
+        type=skew_seconds_arg,
+        default=0,
+        help=(
+            "clock-skew bound (PTC-49): the proposal's expiry was stamped under "
+            "the maker's clock, so it is taken up to this many seconds EARLY, "
+            "never late. Should match the manifest's clock_skew_seconds. Default "
+            "0 is the unbounded comparison; a negative value is refused."
+        ),
+    )
+    ratify.add_argument(
         "--zone", help="signer zone for the issuer DSSE signature (default: ISSUER_SIGNING_ZONE)"
     )
 
@@ -1702,6 +1740,7 @@ def main(argv: list[str] | None = None) -> int:
             store=store,
             proposal_store=proposal_store,
             signer=resolve_record_signer(zone=args.zone),
+            clock_skew=skew_bound(args.clock_skew_seconds),
         )
     except (IssuerSigningConfigError, BrokerConfigError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

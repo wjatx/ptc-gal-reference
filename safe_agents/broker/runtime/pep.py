@@ -93,6 +93,7 @@ from safe_agents.broker.schemas import (
     Session,
     ToolOp,
 )
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW
 from safe_agents.broker.schemas.common import CounterPeriod, DemotionTrigger, Principal
 from safe_agents.broker.schemas.decision import Allow, Decision, Deny
 from safe_agents.broker.schemas.envelope import ApprovalQueue, Confidence
@@ -320,6 +321,11 @@ class BrokerRuntime:
         flood keys. Default "utc-day" is byte-for-byte the original key format.
         Authority-shaping: comes from the image-baked AgentManifest only, never
         a store.
+    clock_skew:
+        The manifest's clock-skew bound (``AgentManifest.clock_skew_seconds``,
+        PTC-49). Applied where a release judges a held call's expiry, which
+        another process may have stamped: the hold is refused up to the bound
+        early, never late. Default zero is the unbounded comparison.
     """
 
     def __init__(
@@ -343,6 +349,7 @@ class BrokerRuntime:
         counter_period: CounterPeriod = "utc-day",
         sub_grant_store: "SubGrantStore | None" = None,
         on_approval_alarm: Callable[[ApprovalAlarmEvent], None] | None = None,
+        clock_skew: datetime.timedelta = ZERO_SKEW,
     ) -> None:
         self._principal = principal
         self._grants = grants
@@ -378,6 +385,10 @@ class BrokerRuntime:
         # PEP derives (caps, egress, error budget, evidence labels, flood keys)
         # buckets at THIS period; default "utc-day" is byte-for-byte the original.
         self._counter_period: CounterPeriod = counter_period
+        # PTC-49: the manifest's clock-skew bound. A held call's expiry was stamped
+        # by whichever process held it, so a release judges it up to this bound
+        # early. Never read from the intent or the call; zero is unbounded.
+        self._clock_skew = clock_skew
         # The broker-held turn boundary. One TurnContext per principal,
         # threaded across every /call, lazily created by _session_turn(). The agent
         # supplies neither its id nor its rollover signal (see new_turn()).
@@ -1038,7 +1049,13 @@ class BrokerRuntime:
             raise ReleaseRefusedError(reason)
 
         try:
-            result = approve(intent_id, approved_by, self._intent_store, executor=_exec)
+            result = approve(
+                intent_id,
+                approved_by,
+                self._intent_store,
+                executor=_exec,
+                skew=self._clock_skew,
+            )
         except QuarantinedIntentError as exc:
             # A rewrite that lands BETWEEN the foreign-check read and the
             # engine's own verify-then-parse read still refuses here.

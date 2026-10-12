@@ -60,6 +60,7 @@ from safe_agents.broker.grants.store import (
 )
 from safe_agents.broker.schemas import Grant, PromotionRecord
 from safe_agents.broker.schemas.budgets import ErrorBudget
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, end_judged_at
 from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger, Principal
 from safe_agents.broker.schemas.durations import validate_label_latency
 from safe_agents.broker.schemas.grant import parse_certified_until
@@ -393,10 +394,19 @@ class PromotionCeremony:
         promotion_record_store: PromotionRecordStore,
         checker: CheckerProtocol | None = None,
         record_signer: object = None,
+        clock_skew: datetime.timedelta = ZERO_SKEW,
     ) -> None:
         self._grant_store = grant_store
         self._record_store = promotion_record_store
         self._checker = checker
+        # The checker's declared clock-skew bound (PTC-49 / GAL-42): the
+        # proposal's expiry and term were stamped under the maker's clock, and a
+        # stored grant's term under an earlier checker's. execute() judges each
+        # of them at ``now + clock_skew``, so every one takes effect up to the
+        # bound EARLY and a ratification is refused, never extended. The caller
+        # supplies it from the manifest (commands.ratify_command); nothing on
+        # the proposal or the grant can set it. Zero is the unbounded comparison.
+        self._clock_skew = clock_skew
         # The issuer RecordSigner (grants/record_signing.py) or None. Signing
         # is ceremony-side since the atomic write: the record is signed BEFORE the atomic
         # record+grant write, and the signature rides the same transact leg —
@@ -608,7 +618,7 @@ class PromotionCeremony:
 
         # --- deterministic expiry (unconditional: expires_at is ON the proposal) ---
         effective_now = now or datetime.datetime.now(datetime.timezone.utc)
-        if proposal_expired(proposal.expires_at, effective_now):
+        if proposal_expired(proposal.expires_at, effective_now, skew=self._clock_skew):
             return CeremonyResult(
                 status="rejected",
                 reason=(
@@ -632,13 +642,18 @@ class PromotionCeremony:
                 term_end = parse_certified_until(proposal.certified_until)
             except ValueError as exc:
                 return CeremonyResult(status="rejected", reason=str(exc))
-            if term_now >= term_end:
+            if end_judged_at(term_now, self._clock_skew) >= term_end:
                 return CeremonyResult(
                     status="rejected",
                     reason=(
                         f"certifiedUntil {proposal.certified_until} is not after the "
-                        f"ratification instant {term_now.isoformat()}; the "
-                        "grant would be lapsed on arrival. Propose afresh with a "
+                        f"ratification instant {term_now.isoformat()}"
+                        + (
+                            f" plus the clock-skew bound {self._clock_skew}"
+                            if self._clock_skew
+                            else ""
+                        )
+                        + "; the grant would be lapsed on arrival. Propose afresh with a "
                         "term in the future, or none."
                     ),
                 )
@@ -808,7 +823,7 @@ class PromotionCeremony:
                     "found; the proposal was evaluated against a grant that no longer "
                     "exists — re-propose from the current state"
                 )
-            if lapse_pending(current.grant, term_now):
+            if lapse_pending(current.grant, term_now, skew=self._clock_skew):
                 # The stored grant's term has passed but its lapse has
                 # not been written. Enforcement already treats it as being at
                 # lastSafeLevel, so promoting from the STORED level would raise

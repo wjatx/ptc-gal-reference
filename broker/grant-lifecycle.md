@@ -418,6 +418,20 @@ that authority to be re-justified.
   against the grant's `ts`, a ledger record's `ts`, or the audit tape. Those say when something was
   *written*, and a quiet log writes nothing, which is precisely the case the arc exists for. Only
   the outermost callers read the wall clock: the PIP (its injectable `clock`) and the runner CLI.
+- **Skew fails toward less authority (GAL-42).** The term was stamped under the checker's clock and
+  is judged under the evaluator's, so every evaluator judges it at `now + skew`, where `skew` is its
+  own declared bound: `AgentManifest.clock_skew_seconds` for the PIP and for `propose`/`ratify`
+  (read from the same `BROKER_MANIFEST`), and `--clock-skew-seconds` for the lapse runner, which
+  reads no manifest and should be given the same value. A term therefore takes effect up to the
+  bound early, never late, and a negative bound is refused at load. `ratify` applies the same bound
+  to the proposal's expiry, to the proposed term (a term within the bound of the ratification
+  instant is lapsed on arrival), and to the stored grant's term. Dwell
+  (`rung.is_eligible_for_promotion`) gates a raise, so it is counted from the last transition up to
+  the bound late, at `now - skew`; it takes the bound from its caller, and nothing in the ceremony
+  calls it yet. Zero, the default everywhere, reproduces the unbounded comparison, and a bound over
+  86400 seconds (one day) is refused at load. What it buys: a slow evaluator clock cannot keep a
+  lapsed level in force for the width of an allowance. What it does not: it does not detect a clock
+  that lies, and it does not bound drift.
 - **Write side.** `grants.lapse.run_lapse`, run by `python -m safe_agents.broker.grants.runner`
   before the demotion pass under the same demotion identity, lowers the grant to `lastSafeLevel`,
   sets `demotionReason = "pending-evidence"`, and appends a **`lapse`-typed** record in the same

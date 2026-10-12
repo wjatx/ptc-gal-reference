@@ -19,12 +19,14 @@ importing `safe_agents.channels.screens` (reference-tier), which
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Callable, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from safe_agents.broker.schemas.clock_skew import MAX_CLOCK_SKEW_SECONDS, ZERO_SKEW, skew_bound
 from safe_agents.channels.adapters import InboundAdapter
 from safe_agents.channels.owner import build as _build_owner_adapter
 from safe_agents.channels.schemas import EventTrigger
@@ -177,6 +179,14 @@ class ChannelsManifest(BaseModel):
     screen: ScreenConfig | None = None
     verdict_sink: bool = False
     dedupe_ttl_days: int = 30
+    # PTC-49 (#175): the bound, in whole seconds, by which gate 4 takes a
+    # sender-stamped `expiry` EARLY (never late): an envelope is refused from
+    # `expiry - clock_skew_seconds` on. This airlock's own configuration, never
+    # the envelope's. Default 0 is the unbounded comparison (ships OFF).
+    # Capped at one day (MAX_CLOCK_SKEW_SECONDS) so a typo is refused at load.
+    clock_skew_seconds: int = Field(
+        default=0, ge=0, le=MAX_CLOCK_SKEW_SECONDS, strict=True
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -238,6 +248,8 @@ class AirlockRuntime:
     verdict_sink: bool
     zone: str
     dedupe_ttl_days: int
+    # The declared clock-skew bound gate 4 applies (PTC-49); zero is unbounded.
+    clock_skew: timedelta = ZERO_SKEW
 
 
 def build_airlock(manifest: ChannelsManifest, *, token: str) -> AirlockRuntime:
@@ -288,6 +300,7 @@ def build_airlock(manifest: ChannelsManifest, *, token: str) -> AirlockRuntime:
         verdict_sink=manifest.verdict_sink,
         zone=manifest.zone,
         dedupe_ttl_days=manifest.dedupe_ttl_days,
+        clock_skew=skew_bound(manifest.clock_skew_seconds),
     )
 
 

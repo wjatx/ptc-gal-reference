@@ -9,6 +9,7 @@ and AWS-free); only commands.main() consumes this module.
 from __future__ import annotations
 
 import argparse
+import datetime
 
 from pydantic import ValidationError
 
@@ -24,6 +25,7 @@ from safe_agents.broker.prototype.boot_config import (
 )
 from safe_agents.broker.schemas import Envelope, compute_envelope_hash
 from safe_agents.broker.schemas.brokered_call import ToolOp
+from safe_agents.broker.schemas.clock_skew import skew_bound
 from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger, Principal
 
 
@@ -171,6 +173,33 @@ def _ceremony_blast_context(
     envelope = _resolve_inforce_envelope(principal, table_name)
     high_blast = list(envelope.confidence.high_blast) if envelope.confidence else []
     return list(_MANIFEST.tool_ops), high_blast, compute_envelope_hash(envelope)
+
+
+def _ceremony_clock_skew(principal: Principal) -> datetime.timedelta:
+    """The clock-skew bound propose and ratify judge terms and expiries with.
+
+    PTC-49 / GAL-42: ``clock_skew_seconds`` from the SAME image-baked manifest
+    the broker enforces with, so the ceremony never treats a term as live that
+    the broker already treats as passed. Read only for the manifest's own
+    principal, for the reason ``_ceremony_blast_context`` gives; never from the
+    proposal or the stored grant.
+    """
+    with grant_load_suppressed():
+        from safe_agents.broker.prototype.broker_server import (  # noqa: PLC0415
+            resolve_manifest,
+        )
+
+    manifest = resolve_manifest()
+    if manifest.principal != principal:
+        manifest_id = (
+            manifest.principal.agentId if manifest.principal is not None else "<none>"
+        )
+        raise RunnerConfigError(
+            f"refusing to read the clock-skew bound for principal {principal.agentId!r} "
+            f"from the BROKER_MANIFEST manifest, whose principal is {manifest_id!r}. "
+            f"Export BROKER_MANIFEST=<the manifest for {principal.agentId!r}>."
+        )
+    return skew_bound(manifest.clock_skew_seconds)
 
 
 def _manifest_context(table_name: str | None):

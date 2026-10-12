@@ -90,7 +90,15 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   eighth base schema.
 > - Later phases added further manifest blocks documented in their own contracts:
 >   `connector_auth` + `capability_iam` (#79, `broker/CONNECTOR-AUTH.md`), `counter_period`
->   (§Budgets note below), and `mcp_servers` (`broker/MCP-HOST.md`) — the image-baked
+>   (§Budgets note below), `clock_skew_seconds` (#175: the bound in whole seconds, default 0, at
+>   most 86400, applied toward less authority where the broker's PIP and approval release, the
+>   drain, `propose`/`ratify`, and the MCP `bulk-propose`/`bulk-ratify` commands compare their
+>   instant with a time another party's clock stamped; `broker/grant-lifecycle.md` §Lapse). Two
+>   commands read no manifest and take `--clock-skew-seconds` instead, defaulting to 0: the lapse
+>   runner and MCP `admit-ratify`. They apply this bound only when given the same value. The
+>   delegation checks and the dwell check take the bound as a parameter from their caller, and no
+>   runtime path in this tree calls them yet. And `mcp_servers`
+>   (`broker/MCP-HOST.md`) — the image-baked
 >   half of two-key MCP admission: the declared `(server_id, tool_name)` namespace +
 >   per-tool `structured_output` trust eligibility, validated at load against `tool_ops` and
 >   `envelope.trusted_read_sources`.
@@ -175,7 +183,8 @@ Per-field notes:
   caps how fast you can re-promote, and therefore how much autonomy you can responsibly hold.
 - **ownerId** — every grant has a named owner (pre-deployment checklist).
 - **certifiedUntil** — the term of the current certification (GAL §6.7.6). Once
-  `now >= certifiedUntil`, per-call enforcement treats the grant as being at `lastSafeLevel` (never
+  `now + skew >= certifiedUntil` (`skew` = the manifest's `clock_skew_seconds`, default 0; GAL-42),
+  per-call enforcement treats the grant as being at `lastSafeLevel` (never
   higher than its stored level), and the demotion runner records a `lapse` (§7). `null` means no
   term and never lapses; terms **ship unset**. It must be an explicit UTC instant (`Z` or `+00:00`;
   naive and non-UTC values are refused) and is stored verbatim. **Omitted from the canonical payload
@@ -335,7 +344,11 @@ Per-field notes:
   or the op's period budget was exhausted, between the hold and the release; nothing ran, #9).
   Terminal states: `rejected`, `expired`, `executed`, `refused`.
 - **expiry** — a hard TTL. An intent the human does not act on expires; it never hangs open
-  indefinitely, and an expired intent never executes. The agent cannot extend or re-issue. The
+  indefinitely, and an expired intent never executes. The agent cannot extend or re-issue. It is stamped
+  under the clock of the process that held the call, so a release (`approve`) judges it at
+  `now + AgentManifest.clock_skew_seconds` and refuses up to that bound early (PTC-49); a
+  rejection applies no bound, since both outcomes refuse and the owner's "no" stays recorded
+  as a rejection rather than an expiry. The
   period is ONE fixed value (`DEFAULT_APPROVAL_EXPIRY_SECONDS`, an hour): it does not shorten as
   the queue grows (PTC §6.12). Expiry is an **event**, found by the runtime's sweep
   (`BrokerRuntime.sweep_expired_intents`), which a long-lived host runs on a schedule (the broker

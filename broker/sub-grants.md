@@ -94,6 +94,15 @@ and any further constraints the spawning agent specifies. The spend caps in the 
 be ≤ the parent's remaining caps. The expiry is always shorter than the parent grant's remaining
 TTL. The sub-grant cannot carry a higher blast-radius limit than the parent.
 
+An expiry is stamped under the issuing broker's clock and checked under another's, so both checks
+take a declared clock-skew bound toward less authority (PTC-49): `compute_sub_grant` refuses a TTL
+that would end later than the parent's expiry less the bound, and `verify_not_expired` treats the
+sub-grant as expired from its expiry less the bound. The bound is a parameter the caller passes
+from its own configuration, never a field of the sub-grant or the scope; zero, the default, is the
+unbounded comparison. No runtime path in this tree calls either function yet, so no manifest value
+reaches them today: a broker that wires sub-grants in must pass its
+`AgentManifest.clock_skew_seconds` itself.
+
 The envelope carries no list of tools, so there is none to intersect. Which calls a sub-agent may
 make is narrowed in the first two dimensions, and in the implemented `SubGrant` by `actionClasses`.
 An envelope tool allowlist once appeared here as a third thing to narrow. No decision ever read

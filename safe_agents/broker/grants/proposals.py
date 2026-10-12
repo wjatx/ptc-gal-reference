@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 from safe_agents.broker.grants.predicate import ActionClassMetrics
 from safe_agents.broker.grants.store import _principal_key
 from safe_agents.broker.schemas.budgets import ErrorBudget
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, end_judged_at
 from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger, Principal
 from safe_agents.broker.schemas.evidence import ConfidenceArtifact
 
@@ -86,12 +87,23 @@ class ProposalIntegrityError(Exception):
 # Deterministic expiry — shared by the ceremony and the future CLI
 # ---------------------------------------------------------------------------
 
-def proposal_expired(expires_at: str, now: datetime.datetime) -> bool:
-    """True iff the proposal's expiry has passed at `now`. Pure; no I/O.
+def proposal_expired(
+    expires_at: str,
+    now: datetime.datetime,
+    *,
+    skew: datetime.timedelta = ZERO_SKEW,
+) -> bool:
+    """True iff the proposal's expiry has passed at `now + skew`. Pure; no I/O.
 
     Fail closed: an unparseable expires_at is expired — a proposal whose
     expiry cannot be read can never license a ratification. Naive timestamps
     (either side) are interpreted as UTC.
+
+    ``skew`` is the checker's declared clock-skew bound (PTC-49 / GAL-42): the
+    expiry was stamped under the MAKER's clock, and ratifying confers
+    authority, so the proposal is taken to expire up to the bound EARLY, never
+    late. It is the checker's configuration, never a proposal field. Zero, the
+    default, is the unbounded comparison.
     """
     try:
         parsed = datetime.datetime.fromisoformat(expires_at)
@@ -100,7 +112,7 @@ def proposal_expired(expires_at: str, now: datetime.datetime) -> bool:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=datetime.timezone.utc)
     effective_now = now if now.tzinfo is not None else now.replace(tzinfo=datetime.timezone.utc)
-    return effective_now >= parsed
+    return end_judged_at(effective_now, skew) >= parsed
 
 
 # ---------------------------------------------------------------------------

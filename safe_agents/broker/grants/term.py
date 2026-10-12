@@ -20,6 +20,14 @@ The evaluation instant is an INPUT, never derived.
 
 The boundary is inclusive: the term has passed iff ``now >= certifiedUntil``
 (the same comparison ``proposals.proposal_expired`` uses for proposal expiry).
+
+Clock skew (GAL §6.7.6, GAL-42). The term was asserted under the checker's
+clock, at ratification; whoever evaluates it compares it with its own. Every
+function here takes an optional ``skew`` bound and judges the term at
+``now + skew``, so a term is taken to pass up to the bound EARLIER, never later
+(``schemas.clock_skew``). The bound is the evaluator's own configuration
+(``AgentManifest.clock_skew_seconds``, or the lapse runner's flag); nothing on
+the grant can set it. Zero, the default, is the unbounded comparison.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ from __future__ import annotations
 import datetime
 
 from safe_agents.broker.schemas import Grant
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, end_judged_at
 from safe_agents.broker.schemas.common import AUTONOMY_RANK, AutonomyLevel
 from safe_agents.broker.schemas.grant import parse_certified_until
 
@@ -48,18 +57,23 @@ def _require_aware(now: datetime.datetime) -> datetime.datetime:
     return now
 
 
-def term_passed(grant: Grant, now: datetime.datetime) -> bool:
-    """True iff the grant carries a term and ``now >= certifiedUntil``.
+def term_passed(
+    grant: Grant, now: datetime.datetime, *, skew: datetime.timedelta = ZERO_SKEW
+) -> bool:
+    """True iff the grant carries a term and ``now + skew >= certifiedUntil``.
 
-    Pure. A grant with no term never lapses, at any ``now`` (GAL-34).
+    Pure. A grant with no term never lapses, at any ``now`` (GAL-34). ``skew``
+    moves the boundary EARLIER only; a negative bound is refused.
     """
     _require_aware(now)
     if grant.certifiedUntil is None:
         return False
-    return now >= parse_certified_until(grant.certifiedUntil)
+    return end_judged_at(now, skew) >= parse_certified_until(grant.certifiedUntil)
 
 
-def lapse_pending(grant: Grant, now: datetime.datetime) -> bool:
+def lapse_pending(
+    grant: Grant, now: datetime.datetime, *, skew: datetime.timedelta = ZERO_SKEW
+) -> bool:
     """True iff the term has passed AND the stored level is above lastSafeLevel.
 
     That is exactly "a lapse record is owed": a grant already at or below its
@@ -67,12 +81,14 @@ def lapse_pending(grant: Grant, now: datetime.datetime) -> bool:
     writer already lowered is a no-op (idempotence falls out of the stored
     level, never out of reading the ledger).
     """
-    return term_passed(grant, now) and (
+    return term_passed(grant, now, skew=skew) and (
         _LEVEL_RANK[grant.level] > _LEVEL_RANK[grant.lastSafeLevel]
     )
 
 
-def effective_level(grant: Grant, now: datetime.datetime) -> AutonomyLevel:
+def effective_level(
+    grant: Grant, now: datetime.datetime, *, skew: datetime.timedelta = ZERO_SKEW
+) -> AutonomyLevel:
     """The level per-call enforcement must act on at instant ``now``.
 
     Before the term passes (or with no term) this is the stored level. Once it
@@ -83,7 +99,7 @@ def effective_level(grant: Grant, now: datetime.datetime) -> AutonomyLevel:
     level as the re-promotion reference, demotion.apply_demotion): a lapse must
     never raise anything. Pure — no write, no store, no clock.
     """
-    if not term_passed(grant, now):
+    if not term_passed(grant, now, skew=skew):
         return grant.level
     if _LEVEL_RANK[grant.lastSafeLevel] < _LEVEL_RANK[grant.level]:
         return grant.lastSafeLevel

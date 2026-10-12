@@ -13,9 +13,10 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from safe_agents.broker.schemas import AuditRecord
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, end_judged_at
 from safe_agents.broker.schemas.common import AutonomyLevel
 
 from .types import (
@@ -41,6 +42,7 @@ def compute_sub_grant(
     *,
     now: datetime | None = None,
     issued_by: str = "broker",
+    skew: timedelta = ZERO_SKEW,
 ) -> SubGrant:
     """Compute a strictly-attenuating sub-grant from a parent authority and a scope.
 
@@ -68,6 +70,12 @@ def compute_sub_grant(
         Inject a fixed value in tests for determinism.
     issued_by:
         The broker identity that issues the sub-grant. Recorded for auditability.
+    skew:
+        The issuing broker's declared clock-skew bound (PTC-49). The parent's
+        expiry may have been stamped under another broker's clock (a sub-grant
+        parent), so it is taken up to the bound EARLY: the requested expiry must
+        end by ``parent.expiry - skew``. Never read from the parent or the scope.
+        Zero, the default, is the unbounded comparison.
 
     Raises
     ------
@@ -118,11 +126,17 @@ def compute_sub_grant(
     # ------------------------------------------------------------------
     requested_expiry = now_dt.timestamp() + scope.ttlSeconds
     parent_expiry_ts = parent.expiry.timestamp()
-    if requested_expiry > parent_expiry_ts:
+    # The parent's expiry is an END asserted under another clock: judged with
+    # the skew bound toward less authority (schemas.clock_skew).
+    judged_expiry = end_judged_at(
+        datetime.fromtimestamp(requested_expiry, tz=timezone.utc), skew
+    ).timestamp()
+    if judged_expiry > parent_expiry_ts:
         raise AttenuationError(
             f"Requested TTL of {scope.ttlSeconds}s would set expiry past the parent's "
-            f"expiry ({parent.expiry.isoformat()}). "
-            "A sub-grant expiry must not exceed the parent's remaining TTL."
+            f"expiry ({parent.expiry.isoformat()})"
+            + (f" less the clock-skew bound {skew}" if skew else "")
+            + ". A sub-grant expiry must not exceed the parent's remaining TTL."
         )
     expiry_dt = datetime.fromtimestamp(requested_expiry, tz=timezone.utc)
     expiry_str = expiry_dt.isoformat()
@@ -252,6 +266,7 @@ def verify_not_expired(
     sub_grant: SubGrant,
     *,
     now: datetime | None = None,
+    skew: timedelta = ZERO_SKEW,
 ) -> None:
     """Raise ExpiredSubGrantError if the sub-grant's absolute expiry has passed.
 
@@ -265,15 +280,20 @@ def verify_not_expired(
     now:
         Current time (UTC). Defaults to datetime.now(UTC). Inject a fixed value
         in tests for determinism.
+    skew:
+        The checking broker's declared clock-skew bound (PTC-49). The expiry was
+        stamped by the issuing broker, under its clock, so it is taken up to the
+        bound EARLY. Never read from the sub-grant. Zero, the default, is the
+        unbounded comparison.
 
     Raises
     ------
     ExpiredSubGrantError
-        If the sub-grant's expiry is at or before now.
+        If the sub-grant's expiry is at or before ``now + skew``.
     """
     now_dt = now if now is not None else datetime.now(timezone.utc)
     expiry_dt = _parse_iso(sub_grant.expiry)
-    if now_dt >= expiry_dt:
+    if end_judged_at(now_dt, skew) >= expiry_dt:
         raise ExpiredSubGrantError(
             f"Sub-grant {sub_grant.id!r} expired at {sub_grant.expiry}; "
             f"current time is {now_dt.isoformat()}. "

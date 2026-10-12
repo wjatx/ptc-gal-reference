@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from safe_agents.broker.schemas import BrokeredCall, Intent
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, end_judged_at
 from safe_agents.broker.schemas.decision import RequireApproval
 
 from .store import IntentAlreadyPendingError, IntentStore
@@ -96,14 +97,17 @@ def _expiry_iso(expiry_seconds: int, now: datetime) -> str:
     return (now + timedelta(seconds=expiry_seconds)).isoformat()
 
 
-def _is_expired(expiry: str, now: datetime) -> bool:
-    """True when ``expiry`` is at or before ``now`` (inclusive of exact equality).
+def _is_expired(expiry: str, now: datetime, skew: timedelta = ZERO_SKEW) -> bool:
+    """True when ``expiry`` is at or before ``now + skew`` (inclusive of equality).
 
     Pure: the evaluation instant is an explicit argument, supplied by the public
-    entry point via _resolve_now(). Nothing here reads a clock.
+    entry point via _resolve_now(). Nothing here reads a clock. ``skew`` is the
+    releasing runtime's declared clock-skew bound (PTC-49): the hold's expiry
+    was stamped under the clock of whichever process held the call, so it is
+    taken up to the bound EARLY, never late. Zero is the unbounded comparison.
     """
     expiry_dt = datetime.fromisoformat(expiry.replace("Z", "+00:00"))
-    return now >= expiry_dt
+    return end_judged_at(now, skew) >= expiry_dt
 
 
 def _expired_result(intent_id: str, store: IntentStore) -> ExecutionResult:
@@ -251,6 +255,7 @@ def approve(
     executor: Callable[[BrokeredCall], Any] | None = None,
     *,
     now: datetime | None = None,
+    skew: timedelta = ZERO_SKEW,
 ) -> ExecutionResult:
     """Execute an intent after a human approves it through an authenticated path.
 
@@ -285,6 +290,12 @@ def approve(
         resolved once here. Never derived from the intent's own ``ts`` or any
         other stored record. (``executed_at`` stays a wall-clock observation of
         when the release actually ran; it is not an input to any verdict here.)
+    skew:
+        The releasing runtime's clock-skew bound (``AgentManifest
+        .clock_skew_seconds``, PTC-49). The hold's expiry was written under the
+        clock of the process that held the call, which need not be this one, so
+        a release is refused from ``expiry - skew`` on. Never read from the
+        intent. Zero, the default, is the unbounded comparison.
 
     Returns
     -------
@@ -313,10 +324,11 @@ def approve(
         )
 
     # Check expiry before claiming the intent. An intent past its expiry never
-    # executes. The pending→expired transition is a compare-and-set shared with the
-    # runtime's expiry sweep, so exactly one of them wins it, and the winner is the
-    # one that writes the expiry's audit record (#163).
-    if _is_expired(intent.expiry, evaluated_at):
+    # executes. A release confers authority, so the skew bound applies (toward
+    # refusing, PTC-49). The pending→expired transition is a compare-and-set shared
+    # with the runtime's expiry sweep, so exactly one of them wins it, and the
+    # winner is the one that writes the expiry's audit record (#163).
+    if _is_expired(intent.expiry, evaluated_at, skew):
         return _expired_result(intent_id, store)
 
     # Atomically claim the approval slot. Only one concurrent caller can win.
@@ -432,7 +444,9 @@ def reject(
 
     # Symmetric with approve(): an intent past its expiry expired undecided; report
     # that rather than flipping it to "rejected". A late "no" is not a human
-    # denial on the record (#163).
+    # denial on the record (#163). No skew bound here, on purpose: both branches
+    # refuse, so the bound would decide no authority, and applying it would record
+    # an owner's in-time "no" as an expiry (PTC-53 keeps the two apart).
     if _is_expired(intent.expiry, evaluated_at):
         return _expired_result(intent_id, store)
 

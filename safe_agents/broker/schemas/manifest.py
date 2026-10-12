@@ -18,11 +18,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .brokered_call import ToolOp
 from .budgets import Budgets
 from .capability_iam import CapabilityIam
+from .clock_skew import MAX_CLOCK_SKEW_SECONDS
 from .common import CounterPeriod, Principal
 from .connector_auth import AuthStrategy, ConnectorAuth
 from .envelope import Envelope
@@ -70,6 +71,22 @@ class AgentManifest(BaseModel):
     # period on the command line; a mismatch reads disjoint keys and yields zero
     # evidence — failing toward less authority, never a wrong sum.
     counter_period: CounterPeriod = "utc-day"
+
+    # -- Clock-skew bound (PTC-49 / GAL-42, #175) ------------------------------
+    # The bound, in whole seconds, applied where this agent's broker compares
+    # its evaluation instant with a time another party's clock asserted: a
+    # certification term (the PIP's effective level, and propose/ratify),
+    # an approval hold's expiry at release, an inbound envelope's expiry at the
+    # drain, and an MCP admission proposal's expiry at bulk-ratify. Always toward
+    # less authority (safe_agents/broker/schemas/clock_skew.py): an end is taken
+    # up to the bound earlier, a start up to the bound later. Default 0 reproduces
+    # the unbounded comparison exactly (ships OFF). Image-baked like
+    # counter_period and outside Envelope for the same reason, so declaring it
+    # never churns the envelope hash; never read from a grant, record or call.
+    # Capped at one day (MAX_CLOCK_SKEW_SECONDS) so a typo is refused at load.
+    clock_skew_seconds: int = Field(
+        default=0, ge=0, le=MAX_CLOCK_SKEW_SECONDS, strict=True
+    )
 
     # -- Consumer-supplied connector implementations + secret mapping --
     # connector_providers: connector name → dotted provider path ("pkg.module:ClassName").

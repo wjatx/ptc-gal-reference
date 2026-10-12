@@ -16,9 +16,10 @@ the same run returning only the envelope, the form the conformance suite calls.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable, Literal
 
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW
 from safe_agents.channels.adapters import InboundAdapter
 from safe_agents.channels.schemas import EventTrigger
 from safe_agents.channels.screening import SCREEN_ERROR, ScreenVerdict, make_screen_record
@@ -80,6 +81,7 @@ def dispatch(
     drops: Any,
     now: datetime,
     zone: str,
+    clock_skew: timedelta = ZERO_SKEW,
 ) -> EventTrigger | None:
     """Run the fixed airlock gate order and return the stamped envelope, or None.
 
@@ -98,6 +100,7 @@ def dispatch(
         drops=drops,
         now=now,
         zone=zone,
+        clock_skew=clock_skew,
     ).envelope
 
 
@@ -113,6 +116,7 @@ def dispatch_outcome(
     drops: Any,
     now: datetime,
     zone: str,
+    clock_skew: timedelta = ZERO_SKEW,
 ) -> DispatchOutcome:
     """Run the fixed airlock gate order (channels/ADAPTERS.md §"Gate ordering").
 
@@ -123,7 +127,11 @@ def dispatch_outcome(
     every screen invocation appends exactly one `ScreenRecord` — pass and
     refuse alike, while a null screen appends nothing. `now` must be tz-aware
     and drives the expiry check and every recorded timestamp — this function
-    never reads the wall clock.
+    never reads the wall clock. `clock_skew` is this airlock's declared bound
+    (`ChannelsManifest.clock_skew_seconds`, PTC-49): gate 4 judges the
+    sender-stamped `expiry` at `now + clock_skew`, so an envelope expires up to
+    the bound early, never late. It is never read from the request or the
+    envelope; zero, the default, is the unbounded comparison.
 
     Short-circuits on the first gate failure, appending exactly one
     `DropRecord` per failure — the one exception is a dedupe hit, a silent
@@ -291,8 +299,10 @@ def dispatch_outcome(
         if result.agent_separated_custody:
             custody_evidence = result.custody_evidence
 
-    # Gate 4 — expiry, ahead of any budget-spending gate.
-    if envelope.is_expired(now):
+    # Gate 4 — expiry, ahead of any budget-spending gate. The expiry is the
+    # sender's, stamped under the sender's clock, so it is judged with this
+    # airlock's own skew bound toward less authority (PTC-49).
+    if envelope.is_expired(now, clock_skew):
         return refuse(
             "expired", PERMANENT, chain_verified=chain_verified, signer_key_id=signer_key_id
         )

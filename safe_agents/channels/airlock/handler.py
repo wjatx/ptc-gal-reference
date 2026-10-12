@@ -332,6 +332,7 @@ def _handle(event: dict) -> dict:
         drops=state.drops,
         now=datetime.now(timezone.utc),
         zone=state.airlock.zone,
+        clock_skew=state.airlock.clock_skew,
     )
 
     accepted = outcome.envelope

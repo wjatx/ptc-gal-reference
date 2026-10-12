@@ -94,6 +94,7 @@ from safe_agents.broker.prototype.boot_config import (
     resolve_store_arm,
 )
 from safe_agents.broker.schemas import Grant, PromotionRecord
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, skew_bound, skew_seconds_arg
 from safe_agents.broker.schemas.common import CounterPeriod, DemotionTrigger, Principal
 from safe_agents.broker.schemas.evidence import (
     ConfidenceArtifact,
@@ -750,6 +751,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "no evidence (safe only because the runner never promotes).",
     )
     parser.add_argument(
+        "--clock-skew-seconds",
+        type=skew_seconds_arg,
+        default=0,
+        help="clock-skew bound for the lapse pass (GAL-42): a certification term "
+        "was asserted under the checker's clock, so it is judged up to this many "
+        "seconds EARLY, never late. Should match the manifest's "
+        "clock_skew_seconds, which the broker enforces with. Default 0 is the "
+        "unbounded comparison. A negative value is refused.",
+    )
+    parser.add_argument(
         "--false-action-window-periods",
         "--false-action-window-days",
         dest="false_action_window_periods",
@@ -839,6 +850,7 @@ def _run_lapse_pass(
     record_store: DemotionLedgerStore,
     now: datetime.datetime,
     record_signer: object,
+    skew: datetime.timedelta = ZERO_SKEW,
 ) -> LapseOutcome:
     """The CLI's lapse pass: evaluate at ``now``, print one PII-safe JSON line."""
     outcome = run_lapse(
@@ -848,6 +860,7 @@ def _run_lapse_pass(
         record_store=record_store,
         now=now,
         record_signer=record_signer,
+        skew=skew,
     )
     if outcome.status == "lapsed" and record_signer is None:
         print(
@@ -964,6 +977,8 @@ def main(argv: list[str] | None = None) -> int:
         record_store=record_store,
         now=datetime.datetime.now(datetime.UTC),
         record_signer=evaluator_signer,
+        # The runner's own configuration, never anything on the grant.
+        skew=skew_bound(args.clock_skew_seconds),
     )
 
     outcome = run_demotion(

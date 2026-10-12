@@ -11,7 +11,7 @@ TransitionError              — raised on any structurally-invalid transition
 PromotionEligibilityCounters — input type for hysteresis checks
 validate_promotion_transition(from_level, to_level)     — pure; raises on illegal
 validate_demotion_transition(from_level, to_level)      — pure; raises on illegal
-is_eligible_for_promotion(grant, counters, *, min_clean_runs, min_dwell, now=None) -> bool
+is_eligible_for_promotion(grant, counters, *, min_clean_runs, min_dwell, now=None, skew=0) -> bool
 dwell_start_ts(records)      — pure; the ledger instant dwell is measured from
 RungStateMachine             — ties ceremony + demotion into one coordinator
 
@@ -80,6 +80,7 @@ from safe_agents.broker.grants.store import (
     QuarantinedGrantError,
 )
 from safe_agents.broker.schemas import Grant, PromotionRecord
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, start_judged_at
 from safe_agents.broker.schemas.common import AutonomyLevel
 
 
@@ -252,6 +253,7 @@ def is_eligible_for_promotion(
     min_clean_runs: int,
     min_dwell: datetime.timedelta,
     now: datetime.datetime | None = None,
+    skew: datetime.timedelta = ZERO_SKEW,
 ) -> bool:
     """Return True iff the grant has dwelt at its level long enough for promotion.
 
@@ -278,11 +280,17 @@ def is_eligible_for_promotion(
             time still elapses; only the bucket size is period-relative.
         now: the evaluation instant; injectable for tests. Defaults to the
             current UTC time. A naive value is interpreted as UTC.
+        skew: the caller's declared clock-skew bound (GAL-42). The last
+            transition's ts was written under another writer's clock, and dwell
+            gates an authority-RAISING move, so the dwell is counted as having
+            started up to the bound LATER: it is judged at ``now - skew``. Never
+            read from the record or the grant. Zero, the default, is the
+            unbounded comparison.
 
     Returns:
         False if grant.level is already out-of-loop (no upward move possible).
         False if counters.clean_runs_since_promotion < min_clean_runs.
-        False if (now - last_transition_ts) < min_dwell.
+        False if (now - skew - last_transition_ts) < min_dwell.
         True otherwise.
     """
     if grant.level is AutonomyLevel.out_of_loop:
@@ -293,7 +301,10 @@ def is_eligible_for_promotion(
     effective_now = now or datetime.datetime.now(datetime.timezone.utc)
     if effective_now.tzinfo is None:
         effective_now = effective_now.replace(tzinfo=datetime.timezone.utc)
-    return effective_now - _parse_ts(counters.last_transition_ts) >= min_dwell
+    return (
+        start_judged_at(effective_now, skew) - _parse_ts(counters.last_transition_ts)
+        >= min_dwell
+    )
 
 
 # ---------------------------------------------------------------------------

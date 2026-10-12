@@ -9,10 +9,12 @@ import base64
 import binascii
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, end_judged_at
 
 # Contract ceiling on the serialized `payload` size (channels/SCHEMAS.md
 # §"payload / payload_ref / payload_digest"). Consumers may bound lower.
@@ -289,16 +291,21 @@ class EventTrigger(BaseModel):
         """The C1 dedupe key: (sender.channel_identity, event_id)."""
         return (self.sender.channel_identity, self.event_id)
 
-    def is_expired(self, now: datetime) -> bool:
-        """Whether `now` is past `expiry`.
+    def is_expired(self, now: datetime, skew: timedelta = ZERO_SKEW) -> bool:
+        """Whether `now + skew` is past `expiry`.
 
         Deterministic and testable: the caller supplies `now` (must be
         timezone-aware); this never reads the wall clock itself
         (channels/SCHEMAS.md §"expiry").
+
+        `skew` is the RECEIVER's declared clock-skew bound (PTC-49): `expiry`
+        was stamped under the sender's clock, so it is taken up to the bound
+        EARLY, never late. Nothing on the envelope can set it. Zero, the
+        default, is the unbounded comparison; a negative bound is refused.
         """
         if now.tzinfo is None:
             raise ValueError("is_expired requires a timezone-aware `now`")
-        return now > datetime.fromisoformat(self.expiry)
+        return end_judged_at(now, skew) > datetime.fromisoformat(self.expiry)
 
     def stamped(
         self,

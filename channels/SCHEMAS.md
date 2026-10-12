@@ -122,6 +122,14 @@ Per-field notes:
   overwriting any inbound value (enforced at the gate — `channels/TRUST-MAPPING.md`).
 - **expiry** — hard TTL, checked with caller-supplied time (deterministic, testable). An expired
   envelope drops before the injection screen so replays cannot drain the screening budget.
+  `expiry` is stamped under the sender's clock, so a receiver judges it with its own declared
+  clock-skew bound, toward less authority (PTC-49): the envelope is expired once
+  `now + bound > expiry`, up to the bound early and never late. The bound is receiver configuration
+  (`ChannelsManifest.clock_skew_seconds` at the airlock, `AgentManifest.clock_skew_seconds` at the
+  drain); no envelope field can set or widen it. Zero, the default, is the unbounded comparison,
+  and a bound over 86400 seconds (one day) is refused at load.
+  This buys that a slow sender clock, or a message held back, gets no window past the expiry it
+  stated. It does not detect a clock that lies, and it costs an honest sender at most the bound.
 
 ## Taint — derived, non-strippable, cross-zone
 
@@ -162,7 +170,8 @@ Verified authenticity never cleans a payload's taint.
   set only by the receiver's trust-map gate, ignoring any inbound value.
 - **C5 — the chain feeds the receiving turn.** Every provenance source is ingested through
   `TurnContext.ingest_source` before the worker acts.
-- **C6 — expiry is a hard TTL,** checked deterministically before budget-spending gates.
+- **C6 — expiry is a hard TTL,** checked deterministically before budget-spending gates, with the
+  receiver's declared clock-skew bound applied toward expiring early, never late (PTC-49).
 - **C7 — `event_id` joins the audit chains** of both zones for end-to-end replay.
 - **C8 — transport-neutral.** No field closes over a wire technology; `channel_type` and `source`
   are open, namespaced vocabularies; bindings live only in reference-tier text.

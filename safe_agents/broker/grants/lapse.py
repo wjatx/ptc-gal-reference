@@ -43,6 +43,10 @@ Also by design:
     (LAPSE_TERM_RATIFIED, ``grants.audit_lapse_term``).
   * The evaluation instant ``now`` is an explicit input (see ``grants.term``);
     only ``main`` in ``grants.runner`` reads the wall clock.
+  * ``skew`` is the evaluator's declared clock-skew bound (GAL-42): the term
+    was asserted under the checker's clock, so it is judged at ``now + skew``
+    and a lapse is owed up to the bound EARLIER. It comes from the runner's
+    own configuration, never from the grant. Zero is the unbounded comparison.
 
 Record and grant commit as ONE atomic unit (``write_record_and_grant``),
 conditioned on the guarded re-read: both land or neither does, so there is no
@@ -67,6 +71,7 @@ from safe_agents.broker.grants.store import (
 )
 from safe_agents.broker.grants.term import lapse_pending, term_passed
 from safe_agents.broker.schemas import Grant, PromotionRecord
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW
 from safe_agents.broker.schemas.common import Principal
 from safe_agents.broker.schemas.promotion_record import DEMOTION_RATIFIER
 
@@ -120,7 +125,11 @@ def _record_ts(now: datetime.datetime) -> str:
 
 
 def build_lapse(
-    grant: Grant, now: datetime.datetime, *, ts: str | None = None
+    grant: Grant,
+    now: datetime.datetime,
+    *,
+    ts: str | None = None,
+    skew: datetime.timedelta = ZERO_SKEW,
 ) -> tuple[Grant, PromotionRecord]:
     """Pure: the lowered grant and the lapse record for a grant owing a lapse.
 
@@ -133,7 +142,7 @@ def build_lapse(
     omit it, and ``now`` is used as-is. Either way it is a write instant, never
     the term: the term goes on the record as ``certifiedUntil`` (#165).
     """
-    if not lapse_pending(grant, now):
+    if not lapse_pending(grant, now, skew=skew):
         raise LapseNotDueError(
             f"grant {grant.principal.agentId}/{grant.actionClass} owes no lapse at "
             f"{now.isoformat()} (certifiedUntil={grant.certifiedUntil!r}, level="
@@ -183,6 +192,7 @@ def apply_lapse(
     now: datetime.datetime,
     session: object = None,
     record_signer: object = None,
+    skew: datetime.timedelta = ZERO_SKEW,
 ) -> tuple[Grant, PromotionRecord]:
     """Lower ``grant`` to lastSafeLevel and append its lapse record, atomically.
 
@@ -199,7 +209,7 @@ def apply_lapse(
     ts = next_ledger_ts(
         record_store, grant.principal, grant.actionClass, now=now, session=session
     )
-    updated, record = build_lapse(grant, now, ts=ts)
+    updated, record = build_lapse(grant, now, ts=ts, skew=skew)
 
     current = store.get_grant(grant.principal, grant.actionClass)
     if current.quarantined:
@@ -237,6 +247,7 @@ def run_lapse(
     now: datetime.datetime,
     session: object = None,
     record_signer: object = None,
+    skew: datetime.timedelta = ZERO_SKEW,
 ) -> LapseOutcome:
     """One lapse evaluation pass for (principal, action_class) at instant ``now``.
 
@@ -260,15 +271,16 @@ def run_lapse(
         return LapseOutcome(
             status="no-term", reason=f"grant {coordinate} carries no term; it never lapses"
         )
-    if not term_passed(grant, now):
+    if not term_passed(grant, now, skew=skew):
         return LapseOutcome(
             status="not-due",
             reason=(
                 f"grant {coordinate} is certified until {grant.certifiedUntil}; "
                 f"not passed at {now.isoformat()}"
+                + (f" with a clock-skew bound of {skew}" if skew else "")
             ),
         )
-    if not lapse_pending(grant, now):
+    if not lapse_pending(grant, now, skew=skew):
         return LapseOutcome(
             status="nothing-to-lapse",
             reason=(
@@ -285,14 +297,16 @@ def run_lapse(
             now=now,
             session=session,
             record_signer=record_signer,
+            skew=skew,
         )
     except (LapseConflictError, RecordAlreadyExistsError) as exc:
         logger.error(str(exc))
         return LapseOutcome(status="conflict", reason=str(exc))
+    judged = f" with a clock-skew bound of {skew}" if skew else ""
     reason = (
         f"grant {coordinate} LAPSED: certification term {grant.certifiedUntil} passed "
-        f"at {now.isoformat()}; {record.fromLevel.value} -> {record.toLevel.value}, "
-        "demotionReason=pending-evidence"
+        f"at {now.isoformat()}{judged}; {record.fromLevel.value} -> "
+        f"{record.toLevel.value}, demotionReason=pending-evidence"
     )
     logger.info(reason)
     return LapseOutcome(status="lapsed", reason=reason, updated_grant=updated, record=record)

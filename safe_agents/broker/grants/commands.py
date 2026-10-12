@@ -76,6 +76,7 @@ from safe_agents.broker.grants._commands_common import (
     _build_ack_store,
     _build_proposal_store,
     _ceremony_blast_context,
+    _ceremony_clock_skew,
     _manifest_context,
     _parse_args,
 )
@@ -138,6 +139,7 @@ from safe_agents.broker.grants.store import (
 from safe_agents.broker.schemas import Grant, PromotionRecord
 from safe_agents.broker.schemas.brokered_call import ToolOp
 from safe_agents.broker.schemas.budgets import ErrorBudget
+from safe_agents.broker.schemas.clock_skew import ZERO_SKEW
 from safe_agents.broker.schemas.common import AutonomyLevel, DemotionTrigger, Principal
 from safe_agents.broker.schemas.evidence import ConfidenceArtifact
 
@@ -512,6 +514,7 @@ def propose_command(
     high_blast: Collection[str],
     session: object = None,
     now: datetime.datetime | None = None,
+    clock_skew: datetime.timedelta = ZERO_SKEW,
 ) -> int:
     """Build, predicate-check, and store a PromotionProposal.
 
@@ -522,6 +525,9 @@ def propose_command(
     ``tool_ops`` is the image-baked manifest's ToolOp table and ``high_blast``
     the in-force envelope's overrides: the blast class is derived from them and
     the maker has no input to it.
+
+    ``clock_skew`` is the manifest's clock-skew bound (GAL-42): a stored term
+    is judged at ``now + clock_skew``, the instant the broker judges it at.
     """
     principal = _principal_from_args(args)
     caller = _caller_identity(session)
@@ -560,7 +566,9 @@ def propose_command(
     # cannot anchor a promotion — its stored level is no longer certified, and
     # enforcement already acts at lastSafeLevel. The ceremony re-checks this at
     # ratify time; refusing here keeps the maker from staging a doomed proposal.
-    if read.grant is not None and lapse_pending(read.grant, _utc_now(now)):
+    if read.grant is not None and lapse_pending(
+        read.grant, _utc_now(now), skew=clock_skew
+    ):
         print(
             f"REFUSED: the grant's certification term {read.grant.certifiedUntil} has "
             f"passed, so it acts at {read.grant.lastSafeLevel.value!r}, but the lapse "
@@ -723,8 +731,13 @@ def ratify_command(
     checker: CheckerProtocol | None = None,
     session: object = None,
     now: datetime.datetime | None = None,
+    clock_skew: datetime.timedelta = ZERO_SKEW,
 ) -> int:
     """Load the stored proposal and run the full maker-checker ceremony.
+
+    clock_skew: the manifest's clock-skew bound (PTC-49 / GAL-42), handed to
+    the ceremony, which judges the proposal's expiry, its term and the stored
+    grant's term at ``now + clock_skew``.
 
     checker: the optional evidence reviewer (findings recorded, never
     gated on). None — the default, and the state whenever GRANTS_REVIEWER_KIND
@@ -841,6 +854,7 @@ def ratify_command(
         promotion_record_store=record_store,
         checker=checker,
         record_signer=signer,
+        clock_skew=clock_skew,
     )
     machine = RungStateMachine(
         ceremony=ceremony, grant_store=grant_store, record_store=record_store
@@ -1094,6 +1108,7 @@ def main(argv: list[str] | None = None) -> int:
                 envelope_hash=envelope_hash,
                 tool_ops=tool_ops,
                 high_blast=high_blast,
+                clock_skew=_ceremony_clock_skew(_principal_from_args(args)),
             )
         if args.command == "ratify":
             grant_store, record_store = _build_stores(args.table_name)
@@ -1109,6 +1124,7 @@ def main(argv: list[str] | None = None) -> int:
                 tool_ops=tool_ops,
                 high_blast=high_blast,
                 checker=_resolve_reviewer(),
+                clock_skew=_ceremony_clock_skew(_principal_from_args(args)),
             )
         if args.command == "tighten":
             grant_store, record_store = _build_stores(args.table_name)
