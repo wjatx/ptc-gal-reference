@@ -431,7 +431,7 @@ def require_sanctioned_grant_load(mode: str) -> None:
 
     Seed mode blind-upserts manifest-derived grants at every boot — a dev
     smoke convenience. On DynamoDB the real floor is protected structurally
-    (brokerRole is read-only on the grants table, so dynamo+seed only ever
+    (brokerRole cannot write grants, so dynamo+seed only ever
     works against DynamoDB Local); the sqlite arm has no IAM between the
     broker process and the file, so seed mode there would silently mint
     grants into a durable trust store on every boot — the wrong-authority-mint shape.

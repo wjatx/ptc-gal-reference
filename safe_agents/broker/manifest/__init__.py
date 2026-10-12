@@ -92,6 +92,14 @@ class ToolOpTable:
             if entry.tool != HARNESS_TOOL and f"{entry.tool}.{entry.op}" in granted_classes
         ]
 
+    def cause_entries(self) -> list[ToolOp]:
+        """The entries that declare ``causes_context`` (PTC-51, #177), in table order.
+
+        The PEP reads a cause op's declaration from THIS table, the image-baked
+        one, never from a call or from the copy of the ToolOp a held intent froze.
+        """
+        return [entry for entry in self._entries if entry.causes_context is not None]
+
     def __len__(self) -> int:
         return len(self._entries)
 
@@ -112,6 +120,8 @@ class ToolOpTable:
 #   egress_arg: name of the arg whose value egresses to the provider.
 #   destination_arg: name of the arg that says where the request goes; read only by
 #               the opt-in composed-destination hold (broker/TAINT.md §6.1).
+#   causes_context: the op creates a context that acts later (PTC-51); no catalog op
+#               declares one, since the target principal is the consumer's to name.
 # ---------------------------------------------------------------------------
 
 CATALOG: list[ToolOp] = [

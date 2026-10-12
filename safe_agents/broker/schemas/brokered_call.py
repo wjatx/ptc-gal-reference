@@ -7,10 +7,68 @@ See SCHEMAS.md §2 and broker/README.md §"The request → decision → audit fl
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
-from .common import Principal
+from .common import MAX_DECLARABLE_AGE_SECONDS, Principal
 from .evidence import ConfidenceArtifact
+
+# The one target spelling that means "a later run of the principal that caused it".
+SELF_TARGET = "self"
+
+
+class CausesContext(BaseModel):
+    """An op's declaration that running it causes a context to exist (PTC-51, #177).
+
+    Image-baked on a ``ToolOp`` in the manifest's ``tool_ops``, never read from a
+    call's arguments. When the op runs, the broker writes an inheritance record
+    for ``target`` before it calls the connector, and every turn ``target``'s
+    runtime mints ingests the causing turn's sources from it
+    (``broker/TAINT.md``). The declaration is the only switch: an op without one
+    writes nothing.
+
+    ``target`` is the literal ``"self"``, a deferred run of the principal whose
+    manifest declares the op, or a child principal spelled in full. Nothing else
+    is accepted, so a typo cannot name a principal nobody runs as.
+
+    ``horizon_seconds`` fixes the record's ``notAfter`` when no sub-grant to the
+    target exists at write time: ``issuedAt`` plus this many seconds. Required on
+    every declaration, so every record's lifetime is known at load. When a
+    sub-grant to a child target exists, its expiry is used instead
+    (``safe_agents.broker.taint.inheritance.resolve_not_after``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Literal["self"] | Principal
+    horizon_seconds: StrictInt = Field(gt=0, le=MAX_DECLARABLE_AGE_SECONDS)
+
+    @model_validator(mode="after")
+    def _child_target_is_spelled_in_full(self) -> "CausesContext":
+        """A child target names every part of a principal, with no padding.
+
+        An empty or padded part names a principal no runtime authenticates as,
+        so the record would land where nobody reads it and the child would start
+        clean. Refuse it at load.
+        """
+        if isinstance(self.target, Principal):
+            for part in ("agentId", "skill", "user"):
+                value = getattr(self.target, part)
+                if not value or value != value.strip():
+                    raise ValueError(
+                        f"causes_context.target.{part} = {value!r} must be non-empty with "
+                        "no leading or trailing whitespace; a child target is a principal "
+                        "spelled in full"
+                    )
+        return self
 
 
 class ToolOp(BaseModel):
@@ -55,6 +113,38 @@ class ToolOp(BaseModel):
     # reads, and it would satisfy the manifest's "the knob needs a declaration" check
     # while holding nothing.
     destination_arg: str | None = Field(default=None, pattern=r"^\S(?:.*\S)?$")
+    # Causes a context (PTC-51, #177) -- running this op creates a context that will act
+    # later: a deferred run of this principal ("self") or a child principal. Image-baked
+    # like every other ToolOp fact, honoured only from the manifest's tool_ops, never
+    # from a call. When set, the broker writes an inheritance record keyed by the target
+    # before the connector runs, and the target's turns start at least as tainted as the
+    # turn that caused them (broker/TAINT.md). None (the default) = the op creates no
+    # context the broker is told about, and nothing is written. It dumps as null when
+    # unset, as destination_arg does.
+    causes_context: CausesContext | None = None
+
+    @field_validator("causes_context", mode="wrap")
+    @classmethod
+    def _name_the_entry(cls, value: Any, handler: Any, info: ValidationInfo) -> Any:
+        """Refuse a malformed declaration with a message that names the entry.
+
+        A pydantic location says ``tool_ops.3.causes_context``; the operator
+        reading a refused manifest needs ``tool.op``.
+        """
+        try:
+            return handler(value)
+        except ValidationError as exc:
+            entry = f"{info.data.get('tool', '?')}.{info.data.get('op', '?')}"
+            details = "; ".join(
+                f"{'.'.join(str(p) for p in err['loc']) or 'causes_context'}: {err['msg']}"
+                for err in exc.errors()
+            )
+            raise ValueError(
+                f"tool_ops entry {entry!r} has a malformed causes_context: {details}. "
+                f"The target is the literal {SELF_TARGET!r} or a child principal "
+                "spelled in full, and horizon_seconds is a positive whole number of "
+                "seconds."
+            ) from None
 
 
 class Taint(BaseModel):

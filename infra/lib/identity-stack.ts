@@ -69,8 +69,9 @@ export class IdentityStack extends Stack {
 
     // ── 2. brokerRole — holds the keys, cannot promote itself ────────────────────────────────────
     // The broker reads secrets and enforces grants; it is the sole path from agent to connector.
-    // It has NO write access to the grants table — only promotionRole and demotionRole may alter
-    // grants. The broker can neither promote itself nor the agent.
+    // It has NO write access to grants. Only promotionRole and demotionRole may alter
+    // grants. The broker can neither promote itself nor the agent. Its one write in the grants
+    // table is the taint inheritance ledger (INHERIT#, PTC-51), confined there by LeadingKeys.
     const brokerRole = new Role(this, 'BrokerRole', {
       assumedBy: computePrincipals(),
       description: `safe-agents ${env} - broker process role (sole secret reader; no grants write)`,
@@ -99,13 +100,36 @@ export class IdentityStack extends Stack {
       }),
     );
 
-    // DynamoDB — grants table: READ ONLY. The broker reads grants to make decisions; it must not
-    // write them. Index resources are included for Query calls on any GSIs added later.
+    // DynamoDB, grants table: READ. The broker reads grants to make decisions; it must not
+    // write them. Index resources are included for Query calls on any GSIs added later. Its one
+    // write in this table, the INHERIT# ledger, is the separately confined statement below.
     brokerRole.addToPolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: ['dynamodb:GetItem', 'dynamodb:Query'],
         resources: [grantsTableArn, `${grantsTableArn}/index/*`],
+      }),
+    );
+
+    // DynamoDB, grants table: the taint inheritance ledger, and nothing else (PTC-51, #177).
+    // When an op declared to cause a context runs, the broker writes a record keyed by the
+    // TARGET principal before it calls the connector; the target's runtime reads it at every
+    // turn mint. The target is usually another principal, so this is the broker's first write
+    // into a partition it does not own. What bounds it: the condition confines every key the
+    // request touches to INHERIT# (ForAllValues, as the maker's PROPOSAL# write), so a GRANT#,
+    // RECORD# or ENVELOPE# upsert is refused by IAM; and an INHERIT# record carries taint for the
+    // principal it names, never authority. IAM confines the key, not the operation: an
+    // UpdateItem could rewrite a live INHERIT# row, and only broker code makes the write
+    // create-only. UpdateItem only, no PutItem: the store writes
+    // a conditional create through update_item. The reads above already cover the Query.
+    brokerRole.addToPolicy(
+      new PolicyStatement({
+        effect: Effect.ALLOW,
+        actions: ['dynamodb:UpdateItem'],
+        resources: [grantsTableArn],
+        conditions: {
+          'ForAllValues:StringLike': { 'dynamodb:LeadingKeys': ['INHERIT#*'] },
+        },
       }),
     );
 

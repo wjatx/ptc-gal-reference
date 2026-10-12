@@ -34,13 +34,13 @@ from safe_agents.broker.delegation import (
     assert_attenuates,
     build_attributed_record,
     check_action_authorized,
-    compute_sub_grant,
     parent_from_grant,
     parent_from_sub_grant,
     verify_not_expired,
 )
 from safe_agents.broker.schemas import AuditRecord
 from safe_agents.broker.schemas.common import AutonomyLevel, Principal
+from safe_agents.broker.tests.scaffold import issue_sub_grant
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +101,7 @@ def _scope(
 
 def _make_sub_grant(**scope_overrides) -> SubGrant:
     """Issue a sub-grant with defaults, optionally overriding scope fields."""
-    return compute_sub_grant(
+    return issue_sub_grant(
         _parent(),
         _scope(**scope_overrides),
         now=_NOW,
@@ -181,32 +181,32 @@ class TestCapAttenuation:
     def test_sub_grant_cap_equals_requested_when_within_remaining(self) -> None:
         """spendCap is set to the requested value when it's within the remaining."""
         parent = _parent(remaining_spend=100.0)
-        sg = compute_sub_grant(parent, _scope(spend_cap=60.0), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(spend_cap=60.0), now=_NOW)
         assert sg.spendCap == 60.0
 
     def test_sub_grant_cap_le_parent_remaining(self) -> None:
         """Sub-grant spendCap ≤ parent remaining at creation."""
         parent = _parent(remaining_spend=100.0)
-        sg = compute_sub_grant(parent, _scope(spend_cap=100.0), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(spend_cap=100.0), now=_NOW)
         assert sg.spendCap <= 100.0
 
     def test_requesting_cap_equal_to_remaining_succeeds(self) -> None:
         """Exactly consuming the remaining cap is allowed (not a widening)."""
         parent = _parent(remaining_spend=50.0)
-        sg = compute_sub_grant(parent, _scope(spend_cap=50.0), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(spend_cap=50.0), now=_NOW)
         assert sg.spendCap == 50.0
 
     def test_requesting_cap_above_remaining_raises(self) -> None:
         """Requesting more cap than the parent has remaining is rejected."""
         parent = _parent(remaining_spend=50.0)
         with pytest.raises(AttenuationError, match="spendCap"):
-            compute_sub_grant(parent, _scope(spend_cap=51.0), now=_NOW)
+            issue_sub_grant(parent, _scope(spend_cap=51.0), now=_NOW)
 
     def test_zero_remaining_any_nonzero_cap_raises(self) -> None:
         """When parent has zero remaining, any nonzero cap request is rejected."""
         parent = _parent(remaining_spend=0.0)
         with pytest.raises(AttenuationError):
-            compute_sub_grant(parent, _scope(spend_cap=1.0), now=_NOW)
+            issue_sub_grant(parent, _scope(spend_cap=1.0), now=_NOW)
 
 
 # ---------------------------------------------------------------------------
@@ -245,14 +245,14 @@ class TestExpiry:
         parent = _parent(expiry=parent_expiry)
         # Request 2 hours — past the parent's 1-hour remaining
         with pytest.raises(AttenuationError, match="expiry"):
-            compute_sub_grant(parent, _scope(ttl_seconds=7201.0), now=_NOW)
+            issue_sub_grant(parent, _scope(ttl_seconds=7201.0), now=_NOW)
 
     def test_ttl_exactly_at_parent_expiry_succeeds(self) -> None:
         """A TTL exactly matching the parent's remaining window is valid."""
         parent_expiry = _NOW + timedelta(hours=1)
         parent = _parent(expiry=parent_expiry)
         # 3600s = exactly 1 hour, matching the parent expiry
-        sg = compute_sub_grant(parent, _scope(ttl_seconds=3600.0), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(ttl_seconds=3600.0), now=_NOW)
         sg_expiry = datetime.fromisoformat(sg.expiry)
         assert sg_expiry <= parent_expiry
 
@@ -270,7 +270,7 @@ class TestAttributionChain:
         """Sub-grant from a root grant: chain = [root_grant_id, sub_grant_id]."""
         root_grant_id = "grant-root-42"
         parent = _parent(grant_id=root_grant_id)
-        sg = compute_sub_grant(parent, _scope(), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(), now=_NOW)
 
         record = _minimal_audit_record()
         attributed = build_attributed_record(sg, record)
@@ -283,7 +283,7 @@ class TestAttributionChain:
         """Chain contains both the root grant ID and the sub-grant ID."""
         root_grant_id = "grant-root-99"
         parent = _parent(grant_id=root_grant_id)
-        sg = compute_sub_grant(parent, _scope(), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(), now=_NOW)
 
         attributed = build_attributed_record(sg, _minimal_audit_record())
 
@@ -298,7 +298,7 @@ class TestAttributionChain:
             grant_id=root_grant_id,
             allow_further_delegation=True,
         )
-        parent_sg = compute_sub_grant(
+        parent_sg = issue_sub_grant(
             parent,
             _scope(allow_further_delegation=True, action_classes=["email.draft"]),
             now=_NOW,
@@ -318,7 +318,7 @@ class TestAttributionChain:
             allowFurtherDelegation=False,
         )
         sub_parent = parent_from_sub_grant(parent_sg, remaining_spend=50.0)
-        sub_sg = compute_sub_grant(sub_parent, grandchild_scope, now=_NOW)
+        sub_sg = issue_sub_grant(sub_parent, grandchild_scope, now=_NOW)
 
         attributed = build_attributed_record(sub_sg, _minimal_audit_record())
         # Full lineage: root → parent_sg → sub_sg
@@ -327,7 +327,7 @@ class TestAttributionChain:
     def test_attributed_record_contains_audit_record(self) -> None:
         """The wrapped audit record is the one passed in."""
         parent = _parent()
-        sg = compute_sub_grant(parent, _scope(), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(), now=_NOW)
         record = _minimal_audit_record()
         attributed = build_attributed_record(sg, record)
         assert attributed.audit_record is record
@@ -336,7 +336,7 @@ class TestAttributionChain:
         """The first element of the chain is the root human-owned grant ID."""
         human_grant_id = "human-grant-alice"
         parent = _parent(grant_id=human_grant_id)
-        sg = compute_sub_grant(parent, _scope(), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(), now=_NOW)
         attributed = build_attributed_record(sg, _minimal_audit_record())
         # First link in the chain is always the root (human) grant
         assert attributed.delegation_chain[0] == human_grant_id
@@ -354,7 +354,7 @@ class TestWideningAttempt:
         """Requesting a more-autonomous level than the parent is rejected."""
         parent = _parent(level=AutonomyLevel.in_loop)
         with pytest.raises(AttenuationError, match="level"):
-            compute_sub_grant(
+            issue_sub_grant(
                 parent,
                 _scope(level=AutonomyLevel.out_of_loop),
                 now=_NOW,
@@ -364,7 +364,7 @@ class TestWideningAttempt:
         """on-loop parent cannot produce an out-of-loop sub-grant."""
         parent = _parent(level=AutonomyLevel.on_loop)
         with pytest.raises(AttenuationError, match="level"):
-            compute_sub_grant(
+            issue_sub_grant(
                 parent,
                 _scope(level=AutonomyLevel.out_of_loop),
                 now=_NOW,
@@ -374,13 +374,13 @@ class TestWideningAttempt:
         """Requesting a cap above parent remaining is rejected."""
         parent = _parent(remaining_spend=30.0)
         with pytest.raises(AttenuationError, match="spendCap"):
-            compute_sub_grant(parent, _scope(spend_cap=31.0), now=_NOW)
+            issue_sub_grant(parent, _scope(spend_cap=31.0), now=_NOW)
 
     def test_widening_scope_to_unauthorized_class_rejected(self) -> None:
         """Requesting an action class the parent doesn't hold is rejected."""
         parent = _parent(action_classes=["email.draft"])
         with pytest.raises(AttenuationError, match="actionClasses"):
-            compute_sub_grant(
+            issue_sub_grant(
                 parent,
                 _scope(action_classes=["email.send"]),
                 now=_NOW,
@@ -390,7 +390,7 @@ class TestWideningAttempt:
         """Requesting a class outside any parent authorization is rejected."""
         parent = _parent(action_classes=["email.draft"])
         with pytest.raises(AttenuationError):
-            compute_sub_grant(
+            issue_sub_grant(
                 parent,
                 _scope(action_classes=["payments.transfer"]),
                 now=_NOW,
@@ -400,7 +400,7 @@ class TestWideningAttempt:
         """Requesting a TTL that extends past parent's expiry is rejected."""
         parent = _parent(expiry=_NOW + timedelta(hours=1))
         with pytest.raises(AttenuationError, match="expiry"):
-            compute_sub_grant(parent, _scope(ttl_seconds=7201.0), now=_NOW)
+            issue_sub_grant(parent, _scope(ttl_seconds=7201.0), now=_NOW)
 
     def test_assert_attenuates_catches_widened_level(self) -> None:
         """assert_attenuates raises for a child with a wider level."""
@@ -433,7 +433,7 @@ class TestWideningAttempt:
             expiry=_PARENT_EXPIRY,
             tree_pool_cap=_DEFAULT_TREE_POOL_CAP,
         )
-        valid_sg = compute_sub_grant(parent, _scope(spend_cap=10.0), now=_NOW)
+        valid_sg = issue_sub_grant(parent, _scope(spend_cap=10.0), now=_NOW)
         bad_sg = SubGrant(**{**valid_sg.model_dump(), "spendCap": 11.0})
         with pytest.raises(AttenuationError, match="spendCap"):
             assert_attenuates(parent, bad_sg)
@@ -448,7 +448,7 @@ class TestWideningAttempt:
             expiry=_PARENT_EXPIRY,
             tree_pool_cap=_DEFAULT_TREE_POOL_CAP,
         )
-        valid_sg = compute_sub_grant(parent, _scope(action_classes=["email.draft"]), now=_NOW)
+        valid_sg = issue_sub_grant(parent, _scope(action_classes=["email.draft"]), now=_NOW)
         bad_sg = SubGrant(**{**valid_sg.model_dump(), "actionClasses": ["email.send"]})
         with pytest.raises(AttenuationError, match="actionClasses"):
             assert_attenuates(parent, bad_sg)
@@ -457,7 +457,7 @@ class TestWideningAttempt:
         """allowFurtherDelegation=True is rejected when the parent forbids it."""
         parent = _parent(allow_further_delegation=False)
         with pytest.raises((AttenuationError, FurtherDelegationForbiddenError)):
-            compute_sub_grant(
+            issue_sub_grant(
                 parent,
                 _scope(allow_further_delegation=True),
                 now=_NOW,
@@ -484,7 +484,7 @@ class TestRecursiveAttenuation:
             remaining_spend=100.0,
             allow_further_delegation=True,
         )
-        parent_sg = compute_sub_grant(
+        parent_sg = issue_sub_grant(
             parent,
             _scope(
                 action_classes=["email.draft"],
@@ -508,7 +508,7 @@ class TestRecursiveAttenuation:
             ttlSeconds=1800.0,
             allowFurtherDelegation=False,
         )
-        sub_sg = compute_sub_grant(sub_parent, grandchild_scope, now=_NOW)
+        sub_sg = issue_sub_grant(sub_parent, grandchild_scope, now=_NOW)
 
         # Level must not exceed parent sub-grant's level (on-loop)
         from safe_agents.broker.delegation.types import LEVEL_ORDER
@@ -535,7 +535,7 @@ class TestRecursiveAttenuation:
             allowFurtherDelegation=False,
         )
         with pytest.raises(AttenuationError, match="spendCap"):
-            compute_sub_grant(sub_parent, grandchild_scope, now=_NOW)
+            issue_sub_grant(sub_parent, grandchild_scope, now=_NOW)
 
 
 # ---------------------------------------------------------------------------
@@ -561,8 +561,8 @@ class TestSubGrantStore:
         store = InMemorySubGrantStore()
         parent1 = _parent(grant_id="parent-A")
         parent2 = _parent(grant_id="parent-B")
-        sg1 = compute_sub_grant(parent1, _scope(), now=_NOW)
-        sg2 = compute_sub_grant(parent2, _scope(), now=_NOW)
+        sg1 = issue_sub_grant(parent1, _scope(), now=_NOW)
+        sg2 = issue_sub_grant(parent2, _scope(), now=_NOW)
         store.save(sg1)
         store.save(sg2)
         assert store.get_by_parent("parent-A") == [sg1]
@@ -610,13 +610,13 @@ class TestSubGrantIntegrity:
     def test_delegation_chain_starts_with_parent_id(self) -> None:
         """The sub-grant's delegationChain contains the parent's ID."""
         parent = _parent(grant_id="parent-xyz")
-        sg = compute_sub_grant(parent, _scope(), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(), now=_NOW)
         assert "parent-xyz" in sg.delegationChain
 
     def test_level_same_as_parent_is_allowed(self) -> None:
         """A sub-grant may match the parent's level (not strictly narrower)."""
         parent = _parent(level=AutonomyLevel.out_of_loop)
-        sg = compute_sub_grant(parent, _scope(level=AutonomyLevel.out_of_loop), now=_NOW)
+        sg = issue_sub_grant(parent, _scope(level=AutonomyLevel.out_of_loop), now=_NOW)
         assert sg.level == AutonomyLevel.out_of_loop
 
     def test_empty_action_classes_rejected(self) -> None:
@@ -630,4 +630,4 @@ class TestSubGrantIntegrity:
             allowFurtherDelegation=False,
         )
         with pytest.raises(AttenuationError, match="empty"):
-            compute_sub_grant(_parent(), empty_scope, now=_NOW)
+            issue_sub_grant(_parent(), empty_scope, now=_NOW)

@@ -37,7 +37,6 @@ from safe_agents.broker.delegation import (
     AttenuationError,
     ExpiredSubGrantError,
     SubGrant,
-    compute_sub_grant,
     verify_not_expired,
 )
 from safe_agents.broker.enforcement import InMemoryStore
@@ -57,6 +56,7 @@ from safe_agents.broker.schemas.clock_skew import (
     start_judged_at,
 )
 from safe_agents.broker.tests.test_approval_instant import _hold
+from safe_agents.broker.tests.scaffold import issue_sub_grant
 from safe_agents.broker.tests.test_delegation import _parent, _scope
 from safe_agents.broker.tests.test_grant_term_lapse import (
     ACTION_CLASS,
@@ -197,7 +197,7 @@ def _approval_release(at, bound):
 
 
 def _subgrant_use(at, bound):
-    sub = compute_sub_grant(
+    sub = issue_sub_grant(
         _parent(expiry=END + datetime.timedelta(hours=1)),
         _scope(ttl_seconds=3600.0),
         now=END - datetime.timedelta(hours=1),
@@ -216,7 +216,7 @@ _SUBGRANT_TTL = 600.0
 def _subgrant_issuance(at, bound):
     # The requested child expiry lands at ``at``; the parent's expiry is END.
     try:
-        compute_sub_grant(
+        issue_sub_grant(
             _parent(expiry=END),
             _scope(ttl_seconds=_SUBGRANT_TTL),
             now=at - datetime.timedelta(seconds=_SUBGRANT_TTL),
@@ -411,7 +411,7 @@ def test_the_manifest_bound_stays_out_of_the_envelope_hash():
         pytest.param(Grant, lambda: _grant().model_dump(mode="json"), id="Grant"),
         pytest.param(
             SubGrant,
-            lambda: compute_sub_grant(
+            lambda: issue_sub_grant(
                 _parent(expiry=END + datetime.timedelta(hours=2)), _scope(), now=END
             ).model_dump(mode="json"),
             id="SubGrant",

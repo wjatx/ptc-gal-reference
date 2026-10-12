@@ -28,7 +28,7 @@ import pytest
 from safe_agents.broker.approval import InMemoryIntentStore
 from safe_agents.broker.audit import InMemorySink
 from safe_agents.broker.delegation import root_grant_id
-from safe_agents.broker.delegation.compute import compute_sub_grant, parent_from_grant
+from safe_agents.broker.delegation.compute import parent_from_grant
 from safe_agents.broker.delegation.pool import resolve_tree_pool
 from safe_agents.broker.delegation.store import InMemorySubGrantStore
 from safe_agents.broker.delegation.types import (
@@ -52,7 +52,7 @@ from safe_agents.broker.schemas import BrokeredCall, Grant, ToolOp
 from safe_agents.broker.schemas.common import AutonomyLevel, Principal
 from safe_agents.broker.taint import build_trust_map
 from safe_agents.connectors import StubConnector
-from safe_agents.broker.tests.scaffold import ENVELOPE_HASH, make_pip
+from safe_agents.broker.tests.scaffold import ENVELOPE_HASH, issue_sub_grant, make_pip
 
 # The tree may create three events a period, no matter how the work is divided.
 # A benign reversible op is used deliberately: the pool is about the BUDGET,
@@ -108,7 +108,7 @@ def _sub_grant_for(principal: Principal, sub_grant_store, *, pool=TREE_POOL_CAP)
         expiry=__import__("datetime").datetime.fromisoformat(_FAR_FUTURE),
         tree_pool_cap=pool,
     )
-    sg = compute_sub_grant(
+    sg = issue_sub_grant(
         parent,
         DelegationScope(
             subAgentPrincipal=principal,
@@ -448,7 +448,7 @@ def test_depth_cannot_raise_the_pool():
     grandparent = parent_from_sub_grant(child, remaining_spend=100.0)
     assert grandparent.tree_pool_cap == TREE_POOL_CAP
 
-    grandchild = compute_sub_grant(
+    grandchild = issue_sub_grant(
         grandparent,
         DelegationScope(
             subAgentPrincipal=SIB_B,

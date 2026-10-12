@@ -15,9 +15,12 @@ Public API:
     AttenuationError       — raised when any dimension would widen parent authority
     ExpiredSubGrantError   — raised when a sub-grant's TTL has passed
     FurtherDelegationForbiddenError — raised when further delegation is not allowed
+    UndeclaredDelegationTargetError: raised when the requested child is not the
+                             causing op's declared causes_context target (PTC-51)
 
   Computation (pure, AWS-free):
-    compute_sub_grant()     — compute a SubGrant from a parent + scope
+    compute_sub_grant()     : compute a SubGrant from a parent + scope + causing op
+    require_declared_target(): refuse a child the causing op does not declare
     assert_attenuates()     — validate that (parent, child) satisfies attenuation
     check_action_authorized() — check if an action class is in a sub-grant's scope
     verify_not_expired()    — check TTL and raise if expired
@@ -42,6 +45,7 @@ from .compute import (
     compute_sub_grant,
     parent_from_grant,
     parent_from_sub_grant,
+    require_declared_target,
     verify_not_expired,
 )
 from .store import InMemorySubGrantStore, SubGrantStore
@@ -55,6 +59,7 @@ from .types import (
     FurtherDelegationForbiddenError,
     ParentAuthority,
     SubGrant,
+    UndeclaredDelegationTargetError,
 )
 
 __all__ = [
@@ -70,8 +75,10 @@ __all__ = [
     "AttenuationError",
     "ExpiredSubGrantError",
     "FurtherDelegationForbiddenError",
+    "UndeclaredDelegationTargetError",
     # computation
     "compute_sub_grant",
+    "require_declared_target",
     "assert_attenuates",
     "check_action_authorized",
     "verify_not_expired",

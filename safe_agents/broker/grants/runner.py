@@ -1,6 +1,6 @@
 """Out-of-band demotion runner — DemotionSignal → evaluator wiring.
 
-The broker process (brokerRole) cannot write the grants table — that invariant is
+The broker process (brokerRole) cannot write grants. That invariant is
 load-bearing (infra/lib/identity-stack.ts: the broker can neither promote itself
 nor the agent). Demotion therefore runs OUT-OF-BAND as its own entrypoint under
 the floor demotion role: an ECS one-shot task or Lambda whose ambient credentials

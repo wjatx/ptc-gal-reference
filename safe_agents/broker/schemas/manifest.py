@@ -305,6 +305,38 @@ class AgentManifest(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _cause_targets_name_another_principal(self) -> "AgentManifest":
+        """Check every ``causes_context`` declaration against this manifest's principal.
+
+        PTC-51 (#177). A declaration needs the manifest's own principal: ``"self"``
+        resolves to it, and the inheritance records it writes are keyed by it. A
+        child target spelled as that same principal is refused, because it reads
+        as a child while describing a deferred run of this one; spelling it
+        ``"self"`` says what it is. The shape of each declaration (the target is
+        ``"self"`` or a full principal, a horizon is declared) is checked on the
+        ``ToolOp`` itself.
+        """
+        for op in self.tool_ops:
+            decl = op.causes_context
+            if decl is None:
+                continue
+            entry = f"{op.tool}.{op.op}"
+            if self.principal is None:
+                raise ValueError(
+                    f"tool_ops entry {entry!r} declares causes_context, but the manifest "
+                    "names no principal. The inheritance record a cause op writes is keyed "
+                    "by a principal, and 'self' means this manifest's own; declare "
+                    "`principal`."
+                )
+            if decl.target == self.principal:
+                raise ValueError(
+                    f"tool_ops entry {entry!r} declares causes_context.target equal to "
+                    "this manifest's own principal. A deferred run of the same principal "
+                    "is spelled 'self'; a child target must be a different principal."
+                )
+        return self
+
+    @model_validator(mode="after")
     def _capability_iam_pairs_with_assumed_role(self) -> "AgentManifest":
         """A declared IAM scope must be assumed by an `assumed_role` strategy.
 

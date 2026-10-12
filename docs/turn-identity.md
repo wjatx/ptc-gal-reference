@@ -62,7 +62,9 @@ In `safe_agents/broker/runtime/pep.py`:
 - `new_turn()` rolls the boundary (discards accumulated taint) and is **broker/harness-owned**: it is
   wired to no HTTP route (`broker_server.py` serves only `/registry` and `/call`), so the agent —
   which reaches the runtime only across that surface — cannot invoke it. Only the trusted loop driver
-  that owns the runtime object, or a human-side reset, may roll a turn.
+  that owns the runtime object, or a human-side reset, may roll a turn. A roll discards the turn's
+  own taint only: the next turn's mint re-reads the taint inheritance ledger, so taint a live
+  record carries comes back (`broker/TAINT.md` §4.1).
 
 The agent therefore supplies **neither the turn id nor the rollover signal**. Clearing taint is a
 broker-side event only (a `new_turn()` call, or session expiry / process restart) — never anything the

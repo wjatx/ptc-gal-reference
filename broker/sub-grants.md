@@ -51,6 +51,15 @@ it red while all 42 attenuation tests stay green, which is the shape the defect 
 It **ships off**: with no sub-grant store configured no pool is drawn and behaviour is unchanged,
 so this is opt-in per deployment.
 
+**The child must be a declared target** (PTC-51, #177). `compute_sub_grant` takes a required
+`causing_op`: the `ToolOp` of the op that creates the child, from the issuing runtime's image-baked
+table. Its `causes_context` must name, as a full principal, exactly the `subAgentPrincipal` the
+request asks for. A missing declaration, a `"self"` target, or any other principal is refused with
+`UndeclaredDelegationTargetError` before any other dimension is checked. The reason is taint: the
+record that keeps a child at least as tainted as the turn that created it is keyed by the declared
+target, so a sub-grant to a principal the request chose would hand authority to a context that
+starts clean. `test_taint_inheritance_schema.py` carries the refusals.
+
 **Issuance is still not built** (#11, second half), and the rest of this document should be read
 with that in mind. No execution path issues a sub-grant: nothing in the runtime receives a
 delegation request. A sub-grant reaches the store out of band today. Note that under the per-zone
@@ -69,8 +78,8 @@ first, which is a deployment change rather than a delegation-wiring one.
 
 ## What attenuation means
 
-A sub-grant is computed from a parent grant along three attenuating dimensions. All three apply
-simultaneously; the computation may not widen any of them.
+A sub-grant is computed from a parent grant along three attenuating dimensions, and a fourth,
+taint, rides beside them. All four apply simultaneously; none may widen.
 
 **1. Level — can only be equal or lower on the oversight rung.**
 
@@ -107,6 +116,22 @@ The envelope carries no list of tools, so there is none to intersect. Which call
 make is narrowed in the first two dimensions, and in the implemented `SubGrant` by `actionClasses`.
 An envelope tool allowlist once appeared here as a third thing to narrow. No decision ever read
 that list, and it was retired (#135).
+
+**4. Taint: the child starts no cleaner than the turn that created it** (PTC-51, #177).
+
+Taint is the one dimension where "no wider" means "no cleaner". A child that starts with a clean
+turn would let planted content in the parent's turn reach an external write through the child
+without a hold. So the op that creates the child declares it (`ToolOp.causes_context`, naming the
+child), the broker writes an inheritance record keyed by the child before the op runs, and every
+turn the child's runtime mints ingests the parent turn's sources under a floor the child's trust
+map and `trusted_read_sources` cannot lift. The record lives until the child's sub-grant expires
+when the broker's sub-grant store holds one for it, else for the declaration's horizon.
+
+This dimension is not a field of `SubGrant` and is not computed by `compute_sub_grant`. It is
+carried by the ledger, so it holds for a child with no sub-grant at all, and it is built today
+while issuance is not. Issuance ties into it only through the declared-target check above: a
+sub-grant goes only to a principal the ledger will reach. `broker/TAINT.md` §4.1 states the rule,
+its fail directions and what it does not cover.
 
 ---
 
@@ -189,7 +214,9 @@ Sub-grant attenuation is enforced at issuance, not on trust. The broker's sub-gr
 path, as designed (steps 1 and 5, and the audit write in step 4, are the unwired parts; see
 Status):
 
-1. Receives the parent agent's delegation request (desired tool set, desired level, desired caps).
+1. Receives the parent agent's delegation request (desired tool set, desired level, desired caps),
+   and refuses it unless the requested child is the declared `causes_context` target of the op
+   creating it (built: `require_declared_target`).
 2. Intersects the requested scope against the parent grant's current authority (remaining caps,
    granted tools, current level).
 3. Clamps the expiry to be shorter than the parent's remaining TTL.

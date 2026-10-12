@@ -35,7 +35,9 @@ sit outside it, under a separate identity.
 | **Tool host** | admitted tool definitions | Treats discovery as untrusted input; admits a tool only through a two-key ceremony. |
 | **Ceremony CLI** | operator credentials | The only sanctioned mutation path for grants and admissions. |
 
-The **broker cannot write the grant store** wherever a platform boundary enforces that. It is a
+The **broker cannot write grants or any other authority record** wherever a platform boundary
+enforces that. Its one write in the grant store is the taint inheritance ledger, confined to its
+own key space, and a ledger row carries no authority. It is a
 deliberate inversion: the component that reads authority per call is denied the ability to grant
 itself any. Enforcement is by the platform (IAM policy, or a read-only mount) rather than by broker
 code, so a bug in the broker does not reach it.

@@ -336,7 +336,8 @@ export class ComputeStack extends Stack {
         // Flush stdout to CloudWatch line-by-line; Python block-buffers when piped, which would
         // otherwise hide the broker's startup backend lines + per-decision logs behind the buffer.
         PYTHONUNBUFFERED: '1',
-        // brokerRole has READ-ONLY access to the grants table (IdentityStack), so the broker
+        // brokerRole cannot write grants (IdentityStack; its one write in the grants table is the
+        // INHERIT# taint inheritance ledger, confined by LeadingKeys), so the broker
         // READS pre-seeded grants rather than writing its own (the local arm's 'seed' mode). The
         // seed step (`python -m broker.prototype.seed_grants`, run out-of-band with write creds —
         // the promotion path's stand-in) MUST have populated the grants table first; a class whose

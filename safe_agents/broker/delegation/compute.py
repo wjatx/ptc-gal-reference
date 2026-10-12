@@ -15,10 +15,11 @@ import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from safe_agents.broker.schemas import AuditRecord
+from safe_agents.broker.schemas import AuditRecord, ToolOp
 from safe_agents.broker.schemas.clock_skew import ZERO_SKEW, end_judged_at
-from safe_agents.broker.schemas.common import AutonomyLevel
+from safe_agents.broker.schemas.common import AutonomyLevel, Principal
 
+from .keys import principal_key
 from .types import (
     AttenuationError,
     AttributedAuditRecord,
@@ -28,6 +29,7 @@ from .types import (
     LEVEL_ORDER,
     ParentAuthority,
     SubGrant,
+    UndeclaredDelegationTargetError,
 )
 
 
@@ -36,10 +38,45 @@ from .types import (
 # ---------------------------------------------------------------------------
 
 
+def require_declared_target(scope: DelegationScope, causing_op: ToolOp) -> None:
+    """Refuse a delegation whose child is not the causing op's declared target.
+
+    PTC-51, ruling 3 on #177. The agent requests ``subAgentPrincipal``; the
+    image-baked ``causing_op.causes_context`` names who the op creates a context
+    for. The inheritance record that keeps the child at least as tainted as its
+    parent is keyed by that declared target, so a sub-grant to anyone else would
+    be a context the record never reaches. ``causing_op`` must be the entry
+    from the issuing runtime's ``ToolOpTable``, never anything a call carried.
+    A ``"self"`` target is refused too: a deferred run of the parent is the
+    parent's own principal, which holds its own grant and needs no sub-grant.
+    """
+    decl = causing_op.causes_context
+    entry = f"{causing_op.tool}.{causing_op.op}"
+    if decl is None:
+        raise UndeclaredDelegationTargetError(
+            f"{entry} declares no causes_context, so it names no child a sub-grant "
+            "may be issued to. Declare causes_context with the child principal as "
+            "its target on the op that creates the child."
+        )
+    if not isinstance(decl.target, Principal):
+        raise UndeclaredDelegationTargetError(
+            f"{entry} declares causes_context.target 'self', a deferred run of the "
+            "parent's own principal; a sub-grant is issued only to a declared child."
+        )
+    if decl.target != scope.subAgentPrincipal:
+        raise UndeclaredDelegationTargetError(
+            f"the requested child {principal_key(scope.subAgentPrincipal)} is not the "
+            f"target {entry} declares ({principal_key(decl.target)}); a sub-grant is "
+            "issued only to the principal the causing op's image-baked declaration "
+            "names, never to one the request chose."
+        )
+
+
 def compute_sub_grant(
     parent: ParentAuthority,
     scope: DelegationScope,
     *,
+    causing_op: ToolOp,
     now: datetime | None = None,
     issued_by: str = "broker",
     skew: timedelta = ZERO_SKEW,
@@ -58,6 +95,10 @@ def compute_sub_grant(
 
     Any violation raises AttenuationError. The broker never silently clamps.
 
+    Before any of that, the requested child must be the target the causing op
+    declares (``require_declared_target``, PTC-51), or issuance raises
+    UndeclaredDelegationTargetError.
+
     Parameters
     ----------
     parent:
@@ -65,6 +106,10 @@ def compute_sub_grant(
         or parent_from_sub_grant() in the calling broker code.
     scope:
         The delegation request from the parent agent.
+    causing_op:
+        The ToolOp, from the issuing runtime's image-baked table, of the op that
+        creates the child. Required: its ``causes_context`` target must equal
+        ``scope.subAgentPrincipal``.
     now:
         The current time, for TTL computation. Defaults to datetime.now(UTC).
         Inject a fixed value in tests for determinism.
@@ -83,7 +128,10 @@ def compute_sub_grant(
         If any requested dimension would widen the parent's authority.
     FurtherDelegationForbiddenError
         If allowFurtherDelegation=True is requested but the parent forbids it.
+    UndeclaredDelegationTargetError
+        If the requested child is not the causing op's declared target.
     """
+    require_declared_target(scope, causing_op)
     now_dt = now if now is not None else datetime.now(timezone.utc)
 
     # ------------------------------------------------------------------

@@ -147,7 +147,7 @@ from safe_agents.broker.schemas.common import (
 )
 from safe_agents.broker.schemas.envelope import Confidence
 from safe_agents.broker.schemas.harness_tool import HARNESS_TOOL, ToolClass, parse_coordinate_op
-from safe_agents.broker.taint import build_trust_map
+from safe_agents.broker.taint import DynamoInheritanceStore, InheritanceStore, build_trust_map
 
 # ---------------------------------------------------------------------------
 # Build a real BrokerRuntime with in-memory fakes (mirrors broker/tests/test_runtime.py)
@@ -641,7 +641,8 @@ def _load_grants(
       - ``seed`` — ``put_grant`` then ``get_grant`` each class. Writing then reading via
         the same store guarantees the stored HMAC hash matches.
       - ``read`` — ``get_grant`` ONLY (no write); brokerRole is read-only on the grants
-        table. A class whose grant is absent or quarantined is omitted with a loud
+        table's authority rows (its one write there is the INHERIT# ledger, confined by
+        LeadingKeys). A class whose grant is absent or quarantined is omitted with a loud
         WARNING — fail-closed, the PIP denies what is not loaded.
       - ``skip`` — load nothing (empty registry).
     """
@@ -675,6 +676,7 @@ def build_runtime(
     on_approval_alarm: "Callable[[ApprovalAlarmEvent], None] | None" = None,
     clock: Clock | None = None,
     input_as_of: "Mapping[InputName, InputAsOf] | None" = None,
+    inheritance_store: "InheritanceStore | None" = None,
 ) -> tuple[BrokerRuntime, InMemorySink | FileAuditSink | S3ObjectLockSink]:
     """Compose a BrokerRuntime from a manifest + three INDEPENDENT, env-selected backends.
 
@@ -737,6 +739,16 @@ def build_runtime(
     replaces this build's own stamp for that input where it is EARLIER, and is
     ignored where it is later, so a caller can make an input older and never
     fresher.
+
+    ``inheritance_store`` is the taint inheritance ledger (PTC-51, #177). Left
+    None, the store arm decides: on sqlite the ledger lives in the broker-writable
+    database (never the grant space's own file, which a cluster mounts read-only);
+    on DynamoDB it lives in the grants table under ``INHERIT#``; in memory there is
+    none, since a ledger one process holds reaches no other context. A manifest
+    whose ``tool_ops`` declares any ``causes_context`` refuses to build without one
+    (``InheritanceStoreRequiredError``), so on the memory arm such a manifest needs
+    a store passed in. Passed explicitly, it replaces the arm's choice; a test
+    hands two runtimes one ``InMemoryInheritanceStore`` that way.
 
     See safe_agents/arms/fargate/BROKER_ENV.md for the full AWS-mode env contract.
     """
@@ -925,6 +937,14 @@ def build_runtime(
         # writes, and would refuse loudly on a read-only mount rather than
         # silently seeding nothing.
         grant_store = SqliteGrantStore(hmac_key=hmac_key, **sqlite_grants_open_options())
+        # PTC-51: the inheritance ledger is a broker write, so it lives in the
+        # broker-writable db_path, never the grant space's read-only file.
+        if inheritance_store is None:
+            from safe_agents.broker.taint.inheritance_sqlite import (  # noqa: PLC0415
+                SqliteInheritanceStore,
+            )
+
+            inheritance_store = SqliteInheritanceStore(db_path)
         store_label = f"sqlite ({db_path})"
     elif is_dynamo_arm():
         from safe_agents.broker.approval import DynamoIntentStore  # noqa: PLC0415
@@ -938,6 +958,10 @@ def build_runtime(
         enforcement_store = DynamoStore(counters_table)  # counters + idem + ledger
         intent_store = DynamoIntentStore(intents_table, hmac_key=hmac_key)
         grant_store = DynamoDBGrantStore(hmac_key=hmac_key, table_name=grants_table)
+        # PTC-51: the inheritance ledger lives in the grants table under INHERIT#,
+        # the one key space the broker role may write there (LeadingKeys).
+        if inheritance_store is None:
+            inheritance_store = DynamoInheritanceStore(grants_table)
         endpoint = os.environ.get("AWS_ENDPOINT_URL_DYNAMODB", "default")
         store_label = (
             f"DynamoDB (grants={grants_table}, counters={counters_table}, "
@@ -1036,8 +1060,9 @@ def build_runtime(
     # Grant loading is controlled by BROKER_GRANT_LOAD (seed|read|skip), default seed:
     #   - seed: the LOCAL arm writes+reads each grant. With dynamo stores this is the ONE
     #     place build_runtime touches AWS for a write (the grant table must exist).
-    #   - read: the AWS brokerRole arm READS pre-seeded grants only — brokerRole is
-    #     read-only on the grants table, so the grants must already be present (seeded
+    #   - read: the AWS brokerRole arm READS pre-seeded grants only — brokerRole cannot
+    #     write grants (its one grants-table write is the INHERIT# ledger, confined by
+    #     LeadingKeys), so the grants must already be present (seeded
     #     out-of-band by broker.prototype.seed_grants). Absent/quarantined classes are
     #     omitted, fail-closed.
     #   - skip: load nothing (empty registry), construction smoke only.
@@ -1128,6 +1153,9 @@ def build_runtime(
         clock_skew=clock_skew,
         input_ages=input_ages,
         clock=now,
+        # PTC-51 -- the inheritance ledger. BrokerRuntime refuses to construct
+        # when the ToolOp table declares a cause op and this is None.
+        inheritance_store=inheritance_store,
     )
     if sqlite_intent_store is not None:
         _boot_sweep_sqlite_intents(runtime, sqlite_intent_store)

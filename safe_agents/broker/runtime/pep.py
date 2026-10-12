@@ -101,7 +101,7 @@ from safe_agents.broker.schemas import (
 )
 from safe_agents.broker.schemas.clock_skew import ZERO_SKEW
 from safe_agents.broker.schemas.common import CounterPeriod, DemotionTrigger, Principal
-from safe_agents.broker.schemas.decision import Allow, Decision, Deny
+from safe_agents.broker.schemas.decision import Allow, Decision, Deny, Transform
 from safe_agents.broker.schemas.envelope import ApprovalQueue, Confidence
 from safe_agents.broker.schemas.evidence import (
     DemotionSignal,
@@ -109,8 +109,10 @@ from safe_agents.broker.schemas.evidence import (
     error_budget_draw,
 )
 from safe_agents.broker.taint import InputTrustMap, TurnContext
+from safe_agents.broker.taint.inheritance import InheritanceStore, require_inheritance_store
 
 from .doer import ConnectorExecutionError, Doer
+from .inheritance import InheritanceWriteError, ingest_inherited, write_inheritance_record
 from .input_age import Clock, DecisionInputs, InputAgePolicy, utc_now
 from .harness_decision import (
     DECISION_REFUSAL_CAUSES,
@@ -498,6 +500,14 @@ class BrokerRuntime:
     clock:
         The instant source for input as-of stamps and the age check. Injectable
         for tests; the UTC wall clock by default.
+    inheritance_store:
+        The taint inheritance ledger (PTC-51, #177): where a cause op's record is
+        written before the op runs, and where this runtime reads the records
+        owed to its own principal when it mints a turn. Required when
+        ``optable`` declares any ``causes_context``: construction refuses with
+        ``InheritanceStoreRequiredError`` otherwise. ``build_runtime`` builds
+        one on every durable store arm. None on a runtime that declares no
+        cause op and was given none.
     """
 
     def __init__(
@@ -524,7 +534,12 @@ class BrokerRuntime:
         clock_skew: datetime.timedelta = ZERO_SKEW,
         input_ages: InputAgePolicy | None = None,
         clock: Clock | None = None,
+        inheritance_store: InheritanceStore | None = None,
     ) -> None:
+        # PTC-51 floor: a cause op never runs without somewhere to write its
+        # inheritance record. Checked first, so a refused runtime holds nothing.
+        require_inheritance_store(optable.cause_entries(), inheritance_store)
+        self._inheritance_store = inheritance_store
         self._principal = principal
         self._grants = grants
         # The per-agent ToolOp table, compiled from the consumer manifest by
@@ -1162,6 +1177,10 @@ class BrokerRuntime:
         human-side reset, may roll a turn. Turn identity is therefore broker-owned
         end-to-end: the agent supplies neither the turn id nor the rollover signal,
         so it cannot launder taint by declaring a fresh turn (memory/TAINT.md Rule 2).
+
+        A roll sheds only this turn's own taint. The next mint re-reads the taint
+        inheritance ledger (PTC-51, #177), so a record owed to this principal keeps
+        tainting every new turn until its ``notAfter``.
         """
         self._current_turn = None
 
@@ -1223,8 +1242,44 @@ class BrokerRuntime:
         there, not closed here.
         """
         if self._current_turn is None:
-            self._current_turn = TurnContext(turn_id=f"turn:{uuid.uuid4()}")
+            turn = TurnContext(turn_id=f"turn:{uuid.uuid4()}")
+            # PTC-51 (#177): a turn starts no cleaner than any live context-causing
+            # turn owed to this principal. Read at EVERY mint, so new_turn() sheds
+            # nothing while a record is live. Never raises: an unreadable ledger
+            # mints the turn tainted (runtime/inheritance.py).
+            if self._inheritance_store is not None:
+                ingest_inherited(
+                    turn,
+                    store=self._inheritance_store,
+                    principal=self._principal,
+                    now=self._clock(),
+                    skew=self._clock_skew,
+                )
+            self._current_turn = turn
         return self._current_turn
+
+    def _write_inheritance_if_declared(self, call: BrokeredCall, effective: Decision) -> None:
+        """Write the cause op's inheritance record, if this op declares one (PTC-51, #177).
+
+        Called by both executors immediately before the Doer, inside the same
+        failure handling. The declaration is read from THIS runtime's image-baked
+        table for the op the Doer will run (a transform's substituted op), never
+        from ``call.manifest``, which on the release path is the copy a held intent
+        froze. An op that declares nothing writes nothing. A failed write raises
+        ``InheritanceWriteError`` and the Doer is never reached.
+        """
+        op = effective.op if isinstance(effective, Transform) else call.op
+        entry = self._optable.entry(call.tool, op)
+        if entry is None or entry.causes_context is None:
+            return
+        write_inheritance_record(
+            store=self._inheritance_store,
+            decl=entry.causes_context,
+            call=call,
+            op=op,
+            sub_grant_store=self._sub_grant_store,
+            now=self._clock(),
+        )
 
     def _surface_quarantined_intent(
         self,
@@ -1584,6 +1639,9 @@ class BrokerRuntime:
             def _release_executor(call: BrokeredCall, effective: Decision) -> Any:
                 """Connector execution callback — called by enforce() on allow."""
                 try:
+                    # PTC-51: the record a declared cause op owes its target, from
+                    # the call's FROZEN taint, so approval does not declassify.
+                    self._write_inheritance_if_declared(call, effective)
                     # Bound so a decision point inside the connector (the MCP
                     # host's admission snapshot) records its input here (#176).
                     with inputs.bound():
@@ -1607,6 +1665,10 @@ class BrokerRuntime:
                         stored_call_digest=stored_digest,
                         **inputs.audit_fields(),
                     )
+                    if isinstance(exc, InheritanceWriteError):
+                        # Nothing ran, so the intent lands "refused", never left
+                        # "approved" as a connector that broke mid-call is.
+                        raise ReleaseRefusedError(str(exc)) from None
                     raise
                 emit(
                     self._audit_sink,
@@ -2425,6 +2487,9 @@ class BrokerRuntime:
             failure (#35). Before that it escaped with no audit record at all.
             """
             try:
+                # PTC-51: a declared cause op writes its inheritance record before
+                # the Doer runs; a failed write stops the op here (#177).
+                self._write_inheritance_if_declared(brokered_call, effective)
                 # Bound so a decision point inside the connector (the MCP host's
                 # admission snapshot) records its input on this decision (#176).
                 with inputs.bound():

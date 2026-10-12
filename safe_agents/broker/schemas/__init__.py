@@ -8,7 +8,7 @@ See broker/SCHEMAS.md for the authoritative field-by-field contract.
 """
 
 from .audit_record import AuditRecord
-from .brokered_call import BrokeredCall, Session, Taint, ToolOp
+from .brokered_call import SELF_TARGET, BrokeredCall, CausesContext, Session, Taint, ToolOp
 from .budgets import Budgets, CapacityBudget, ErrorBudget
 from .capability_iam import CapabilityIam
 from .connector_auth import AuthStrategy, ConnectorAuth, HeaderSource
@@ -31,6 +31,7 @@ from .evidence import (
     meets_bar,
 )
 from .grant import Grant
+from .inheritance import InheritanceRecord
 from .intent import Intent
 from .manifest import AgentManifest
 from .mcp_registry import (
@@ -88,6 +89,11 @@ __all__ = [
     "ToolOp",
     "Taint",
     "Session",
+    # PTC-51 (#177): an op's declaration that it causes a context, and the
+    # inheritance record the broker writes for the context's principal
+    "CausesContext",
+    "SELF_TARGET",
+    "InheritanceRecord",
     # connector auth-strategy config (#79) — how the broker resolves a credential
     "AuthStrategy",
     "ConnectorAuth",

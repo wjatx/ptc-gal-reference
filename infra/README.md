@@ -52,7 +52,10 @@ roles so a compromised agent inherits nothing:
 - **agent role** — no connector creds, no Secrets Manager, **no write to the `grants` table**,
   egress only to the broker. The dumbest role in the chain.
 - **broker role** — reads the secret store, reads `grants`, reads/writes `counters` + `intents`,
-  `PutObject`-only to the audit bucket. Holds the keys; cannot promote itself.
+  `PutObject`-only to the audit bucket. Holds the keys; cannot promote itself. Its one write in
+  the `grants` table is the taint inheritance ledger: `UpdateItem` confined by `LeadingKeys` to
+  `INHERIT#`. It can write only `INHERIT#` rows and grants no authority. IAM confines the key, not
+  the operation: only broker code makes the write create-only (`broker/TAINT.md`).
 - **promotion role** — writes the `grants` table via the maker-checker path, and reads the
   `*/issuer/*` signing key to sign the records that RAISE authority.
 - **demotion role** — deterministic grant writes on triggers, no model in the loop, and reads the

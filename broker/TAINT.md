@@ -66,6 +66,12 @@ floor an external write demands cannot influence that write until a human endors
 to `require_approval`). The cut being grant-independent is exactly no-write-up being non-bypassable
 by autonomy rung.
 
+**The third rule: invocation, in its low-water-mark form.** Biba's strict policy also says a
+subject may invoke only subjects at or below its own level. The low-water-mark form does not
+refuse the invocation: the invoked subject starts at the invoker's level. Here that means a
+context the agent causes to exist, a later run of its own principal or a child principal, starts
+with a turn at least as tainted as the turn that caused it (PTC-51). §4.1 is how it is built.
+
 **Endorsement = `trusted_read_sources`, reframed as first-class audited declassification.** A
 consumer placing `connector:{tool}.{op}` in `Envelope.trusted_read_sources` (§2) is asserting a
 **declassification**: "raise this source's ingest above the integrity floor for this agent." This is
@@ -140,11 +146,105 @@ the turn of the process it reaches and no other.
 ## 4. What clears taint — and what cannot
 
 **Clears (broker/harness-owned only):** a turn rollover (`new_turn()`, callable only by the trusted
-loop driver that owns the runtime object), or session expiry / process restart.
+loop driver that owns the runtime object), or session expiry / process restart (#191). Each clears
+only the turn's own taint. Taint a turn inherited from the ledger (§4.1) comes back at the next mint
+for as long as its record is live, so neither a rollover nor a restart sheds it.
 
 **Cannot clear:** model output, a later clean read in the same turn, or anything the agent does.
 There is **deliberately no taint-clearing broker API** (clearing is a human/harness action, not
 a code path the agent can reach). This is the memory-side Rule 2 of §8, enforced at the turn boundary.
+
+### 4.1 A context the agent causes starts no cleaner (PTC-51, #177)
+
+**The attack.** An agent that has read planted content cannot make an external write without a
+hold (§5). If it can schedule its own later run, or launch a worker under another principal, and
+that context starts with a clean turn, the planted content only has to ask for the hand-off. This
+is Biba's invocation property (§1.1), applied as a low-water mark.
+
+**The declaration.** The consumer marks each op that creates such a context with
+`ToolOp.causes_context` in the image-baked manifest's `tool_ops`, naming the target: `"self"` for a
+later run of the same principal, or a child principal spelled in full. The target comes only from
+the declaration, never from the call's arguments, so the agent cannot choose where its taint goes.
+The broker reads the declaration from its own `ToolOpTable` for the op the connector will run,
+never from a call or from the copy of the `ToolOp` a held intent froze. An op that declares nothing
+writes nothing. The shape and its load-time refusals are in `broker/SCHEMAS.md`.
+
+**The write.** Immediately before the connector runs a declared op, the broker writes one
+inheritance record keyed by the target (`runtime/pep.py::_write_inheritance_if_declared`, called
+from both `_executor` and `_release_executor`). The record carries the call's own `taint`, copied
+whole with its original source ids, plus the causing principal and turn, the op, `issuedAt` and
+`notAfter`. A held call froze its taint when it was held, so a call a human releases writes the same
+record an inline call would: approval is not declassification. `notAfter` is fixed at write time:
+the child's sub-grant expiry when the broker's sub-grant store holds one for the child, otherwise
+`issuedAt` plus the declaration's `horizon_seconds`, and always the latter for `"self"`.
+
+**The read.** Whenever a runtime mints a turn (`runtime/pep.py::_session_turn`: its first call, and
+its first call after each `new_turn()`), it reads the live records for its own principal and
+ingests every source they carry (`runtime/inheritance.py::ingest_inherited`). Each is ingested
+under a floor that neither the runtime's trust map nor `Envelope.trusted_read_sources` can lift,
+the floor `channels/trust_map.py::ingest_chain` applies to a sender's `untrusted` label (PTC §6.2,
+consequence 2). A record from a clean turn adds nothing. A record that is tainted but names no
+source taints with `inheritance:unsourced`. A child presents nothing: the runtime reads by the
+principal it already serves. `notAfter` was stamped under the causing broker's clock, so a record
+is judged live at the reader's instant less the manifest's `clock_skew_seconds`, which keeps it
+tainting up to the bound longer.
+
+**Fail directions.**
+
+- *The write fails* (the store refuses or is unreachable, two sub-grants name the child, or the
+  child's sub-grant has already expired so the record would be born expired). The op does not
+  run. Inline, the audit record has `outcome="failed"` and an `error` naming the inheritance
+  record, and the agent gets a deny. On release, the audit record is written the same way, with
+  `outcome="failed"`, and the intent lands in `refused` with a reason that begins
+  `release refused`.
+- *The read fails.* The turn is minted tainted with the source `inheritance:unreadable`, and a
+  warning is logged. The runtime never refuses to serve: refusing is a forced abstention, and
+  whether that is safe depends on the agent's polarity, which belongs to the consumer.
+
+**Floor, not knob.** A manifest that declares any cause op builds no runtime without an inheritance
+store. On the SQLite and DynamoDB arms `build_runtime` always builds one, so a runtime there reads
+at every mint whether or not it declares anything. The consumer's declaration is the only switch.
+Where the records live, and the one broker write that reaches another principal's key space, are
+in `broker/SCHEMAS.md`.
+
+**No hold of its own.** The PDP is unchanged, and its corpus digest with it. Inheritance is the
+control. A consumer that classifies a cause op as an external write still gets the standing cut on
+a tainted turn, and the release then writes the record.
+
+**The cost.** A `"self"` record taints every turn of that principal until `notAfter`, including
+turns the deferred run did not cause. Those turns get holds they did not need. That is friction,
+not a loss of safety.
+
+**What it does not cover.**
+
+- A context created by means the broker never sees: a shell that writes a crontab, a background
+  process a harness starts, a cloud API called with ambient credentials. Containment closes these.
+  This clause narrows nothing there.
+- A target the consumer declared wrongly. The record goes to the principal the declaration names.
+  When the connector actually starts a context under some other principal, that context reads no
+  record and begins clean. Which principal a connector really started is outside what the broker
+  observes, so it cannot detect the mismatch.
+- Taint carried by data rather than by a context. A cause op can leave content in storage that
+  some later context, the same or another, reads back. Nothing here follows the content. The
+  memory-layer floor owns that case (§8, #147).
+- A child turn that is already open when the record lands. The read happens at mint, never mid-turn,
+  so that turn stays as clean as it was until the child's next `new_turn()`.
+- The content a cause op itself fetches. The record copies the call's taint as it stood before the
+  connector ran. A declared op that both reads external content and creates a context passes on
+  the turn's earlier sources, not the source its own read adds afterwards.
+- A child that outlives its sub-grant. With a sub-grant, `notAfter` is the sub-grant's expiry. A
+  child that also holds grants of its own keeps acting under them after that instant, and from
+  its next mint it does so clean.
+- A same-zone child that starts its own broker process begins with a clean turn (#190), and a
+  process restart clears the live turn's own taint (#191).
+- A context in another deployment, which shares no store. That hand-off is a channel publish: an
+  external write, held on a tainted turn, that carries the turn's sources in its signed chain
+  (PTC §6.5). The ledger is shared within one deployment.
+- Two runtimes on the in-memory arm share a ledger only when one store object is passed to both.
+
+Records carry no hash or signature. Like every other broker-written row, their integrity rests on
+who may write the store. A record grants nothing. The broker code writes create-only, but a holder
+of the store write could rewrite or delete a live record and so lower the taint it carries.
 
 ## 5. The escalation floor by action class
 
@@ -310,6 +410,17 @@ The broker-side half of the memory-taint acceptance exists as tests today (`safe
   exhaustive corpus pins
   its ON slice and keeps the OFF digest
   (`test_pdp_corpus.py::test_harness_on_slice_moves_only_tainted_points`).
+- **A caused context inherits the causing turn's taint**: `test_taint_inheritance_runtime.py`,
+  two runtimes sharing one ledger: the row written before the Doer and the child held
+  (`test_the_cause_op_writes_its_row_before_the_doer_and_the_child_is_held`), the read at mint
+  (`test_the_child_reads_the_row_when_it_mints_its_first_turn`), an unreadable ledger
+  (`test_an_unreadable_ledger_mints_the_turn_tainted_and_still_serves`), approval
+  (`test_a_held_cause_op_approved_writes_the_frozen_taint_and_the_child_is_held`), the child's
+  rollover (`test_new_turn_in_the_child_sheds_nothing_while_the_row_is_live`), the floor
+  (`test_nothing_the_child_configures_lifts_an_inherited_source`), the failed write inline and on
+  release, the `"self"` target and its control, the sub-grant expiry and the skew bound. The
+  declaration's load-time refusals and the stores are in `test_taint_inheritance_schema.py` and
+  `test_taint_inheritance_store.py`.
 - **Trusted-read relief + regression pair** — `test_read_gating.py`:
   `test_untrusted_read_taints_and_escalates_next_write` vs
   `test_trusted_read_does_not_taint_and_next_write_is_not_escalated` (the only difference is

@@ -100,7 +100,7 @@ field names and types. The wire/storage encoding (JSON over MCP; DynamoDB items;
 >   value is resolved under `<prefix>/connectors/<leaf>`, so a pre-prefixed value
 >   would double the prefix and miss the IAM grant.
 > - `tool_ops: list[ToolOp]` (default `[]`) — the consumer-owned ToolOp table. Each op's
->   `effect/external/reversible/egress_arg/destination_arg` classification travels WITH the agent here, not in a
+>   `effect/external/reversible/egress_arg/destination_arg/causes_context` classification travels WITH the agent here, not in a
 >   base global; `build_runtime` compiles it into the runtime's `ToolOpTable` and the broker
 >   resolves every `(tool, op)` against it — so a consumer-defined op gates identically regardless
 >   of its name (the base owns the ToolOp *schema* + the PDP rules that key on it, never the op
@@ -268,6 +268,10 @@ interface ToolOp {
   reversible?: boolean             // can a wrong action be undone (deletes a bad event) vs not (a wire)
   egress_arg?: string              // read-gating: name of the arg that egresses to the provider (e.g. "query")
   destination_arg?: string         // PTC-52: name of the arg that says where the request goes (e.g. "url")
+  causes_context?: {               // PTC-51: running this op creates a context that acts later
+    target: "self" | Principal     //   a deferred run of this principal, or a child spelled in full
+    horizon_seconds: number        //   the record's lifetime when no sub-grant to the target exists
+  }
 }
 // A harness's own tool call is decided at the reserved tool "harness-tool", op "<tool_class>/<locality>":
 //   { tool:"harness-tool", op:"shell/project", effect:"write", external:false, reversible:true }
@@ -313,6 +317,72 @@ Per-field notes:
   The coordinate is never in the served registry and never a connector op: an agent-facing call
   (`/call`, MCP `tools/call`) that names `harness-tool` is refused and recorded as `deny`/`denied`
   before the manifest is consulted.
+- **manifest.causes_context** (PTC-51, #177): the op's declaration that running it creates a
+  context that will act later, and whose principal that context runs as. `target` is the literal
+  `"self"` (a deferred run of the principal whose manifest declares the op) or a child principal
+  with all four parts spelled, non-empty and unpadded. `horizon_seconds` is a positive whole number
+  of seconds, at most 3,162,240,000 (one hundred years of 366 days, the bound
+  `input_max_age_seconds` uses), and is required on every declaration. It is honoured only
+  from the image-baked manifest's `tool_ops`; the broker reads it from its own `ToolOpTable`, never
+  from a call or from the copy of the ToolOp a held intent froze. Refused at load, each with a
+  message naming the `tool.op` entry: any other target shape, a missing or non-positive horizon, a
+  child target equal to the manifest's own `principal`, and any declaration in a manifest that
+  names no `principal`. A manifest that declares one builds no runtime without an inheritance
+  store (below). Absent, the op creates no context the broker is told about and nothing is
+  written. It dumps as `null` when unset, so it is in a stored call's bytes like the other ToolOp
+  fields; adding it moved no pinned hash.
+
+### The inheritance record (a store row, not a base schema)
+
+When an op that declares `causes_context` runs, the broker writes one `InheritanceRecord`
+(`safe_agents/broker/schemas/inheritance.py`) before it calls the connector, and every runtime
+reads the unexpired records for its own principal when it mints a turn. `broker/TAINT.md` §4.1 owns
+that behaviour and its fail directions; this is the shape.
+
+```ts
+// Illustrative stub, not an implementation
+interface InheritanceRecord {
+  id: string                 // broker-minted, unique per record
+  target: Principal          // whose turns inherit: the causing principal for "self", else the child
+  causingPrincipal: Principal
+  causingTurnId: string      // the broker-minted turn the cause op ran in
+  taint: { tainted: boolean; sources: string[] }   // the causing call's own frozen taint, whole
+  tool: string; op: string   // the op coordinate that caused the context
+  issuedAt: string           // ISO-8601 with an offset
+  notAfter: string           // ISO-8601 with an offset, later than issuedAt; fixed at write
+}
+```
+
+- **taint** is copied from the causing call. A call released from an approval hold carries the
+  taint the hold froze into its intent, so a released call writes the same record an inline call
+  would. Source ids keep their original spelling; no lineage prefix is added.
+- **notAfter** is resolved by `taint.inheritance.resolve_not_after`: the expiry of the child's
+  sub-grant when the broker's sub-grant store holds one for the target, otherwise `issuedAt` plus
+  the declaration's `horizon_seconds`, and always the latter for `"self"`. A record whose
+  `notAfter` is not after its `issuedAt` is refused, so the write fails and the op does not run.
+  A record taints while the reader's instant, less the reader's `clock_skew_seconds`, is before
+  `notAfter`, so another broker's clock can only keep it tainting longer.
+- **No hash or signature.** Like every other broker-written row, a record's integrity rests on who
+  may write the store. The agent holds no store credential. A record grants nothing. The
+  broker code writes create-only, but a holder of the store write could rewrite or delete a live
+  record and so lower the taint it carries; the ledger is only as sound as that write is held.
+- **Key layout**, the same on every durable store so a row pump moves rows verbatim:
+  `pk = "INHERIT#<agentId>#<skill>#<user>#<tier>"` (the target) and
+  `sk = "<notAfter as fixed-width UTC>#<id>"`, with the record as JSON in `data`. A read asks for
+  one partition from the current instant onward, then re-checks each record's `notAfter`.
+- **Stores** (`safe_agents/broker/taint/inheritance.py`, `inheritance_sqlite.py`), behind one
+  protocol, `put_record(record)` (create-only) and `live_records(target, now)`. In memory, for
+  tests and one process. SQLite, in the broker-writable database `BROKER_SQLITE_PATH` names and
+  never in the grant space's own file, which a cluster mounts read-only into the broker. DynamoDB,
+  in the grants table under `INHERIT#`, read by a strongly consistent Query on the target's
+  partition and never a Scan, and written by a conditional create through `UpdateItem` that the
+  broker role may issue only for `INHERIT#` keys (`dynamodb:LeadingKeys`,
+  `infra/lib/identity-stack.ts`). The grants table has no time-to-live, so an expired row stays
+  stored until something removes it; it taints nothing.
+- **The floor.** `BrokerRuntime` refuses to construct when its ToolOp table declares any
+  `causes_context` and it was given no store. `build_runtime` builds the SQLite or DynamoDB store
+  on those arms whether or not the manifest declares a cause op, because a child that declares
+  nothing still reads its records; on the in-memory arm there is none unless one is passed.
 
 ---
 

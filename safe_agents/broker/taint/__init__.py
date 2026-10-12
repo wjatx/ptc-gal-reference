@@ -28,6 +28,30 @@ Typical PEP usage:
 """
 
 from .context import TurnContext
+from .inheritance import (
+    DynamoInheritanceStore,
+    InheritanceRecordExistsError,
+    InheritanceStore,
+    InheritanceStoreRequiredError,
+    InMemoryInheritanceStore,
+    inheritance_target,
+    require_inheritance_store,
+    resolve_not_after,
+)
 from .propagation import InputTrustMap, build_trust_map
 
-__all__ = ["TurnContext", "InputTrustMap", "build_trust_map"]
+__all__ = [
+    "TurnContext",
+    "InputTrustMap",
+    "build_trust_map",
+    # PTC-51 (#177): the inheritance ledger's store and its writer's helpers.
+    # SqliteInheritanceStore lives in .inheritance_sqlite.
+    "InheritanceStore",
+    "InMemoryInheritanceStore",
+    "DynamoInheritanceStore",
+    "InheritanceRecordExistsError",
+    "InheritanceStoreRequiredError",
+    "require_inheritance_store",
+    "inheritance_target",
+    "resolve_not_after",
+]

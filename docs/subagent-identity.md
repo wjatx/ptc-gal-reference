@@ -77,10 +77,41 @@ And the spawned context **inherits the spawning turn's taint** rather than start
 otherwise "spawn my future self after the read, let it do the write" launders taint through time
 exactly as declaring a fresh turn once did across calls.
 
+**How it inherits (PTC-51, #177).** The consumer marks each op that creates such a context with an
+image-baked `causes_context` declaration on its `ToolOp`, naming the target: `"self"` for a
+deferred run of the same principal, or the child principal spelled in full. The target comes from
+that declaration and never from the call's arguments, so the agent cannot choose where its taint
+goes. When the op runs, the broker writes an inheritance record keyed by the target before it
+calls the connector. The record holds the causing turn's sources, the causing principal and turn,
+the op, and a `notAfter` fixed at write time. Every runtime reads the live records for its own
+principal whenever it mints a turn, including after a turn rollover, and ingests the sources
+under a floor its own trust map cannot lift. The child presents nothing, which fits the per-zone
+model above: the broker already knows which principal it serves. A held cause op that a human
+releases writes the same record from the taint its hold froze, so approval does not clean the
+child. A record that cannot be written stops the op; a ledger that cannot be read mints the turn
+tainted. The record's shape and stores are in `broker/SCHEMAS.md`; the reading, the floor and the
+fail directions are in `broker/TAINT.md` §4.1.
+
+A sub-grant is issued only to a declared child. `compute_sub_grant` takes the causing op from the
+issuing runtime's table and refuses a requested child that is not that op's declared target
+(`broker/sub-grants.md`).
+
+This covers a context the broker itself creates on the agent's behalf. It does not cover one the
+broker never sees: a shell that writes a crontab, or a cloud API called with ambient credentials.
+Containment closes that. Nor does it catch a declaration that names the wrong child: the record
+goes where the declaration points, and a context the connector starts under a different principal
+reads nothing and begins clean. A hand-off to an agent in another deployment is a channel publish, which already
+carries the turn's sources in its signed chain; the ledger is shared within one deployment. Two
+nearer cases are open gaps rather than covered ones: a same-zone child that starts its own broker
+process begins with a clean turn (#190), and a process restart clears the live turn's own taint
+(#191), though not taint it inherited from a live record.
+
 ## Base / consumer split
 
 Base (invariant): zone = principal; in-zone identity claims are never trusted; out-of-zone /
-future spawning is a brokered action-class; spawned contexts inherit taint. Consumer (envelope):
-whether to run multiple enforced zones at all, which action-classes cover its spawn/schedule
-surfaces, and any advisory in-zone downscoping policy. Per `friction-doctrine.md`, the enforced
+future spawning is a brokered action-class; spawned contexts inherit taint through the
+inheritance ledger, which a runtime declaring any cause op cannot run without. Consumer
+(manifest and envelope): whether to run multiple enforced zones at all, which ops cover its
+spawn/schedule surfaces and the `causes_context` target each one names, and any advisory in-zone
+downscoping policy. Per `friction-doctrine.md`, the enforced
 floor here is small — everything else is topology the consumer chooses.

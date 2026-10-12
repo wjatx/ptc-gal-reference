@@ -92,11 +92,14 @@ Where each adversary's reach ends, and the mechanism that ends it.
   name its posture. The code/credential half (no creds in the agent, broker as separate identity) is
   always on (`docs/network-security-layer.md`).
 - **Identity.** Agent, broker, ceremony maker, ceremony checker, watcher, and auditor are distinct
-  principals where they exist. The broker is denied grant-store writes by the platform rather than
-  by broker code — IAM on AWS, a read-only mount on the cluster — so this is a deployed property to
-  assert per arm, and a single-machine run falls outside its reach rather than failing it
-  (`docs/posture-ladder.md`). The residue that is NOT posture-scoped: the default seed path stamps
-  `promotedBy` and an evidence ref as literals (#27), which is a false entry in authority state at
+  principals where they exist. The broker is denied writes to grants and every other authority
+  record by the platform rather than by broker code: IAM on AWS, a read-only mount on the cluster.
+  So this is a deployed property to assert per arm, and a single-machine run falls outside its
+  reach rather than failing it (`docs/posture-ladder.md`). Its one write in the grant store is the
+  taint inheritance ledger, confined on AWS by `LeadingKeys` to its own key space and kept off the
+  read-only mount on the cluster; a ledger row carries taint and no authority (`broker/TAINT.md`
+  §4.1). The residue that is NOT posture-scoped: the default seed path stamps `promotedBy` and an
+  evidence ref as literals (#27), which is a false entry in authority state at
   any posture. The maker cannot sign or write the checker's key space; the acting
   roles hold no `dynamodb:Scan`. The ceremony and audit roles are
   context-gated at deploy: a redeploy that omits any of the five `<x>TrustedPrincipals` contexts

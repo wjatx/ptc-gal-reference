@@ -50,6 +50,17 @@ class FurtherDelegationForbiddenError(ValueError):
     """Raised when a sub-agent attempts to delegate but allowFurtherDelegation=False."""
 
 
+class UndeclaredDelegationTargetError(ValueError):
+    """Raised when a requested child is not the causing op's declared target.
+
+    PTC-51 (#177). The agent requests a child principal; the image-baked
+    ``ToolOp.causes_context`` of the op that creates the child names who may be
+    one. The taint inheritance record is keyed by that declaration, so a
+    sub-grant to any other principal would hand authority to a context that
+    starts clean. Refused, never redirected.
+    """
+
+
 class AmbiguousSubGrantError(ValueError):
     """Raised when one principal holds more than one sub-grant.
 

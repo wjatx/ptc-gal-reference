@@ -803,12 +803,57 @@ function agentRoleHasZeroAuthority(): boolean {
   return statementsForRole('AgentRole').length === 0;
 }
 
+// PTC-51 (#177): the broker's one grants-table write is the taint inheritance ledger, a
+// conditional create confined by LeadingKeys to INHERIT#. Exact match on purpose: a second
+// prefix in the list, the bare (Any) form, or a wildcard would each widen what it may write.
+function isInheritanceLedgerWrite(s: Statement): boolean {
+  const actions = actionsOf(s);
+  const cond = (s.Condition ?? {}) as Record<string, Record<string, unknown>>;
+  const operators = Object.keys(cond);
+  const keys = operators.length === 1 ? Object.keys(cond[operators[0]] ?? {}) : [];
+  const raw = keys.length === 1 ? cond[operators[0]][keys[0]] : undefined;
+  const values = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
+  return (
+    actions.length === 1 &&
+    actions[0] === 'dynamodb:UpdateItem' &&
+    operators[0] === 'ForAllValues:StringLike' &&
+    keys[0] === 'dynamodb:LeadingKeys' &&
+    values.length === 1 &&
+    values[0] === 'INHERIT#*'
+  );
+}
+
 function onlyPromotionAndDemotionWriteGrants(): boolean {
+  // The broker's inheritance-ledger write is set aside here and pinned on its own row
+  // (brokerWritesOnlyTheInheritanceLedger); any OTHER broker write on the grants table
+  // still fails this row.
+  const brokerWritesGrants = statementsForRole('BrokerRole').some(
+    (s) =>
+      actionsOf(s).some((a) => DDB_WRITE_ACTIONS.includes(a)) &&
+      resourceString(s).includes('grants-table-arn') &&
+      !isInheritanceLedgerWrite(s),
+  );
   return (
     roleWritesGrants('PromotionRole') &&
     roleWritesGrants('DemotionRole') &&
-    !roleWritesGrants('BrokerRole') &&
+    !brokerWritesGrants &&
     !roleWritesGrants('AgentRole')
+  );
+}
+
+function brokerWritesOnlyTheInheritanceLedger(): boolean {
+  // Exactly one broker write statement on the grants table, and it is the INHERIT#-confined
+  // UpdateItem on the table itself (no index resource: an index is never written). The reads
+  // that the ledger's Query needs are the broker's existing unconditioned GetItem/Query.
+  const writes = statementsForRole('BrokerRole').filter(
+    (s) =>
+      actionsOf(s).some((a) => DDB_WRITE_ACTIONS.includes(a)) &&
+      resourceString(s).includes('grants-table-arn'),
+  );
+  return (
+    writes.length === 1 &&
+    isInheritanceLedgerWrite(writes[0]) &&
+    !resourceString(writes[0]).includes('/index/')
   );
 }
 
@@ -2687,8 +2732,14 @@ const ROWS: Row[] = [
   {
     id: 'identity/grants-writers',
     group: 'Identity',
-    desc: 'only promotion + demotion write grants (not agent, not broker)',
+    desc: 'only promotion + demotion write grants (not agent, not broker; the broker\'s one grants-table write is the INHERIT# ledger, pinned below)',
     check: onlyPromotionAndDemotionWriteGrants,
+  },
+  {
+    id: 'identity/broker-writes-only-the-inheritance-ledger',
+    group: 'Identity',
+    desc: 'BrokerRole holds exactly one grants-table write: UpdateItem LeadingKeys-confined (ForAllValues) to INHERIT#, the PTC-51 taint inheritance ledger (#177); a GRANT#/RECORD#/ENVELOPE# upsert is refused by IAM',
+    check: brokerWritesOnlyTheInheritanceLedger,
   },
   {
     id: 'identity/secret-reader',

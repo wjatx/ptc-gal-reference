@@ -200,8 +200,9 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # re-audit found they needed: PTC-11 shares the unstamped publish path with
     # PTC-7/8/9, PTC-29's ordering shares the dedupe race with PTC-14, and
     # PTC-43's coalescing can join a hold that has already expired. Of the
-    # five clauses PTC 0.5.0-draft added, only PTC-51 (taint across a spawned
-    # or deferred context) is unbuilt; PTC 0.6.0-draft took the markers off
+    # five clauses PTC 0.5.0-draft added, PTC-51 (taint across a spawned or
+    # deferred context) was the last built (#177, the inheritance ledger); its
+    # marker stays until a spec revision takes it off. PTC 0.6.0-draft took the markers off
     # PTC-44, PTC-49, PTC-50, PTC-52 and PTC-53 and added PTC-54, owner-routed
     # approval, which nothing on the approval path implements: ownerId is
     # written by the ceremony and read by no release.

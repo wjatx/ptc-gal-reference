@@ -159,3 +159,36 @@ def make_pip(
         )
 
     return pip
+
+
+def cause_op_for(target: Principal, *, tool: str = "worker", op: str = "launch"):
+    """An image-baked ToolOp that declares it creates a context for ``target`` (PTC-51).
+
+    Sub-grant issuance refuses a child the causing op does not declare
+    (``delegation.compute.require_declared_target``), so every issuance in a test
+    names one. The horizon is arbitrary; issuance never reads it.
+    """
+    from safe_agents.broker.schemas import ToolOp  # noqa: PLC0415
+
+    return ToolOp(
+        tool=tool,
+        op=op,
+        effect="write",
+        external=False,
+        reversible=True,
+        causes_context={"target": target.model_dump(), "horizon_seconds": 3600},
+    )
+
+
+def issue_sub_grant(parent, scope, **kwargs):
+    """``compute_sub_grant`` with a causing op that declares the scope's own child.
+
+    For the tests about OTHER dimensions of attenuation. The declared-target check
+    itself is exercised by calling ``compute_sub_grant`` directly
+    (``test_taint_inheritance_schema.py``).
+    """
+    from safe_agents.broker.delegation import compute_sub_grant  # noqa: PLC0415
+
+    return compute_sub_grant(
+        parent, scope, causing_op=cause_op_for(scope.subAgentPrincipal), **kwargs
+    )
