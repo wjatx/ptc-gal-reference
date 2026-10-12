@@ -40,7 +40,10 @@ The claim this implementation exists to support is: **the agent holds no
 credentials, its only egress is a deterministic broker, and a fully compromised
 agent can still only ask.** That rests on three separate mechanisms, and the
 report we want most is one that **composes** them rather than defeating any
-single one.
+single one. [`docs/threat-model.md`](docs/threat-model.md) is the list of claims
+to attack: the adversaries, the base-owned paths where attacker-influenced
+content enters with the control and test cited for each, and what each control
+does not buy.
 
 Also squarely in scope, and arguably more valuable than a conventional
 vulnerability:

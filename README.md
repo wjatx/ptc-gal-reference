@@ -189,6 +189,9 @@ to day, so a failure there is worth an issue.
   or another MCP client, and the AWS and OpenShift paths.
 - [`docs/lf-reference-implementation.md`](docs/lf-reference-implementation.md): the claim, what
   is demonstrated against what is only asserted, and where to attack it.
+- [`docs/threat-model.md`](docs/threat-model.md): the list of claims worth attacking, with the
+  adversaries, the paths where attacker-influenced content enters, and what each control does not
+  buy.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md): the technical floor.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): how to contribute.
 - [`SECURITY.md`](SECURITY.md): how to report a finding that should not be public yet.

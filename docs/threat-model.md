@@ -224,8 +224,13 @@ reviewer.
   base cannot verify it across deployments. What the base does is narrower: the manifest's `zone`
   is required with no default, so a configured deployment never runs under an id it did not
   choose, and the shipped example manifests each name their own.
-- **Every proof here is a drill we designed to pass.** No third party has attacked these claims;
-  that gap is tracked, not waved away (`/assumption-testing`).
+- **Every proof here is a drill we designed to pass.** One claim has been attacked from outside,
+  by reading rather than by running: an outside reader checked the `false_action` path of the
+  grant lifecycle against GAL 0.2.9 and the code, and showed that an owner's flag reached no audit
+  surface, so neither the tape nor the ledger could say when a flag was raised or against which
+  intent (#34). A flag now writes its own audit record (5570b03); whether a demotion record should
+  cite it is still open. Nobody outside the project has run a deployed floor, so no third party has
+  attacked these claims by exercising them.
 
 ## 6. The consumer register contract
 

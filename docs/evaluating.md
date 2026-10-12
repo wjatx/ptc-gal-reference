@@ -18,7 +18,9 @@ three postures; the table below maps them to the three places you can run this.
 | **OpenShift** (posture 2) | The ceremony arc in pods under separate ServiceAccounts, with a leg's writes to grant rows and to another leg's audit records refused by the kernel on read-only mounts, and an agent pod holding no credentials working only through the broker | Anything on vanilla Kubernetes, which the drill does not support today | Cluster admin on an OpenShift cluster, or OpenShift Local on a laptop (a free Red Hat account, about 14 GiB of RAM for the VM); from about 150 s to 19 minutes for a full run, depending on the cluster |
 
 Starting with the laptop is reasonable, and so is stopping there, as long as the conclusions
-stay inside posture 1.
+stay inside posture 1. Whichever path you take, [`docs/threat-model.md`](threat-model.md) is the
+list of claims worth attacking: the adversaries, the base-owned paths where attacker-influenced
+content enters with the control and test cited for each, and what each control does not buy.
 
 ## The laptop tour
 
