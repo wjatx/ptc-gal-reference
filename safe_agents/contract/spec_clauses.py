@@ -100,9 +100,11 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 # the age of a fetched input, taint across delegation, an agent-composed
 # destination on a tainted turn, an approval that expires undecided), and GAL
 # 0.6.0-draft added GAL-41 to GAL-43 (issuer standing, skew, input age), and
-# 0.6.1-draft added GAL-44 (a lapse record's term is the ratified one).
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 53, SPEC_GAL: 44}
-EXPECTED_TOTAL_ROWS = 97
+# 0.6.1-draft added GAL-44 (a lapse record's term is the ratified one). PTC
+# 0.6.0-draft added PTC-54 and GAL 0.7.0-draft added GAL-45 (a held call is
+# answered by the owner of the grant that governs it), one rule stated twice.
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 54, SPEC_GAL: 45}
+EXPECTED_TOTAL_ROWS = 99
 
 # clause_id -> (marker_form, tracking issue)
 #
@@ -197,34 +199,27 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # PTC 0.5.0-draft. Three existing clauses gain markers the 2026-10-03
     # re-audit found they needed: PTC-11 shares the unstamped publish path with
     # PTC-7/8/9, PTC-29's ordering shares the dedupe race with PTC-14, and
-    # PTC-43's coalescing can join a hold that has already expired. PTC-44 is
-    # rewritten: a sender the airlock authenticated and mapped learns whether a
-    # refusal of authority is permanent or transient, which nothing classifies
-    # today (the airlock answers 200 to everything). PTC-49 to PTC-53 are new
-    # and unbuilt.
+    # PTC-43's coalescing can join a hold that has already expired. Of the
+    # five clauses PTC 0.5.0-draft added, only PTC-51 (taint across a spawned
+    # or deferred context) is unbuilt; PTC 0.6.0-draft took the markers off
+    # PTC-44, PTC-49, PTC-50, PTC-52 and PTC-53 and added PTC-54, owner-routed
+    # approval, which nothing on the approval path implements: ownerId is
+    # written by the ceremony and read by no release.
     "PTC-11": (MARKER_FORM_INLINE, "#15"),
     "PTC-29": (MARKER_FORM_INLINE, "#20"),
     "PTC-43": (MARKER_FORM_INLINE, "#41"),
-    "PTC-44": (MARKER_FORM_INLINE, "#174"),
-    "PTC-49": (MARKER_FORM_INLINE, "#175"),
-    "PTC-50": (MARKER_FORM_INLINE, "#176"),
     "PTC-51": (MARKER_FORM_INLINE, "#177"),
-    "PTC-52": (MARKER_FORM_INLINE, "#178"),
-    "PTC-53": (MARKER_FORM_INLINE, "#163"),
+    "PTC-54": (MARKER_FORM_INLINE, "#189"),
     # GAL 0.6.0-draft. GAL-18 gains the qualifier "where signing is configured"
     # and is marked for the two things #162 records: not every writer refuses
     # once a ledger has adopted signing, and the override leaves nothing
-    # durable. GAL-41 to GAL-43 are new and unbuilt; GAL-42 and GAL-43 share
-    # their tracking issues with PTC-49 and PTC-50, being the same two rules.
+    # durable. GAL-41 (issuer standing) is unbuilt. GAL 0.7.0-draft took the
+    # markers off GAL-42, GAL-43 and GAL-44 and added GAL-45, the lifecycle
+    # half of PTC-54, sharing its tracking issue as GAL-42 and GAL-43 did with
+    # PTC-49 and PTC-50.
     "GAL-18": (MARKER_FORM_INLINE, "#162"),
     "GAL-41": (MARKER_FORM_INLINE, "#179"),
-    "GAL-42": (MARKER_FORM_INLINE, "#175"),
-    "GAL-43": (MARKER_FORM_INLINE, "#176"),
-    # GAL 0.6.1-draft. GAL-44 holds a lapse record's term to the latest
-    # promotion before it. The audit rule is built (LAPSE_TERM_RATIFIED,
-    # grants/audit_lapse_term.py). The row stays because the published text
-    # still carries the marker; it goes when a later revision takes it off.
-    "GAL-44": (MARKER_FORM_INLINE, "#183"),
+    "GAL-45": (MARKER_FORM_INLINE, "#189"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from

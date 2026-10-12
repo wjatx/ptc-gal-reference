@@ -113,7 +113,7 @@ DropReason = Literal[
     "screen_refused",
     # The airlock could not evaluate: a fetched input it needed (`detail`
     # `key_source` or `dedupe_store`) was unavailable. Recorded for a transient
-    # refusal (channels/ADAPTERS.md §"What the sender is told", issue #174).
+    # refusal (PTC §3.5; channels/ADAPTERS.md §"What the sender is told").
     "not_evaluated",
 ]
 

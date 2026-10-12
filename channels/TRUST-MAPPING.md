@@ -182,9 +182,9 @@ drop log.
 `not_evaluated` records a refusal the airlock could not evaluate, because a fetched input it needed
 was unavailable; `detail` names the input, `key_source` (gate 3.5) or `dedupe_store` (gate 6). It
 is the record of a transient refusal (`channels/ADAPTERS.md` §"What the sender is told"), and it
-lets the receiver's own record tell a refusal it evaluated from one it could not. The
-specification's closed vocabulary (PTC §3.5) gains `not_evaluated` in the revision that removes
-PTC-44's not-yet-implemented marker (#174).
+lets the receiver's own record tell a refusal it evaluated from one it could not. It is a reason in
+the specification's closed vocabulary (PTC §3.5, since 0.6.0-draft), where a `not_evaluated` record
+must carry a `detail` naming the input.
 
 ## Input age
 
