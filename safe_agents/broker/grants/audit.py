@@ -38,6 +38,11 @@ Rules (each documented at its check site in run_audit):
                             grant ts is a write the ledger does not explain,
                             an earlier one is a record whose grant write did
                             not land
+  LAPSE_TERM_RATIFIED       a lapse record's certifiedUntil, where present, is
+                            the term on the latest promotion record before
+                            it, carries none with no promotion before it, and
+                            is not later than the record's own ts
+                            (grants/audit_lapse_term.py)
   RECORD_SIGNATURE_VERIFIES every record in scope carries a DSSE envelope that
                             verifies under ITS RECORD TYPE'S signing role
                             (issuer: promotion/bootstrap/tightening/
@@ -140,6 +145,7 @@ from safe_agents.broker.grants.acknowledgments import (
     verify_acknowledgment,
     violation_detail_digest,
 )
+from safe_agents.broker.grants.audit_lapse_term import lapse_term_findings
 from safe_agents.broker.grants.demotion import (
     _rank,  # the SAME rank ordering the lifecycle moves on — never duplicated
 )
@@ -170,6 +176,7 @@ LEVEL_LEDGER_CONSISTENT = "LEVEL_LEDGER_CONSISTENT"
 LEVEL_DROP_RECORDED = "LEVEL_DROP_RECORDED"
 GRANT_TERM_RATIFIED = "GRANT_TERM_RATIFIED"
 GRANT_TS_RECORDED = "GRANT_TS_RECORDED"
+LAPSE_TERM_RATIFIED = "LAPSE_TERM_RATIFIED"
 RECORD_SIGNATURE_VERIFIES = "RECORD_SIGNATURE_VERIFIES"
 EVALUATOR_RECORD_CONTINUOUS = "EVALUATOR_RECORD_CONTINUOUS"
 RECORD_SIGNING_EPOCH_VALID = "RECORD_SIGNING_EPOCH_VALID"
@@ -885,7 +892,8 @@ def run_audit(
         # demotion explains the LEVEL, never a different term. A lapse record
         # may carry certifiedUntil too (the term that expired, GAL §5.2), and
         # this rule does not read it: what a lapse record says about a term
-        # is the evaluator's account, never what the checker ratified. With no
+        # is the evaluator's account, never what the checker ratified
+        # (LAPSE_TERM_RATIFIED below holds that account to this one). With no
         # promotion on the ledger (bootstrap only) there is no ratified term,
         # so the grant must carry none. Un-waivable: a mismatch is a term the
         # checker never ratified — authority, in either direction.
@@ -1070,6 +1078,23 @@ def run_audit(
                     )
                 )
             level_before = record.toLevel
+
+    # LAPSE_TERM_RATIFIED (GAL §6.11, GAL-44) — a lapse record's term is the
+    # ratified one. GRANT_TERM_RATIFIED above holds the GRANT's term to the
+    # latest promotion and deliberately never reads a lapse record's; this rule
+    # holds the lapse RECORD's. The writer copies the grant's term and the
+    # stores' paired write refuses any other (refuse_lapse_drift), but a lapse
+    # record appended through a record store alone passes through neither, and
+    # a reader takes the instant enforcement fell from this field (§5.2). The
+    # three checks and their limits are in grants/audit_lapse_term.py. Judged
+    # over every coordinate with records, grant or no grant, signed or not, in
+    # every mode: it needs no key. Un-waivable (not in WAIVABLE_RULES): a
+    # misstated term is a misstatement of how long authority was certified.
+    for coordinate, coordinate_records in ledger.items():
+        for detail in lapse_term_findings([e.record for e in coordinate_records]):
+            violations.append(
+                AuditViolation(rule=LAPSE_TERM_RATIFIED, coordinate=coordinate, detail=detail)
+            )
 
     # RECORD_SIGNATURE_VERIFIES — a record in scope must carry a DSSE envelope
     # that verifies under ITS RECORD TYPE'S signing role (fails closed):

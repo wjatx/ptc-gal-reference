@@ -221,8 +221,9 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     "GAL-42": (MARKER_FORM_INLINE, "#175"),
     "GAL-43": (MARKER_FORM_INLINE, "#176"),
     # GAL 0.6.1-draft. GAL-44 holds a lapse record's term to the latest
-    # promotion before it. The lapse writer and the stores' paired write hold
-    # it; no audit rule re-derives it from the ledger, which is what is marked.
+    # promotion before it. The audit rule is built (LAPSE_TERM_RATIFIED,
+    # grants/audit_lapse_term.py). The row stays because the published text
+    # still carries the marker; it goes when a later revision takes it off.
     "GAL-44": (MARKER_FORM_INLINE, "#183"),
 }
 

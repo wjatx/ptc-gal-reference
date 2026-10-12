@@ -529,10 +529,17 @@ Per-field notes:
   A lapse record carrying the field sets nothing. The stores refuse a lapse write whose record
   names a term other than the grant's, or that moves the grant's `certifiedUntil` or
   `lastSafeLevel` (`refuse_lapse_drift`, all three backends), and `refuse_term_extension` still
-  exempts a `promotion` record only. That guard sits on the paired grant-and-record write, and it
-  is the only thing that holds a lapse record's term to the grant's: no audit rule re-derives it
-  from the ledger, so a lapse record appended outside that write is checked for its signature and
-  its shape and not for the term it names.
+  exempts a `promotion` record only. That guard sits on the paired grant-and-record write, so it
+  holds the honest writer and no record appended outside that write. The audit rule
+  `LAPSE_TERM_RATIFIED` (GAL §6.11, GAL-44) re-derives the term from the ledger for every lapse
+  record that carries one, however it got there: the term must equal, as the stored string, the
+  term on the latest `promotion` record before it at its coordinate (by parsed `ts`); with no
+  promotion before it the record must carry none; and the term must not be later than the record's
+  own `ts`, since a lapse is written at or after the instant its term passed. A `ts` that judgement
+  needs and cannot read is a finding too. Un-waivable, and it runs with no key. What it buys: the
+  ledger cannot state a lapse term its own promotion records do not account for. It does not say
+  the promotion record is genuine, which is `RECORD_SIGNATURE_VERIFIES`'s question, and it does not
+  say the lapse was owed.
   The audit rule `GRANT_TERM_RATIFIED` holds each grant to the ratified term: a grant's
   `certifiedUntil` must equal the term on the chronologically-latest **promotion** record at its
   coordinate (a later demotion, tightening or lapse moves the level, never the term), and a grant

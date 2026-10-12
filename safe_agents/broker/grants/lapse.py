@@ -38,7 +38,9 @@ Also by design:
     the record's ``ts`` is the instant it was written, and is never set to the
     term. The gap between the two is how long the grant sat lapsed and
     unrecorded. The store refuses a lapse write whose record names any other
-    term (``refuse_lapse_drift``).
+    term (``refuse_lapse_drift``), and the audit reports a lapse record whose
+    term is not the ratified one however it reached the ledger
+    (LAPSE_TERM_RATIFIED, ``grants.audit_lapse_term``).
   * The evaluation instant ``now`` is an explicit input (see ``grants.term``);
     only ``main`` in ``grants.runner`` reads the wall clock.
 

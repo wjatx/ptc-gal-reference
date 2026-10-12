@@ -195,6 +195,19 @@ force.
   second check is the one that matters for a planted row: a "demotion" from `out-of-loop` to
   `on-loop` lowers on its own terms, and on a ledger that stood at `in-loop` it would leave the
   derived level raised with no issuer signature. Un-waivable.
+- **`LAPSE_TERM_RATIFIED`.** A `lapse` record's `certifiedUntil` is where a reader takes the
+  instant enforcement fell (GAL §5.2), and on the sanctioned path the writer copies the grant's term
+  and the stores refuse any other. A lapse record appended through a record store alone, by a holder
+  of the evaluator's key or by anyone who can write a ledger that has not adopted signing, passes
+  through neither. So the audit holds every lapse record that carries a term to the ledger (GAL
+  §6.11, GAL-44): the term must equal, as the stored string, the term on the latest `promotion`
+  record before it at its coordinate; a lapse record with no promotion before it carries none; and
+  the term is not later than the record's own `ts`. "Before" and "latest" are by parsed instant,
+  never string or list order, and a `ts` that judgement needs and cannot read is a finding. A lapse
+  record carrying no term is not judged, since the field is optional. Judged at every coordinate
+  with records, signed or not, in every mode. Un-waivable, as `GRANT_TERM_RATIFIED` is: a misstated
+  term misstates how long authority was certified. The third check reads today's writer, which
+  applies no clock skew; the skew allowance (#175) has to carry its bound into it.
 - **`GRANT_ENVELOPE_IN_FORCE`.** Every grant's `envelopeHash` is compared to the stored
   in-force envelope for its principal (recomputed via the same load path the broker uses at boot —
   a plain content hash, so the keyless posture holds). A mismatch is a grant the broker quarantines
@@ -433,6 +446,9 @@ that authority to be re-justified.
   the drop is `LEVEL_DROP_RECORDED` (waivable, for pre-atomic-write history where demotion wrote the grant
   first). `GRANT_TERM_RATIFIED` (un-waivable) holds the grant's term to the one on its latest
   promotion record: the term enforced must be the term the checker ratified.
+  `LAPSE_TERM_RATIFIED` (un-waivable) holds each lapse record's term to the one on the latest
+  promotion record before it, and to no later than the record's own `ts`, so a lapse record that
+  reached the ledger outside the paired write cannot misstate how long the grant was certified.
 
 Honest limits. The runner signs the lapse record — and the demotion record beside it — with the
 **evaluator** key when one is configured in its environment; otherwise it stores them unsigned with
