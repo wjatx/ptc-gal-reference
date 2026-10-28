@@ -705,7 +705,8 @@ of the philosophy doc). Seven record types share one ledger. Six record a level 
 maker-checker act that raises a Grant's level is the `promotion` type. `reattestation` records a
 write that changes none (GAL §4.3, §6.6). `withdrawal` (GAL §6.10, GAL-41, #179) records a grant
 lowered because the issuer key its level rested on was withdrawn; GAL 0.8.0-draft publishes it as
-the seventh type (§4.3, §5.2). **Demotions append a
+the seventh type (§4.3, §5.2). GAL 0.9.0-draft adds an eighth, `principal-withdrawal` (§4.3,
+§6.16, GAL-46), which this package does not build yet (#197). **Demotions append a
 `demotion`-typed record on the same
 ledger** — this supersedes the earlier "demotion needs no such record" exemption (Phase 3,
 `docs/GAL.md` §3); demotion itself stays automatic and deterministic (`grant-lifecycle.md`).

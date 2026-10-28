@@ -54,7 +54,8 @@ Every ingredient has prior art; the assembled lifecycle does not:
   ledger — landed in Phase 3's batched schema pass, superseding §7's earlier demotion exemption
   (previously demotion emitted only an `AuditRecord`). The record ships seven types
   (`promotion` / `demotion` / `bootstrap` / `tightening` / `lapse` / `reattestation` /
-  `withdrawal`);
+  `withdrawal`); GAL 0.9.0-draft specifies an eighth, `principal-withdrawal` (§6.16), not yet
+  built (#197);
   `stale_confidence` demotions
   carry `demotionReason="pending-evidence"` (label-free drift voids the certification), the other
   triggers `"failing"`. A `lapse` records an expired certification term: also

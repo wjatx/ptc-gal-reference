@@ -103,8 +103,10 @@ GAL_ORIGIN_TABLE_COLUMNS = 2
 # 0.6.1-draft added GAL-44 (a lapse record's term is the ratified one). PTC
 # 0.6.0-draft added PTC-54 and GAL 0.7.0-draft added GAL-45 (a held call is
 # answered by the owner of the grant that governs it), one rule stated twice.
-EXPECTED_ROW_COUNTS = {SPEC_PTC: 54, SPEC_GAL: 45}
-EXPECTED_TOTAL_ROWS = 99
+# GAL 0.9.0-draft added GAL-46 (principal standing, the lifecycle half of
+# draft-jackson-wimse-evaluation-05 Section 3.6).
+EXPECTED_ROW_COUNTS = {SPEC_PTC: 54, SPEC_GAL: 46}
+EXPECTED_TOTAL_ROWS = 100
 
 # clause_id -> (marker_form, tracking issue)
 #
@@ -220,6 +222,12 @@ EXPECTED_MARKED: dict[str, tuple[str, str]] = {
     # `withdrawal` as the seventh record type.
     "GAL-18": (MARKER_FORM_INLINE, "#162"),
     "GAL-45": (MARKER_FORM_INLINE, "#189"),
+    # GAL 0.9.0-draft. GAL-46 (principal standing) is unbuilt (#196), and so
+    # are the two pieces it brought: GAL-6's eighth gate term, principal in
+    # standing (#198), and the `principal-withdrawal` record type (#197),
+    # which is marked on its §4.3 and §5.2 rows rather than on a clause.
+    "GAL-6": (MARKER_FORM_INLINE, "#198"),
+    "GAL-46": (MARKER_FORM_INLINE, "#196"),
 }
 
 # Clauses the reference implementation has OUTGROWN. Pinned separately from
