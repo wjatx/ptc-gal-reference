@@ -882,13 +882,17 @@ export class IdentityStack extends Stack {
     // against: the broker service's decision log and the airlock's structured events (the
     // handler_error/screen_error silent-failure signals) — never a `/safe-agents/${env}/*`
     // wildcard. FilterLogEvents is the primary cross-stream correlation call; DescribeLogStreams +
-    // GetLogEvents are the read-only companions needed to page a specific stream.
+    // GetLogEvents are the read-only companions needed to page a specific stream. Each group is
+    // listed bare and as `:*`: from 2027-04-26 FilterLogEvents and DescribeLogStreams authorize
+    // only against the bare log-group ARN, and GetLogEvents against the stream form.
     campaignWatcherRole.addToPolicy(
       new PolicyStatement({
         effect: Effect.ALLOW,
         actions: ['logs:FilterLogEvents', 'logs:DescribeLogStreams', 'logs:GetLogEvents'],
         resources: [
+          `arn:${Aws.PARTITION}:logs:${Aws.REGION}:${Aws.ACCOUNT_ID}:log-group:/safe-agents/${env}/broker`,
           `arn:${Aws.PARTITION}:logs:${Aws.REGION}:${Aws.ACCOUNT_ID}:log-group:/safe-agents/${env}/broker:*`,
+          `arn:${Aws.PARTITION}:logs:${Aws.REGION}:${Aws.ACCOUNT_ID}:log-group:/safe-agents/${env}/channels-airlock`,
           `arn:${Aws.PARTITION}:logs:${Aws.REGION}:${Aws.ACCOUNT_ID}:log-group:/safe-agents/${env}/channels-airlock:*`,
         ],
       }),
