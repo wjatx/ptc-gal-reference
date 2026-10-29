@@ -3,7 +3,7 @@
 > One/two-pager for the LF agent-standards conversation: what we're building, which existing
 > standards we adopt, why two seams remain unstandardized, and how these proposals fill them.
 > Names are final (2026-07-24); the normative spec drafts are [`PTC-SPEC.md`](https://github.com/wjatx/ptc-gal-standards/blob/main/PTC-SPEC.md) (`0.6.1-draft`)
-> and [`GAL-SPEC.md`](https://github.com/wjatx/ptc-gal-standards/blob/main/GAL-SPEC.md) (`0.9.1-draft`). They revise independently, so their versions can differ.
+> and [`GAL-SPEC.md`](https://github.com/wjatx/ptc-gal-standards/blob/main/GAL-SPEC.md) (`0.9.2-draft`). They revise independently, so their versions can differ.
 > Internal spines: `docs/PTC.md`, `docs/GAL.md`.
 
 ## What we're building
